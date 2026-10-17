@@ -553,7 +553,12 @@ async function scan() {
       try { await reopenedTickets.adopt(n, ch); } catch (e) { log(`reopened ticket ${n}: ${e.message}`); }
     }
     // A ticket adopted from a handoff before its channel was seen gets it now.
-    if (known && !known.channelId) { known.channelId = ch.id; known.source = { ...known.source, channelId: ch.id, channelName: ch.name }; ledger.save(); }
+    if (known && (!known.channelId || (!known.replyChannel && known.channelId === ch.id))) {
+      known.channelId ||= ch.id;
+      known.replyChannel ||= ch.id;
+      known.source = { ...known.source, channelId: ch.id, channelName: ch.name };
+      ledger.save();
+    }
     if (ledger.data.seen[`ticket:${n}`]) continue;
     const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId: ch.id, source: { content: `Open ticket channel #${ch.name} with no Keir task; adopted by the sweep. Read its history and pick it up.`, channelId: ch.id, at: new Date().toISOString() }, deadline: Date.now() + config.taskLifetimeMs });
     ledger.audit("ticket_adopted_by_sweep", { job: job.id, ticket: n }); ledger.save();
@@ -584,7 +589,7 @@ function ensureTicketJob(n) {
   const existing = d.jobs[d.seen[`ticket:${n}`]];
   if (existing) return existing;
   const channelId = Object.entries(d.channels).find(([, c]) => c.ticket === n)?.[0] || null;
-  const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId,
+  const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId, replyChannel: channelId,
     source: { content: `Ticket ${n} handed off by another operator. Read its history and the handoff, then continue it.`, channelId, at: new Date().toISOString() },
     deadline: Date.now() + config.taskLifetimeMs });
   ledger.audit("ticket_adopted_by_handoff", { job: job.id, ticket: n });

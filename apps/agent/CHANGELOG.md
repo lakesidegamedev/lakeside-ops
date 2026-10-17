@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- Ticket handoffs now retain the Discord reply route when Keir discovers the ticket channel later, so he can acknowledge and answer in the ticket.
+
 ## 5.8.14 (2026-10-18)
 
 ### For users
