@@ -5,6 +5,14 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- Asking Keir whether the game can do something now gets an answer checked against the code. If the system does not exist yet, Keir offers to build it, or says who already is.
+
+### For developers
+
+- Owner and developer requests tagged as a mechanics question, feature request, design feedback or command carry `context.capabilityQuestion`, so quick and focused conversations (which skip the full brief) still check the code and offer a build when the mechanic is missing. Players and ticket tasks are excluded.
+
 ## 5.8.19 (2026-10-18)
 
 <!-- Coverage: keir-v5.8.18 (387134f) through this release's ticket conversation fixes. -->
