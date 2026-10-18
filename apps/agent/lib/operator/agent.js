@@ -169,8 +169,8 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
   // A lane's provider setting is a comma list of runner[:model] entries, e.g.
   // "agy,muse:muse-spark-1.3-contributor". New tasks take the next entry in
   // turn; a task keeps its runner for life so its context never switches model.
-  const DEFAULT_MODEL = { agy: () => config.agyModel || "gemini-3.8-flash", muse: () => config.museModel || "muse-wonder-1.0", codex: () => "gpt-6-luna", opencode: () => "opencode/glm-5.3-flash-free", ollama: () => "deepseek-v4.1-flash", deepseek: () => "deepseek-flash", claude: () => config.model };
-  const PROVIDER_LABEL = { agy: "antigravity-cli-subscription", muse: "muse-cli-subscription", codex: "codex-cli-chatgpt-subscription", opencode: "opencode-cli", ollama: "ollama-cloud-subscription", deepseek: "deepseek-api", claude: "claude-cli-subscription" };
+  const DEFAULT_MODEL = { agy: () => config.agyModel || "gemini-3.8-flash", cursor: () => "auto", muse: () => config.museModel || "muse-wonder-1.0", codex: () => "gpt-6-luna", opencode: () => "opencode/glm-5.3-flash-free", ollama: () => "deepseek-v4.1-flash", deepseek: () => "deepseek-flash", claude: () => config.model };
+  const PROVIDER_LABEL = { agy: "antigravity-cli-subscription", cursor: "cursor-subscription", muse: "muse-cli-subscription", codex: "codex-cli-chatgpt-subscription", opencode: "opencode-cli", ollama: "ollama-cloud-subscription", deepseek: "deepseek-api", claude: "claude-cli-subscription" };
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
     if (job.provider?.lane !== lane) {
@@ -289,7 +289,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       if (!job.provider?.ownerSelected) routeForVision(job, config, ledger, quick ? "quick" : "worker");
       // Voice hands off after 30s instead of holding the speaker for the full conversation budget.
       const budget = turnBudget(quick ? (job.voiceMode ? config.voiceMaxTurnMs || 30000 : config.quickMaxTurnMs || 90000) : config.maxTurnMs), [model, , p] = providerOf(job);
-      const chosen = await require("./effort").activationEffort(job, { config, quick, runner: p });
+      const chosen = p === "cursor" ? { effort: "automatic", via: "cursor-auto" } : await require("./effort").activationEffort(job, { config, quick, runner: p });
       job.effort = { ...chosen, at: Date.now() }; job.provider.effort = chosen.effort; effortUsed = chosen;
       // Facts about what this activation runs on, so a question about Keir's
       // version, model or effort is answered from them, never guessed.

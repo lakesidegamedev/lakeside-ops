@@ -2,14 +2,14 @@
 // Configured routes and the studio's proven routes appear in the owner's picker. A model change
 // takes effect at the next activation, never halfway through an external effect.
 const { check } = require("./routing");
-const RUNNERS = { claude: "Claude", codex: "Codex", muse: "Muse", agy: "Gemini", ollama: "Ollama", deepseek: "DeepSeek API", opencode: "OpenCode" };
-const PROVEN = ["claude:claude-opus-5-5", "claude:claude-sonnet-5-5", "codex:gpt-6.1-sol", "codex:gpt-6-luna", "opencode:opencode-go/muse-spark-1.3-contributor", "agy:gemini-3.8-flash", "ollama:deepseek-v4.1-flash"];
-// Voice Auto is the fastest reliable conversation route. Gemini Flash timed out in
-// 11 of 19 and DeepSeek Flash failed 17 of 32 voice-lane turns (2026-10-17);
-// Sonnet answered in about 10s with none failing.
+const RUNNERS = { claude: "Claude", codex: "Codex", muse: "Muse", agy: "Gemini", cursor: "Cursor", ollama: "Ollama", deepseek: "DeepSeek API", opencode: "OpenCode" };
+const PROVEN = ["claude:claude-opus-5-5", "claude:claude-sonnet-5-5", "codex:gpt-6.1-sol", "codex:gpt-6-luna", "opencode:opencode-go/muse-spark-1.3-contributor", "agy:gemini-3.8-flash", "cursor:auto", "ollama:deepseek-v4.1-flash"];
+// Voice Auto follows the configured subscription route for all Keir lanes.
 const VOICE = ["claude:claude-sonnet-5-5"];
+const voiceChoices = (config) => String(config.voiceProvider || VOICE.join(",")).split(",").map(s => s.trim()).filter(Boolean);
+const voiceChoiceLabels = (config) => voiceChoices(config).map(id => id === "cursor:auto" ? "Cursor Auto" : id === "claude:claude-sonnet-5-5" ? "Claude Sonnet 5.5" : id);
 function models(config, lane = null) {
-  const defaults = { claude: config.model, codex: "gpt-6-luna", muse: config.museModel || "muse-wonder-1.0", agy: config.agyModel || "gemini-3.8-flash", ollama: "deepseek-v4.1-flash", deepseek: "deepseek-flash" };
+  const defaults = { claude: config.model, codex: "gpt-6-luna", muse: config.museModel || "muse-wonder-1.0", agy: config.agyModel || "gemini-3.8-flash", cursor: "auto", ollama: "deepseek-v4.1-flash", deepseek: "deepseek-flash" };
   const specs = [config.quickProvider || "claude", config.workerProvider || "claude", config.codingProvider, config.investigatorProvider, config.visionProvider, ...(!config.standalone ? PROVEN : []), config.voiceProvider || (!config.standalone && VOICE[0]), ...(config.availableRoutes || []), config.defaultRoute].filter(Boolean).flatMap((s) => String(s).split(","));
   const routes = new Map();
   for (const value of specs) {
@@ -19,7 +19,7 @@ function models(config, lane = null) {
     if (!(RUNNERS[runner] || config.standalone && ["antigravity", "opencode", "grok", "gemini", "cursor"].includes(runner)) || !model) continue;
     const id = `${runner}:${model}${effort ? `@${effort}` : ""}`;
     const verdict = check(["conversation", "voice"].includes(lane) ? "quick" : lane === "investigation" ? "investigator" : (lane === "coordination" ? "worker" : lane) || "quick", id);
-    routes.set(id, { id, configured: true, laneAllowed: config.standalone || verdict.ok, readiness: { state: "unverified", checkedAt: null, reason: "Configured route. Provider authentication and current availability are checked when work starts." }, available: config.standalone || verdict.ok, ...(!config.standalone && !verdict.ok ? { reason: verdict.reason } : {}), effortMode: "jev", label: require("./selfinfo").label(model), provider: RUNNERS[runner] || runner, runner, model, ...(effort ? { effort } : {}) });
+    routes.set(id, { id, configured: true, laneAllowed: config.standalone || verdict.ok, readiness: { state: "unverified", checkedAt: null, reason: "Configured route. Provider authentication and current availability are checked when work starts." }, available: config.standalone || verdict.ok, ...(!config.standalone && !verdict.ok ? { reason: verdict.reason } : {}), effortMode: runner === "cursor" ? "provider-managed" : "jev", label: require("./selfinfo").label(model), provider: RUNNERS[runner] || runner, runner, model, ...(effort ? { effort } : {}) });
   }
   // Historical effort suffixes remain accepted, but do not fill the picker with
   // duplicate entries for the same model now that Jev chooses activation effort.
@@ -28,8 +28,9 @@ function models(config, lane = null) {
     const key = `${route.runner}:${route.model}`;
     if (!unique.has(key) || !route.effort) unique.set(key, route);
   }
-  const autoReady = lane !== "voice" || VOICE.every(id => [...unique.values()].some(r => r.id.split("@")[0] === id && r.available));
-  return [{ id: "auto", label: "Auto", provider: "Keir routing", available: autoReady, ...(autoReady ? {} : { reason: "Voice Auto needs Claude Sonnet 5.5 configured. Select an explicit voice model." }) }, ...unique.values()];
+  const choices = voiceChoices(config), choiceLabels = voiceChoiceLabels(config);
+  const autoReady = lane !== "voice" || choices.every(id => [...unique.values()].some(r => r.id.split("@")[0] === id.split("@")[0] && r.available));
+  return [{ id: "auto", label: "Auto", provider: "Keir routing", available: autoReady, ...(autoReady ? {} : { reason: `Voice Auto needs ${choiceLabels.join(" or ")} configured. Select an explicit voice model.` }) }, ...unique.values()];
 }
 function resolveModel(config, id, lane = null) {
   const options = models(config, lane);
@@ -49,8 +50,9 @@ function resolveModel(config, id, lane = null) {
 function voiceRoute(config, data, thread) {
   const selected = data.appThread?.preferences?.[thread]?.routes?.voice || "auto";
   if (selected !== "auto") return resolveModel(config, selected, "voice").id;
-  const available = VOICE.map(id => models(config, "voice").find(m => m.id.split("@")[0] === id && m.available !== false)?.id).filter(Boolean);
-  if (available.length !== VOICE.length) throw Object.assign(new Error("Voice Auto needs Claude Sonnet 5.5 configured. Choose an available voice model."), { status: 409 });
+  const choices = voiceChoices(config), choiceLabels = voiceChoiceLabels(config);
+  const available = choices.map(id => models(config, "voice").find(m => m.id.split("@")[0] === id.split("@")[0] && m.available !== false)?.id).filter(Boolean);
+  if (available.length !== choices.length) throw Object.assign(new Error(`Voice Auto needs ${choiceLabels.join(" or ")} configured. Choose an available voice model.`), { status: 409 });
   const t = data.appThread;
   const n = t.voiceSequence?.[thread] || 0;
   (t.voiceSequence ||= {})[thread] = n + 1;

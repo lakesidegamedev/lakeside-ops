@@ -96,15 +96,16 @@ test("direct app control ingress rejects cross-origin JSON and form writes", asy
   assert.equal(app.controls.view().stopped, true);
 });
 
-test("authenticated voice turns use the fastest route on the conversation lane and keep coding separate", t => {
+test("authenticated voice turns use Cursor Auto on the conversation lane and keep coding separate", t => {
   const { app, ledger, config } = setup(t);
+  config.voiceProvider = "cursor:auto";
   const typed = app.authenticatedPost("Hello", "typed");
   const voiced = app.authenticatedPost("Implement a change", "voiced", "main", { voice: true });
   assert.notEqual(typed.jobId, voiced.jobId);
   const job = ledger.data.jobs[voiced.jobId];
   assert.equal(job.kind, "conversation"); assert.equal(job.voiceMode, true);
   applyModel(job, config, ledger, "quick");
-  assert.equal(job.provider.runner, "claude"); assert.equal(job.provider.model, "claude-sonnet-5-5"); assert.equal(job.provider.effort, undefined); // voice pins low at activation.
+  assert.equal(job.provider.runner, "cursor"); assert.equal(job.provider.model, "auto"); assert.equal(job.provider.effort, undefined);
   const child = ledger.createJob("voice-child", { kind: "coding", codingParent: job.id, role: "owner" });
   applyModel(child, config, ledger, "worker");
   assert.equal(child.voiceMode, undefined);
@@ -127,6 +128,7 @@ test("speech remains owner-authenticated, rejects browser forgery, and stops wit
 
 test("voice turns keep their route durably despite text overrides and retries, with no route mutation in flight", t => {
   const { app, ledger, config, dir } = setup(t);
+  config.voiceProvider = "cursor:auto";
   app.selectModel("main", "codex:gpt-6.1-sol");
   app.controls.update({ action: "configure", routes: { conversation: "codex:gpt-6-luna" } });
   const first = app.authenticatedPost("Hello from voice", "voice-1", "main", { voice: true });
@@ -137,17 +139,17 @@ test("voice turns keep their route durably despite text overrides and retries, w
   const second = app.authenticatedPost("What did I just say?", "voice-2", "main", { voice: true });
   const b = ledger.data.jobs[second.jobId];
   assert.notEqual(a.id, b.id); applyModel(b, config, ledger, "quick");
-  assert.equal(a.provider.model, "claude-sonnet-5-5"); assert.equal(b.provider.model, "claude-sonnet-5-5");
-  applyModel(a, config, ledger, "quick"); assert.equal(a.provider.runner, "claude");
-  assert.equal(createLedger(path.join(dir, "ledger.json")).data.jobs[b.id].voiceRoute, "claude:claude-sonnet-5-5");
+  assert.equal(a.provider.model, "auto"); assert.equal(b.provider.model, "auto");
+  applyModel(a, config, ledger, "quick"); assert.equal(a.provider.runner, "cursor");
+  assert.equal(createLedger(path.join(dir, "ledger.json")).data.jobs[b.id].voiceRoute, "cursor:auto");
   assert.equal(ledger.data.appThread.modelSelections.main, "codex:gpt-6.1-sol");
   assert.equal(ledger.data.appThread.preferences.main.routes.conversation, "codex:gpt-6-luna");
   assert.equal(first.message.selectedRoute, a.voiceRoute);
   const typed = ledger.data.jobs[app.authenticatedPost("Hello typed", "text").jobId];
   applyModel(typed, config, ledger, "quick"); assert.equal(typed.provider.model, "gpt-6-luna");
-  app.controls.update({ action: "configure", routes: { voice: "claude:claude-sonnet-5-5" } });
+  app.controls.update({ action: "configure", routes: { voice: "cursor:auto" } });
   const c = ledger.data.jobs[app.authenticatedPost("Explicit voice choice", "voice-3", "main", { voice: true }).jobId];
-  applyModel(c, config, ledger, "quick"); assert.equal(c.provider.model, "claude-sonnet-5-5");
+  applyModel(c, config, ledger, "quick"); assert.equal(c.provider.model, "auto");
   assert.equal(ledger.data.appThread.voiceSequence.main, 2);
 });
 test("studio picker contains all proven routes without enabling blocked work lanes or unconfigured standalone models", t => {
@@ -158,7 +160,7 @@ test("studio picker contains all proven routes without enabling blocked work lan
   }
   const standalone = { standalone: true, defaultRoute: "codex:my-model" };
   assert.ok(!models(standalone).some(m => m.id === "claude:claude-opus-5-5"));
-  assert.throws(() => voiceRoute(standalone, { appThread: {} }, "main"), /needs Claude Sonnet/);
+  assert.throws(() => voiceRoute(standalone, { appThread: {} }, "main"), /needs Claude Sonnet 5.5/);
 });
 
 test("voice Auto is unavailable without its route and readiness is never invented", () => {
