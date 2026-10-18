@@ -283,17 +283,7 @@ struct TaskDetail: View {
                     if !task["cards"].array.isEmpty { KeirCards(cards: task["cards"].array) }
                     if !task["live"].array.isEmpty {
                         DisclosureGroup {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(Array(task["live"].array.enumerated()), id: \.offset) { _, call in
-                                    HStack(spacing: 8) {
-                                        Image(systemName: call["ok"].bool ? "checkmark" : "exclamationmark.triangle").font(.caption2).foregroundStyle(call["ok"].bool ? OpsTheme.mint : OpsTheme.warn).frame(width: 14)
-                                        Text(call["tool"].string).font(.caption.monospaced().weight(.semibold))
-                                        Text(call["what"].string).font(.caption.monospaced()).foregroundStyle(OpsTheme.muted).lineLimit(1)
-                                        Spacer()
-                                        Text(OpsFormat.ago(call["at"])).font(.caption2).foregroundStyle(OpsTheme.muted)
-                                    }
-                                }
-                            }.padding(.top, 6)
+                            KeirToolCalls(calls: task["live"].array).padding(.top, 6)
                         } label: { Label(task["state"].string == "running" ? "Live work" : "Tool calls", systemImage: "terminal").font(.callout.weight(.semibold)) }
                         .tint(OpsTheme.ink).accessibilityIdentifier("task-live")
                     }
@@ -555,5 +545,50 @@ struct MemoryView: View {
     }
     private func forget(_ note: JSONValue) {
         Task { _ = try? await session.post("/api/keir/app/memory/\(note["id"].string)/forget", [:]); await load() }
+    }
+}
+
+
+/// Source-specific activity for both chat and task details. Inputs and outputs
+/// stay in the protected task trace; the conversation shows the operation.
+struct KeirToolCalls: View {
+    let calls: [JSONValue]
+    @State private var expanded = false
+    private struct CallRow: Identifiable {
+        let id: String
+        let call: JSONValue
+    }
+    private var visible: [CallRow] {
+        let rows = calls.enumerated().map { index, call in
+            CallRow(id: call["id"].string.nonempty ?? "legacy-\(index)-\(call["tool"].string)", call: call)
+        }
+        return expanded ? rows : Array(rows.suffix(3))
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(visible) { row in
+                let call = row.call
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: call["icon"].string.nonempty ?? "wrench.and.screwdriver")
+                        .foregroundStyle(call["state"].string == "failed" ? OpsTheme.warn : OpsTheme.sky)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(call["title"].string.nonempty ?? call["tool"].string).font(.caption.weight(.semibold))
+                        HStack(spacing: 5) {
+                            Text(call["source"].string.nonempty ?? "Keir")
+                            if !call["what"].string.isEmpty { Text("·"); Text(call["what"].string).lineLimit(1) }
+                        }.font(.caption2).foregroundStyle(OpsTheme.muted)
+                    }
+                    Spacer(minLength: 4)
+                    if call["state"].string == "running" { ProgressView().controlSize(.mini).accessibilityLabel("Running") }
+                    else if call["state"].string == "failed" || call["ok"] == .bool(false) { Image(systemName: "exclamationmark.circle").foregroundStyle(OpsTheme.warn).accessibilityLabel("Failed") }
+                    else { Image(systemName: "checkmark").foregroundStyle(OpsTheme.mint).accessibilityLabel("Completed") }
+                }.font(.caption)
+                    .accessibilityIdentifier("keir-tool-\(call["id"].string)")
+            }
+            if calls.count > 3 {
+                Button(expanded ? "Show less" : "Show all \(calls.count) tool calls") { expanded.toggle() }.font(.caption2)
+            }
+        }.padding(10).background(OpsTheme.surface.opacity(0.7), in: RoundedRectangle(cornerRadius: 10))
     }
 }

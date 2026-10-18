@@ -886,10 +886,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (job.appSteering && name !== "owner_updates") throw new Error("The owner changed direction. Call owner_updates before continuing this task.");
     // The owner app shows owner tasks' tool calls live.
     const started = now();
+    const callId = appMuse()?.startTool?.(job, name, input);
     const safeLogInput = musePolicy.logInput(input);
     let result;
-    try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started); }
-    catch (e) { appMuse()?.noteTool(job, name, safeLogInput, false, now() - started); throw e; }
+    try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started, callId); }
+    catch (e) { appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId); throw e; }
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v); } catch {}

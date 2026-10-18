@@ -143,7 +143,15 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     const chart = entry.chart && entry.files?.[0] && /^chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(path.basename(entry.files[0].path)) ? path.basename(entry.files[0].path) : undefined;
     const cards = agent()?.cardsFor(job) || [];
     const voiceRoot = rootOf(job)?.voiceMode ? rootOf(job) : job.voiceMode ? job : null;
-    const message = append(d, { role: "keir", text, ...(entry.voiceProgress === true ? { voiceProgress: true } : {}), jobId: voiceRoot?.id || job.id, ...(voiceRoot && voiceRoot.id !== job.id ? { taskId: job.id } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}), ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), thread: appThread(job), ...(job.appWatch ? { watch: job.appWatch } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}) }, now());
+    if (!job.firstReplyAt && /^(channel-reply|finish):/.test(key) && entry.voiceProgress !== true) {
+      job.firstReplyAt = now();
+      const root = require("./appcontrols").rootOf(d, job) || job;
+      const firstReplyMs = Math.max(0, now() - (root.at || job.at || now()));
+      if (job.contextBudget) job.contextBudget.firstReplyMs = firstReplyMs;
+      ledger.audit("chat_delivery", { job: job.id, firstReplyMs, queueMs: Math.max(0, now() - (entry.at || now())) });
+    }
+    const activity = require("./toolactivity").forReply(job);
+    const message = append(d, { role: "keir", text, ...(activity.length ? { activity } : {}), ...(entry.voiceProgress === true ? { voiceProgress: true } : {}), jobId: voiceRoot?.id || job.id, ...(voiceRoot && voiceRoot.id !== job.id ? { taskId: job.id } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}), ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), thread: appThread(job), ...(job.appWatch ? { watch: job.appWatch } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}) }, now());
     record(message);
     if (/^(channel-reply|finish|error-reply):/.test(key)) { clearStatus(d, job.id); delete job.progressMessageId; }
     return [message.id];
@@ -156,7 +164,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     for (const id of Object.keys(t.status)) if (!d.jobs[id] || CLOSED.includes(d.jobs[id].state)) delete t.status[id];
     const jobs = Object.values(d.jobs).filter((j) => appJob(j) && !CLOSED.includes(j.state));
     const inThread = (x) => !thread || (x || "main") === thread;
-    const tasks = jobs.filter((j) => inThread(appThread(j))).map((j) => ({ id: j.id, kind: j.kind, state: j.state, status: t.status[j.id]?.text || null, at: j.at, thread: appThread(j), title: String(j.codingParent ? `${j.investigation ? "Investigation" : "Coding"}: ${d.jobs[j.codingParent]?.source?.content || "Delegated work"}` : j.source?.content || "Task").slice(0, 100), overrides: j.appOverrides || {}, provider: j.provider ? { ...j.provider, effort: j.effort?.effort || j.provider.effort || null } : null, skills: j.activeSkills || [], model: j.provider?.model || null, modelRoute: j.provider?.route || "auto", steering: Boolean(j.appSteering), computer: j.appComputer || null, blocker: j.ownerMuseBlocker || null, approvals: pendingDecisions().filter(x => x.jobId === j.id) }));
+    const tasks = jobs.filter((j) => inThread(appThread(j))).map((j) => ({ id: j.id, kind: j.kind, state: j.state, status: t.status[j.id]?.text || null, at: j.at, thread: appThread(j), title: String(j.codingParent ? `${j.investigation ? "Investigation" : "Coding"}: ${d.jobs[j.codingParent]?.source?.content || "Delegated work"}` : j.source?.content || "Task").slice(0, 100), overrides: j.appOverrides || {}, provider: j.provider ? { ...j.provider, effort: j.effort?.effort || j.provider.effort || null } : null, skills: j.activeSkills || [], live: require("./toolactivity").pending(j), contextBudget: j.contextBudget || null, model: j.provider?.model || null, modelRoute: j.provider?.route || "auto", steering: Boolean(j.appSteering), computer: j.appComputer || null, blocker: j.ownerMuseBlocker || null, approvals: pendingDecisions().filter(x => x.jobId === j.id) }));
     // The working-now board covers all of Keir's work, not only app tasks. It is
     // computed on the update tick; only its content, not its clock, changes the version.
     const b = t.updates?.board || null;
