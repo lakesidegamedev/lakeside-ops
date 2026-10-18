@@ -57,7 +57,16 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
         submissionInput={result:draft.result,summary:draft.summary,calculations:input.calculations};
       }else if(submission&&input.result!==undefined)delete session.submissionDraft;
       if(submission&&submissionInput.result===undefined)throw new Error('submit_result requires result matching the advertised task schema'+(session.job.resultSchema?.required?.length?'; required fields: '+session.job.resultSchema.required.join(', '):''));
+      // Deliverable gate: a task that names required files cannot finish done without them.
+      if((name==='finish'&&input?.state==='done'||submission)&&session.job.requiredFiles?.length){
+        for(const file of session.job.requiredFiles){
+          const probe=await broker.tool(session.job,'shell',{command:'cd repo && node -e '+JSON.stringify("JSON.parse(require('fs').readFileSync("+JSON.stringify(file)+",'utf8'));console.log('ok')")},session.signal).catch(e=>({output:String(e.message)}));
+          if(!/\bok\b/.test(String(probe?.output??probe?.stdout??JSON.stringify(probe))))throw new Error('Not finished: the task requires '+file+' in the repository root as valid JSON, and it is missing or invalid. Write it (in one piece; keep it under 12 KB), then finish.');
+        }
+      }
+      if(name==='shell'&&session.job.submitGates&&session.job.submitGates.effects!==false){const refusal=require('./submitgates').effectRefusal(input?.command);if(refusal)throw new Error(refusal);}
       const prepared=submission?await prepareStructuredSubmission(session.job,submissionInput,{allowCalculations:session.tools.some(tool=>tool.name==='calculate'),calculate:async steps=>(await broker.tool(session.job,'calculate',{steps},session.signal)).steps}):null;
+      if(submission){if(prepared?.calculations)require('./submitgates').remember(session,JSON.stringify(prepared.calculations));const refusal=require('./submitgates').check(session,prepared?.result??submissionInput.result);if(refusal){if(prepared?.calculations)session.submissionDraft=undefined;throw new Error(refusal);}}
       const deliverable=prepared?.result??input.result,summary=prepared?.summary??input.summary;
       const submissionSummary=(typeof summary==='string'&&summary.trim()?summary:typeof deliverable?.answer==='string'&&deliverable.answer.trim()?deliverable.answer:'Structured result submitted.').slice(0,4000);
       const effectiveInput=submission?{state:'done',result:deliverable,summary:submissionSummary}:input;
@@ -73,6 +82,7 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
       const safe = result && typeof result === "object" ? { ...result } : result;
       if (safe && typeof safe === "object") { delete safe._images; delete safe.image; }
       const content = [{ type: "text", text: redactSecrets(JSON.stringify(safe ?? null)).slice(0, 22000) }];
+      require("./submitgates").remember(session, content[0].text);
       for (const source of images) {
         try { const img = normalizeImage(source); content.push({ type: "image", data: img.data, mimeType: img.media_type }); }
         catch (e) { content.push({ type: "text", text: e.message }); }

@@ -27,7 +27,7 @@ async function prepareStructuredSubmission(job,input,{allowCalculations=false,ca
    if(item.length>32000)throw Error('Calculated report text exceeds 32000 characters');
    const exact=/^\$(?:calc\.)?([A-Za-z_][A-Za-z0-9_]{0,39})$/.exec(item);
    if(exact)return value(exact[1]);
-   const rendered=item.replace(/\{\{calc\.([A-Za-z_][A-Za-z0-9_]{0,39})(?::(\d{1,2}))?\}\}/g,(_all,id,digits)=>{
+   const rendered=item.replace(/\{\{(?:calc\.)?([A-Za-z_][A-Za-z0-9_]{0,39})(?::(\d{1,2}))?\}\}/g,(_all,id,digits)=>{
     const number=value(id);if(digits===undefined)return String(number);
     const precision=Number(digits);if(precision>10)throw Error('Calculation display precision must be 0-10');
     return number.toFixed(precision);
