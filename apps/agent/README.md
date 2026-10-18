@@ -192,3 +192,11 @@ imports a mutable checkout. OpenCode executes OpenCode and Ollama Cloud routes.
 Other subscription routes retain their selected model and authentication.
 Existing Rust lane settings select a compatibility transport inside the CLI.
 Task state and authorization remain in the operator and broker.
+
+### Native suggestion filing
+
+`open_suggestion` files through the support MCP and the game's existing suggestion API. Discord filing binds the submitter to a freshly fetched human source message; app filing binds it to the authenticated owner's unchanged request. The reply includes the native suggestion number and feedback URL. Native intake owns optional GitHub mirroring.
+
+The support MCP needs `DISCORD_BOT_TOKEN`, `DISCORD_BOT_API_KEY`, and `AHD_GAME_API_URL`; `KEIR_OWNER_ID` must match the operator when accepting owner app submissions. Its `agentSuggestionIntake` collection retains one durable claim per source. A timed-out submission is held for receipt inspection rather than retried as a new suggestion.
+
+Ticket answers request `delivery_mode: reply`, which creates a new channel message. Background milestones retain `card` delivery. Release the support MCP's new write schema before activating an operator that requests reply delivery or suggestion intake.

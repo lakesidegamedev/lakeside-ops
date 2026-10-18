@@ -38,6 +38,7 @@ function resolveModel(config, id, lane = null) {
   if (!route && typeof id === "string" && /@(low|medium|high|xhigh|max)$/.test(id)) {
     const [base, effort] = id.split("@");
     const prior = options.find(m => m.id.split("@")[0] === base);
+    if (prior?.effortMode === "provider-managed") throw Object.assign(new Error("Cursor Auto manages its own model and reasoning effort"), { status: 400 });
     if (prior) route = { ...prior, id, effort };
   }
   if (route?.available === false) throw Object.assign(new Error(route.reason), { status: 400 });

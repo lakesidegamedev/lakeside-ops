@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- File native suggestions for verified player and developer sources, with a feedback receipt, original-author attribution and durable retry protection.
+- Ticket answers create visible channel replies; background milestones can still update the intake card.
+- App model controls distinguish Cursor Auto from installation routing and show that Cursor manages its own effort.
+
 ## 5.8.16 (2026-10-18)
 
 ### For users

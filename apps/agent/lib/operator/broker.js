@@ -409,7 +409,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (!opening.text) { d.disclosed[n] = { at: now(), posted: false, ...(opening.answered ? { answered: true } : { staff: true }) }; ledger.save(); return; }
     try {
       require("./supporttakeover").assertCanAct(d, { ticket: n });
-      await mcp.call("support", "support_public_update", { kind: "ticket", number: n, message: opening.text, deliver: true, update_kind: "progress" }, true);
+      await mcp.call("support", "support_public_update", { kind: "ticket", number: n, message: opening.text, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
       d.disclosed[n] = { at: now(), posted: true, ...(opening.count ? { count: opening.count } : {}) }; ledger.save();
       ledger.audit("disclosure_posted", { ticket: n, count: opening.count || null, returning: !opening.text.startsWith("Hi, I'm Keir") });
     } catch (e) { d.disclosed[n] = { at: now(), posted: false, error: String(e.message).slice(0, 200) }; ledger.save(); }
@@ -651,7 +651,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     try {
       const result = await effect(notice, "delivery", () => editing
         ? discord("PATCH", `/channels/${old.channelId}/messages/${old.messageId}`, { content: message, allowed_mentions: { parse: [] } })
-        : mcp.call("support", "support_public_update", { kind: "ticket", number: job.ticket, message, deliver: true, update_kind: "progress" }, true));
+        : mcp.call("support", "support_public_update", { kind: "ticket", number: job.ticket, message, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true));
       const delivery = result.delivery?.delivery || result.delivery || {};
       const delivered = editing || ["posted", "delivered", "sent", "already_posted"].includes(delivery.status) || result.delivery?.posted === true;
       if (!delivered) throw new Error("Waiting update delivery is unconfirmed; inspect receipt.");
@@ -931,7 +931,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!config.roleSnapshot || !["watchkeeper", "engineering"].includes(require("./roles").roleOf(job, ledger.data.jobs))) throw new Error("Operator role state is restricted to observer and engineering tasks");
       return config.roleSnapshot();
     }
-    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "merge_related", "merge_into_incident", "execute_action"].includes(name)) throw new Error("finding tasks never post in Discord or execute privileged actions");
+    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)) throw new Error("finding tasks never post in Discord or execute privileged actions");
     if (job.codingParent && !childTools(job).includes(name)) throw new Error(job.investigation ? "Investigators only read: code in the snapshot, live game state, history and past tickets. The worker handles fixes, publication and communication." : "Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.");
     if (name === "recent_changes") return capabilities.recentChanges({ days: input.days, query: input.query, path: input.path });
     if (name === "view_page") {
@@ -1237,7 +1237,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         }
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
-          const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress" };
+          const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
           const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal));
           job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, ticketNo, message);
           const ticketTask = d.jobs[d.seen[`ticket:${ticketNo}`]]; if (ticketTask) ticketTask.lastPublishedAt = now();
@@ -1952,6 +1952,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (bytes.length > 4 * 1024 * 1024) throw new Error("image is oversized");
       return { image: { type: "base64", media_type: a.content_type, data: bytes.toString("base64") } };
     }
+    if (name === "open_suggestion") return require("./suggestionintake").openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal });
     if (name === "open_ticket") {
       if (isAppJob(job)) return require("./ownerintake").openOwnerTicket({ ledger, config, mcp, effect, job, input, signal, now });
       const commanded = job.kind === "command" && ["owner", "support"].includes(job.role);
@@ -2077,7 +2078,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) throw new Error("terminal statuses require a resolution receipt");
       if (input.tool === "support_resolve") {
         const recent = rows.filter((m) => !m.author.bot).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1).at(-1);

@@ -174,7 +174,7 @@ function renderModelPicker() {
     button.type = "button"; button.className = "model-option"; button.dataset.route = route.id;
     button.setAttribute("aria-pressed", String(route.id.split("@")[0] === selection.split("@")[0])); button.disabled = route.available === false || controlBusy;
     title.textContent = route.id === "auto" ? "Auto" : route.label;
-    detail.textContent = route.id === "auto" ? (lane === "voice" ? "Alternate Gemini and DeepSeek" : `Installation default: ${controls?.defaults?.[lane] || "not configured"}`) : `${route.provider} · ${route.id}${route.available === false ? " · " + route.reason : ""}`;
+    detail.textContent = route.id === "auto" ? `Installation default: ${controls?.defaults?.[lane] || "not configured"}` : `${route.provider} · ${route.id}${route.effortMode === "provider-managed" ? " · Cursor chooses model and effort" : ""}${route.available === false ? " · " + route.reason : ""}`;
     button.append(title, detail); button.onclick = () => changeControl({ action: "configure", routes: { [lane]: route.id } }); $("model-options").append(button);
   }
   $("model-selected").textContent = `Selected: ${selection}. This is the requested route; completion is reported separately.`;

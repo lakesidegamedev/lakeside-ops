@@ -190,3 +190,31 @@ test("voice activations skip the effort classifier and run low", async () => {
   assert.deepEqual(await activationEffort({ voiceMode: true }, { config: { chooseEffort }, quick: true, runner: "claude" }), { effort: "low", via: "voice" });
   await assert.rejects(activationEffort({ voiceMode: true, codingParent: "p" }, { config: { chooseEffort }, quick: false, runner: "claude" }), /classifier/);
 });
+
+test("Cursor Auto is selectable through authenticated app settings and reaches chat and coding activations", async t => {
+  const { app, ledger, config, dir } = setup(t);
+  config.quickProvider = "cursor:auto";
+  const server = createAppServer({ app, artifactsDir: dir, authenticate: async req => req.headers.authorization === "owner" ? "owner" : false });
+  await new Promise(r => server.listen(0, "127.0.0.1", r)); t.after(() => new Promise(r => server.close(r)));
+  const base = `http://127.0.0.1:${server.address().port}/api/keir/app`;
+  const headers = { authorization: "owner", "content-type": "application/json" };
+  const controls = await (await fetch(`${base}/controls`, { headers })).json();
+  for (const lane of ["conversation", "voice", "coding", "investigation", "coordination"]) {
+    const cursor = controls.options[lane].find(r => r.id === "cursor:auto");
+    assert.equal(cursor.provider, "Cursor"); assert.equal(cursor.label, "Cursor Auto");
+    assert.equal(cursor.effortMode, "provider-managed"); assert.equal(cursor.available, true);
+  }
+  const selected = await fetch(`${base}/controls`, { method: "POST", headers, body: JSON.stringify({ action: "configure", routes: { conversation: "cursor:auto", coding: "cursor:auto" } }) });
+  assert.equal(selected.status, 200);
+  const chat = ledger.data.jobs[app.authenticatedPost("What is the current status?", "cursor-chat").jobId];
+  applyModel(chat, config, ledger, "quick"); assert.equal(chat.provider.runner, "cursor"); assert.equal(chat.provider.model, "auto"); assert.equal(chat.provider.effort, undefined);
+  const child = ledger.createJob("cursor-coding", { role: "owner", kind: "coding", codingParent: chat.id });
+  applyModel(child, config, ledger, "worker"); assert.equal(child.provider.runner, "cursor"); assert.equal(child.provider.model, "auto"); assert.equal(child.effortPin, undefined);
+  const saved = createLedger(path.join(dir, "ledger.json"));
+  assert.equal(saved.data.appThread.preferences.main.routes.conversation, "cursor:auto");
+});
+
+test("Cursor Auto cannot acquire a legacy pinned effort through app model selection", t => {
+  const { app, config } = setup(t); config.quickProvider = "cursor:auto";
+  assert.throws(() => app.controls.update({ action: "configure", routes: { conversation: "cursor:auto@high" } }), /manages its own/);
+});
