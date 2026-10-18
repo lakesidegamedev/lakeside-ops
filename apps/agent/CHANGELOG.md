@@ -12,6 +12,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ### For users
 
 - Ticket answers and final resolutions appear as new conversation messages instead of edits buried in the opening card.
+- Internal developer summaries and decision handoffs stay out of player tickets. Support works toward the player's goal and does not treat resignation as acceptance.
 - Keir explains and investigates without asking permission. A blocked repair stays on hold while independent work and conversation continue.
 - Owner decisions can stay in the native app instead of also appearing in Discord DMs.
 - Simple chats start with less context and load more instructions and tools as needed. Actual response time still depends on the provider.

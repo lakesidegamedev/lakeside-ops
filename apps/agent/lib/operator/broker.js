@@ -131,7 +131,7 @@ const { ECONOMY_PATHS } = blast;
 const isHugePath = (file) => ECONOMY_PATHS.test(file) || /^src\/lib\/equities\//.test(file) || blast.WORKER_PATHS.test(file) || authority.MIGRATION_PATHS.test(file);
 const ticketNumberOf = (name) => Number(/^ticket-.*-(\d+)$/.exec(name || "")?.[1] || 0);
 // Internals that must never reach a player's ticket channel.
-const TECHNICAL = /github\.com|\bPRs?\b|pull request|#\d{3,5}\b|\bCI\b|\bchecks?\b.*\b(?:green|red|pass|fail|run)|\bshard|\bmerg(?:e|ed|ing)\b|\bstaging\b|\bdevelopment branch|\bbranch\b|\bcommit\b|\bvitest\b|\btest files?\b|\.(?:ts|tsx|js)\b|`|turn worker|\bpromot(?:e|ed|ion)\b/i;
+const TECHNICAL = /github\.com|\bPRs?\b|pull request|#\d{3,5}\b|\bCI\b|\bchecks?\b.*\b(?:green|red|pass|fail|run)|\bshard|\bmerg(?:e|ed|ing)\b|\bstaging\b|\bdevelopment branch|\bbranch\b|\bcommit\b|\bvitest\b|\btest files?\b|\.(?:ts|tsx|js)\b|`|turn worker|\bpromot(?:e|ed|ion)\b|\b(?:decision|approval)\s+(?:DM|inbox)\b|\bdig done\b|\b(?:OAuth2?|redirect_uri|return URI|portal\/env|env mismatch)\b/i;
 // Engine and staff vocabulary players never see on a screen (owner, 2026-10-17:
 // "the way he explains things to users is SOOO jargony"). Code-style names too.
 const JARGON = /\b(?:headroom|sell[- ]through|reachable (?:book|market|demand)|(?:order|demand|supply) book|demand throttle|throttl(?:e|ed|ing)|ratchet(?:s|ed|ing)?|fill (?:rate|ratio|share)|nameplate|run[- ]rate|carry[- ]forwards?|clearing (?:price|records?)|settlement (?:span|phase)|cohorts?|baseline(?:s|d)?|multipliers?|coefficients?|config(?:uration)?|feature flags?|the seed|seeded|turn processing|turn engine|NPPs?|coordinator|status card|ledger|telemetry|heuristics?|invariants?)\b|\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b|\b[a-z]+[A-Z][a-zA-Z]+\b|\b[a-z]+_[a-z_]+\b/;
@@ -499,6 +499,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   }
   async function finishPublicText(job) {
     if (!job.replyChannel) return null;
+    // A developer task's bookkeeping is private even when it was requested
+    // inside a player's ticket. Public answers use the explicit reply tool.
+    if (ticketOf(job) && job.kind === "command") return null;
     try {
       let text = publicText(job.summary.replace(/[\u2013\u2014]/g, ","));
       const ticketNo = ticketOf(job);
