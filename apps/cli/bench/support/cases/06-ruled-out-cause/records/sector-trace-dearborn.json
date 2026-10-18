@@ -1,0 +1,13 @@
+{
+  "plant": "Dearborn car plant",
+  "state": "Michigan",
+  "currency": "USD",
+  "turns": [
+    { "turn": 110, "output": 4800, "steelFill": 1.0, "workersRequired": 5000, "workersStaffed": 5000, "wageOffered": 12.8 },
+    { "turn": 111, "output": 4790, "steelFill": 1.0, "workersRequired": 5000, "workersStaffed": 4990, "wageOffered": 12.8 },
+    { "turn": 112, "output": 2930, "steelFill": 1.0, "workersRequired": 5000, "workersStaffed": 3050, "wageOffered": 12.8 },
+    { "turn": 113, "output": 2920, "steelFill": 1.0, "workersRequired": 5000, "workersStaffed": 3040, "wageOffered": 12.8 },
+    { "turn": 114, "output": 2935, "steelFill": 1.0, "workersRequired": 5000, "workersStaffed": 3050, "wageOffered": 12.8 }
+  ],
+  "steelStockpileTonnes": 18400
+}

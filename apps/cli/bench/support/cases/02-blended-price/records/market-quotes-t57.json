@@ -1,0 +1,9 @@
+{
+  "turn": 57,
+  "currency": "USD",
+  "quotes": [
+    { "product": "Steel", "worldQuote": 690, "unit": "tonne" },
+    { "product": "Pig iron", "worldQuote": 155, "unit": "tonne" }
+  ],
+  "note": "World quotes are the current listed market price. Realized sale prices follow local demand and arrive with a one turn lag."
+}

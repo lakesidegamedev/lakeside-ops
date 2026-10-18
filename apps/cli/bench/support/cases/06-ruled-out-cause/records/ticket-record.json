@@ -1,0 +1,10 @@
+{
+  "ticket": "synthetic-0606",
+  "facts": [
+    { "fact": "Dearborn car plant output fell from about 4,800 to about 2,930 cars per turn from turn 112", "source": "sector trace t110-t114" }
+  ],
+  "ruledOut": [
+    { "idea": "Steel shortage limits the Dearborn plant", "reason": "Steel inputs were filled 100% every turn t110 to t114; zero units short", "source": "sector trace t110-t114", "recordedAtTurn": 113 }
+  ],
+  "openQuestions": [ "What limits output from turn 112?" ]
+}

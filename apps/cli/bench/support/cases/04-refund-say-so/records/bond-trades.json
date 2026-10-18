@@ -1,0 +1,12 @@
+{
+  "account": "marlowe_capital",
+  "currency": "USD",
+  "instrument": "Crown 2030 bond",
+  "faceValuePerBond": 10000,
+  "trades": [
+    { "turn": 71, "side": "buy", "bonds": 400, "pricePct": 99.2, "cash": -3968000 },
+    { "turn": 88, "side": "sell", "orderType": "market", "bonds": 400, "pricePct": 94.1, "cash": 3764000 }
+  ],
+  "realizedResult": -204000,
+  "note": "Loss = 400 bonds x 10,000 face x (99.20% - 94.10%)."
+}

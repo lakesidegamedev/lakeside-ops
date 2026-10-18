@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),cp=require('node:child_pro
 const helpers=require('./run.cjs');
 const CLI=path.resolve(__dirname,'..'),AGENT=path.resolve(CLI,'../agent');
 const {createSandbox}=require(AGENT+'/lib/operator/sandbox'),{createBroker}=require(AGENT+'/lib/operator/broker'),{createLedger}=require(AGENT+'/lib/operator/store'),{createToolServer}=require(AGENT+'/lib/operator/toolserver'),{TOOLS}=require(AGENT+'/lib/operator/agent');
-const CASES=[{id:'01-lease-queue',editable:['src/queue.cjs'],checks:14},{id:'02-evidence-cache',editable:['src/cache.cjs'],checks:10},{id:'03-durable-outbox',editable:['src/outbox.cjs','candidate.test.cjs','DESIGN.md'],checks:19,quality:true,limitMs:300000}];
+const CASES=[{id:'01-lease-queue',editable:['src/queue.cjs'],checks:14},{id:'02-evidence-cache',editable:['src/cache.cjs'],checks:10},{id:'04-ledger-rounding',editable:['src/ledger.cjs'],checks:15},{id:'05-multi-file-bug',editable:['src/parser.cjs'],checks:13},{id:'06-perf-regression',editable:['src/rank.cjs'],checks:13},{id:'07-concurrency-retry',editable:['src/runner.cjs'],checks:15},{id:'03-durable-outbox',editable:['src/outbox.cjs','candidate.test.cjs','DESIGN.md'],checks:19,quality:true,limitMs:300000}];
 const opt=m=>m==='optimized'||m==='keir-current'||m==='keir-lean',keirArm=m=>['keir-current','keir-lean','keir-hybrid'].includes(m);
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const git=args=>cp.execFileSync('git',args,{encoding:'utf8',stdio:['ignore','pipe','pipe']});

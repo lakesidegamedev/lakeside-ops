@@ -1,0 +1,9 @@
+{
+  "corporation": "Fenwick Foundry",
+  "currency": "GBP",
+  "debits": [
+    { "turn": 96,  "time": "09:41:03", "requestId": "req-96-a",   "item": "Factory licence: Leeds",     "licenceId": "LIC-2207", "amount": 350000 },
+    { "turn": 101, "time": "10:04:12", "requestId": "req-101-77", "item": "Factory licence: Sheffield", "licenceId": "LIC-2291", "amount": 350000 },
+    { "turn": 101, "time": "10:04:14", "requestId": "req-101-77", "item": "Factory licence: Sheffield", "licenceId": "LIC-2291", "amount": 350000 }
+  ]
+}
