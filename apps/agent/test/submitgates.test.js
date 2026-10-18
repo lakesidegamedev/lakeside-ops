@@ -35,3 +35,7 @@ test("effect guard refuses asserted approvals and effect scripts, allows reads a
   assert.equal(g.effectRefusal("cd repo && node --test refund.test.cjs"), null);
   assert.equal(g.effectRefusal("node actions.cjs relink --dry-run"), null);
 });
+
+test("an unrendered template never reaches a player", () => {
+  assert.match(g.check(session(), { reply: "Your profit fell by £{{d}}." }), /unrendered placeholder \{\{d\}\}/);
+});

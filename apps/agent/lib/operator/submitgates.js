@@ -30,6 +30,8 @@ function copyProblems(reply) {
   if (DASH.test(reply)) problems.push("The reply contains an em or en dash. Rewrite those sentences without dashes.");
   const internal = INTERNAL.exec(reply);
   if (internal) problems.push(`The reply uses the internal word "${internal[0]}". Say it in the words the game shows players.`);
+  const template = /\{\{[^{}]{0,60}\}\}/.exec(reply);
+  if (template) problems.push(`The reply contains an unrendered placeholder ${template[0]}. Write the number itself, or supply calculations and reference them as {{calc.id}}.`);
   const code = CODE.exec(reply);
   if (code) problems.push(`The reply contains code-style text ("${code[0]}"). Players never see file names, paths or identifiers.`);
   return problems;
