@@ -57,6 +57,7 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
         submissionInput={result:draft.result,summary:draft.summary,calculations:input.calculations};
       }else if(submission&&input.result!==undefined)delete session.submissionDraft;
       if(submission&&submissionInput.result===undefined)throw new Error('submit_result requires result matching the advertised task schema'+(session.job.resultSchema?.required?.length?'; required fields: '+session.job.resultSchema.required.join(', '):''));
+      if(submission){const refusal=require('./submitgates').check(session,submissionInput.result);if(refusal)throw new Error(refusal);}
       const prepared=submission?await prepareStructuredSubmission(session.job,submissionInput,{allowCalculations:session.tools.some(tool=>tool.name==='calculate'),calculate:async steps=>(await broker.tool(session.job,'calculate',{steps},session.signal)).steps}):null;
       const deliverable=prepared?.result??input.result,summary=prepared?.summary??input.summary;
       const submissionSummary=(typeof summary==='string'&&summary.trim()?summary:typeof deliverable?.answer==='string'&&deliverable.answer.trim()?deliverable.answer:'Structured result submitted.').slice(0,4000);
@@ -73,6 +74,7 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
       const safe = result && typeof result === "object" ? { ...result } : result;
       if (safe && typeof safe === "object") { delete safe._images; delete safe.image; }
       const content = [{ type: "text", text: redactSecrets(JSON.stringify(safe ?? null)).slice(0, 22000) }];
+      require("./submitgates").remember(session, content[0].text);
       for (const source of images) {
         try { const img = normalizeImage(source); content.push({ type: "image", data: img.data, mimeType: img.media_type }); }
         catch (e) { content.push({ type: "text", text: e.message }); }

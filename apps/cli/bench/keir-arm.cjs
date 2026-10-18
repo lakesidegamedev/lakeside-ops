@@ -16,9 +16,9 @@ const SHAPES={
 function build(profile,shape){
  const spec=SHAPES[shape],job={...spec.job},tools=spec.tools(job),lane=skills.laneOf(job,spec.quick),prep=skills.prepare(lane);
  if(profile==='keir-current')return{tools,deferred:null,brief:KEIR+TOOL_NOTE+prep.text,stats:{briefChars:(KEIR+TOOL_NOTE+prep.text).length,toolSchemaChars:JSON.stringify(tools).length,tools:tools.length}};
- const hybrid=profile==='keir-hybrid',core=hybrid||profile==='keir-core',ctx=bp.lean({job,quick:spec.quick,briefText:KEIR,tools:hybrid?tools.filter(t=>!['finish_patch','edit_verify'].includes(t.name)):tools,skills,skillLane:lane,skillNames:prep.names,...(core?{coreText:CORE,hybrid}:{})});
+ const hybrid=profile==='keir-hybrid',core=hybrid||profile==='keir-core'||profile==='keir-lift',ctx=bp.lean({job,quick:spec.quick,briefText:KEIR,tools:hybrid?tools.filter(t=>!['finish_patch','edit_verify'].includes(t.name)):tools,skills,skillLane:lane,skillNames:prep.names,...(core?{coreText:CORE,hybrid}:{})});
  const brief=ctx.brief+TOOL_NOTE+ctx.skillDigest(prep.names),direct=ctx.session.tools;
  return{tools:direct,deferred:ctx.session,brief,stats:{briefChars:brief.length,toolSchemaChars:JSON.stringify(direct).length,tools:direct.length,profile:ctx.profile,omitted:ctx.omitted.length,deferredTools:ctx.deferredNames.length}};
 }
-const isArm=p=>['keir-current','keir-lean','keir-hybrid','keir-core'].includes(p);
+const isArm=p=>['keir-current','keir-lean','keir-hybrid','keir-core','keir-lift'].includes(p);
 module.exports={build,isArm};
