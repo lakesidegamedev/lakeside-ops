@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.21 (2026-10-19)
+
 ### For users
 
 - Keir answers faster and uses far fewer tokens per task. Each job now reads only the parts of its manual it needs, and loads the rest on demand.
