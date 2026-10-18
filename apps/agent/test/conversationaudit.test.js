@@ -58,3 +58,11 @@ test("a withdrawn decision cannot silently leave its task held", () => {
  data.decisions.d = { id: "d", jobId: "j", state: "withdrawn", at: now, sent: {} };
  assert.ok(auditConversation(data, options).findings.some(f => f.kind === "orphan-owner-decision-hold"));
 });
+
+test("an unanswered player burst is flagged within five minutes even during player-reply wait", () => {
+ const { data, options } = fixture(); data.jobs.j.waitingFor = { kind: "player_reply" };
+ options.messages[1] = [{ id: "answer", timestamp: now - 20 * 60000, author: { bot: true }, content: "Please try again." },
+ { id: "human", timestamp: now - 5 * 60000, author: { bot: false }, content: "I cannot buy my shares" },
+ { id: "fragment", timestamp: now - 1000, author: { bot: false }, content: "the number disappears" }];
+ assert.ok(auditConversation(data, options).findings.some(f => f.kind === "player-reply-unanswered"));
+});

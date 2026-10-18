@@ -71,3 +71,21 @@ test("a compact session discovers and invokes granted tools over multiple calls 
   await rpc("finish", { state: "done" });
   assert.equal((await rpc("load_context", { section: "tools" })).isError, true);
 });
+
+test("developer capability questions carry the build-offer rule; players and tickets do not", () => {
+  const { capabilityGuidance } = require("../lib/operator/chatcontext");
+  const ask = (over = {}) => ({ role: "owner", kind: "conversation", tags: { kind: "mechanics_question" }, source: { content: "Can the USSR dissolve?" }, ...over });
+  assert.match(capabilityGuidance(ask(), true), /offer to build it/);
+  assert.match(capabilityGuidance(ask(), true), /hand off to confirm/);
+  assert.match(capabilityGuidance(ask({ role: "developer", tags: { kind: "feature_request" } }), false), /repository_snapshot/);
+  assert.equal(capabilityGuidance(ask({ role: "player" }), true), undefined);
+  assert.equal(capabilityGuidance(ask({ ticket: 1600 }), false), undefined);
+  assert.equal(capabilityGuidance(ask({ tags: { kind: "banter" } }), true), undefined);
+  assert.equal(capabilityGuidance(ask({ tags: undefined }), true), undefined);
+});
+
+test("a focused owner capability question reaches the provider with the build-offer rule", async t => {
+  const { seen } = await capture(t, "Can the USSR dissolve?", { kind: "mechanics_question", complexity: "simple", kindConfidence: 0.99, contextProfile: "focused" });
+  assert.match(seen.prompt, /capabilityQuestion/);
+  assert.match(seen.prompt, /offer to build it/);
+});

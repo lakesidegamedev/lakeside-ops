@@ -14,6 +14,24 @@ function profile(job) {
   const tags = job.tags;
   return tags?.contextProfile === "focused" && tags.kindConfidence >= 0.75 && !tags.injection && !tags.needsVision ? "focused" : "full";
 }
+// Owner 2026-10-19: "can the USSR dissolve?" from a developer is a capability
+// question, not trivia. Answer it from the code, and when the mechanic is
+// missing, offer to build it in the same reply. A direct change request is the
+// go-ahead itself. Players never get the offer; their wishes are suggestions.
+const CAPABILITY_ROLES = ["owner", "developer", "delegate"];
+const CAPABILITY_KINDS = ["mechanics_question", "feature_request", "design_feedback", "owner_command"];
+function capabilityGuidance(job, quick) {
+  if (!CAPABILITY_ROLES.includes(job.role) || job.ticket || job.codingParent || job.internalProbe || !CAPABILITY_KINDS.includes(job.tags?.kind)) return undefined;
+  const check = quick
+    ? "Check with code_search/code_exact through read_tool and recent_changes; the index can lag, so if it is not conclusive, hand off to confirm against the live branch rather than answering from memory."
+    : "Check repository_snapshot at main (and development for merged work) and grep for the mechanic; do not answer from memory.";
+  return [
+    "A developer asking whether the game can do something gets a code-checked answer: yes, partly or no, with the evidence in one or two sentences.",
+    check,
+    "If it is missing or partial, end the same reply with an offer to build it: one line on what it would add and which other systems it should touch, then ask if they want it built. Before offering, check open PRs, issues and the work queue; if someone is already building it, say so instead of offering.",
+    "When they say yes, that is the go-ahead: hand off and build it as a PR to development. A direct request to change or do something is already the go-ahead: do it, do not offer and wait.",
+  ].join(" ");
+}
 function page(text, offset = 0) {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Invalid context offset");
   return { text: text.slice(offset, offset + 10000), totalChars: text.length, nextOffset: offset + 10000 < text.length ? offset + 10000 : null };
@@ -51,4 +69,4 @@ function sessionContext({ job, ledger, broker, config, tools, fullBrief, recallP
     names,
   };
 }
-module.exports = { SMALL_BRIEF, EXTRA_TOOLS, literalGreeting, profile, sessionContext };
+module.exports = { SMALL_BRIEF, EXTRA_TOOLS, literalGreeting, profile, sessionContext, capabilityGuidance };
