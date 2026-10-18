@@ -408,4 +408,4 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
   }
   return { run, canRun: () => true, openToolSession };
 }
-module.exports = { usageRecord, createAgent, normalizeImage, TOOLS, rustLaneAllowed, routeForVision };
+module.exports = { usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };
