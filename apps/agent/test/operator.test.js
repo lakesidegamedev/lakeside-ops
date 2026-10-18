@@ -2076,3 +2076,13 @@ test("a closure hold blocks resolution but permits a substantive player reply", 
   await f.broker.tool(j, "channel_reply", { message: "I am checking the original agreement and why the price changed while you were unable to complete it." });
   assert.equal(j.channelReplyQueued, true);
 });
+
+test("newer player input removes the old developer sibling wake delay", async () => {
+  const f = fixture(), owner = f.config.ownerId;
+  f.ledger.createJob("cmd:old-reply", { kind: "command", role: "owner", actorId: owner, ticket: 7002,
+    source: { authorId: owner, at: new Date(1000).toISOString() }, deadline: 9999999999999 }).state = "waiting";
+  const t = f.ledger.createJob("ticket:7002", { kind: "ticket", role: "support", ticket: 7002,
+    observedPlayerAt: 4000, source: { content: "new question" }, deadline: 9999999999999 }); t.state = "running";
+  await f.broker.tool(t, "finish", { state: "waiting", summary: "Waiting briefly for an independent check", wakeAfterMinutes: 1 });
+  assert.ok(t.wakeAt < 5000 + 30 * 60000);
+});

@@ -465,7 +465,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. No further posts until the decision lands or the player writes; update the status card if the stage changed.`);
     }
     // Monologue cap (ticket 1514: 52 Keir messages to 4 human). After three
-    // consecutive Keir posts with no human reply, progress goes on the card.
+    // consecutive Keir posts, pause ten minutes instead of silencing the ticket indefinitely.
     // One post per task per ten minutes unless the player wrote or it is a
     // question (ticket 1539: two essays a minute apart). A correction is one
     // or two sentences and is never followed by the long version.
@@ -477,12 +477,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (isCorrection(message) && sentences(message).length > 2)
       throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
-    if (run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && !question)
-      throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Put progress on the status card; post again only to ask the player something or when they write.`);
+    if (run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
+      throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
     // A developer asking Keir in the ticket gets one answer, from their own task.
     // The automatic ticket task must not answer it over them (ticket 1510).
     if (job.kind === "ticket") {
-      const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state));
+      const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
       if (dev) throw new Error(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
     }
     const ev = ticketEvidence(ticketNo);
@@ -2438,7 +2438,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // While a developer's own task holds this ticket, the ticket task only
       // comes back in half an hour (or sooner if the player writes); it was
       // waking every minute to be refused (ticket 1518).
-      if (job.kind === "ticket" && ["waiting", "done", "dismissed"].includes(state) && Object.values(d.jobs).some((j) => j.id !== job.id && j.kind === "command" && j.ticket === job.ticket && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state))) job.wakeAt = Math.max(job.wakeAt || 0, now() + 30 * 60000);
+      if (job.kind === "ticket" && ["waiting", "done", "dismissed"].includes(state) && Object.values(d.jobs).some((j) => j.id !== job.id && j.kind === "command" && j.ticket === job.ticket && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(job.ticket) <= (Date.parse(j.source?.at || "") || now()))) job.wakeAt = Math.max(job.wakeAt || 0, now() + 30 * 60000);
       // Claimed automatic tickets stay dormant; only the claiming developer's
       // own command may continue their work. Never turn a model "done" into
       // another scheduled investigation of the same staff-owned ticket.

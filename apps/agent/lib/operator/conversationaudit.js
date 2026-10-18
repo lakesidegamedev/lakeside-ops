@@ -27,7 +27,8 @@ function auditConversation(data, { tickets = {}, messages = {}, decisionMessages
     const replies = sorted.filter(m => m.author?.bot && String(m.content || "").trim().length > 8 && !/^Your ticket receipt:/.test(m.content));
     for (const m of replies.filter(m => stamp(m.timestamp) >= since)) if (INTERNAL.test(m.content)) add("internal-handoff-public", { ticket: n, messageId: m.id, excerpt: clip(m.content) });
     const latestReply = replies.at(-1), latestHuman = sorted.filter(m => !m.author?.bot && String(m.content || "").trim()).at(-1);
-    if (!CLOSED.has(ticket.status) && !data.channels?.[ticket.conversation?.channelId]?.claimedBy && latestHuman && stamp(latestHuman.timestamp) > stamp(latestReply?.timestamp) && now - stamp(latestHuman.timestamp) > 15 * 60000)
+    const firstUnanswered = sorted.find(m => !m.author?.bot && String(m.content || "").trim() && stamp(m.timestamp) > stamp(latestReply?.timestamp));
+    if (!CLOSED.has(ticket.status) && !data.channels?.[ticket.conversation?.channelId]?.claimedBy && latestHuman && stamp(latestHuman.timestamp) > stamp(latestReply?.timestamp) && now - stamp(firstUnanswered?.timestamp || latestHuman.timestamp) > 3 * 60000)
       add("player-reply-unanswered", { ticket: n, messageId: latestHuman.id, minutes: Math.floor((now - stamp(latestHuman.timestamp)) / 60000) });
     if (job && !CLOSED.has(ticket.status) && ["queued", "running", "waiting", "blocked"].includes(job.state) && !job.waitingFor && !data.channels?.[ticket.conversation?.channelId]?.claimedBy && (job.updatedAt || 0) >= since && now - stamp(latestReply?.timestamp || job.at) > 2 * 3600000)
       add("active-ticket-conversation-stale", { ticket: n, messageId: latestReply?.id || null, minutes: Math.floor((now - stamp(latestReply?.timestamp || job.at)) / 60000) });

@@ -5,6 +5,23 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.19 (2026-10-18)
+
+<!-- Coverage: keir-v5.8.18 (387134f) through this release's ticket conversation fixes. -->
+
+### For users
+
+- A new player question can receive a reply even when an older developer conversation is waiting in the same ticket.
+- Earlier progress updates no longer prevent a later answer indefinitely. Repeated messages remain limited.
+- Conversation monitoring flags unanswered messages sooner, including fragmented messages sent in a burst.
+
+### For developers
+
+- Make developer-task reply ownership yield to newer human input, and apply the same rule to coordinator wake delays. Explicit staff takeovers retain their existing enforcement.
+- Bound the consecutive-message pause to ten minutes. Keep duplicate-copy checks, outcome evidence, owner-decision holds and the short-message guard.
+- Measure unanswered age from the first human message since the latest visible answer, with a three-minute threshold. Player-reply wait state does not suppress the finding.
+- Add regression cases for the two observed reply fences and fragmented unanswered messages. Production activation is verified separately from source inclusion.
+
 ## 5.8.18 (2026-10-18)
 
 <!-- Coverage: keir-v5.8.17 (2202599) through this release's decision consistency and audit changes. -->
