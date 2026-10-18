@@ -5,6 +5,18 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.16 (2026-10-18)
+
+### For users
+
+- Engineering and Watchkeeper can use Cursor Auto, completing the Cursor Auto
+  provider setup across Keir's configured lanes.
+
+### For developers
+
+- Accept the provider-managed Cursor Auto route in Keir's engineering settings.
+
+
 ## 5.8.15 (2026-10-18)
 
 ### For users
