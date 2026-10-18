@@ -1,0 +1,6 @@
+[
+  {"id": "04-ledger-rounding", "editable": ["src/ledger.cjs"], "checks": 15},
+  {"id": "05-multi-file-bug", "editable": ["src/parser.cjs"], "checks": 13},
+  {"id": "06-perf-regression", "editable": ["src/rank.cjs"], "checks": 13},
+  {"id": "07-concurrency-retry", "editable": ["src/runner.cjs"], "checks": 15}
+]

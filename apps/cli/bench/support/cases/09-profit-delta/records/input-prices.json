@@ -1,0 +1,7 @@
+{
+  "currency": "GBP",
+  "unit": "tonne",
+  "flour": [ { "turn": 129, "price": 210 }, { "turn": 130, "price": 212 }, { "turn": 131, "price": 248 } ],
+  "sugar": [ { "turn": 129, "price": 540 }, { "turn": 130, "price": 541 }, { "turn": 131, "price": 539 } ],
+  "note": "Flour is the main bakery input by cost."
+}

@@ -19,12 +19,14 @@ function validate(request) {
   if (request.completionUrl && request.completionUrl !== request.url + "/completion") throw new Error("Completion receipt must belong to the granted tool session");
   if (!Array.isArray(request.tools) || request.tools.some(t => typeof t.name !== "string")) throw new Error("Invalid CLI tool grant");
   if (request.viaRust && ["ollama", "deepseek", "opencode"].includes(request.runner)) throw new Error("Selected route has no Rust provider adapter");
-  if (request.toolsMode && !["broker", "native"].includes(request.toolsMode)) throw new Error("Invalid tool mode");
-  if (request.toolsMode === "native") {
+  if (request.toolsMode && !["broker", "native", "hybrid"].includes(request.toolsMode)) throw new Error("Invalid tool mode");
+  if (request.toolsMode === "hybrid" && !["claude", "ollama", "deepseek", "opencode"].includes(request.runner)) throw new Error("Hybrid tools are only adapted for the claude and OpenCode runners");
+  if (request.toolsMode === "native" || request.toolsMode === "hybrid") {
     if (!request.worktree || !request.repo || !fs.existsSync(path.join(request.worktree, ".git"))) throw new Error("Native tools need an explicit registered worktree");
     const registered = require("node:child_process").execFileSync("git", ["-C", request.repo, "worktree", "list", "--porcelain"], { encoding: "utf8" });
     if (!registered.split("\n").includes(`worktree ${fs.realpathSync(request.worktree)}`)) throw new Error("Native tools worktree is not registered");
     if (request.viaRust) throw new Error("Native coding tools cannot also select broker-only Rust execution");
+    if (request.toolsMode === "hybrid" && !request.tools.some(t => t.name === "finish")) throw new Error("Hybrid tools need the broker finish tool");
   }
   return request;
 }

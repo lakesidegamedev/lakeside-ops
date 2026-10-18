@@ -1,0 +1,9 @@
+{
+  "instrument": "Crown 2030 bond",
+  "turn": 88,
+  "bestBidPct": 94.1,
+  "bestAskPct": 94.6,
+  "lastTradePct": 94.15,
+  "fills": [ { "account": "marlowe_capital", "side": "sell", "bonds": 400, "pricePct": 94.1, "matchedAgainst": "best bid" } ],
+  "anomalies": []
+}

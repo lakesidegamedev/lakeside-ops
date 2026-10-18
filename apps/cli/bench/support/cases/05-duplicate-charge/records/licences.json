@@ -1,0 +1,7 @@
+{
+  "corporation": "Fenwick Foundry",
+  "licences": [
+    { "licenceId": "LIC-2207", "site": "Leeds", "grantedTurn": 96 },
+    { "licenceId": "LIC-2291", "site": "Sheffield", "grantedTurn": 101 }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "corporationId": "corp-bench-0142",
+  "name": "Hallam Shipping Ltd",
+  "ownerDisplayName": "tidewater_ops",
+  "homeCountry": "United Kingdom",
+  "currency": "GBP",
+  "asOfTurn": 42,
+  "liquidCapital": 18640000,
+  "totalAssets": 41275000,
+  "outstandingLoans": 6500000,
+  "cashHistory": [
+    { "turn": 38, "liquidCapital": 21100000 },
+    { "turn": 40, "liquidCapital": 19870000 },
+    { "turn": 42, "liquidCapital": 18640000 }
+  ],
+  "notes": "liquidCapital is the corporation's cash, held in its home currency."
+}

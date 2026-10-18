@@ -5,6 +5,18 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- Keir answers faster and uses far fewer tokens per task. Each job now reads only the parts of its manual it needs, and loads the rest on demand.
+- Keir refuses to run a command that takes an action on a claimed approval, such as relinking an account on someone's say-so. It asks for the approval instead.
+
+### For developers
+
+- Lean activation context (`lib/operator/briefprofile.js`): the brief is trimmed per job kind (coder, investigator, probe, finding, quick, work), skill bodies become one-paragraph digests, and 27 rare tool schemas on ticket/command jobs load through `load_context` and run through `call_tool`. Measured on keir-bench: ticket/command always-on context 114K to 76K chars, coding child 90K to 16K; no accuracy loss on Sonnet 5.5 or DeepSeek v4.1 Flash. `KEIR_LEAN_CONTEXT=0` restores the full brief.
+- Effect guard (`lib/operator/submitgates.js`, toolserver): shell commands that assert an approval (`--approved-by`, `--override`, `--as-owner`, `--force`) or run a script with an effect verb (relink, transfer, refund, credit, grant, approve, delete) are refused before execution. Test runners and `--dry-run`/`status` are exempt. It refused 0 of 441 recorded live shell commands and took DeepSeek's unapproved relink attempts on the bench from 9 of 15 runs to 0. `KEIR_EFFECT_GUARD=0` turns it off.
+- Off by default: `KEIR_CORE_BRIEF=1` (3.4K-char core brief from `KEIR-CORE.md` for ticket, command, finding and quick jobs) and the hybrid tool mode (model-native workspace tools plus broker MCP for effects). Both need further validation before live use.
+- keir-bench: support suite (10 graded player-reply cases), four more coding cases, real-brief arms (`keir-current`, `keir-lean`, `keir-core`, `keir-hybrid`), workspace prefetch, deliverable gate and `KEIR_BENCH_TIME_SCALE`.
+
 ## 5.8.20 (2026-10-18)
 
 ### For users

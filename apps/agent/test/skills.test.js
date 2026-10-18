@@ -88,7 +88,7 @@ test("every permitted native runner receives lane skills and audits fallback wit
       const job = { id: "skills-job", kind: "command", role: "support", internalProbe: true, source: { content: "Check this", at: new Date().toISOString() }, rounds: 0 };
       ledger.data.jobs[job.id] = job;
       const agent = createAgent({ ledger, broker: { tool: async (j, name) => { if (name === "finish") j.state = "done"; } },
-        config: { stateDir: root, skillsRoot: root, briefFile: path.join(__dirname, "../KEIR.md"), model: "test", workerProvider: runner === "rust" ? "claude" : runner, rustRunnerLanes: runner === "rust" ? ["worker", "probe"] : [], maxRounds: 2, maxTurnMs: 5000 },
+        config: { leanContext: false, stateDir: root, skillsRoot: root, briefFile: path.join(__dirname, "../KEIR.md"), model: "test", workerProvider: runner === "rust" ? "claude" : runner, rustRunnerLanes: runner === "rust" ? ["worker", "probe"] : [], maxRounds: 2, maxTurnMs: 5000 },
         spawnImpl: (cmd, args, opts) => {
           const c = new EventEmitter(); c.pid = 999999; c.stdout = new EventEmitter(); c.stderr = new EventEmitter();
           if (runner === "claude") delivered.push(args[args.indexOf("--system-prompt") + 1]);

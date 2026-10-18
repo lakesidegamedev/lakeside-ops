@@ -76,7 +76,7 @@ const config = {
   skills: env.KEIR_SKILLS !== "0",
   knowledgeCorrections: env.KEIR_KNOWLEDGE_CORRECT === "1",
   knowledgePreparation: env.KEIR_KNOWLEDGE_PREPARE === "1" ? { server: env.KEIR_KNOWLEDGE_SERVER || "ops-knowledge", project: env.KEIR_KNOWLEDGE_PROJECT, timeoutMs: positive("KEIR_KNOWLEDGE_TIMEOUT_MS", 5000) } : undefined,
-  briefFile: path.join(__dirname, "KEIR.md"), repositories: { AHDGame: "/root/projects/AHDGame", "lakeside-operator": env.KEIR_SOURCE_REPO || "/root/projects/lakeside-ops", AHDClient: "/root/projects/AHDClient" },
+  briefFile: path.join(__dirname, "KEIR.md"), coreBriefFile: path.join(__dirname, "KEIR-CORE.md"), coreBrief: env.KEIR_CORE_BRIEF === "1", effectGuard: env.KEIR_EFFECT_GUARD !== "0", leanContext: env.KEIR_LEAN_CONTEXT !== "0", repositories: { AHDGame: "/root/projects/AHDGame", "lakeside-operator": env.KEIR_SOURCE_REPO || "/root/projects/lakeside-ops", AHDClient: "/root/projects/AHDClient" },
   // Every public guild text channel or thread is watched for reports, except
   // ticket channels (their own tasks handle them) and explicit exclusions.
   scanExclude: (env.KEIR_SCAN_EXCLUDE || "").split(",").filter(Boolean),

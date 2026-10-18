@@ -1,0 +1,12 @@
+{
+  "corporation": "Ironbridge Works",
+  "turn": 57,
+  "currency": "USD",
+  "lines": [
+    { "product": "Steel", "unitsSold": 1200, "revenue": 806400 },
+    { "product": "Pig iron", "unitsSold": 1800, "revenue": 270000 }
+  ],
+  "totals": { "unitsSold": 3000, "revenue": 1076400 },
+  "displayedAverageSalePrice": 358.8,
+  "displayedAverageNote": "Sales screen average = total revenue / total units, across every product the corporation sold this turn."
+}

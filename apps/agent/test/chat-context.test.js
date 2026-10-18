@@ -38,7 +38,7 @@ test("Jev can choose focused context, while uncertain, sensitive and attached ta
   const focused = await capture(t, "What is the current game turn?", { kind: "mechanics_question", complexity: "simple", kindConfidence: 0.99, contextProfile: "focused" });
   assert.equal(focused.job.contextBudget.profile, "focused"); assert.ok(focused.seen.brief.length < 6000); assert.equal(focused.recalled, 0);
   const full = await capture(t, "Why is my treasury wrong?", { kind: "mechanics_question", complexity: "hard", kindConfidence: 0.4, contextProfile: "focused", injection: true });
-  assert.equal(full.job.contextBudget.profile, "full"); assert.ok(full.seen.brief.length > 50000); assert.equal(full.recalled, 1);
+  assert.equal(full.job.contextBudget.profile, "full"); assert.ok(full.seen.brief.length > 30000); assert.equal(full.recalled, 1);
   const { profile, literalGreeting } = require("../lib/operator/chatcontext");
   assert.equal(literalGreeting({ kind: "conversation", source: { content: "Hello, deploy the fix" } }), false);
   assert.equal(profile({ kind: "conversation", source: { content: "Hello", attachments: [{}] } }), "full");
