@@ -1240,6 +1240,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           // Substantive updates are sent and attached to the ticket record.
           const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
           const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal));
+          const delivery = result.delivery;
+          const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
+          if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
           job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, ticketNo, message);
           const ticketTask = d.jobs[d.seen[`ticket:${ticketNo}`]]; if (ticketTask) ticketTask.lastPublishedAt = now();
           ledger.save();

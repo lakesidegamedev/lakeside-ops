@@ -105,3 +105,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 Source available with permission to build, privately modify and self-host for
 your own operations. See [LICENSE.md](LICENSE.md). The imported dashboard keeps
 its [MIT license](apps/web/LICENSE), and vendored components retain their licenses.
+
+Owner decision delivery can be pinned to the native app with `KEIR_OWNER_DECISION_CHANNEL=app` on the agent service. Decisions remain available through the authenticated app API and existing push collector; they do not also create owner Discord DMs. The default retains Discord delivery for independent installs. Delegate escalation and exact execution approval validation retain their existing rules. This requires an agent release and restart; updating the support MCP alone does not activate it.

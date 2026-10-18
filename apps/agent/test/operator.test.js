@@ -2048,3 +2048,13 @@ test("OpenCode exhausted empty response hands off the original owner request wit
   assert.equal(f.ledger.data.actions.pending.state, "pending");
   assert.doesNotMatch(job.summary, /Model ended/);
 });
+
+for (const delivery of [{ posted: true, via: "intake-card" }, { posted: false, delivery: { status: "failed" } }]) test(`ticket replies cannot claim delivery from ${JSON.stringify(delivery)}`, async () => {
+  const f = fixture();
+  const original = f.mcp.call;
+  f.mcp.call = async (...args) => args[1] === "support_public_update" ? { ok: true, delivery } : original(...args);
+  const j = running(f, { actorId: f.config.ownerId, ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { authorId: f.config.ownerId, messageId: "666666666666666666", channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" } });
+  await assert.rejects(f.broker.tool(j, "channel_reply", { message: "I found why the panels differ and am checking the sale path." }), /not confirmed as a new channel message/);
+  assert.equal(j.lastPublishedAt, undefined);
+  assert.ok(!j.channelReplyQueued);
+});
