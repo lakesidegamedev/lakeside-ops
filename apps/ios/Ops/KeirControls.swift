@@ -48,7 +48,7 @@ struct KeirControls: View {
                             }.accessibilityIdentifier("keir-route-\(lane)")
 
                         }
-                        Text("Conversation answers your messages. Coordination manages tasks; coding and investigation have their own overrides. Jev automatically chooses reasoning effort for every activation. Changes apply at the next activation.").font(.caption).foregroundStyle(.secondary)
+                        Text("Conversation answers your messages. Coordination manages tasks; coding and investigation have their own overrides. Cursor Auto chooses its model and effort. Other routes use Jev for effort. Changes apply at the next activation.").font(.caption).foregroundStyle(.secondary)
                     } header: { Text("Providers · this conversation") }
                     Section {
                         Picker("Work type", selection: $lane) { ForEach(lanes, id: \.self) { Text($0.capitalized).tag($0) } }
@@ -170,7 +170,12 @@ enum KeirProviderName {
     static func label(_ id: String, options: [JSONValue]) -> String {
         if id == "auto" { return "Automatic" }
         if id == "inherit" { return "Inherit conversation" }
+        if id == "cursor:auto" { return "Cursor Auto" }
         return options.first { $0["id"].string == id }?["label"].string.nonempty ?? id.components(separatedBy: "@")[0].components(separatedBy: ":").last ?? id
+    }
+    static func providerManaged(_ id: String, options: [JSONValue], defaultRoute: String) -> Bool {
+        let effective = id == "auto" ? defaultRoute : id
+        return options.first { $0["id"].string == effective }?["effortMode"].string == "provider-managed" || effective == "cursor:auto"
     }
     static func choices(_ options: [JSONValue], selected: String) -> [JSONValue] {
         var seen = Set<String>()
@@ -201,8 +206,13 @@ struct KeirProviderPicker: View {
                 }
             }
             Section("Reasoning effort") {
-                Label("Automatic · Jev", systemImage: "brain")
-                Text("Jev chooses the effort needed for each activation. Selecting a model does not pin effort.").font(.caption).foregroundStyle(.secondary)
+                if KeirProviderName.providerManaged(selection, options: options, defaultRoute: defaultRoute) {
+                    Label("Automatic · Cursor", systemImage: "brain")
+                    Text("Cursor Auto chooses the model and reasoning effort for this route.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Label("Automatic · Jev", systemImage: "brain")
+                    Text("Jev chooses the effort needed for each activation. Selecting a model does not pin effort.").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }.navigationTitle(lane.capitalized).navigationBarTitleDisplayMode(.inline)
     }

@@ -949,7 +949,7 @@ test("in a ticket channel, developer-task replies are player register and attach
   const r = await f.broker.tool(j, "channel_reply", { message: "The fix is in testing on dev and heads to the main server next. I'll confirm here when it's live." });
   assert.equal(r.attachedToTicket, 123);
   const call = f.calls.find((c) => c[1] === "support_public_update");
-  assert.equal(call[2].number, 123); assert.equal(call[2].deliver, true);
+  assert.equal(call[2].number, 123); assert.equal(call[2].deliver, true); assert.equal(call[2].delivery_mode, "reply");
   assert.equal(Object.keys(f.ledger.data.outbox).filter((k) => k.startsWith("channel-reply")).length, 0);
 });
 

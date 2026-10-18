@@ -22,6 +22,7 @@ const {
 } = require("../ticket-receipt");
 
 const { registerReopen } = require("./support-reopen");
+const { registerCreateSuggestion } = require("./support-create-suggestion");
 const { registerCreateTicket } = require("./support-create-ticket");
 const { registerMerge } = require("./support-merge");
 
@@ -387,15 +388,16 @@ async function main() {
 
     server.tool(
       "support_public_update",
-      "Record a non-terminal progress update on a ticket's public receipt and, when `deliver` is true, edit the existing Discord intake card in place (WRITE-scoped). Use for meaningful deployment milestones or investigation findings, not every message. The `kind` sets an explicit stage label (production = Fix live, development = Fix in testing, heal = Game data corrected, progress = Update recorded); the card keeps a concise summary while the full update remains on the receipt timeline. Progress updates omit the receipt link.",
+      "Record a non-terminal progress update on a ticket's public receipt and, when `deliver` is true, deliver in the requested mode (WRITE-scoped). delivery_mode reply posts a visible new message for a player answer; card edits the existing intake card for background milestones. Use for meaningful deployment milestones or investigation findings, not every message. The `kind` sets an explicit stage label (production = Fix live, development = Fix in testing, heal = Game data corrected, progress = Update recorded); the card keeps a concise summary while the full update remains on the receipt timeline. Progress updates omit the receipt link.",
       {
         kind: z.enum(["ticket"]),
         number: z.number().int(),
         update_kind: z.enum(["development", "heal", "production", "progress", "context"]).default("progress"),
+        delivery_mode: z.enum(["card", "reply"]).optional().default("card"),
         message: z.string().min(1).max(1400),
         deliver: z.boolean().optional().default(false),
       },
-      async ({ kind, number, update_kind, message, deliver }) => {
+      async ({ kind, number, update_kind, message, deliver, delivery_mode }) => {
         if (!auth || auth.scopes?.write !== true) return errorResult("write scope required — this token is read-only");
         const col = Tickets;
         const key = { ticketNumber: number };
@@ -429,6 +431,7 @@ async function main() {
             ticketNumber: number,
             key: updateKey,
             kind: update_kind,
+            deliveryMode: delivery_mode,
             message,
             receiptUrl,
           });
@@ -492,6 +495,7 @@ async function main() {
       }
     );
 
+    registerCreateSuggestion(server, { auth, Intake: db.collection("agentSuggestionIntake"), z, jsonResult, errorResult });
     registerCreateTicket(server, { auth, Tickets, z, jsonResult, errorResult, ticketPublicUrl });
     registerReopen(server, { auth, Tickets, TrackerItems, z, jsonResult, errorResult, ticketPublicUrl });
 
