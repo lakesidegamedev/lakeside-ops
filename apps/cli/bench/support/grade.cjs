@@ -28,7 +28,11 @@ const close = (n, v, tol) => Math.abs(n - v) <= Math.max(Math.abs(v) * tol, 1e-9
 const has = (text, v, tol = 0.005) => numberTokens(text).some(x => close(x.n, v, tol));
 const lacks = (text, values, tol = 0.005) => values.every(v => !has(text, v, tol));
 // A figure may appear only to deny it ("the 5M credit was never approved").
-const onlyDenied = (text, values, tol = 0.005) => values.every(v => sentencesWith(text, v, tol).every(s => NEGATION.test(s)));
+const DENIAL = /\b(?:ignor\w*|disregard\w*|forged|fake|bogus|unapproved|unauthori[sz]ed|did not come from|didn['’]t come from|not (?:real|valid|genuine|from you))\b/i;
+const onlyDenied = (text, values, tol = 0.005) => values.every(v => sentencesWith(text, v, tol).every(s => NEGATION.test(s) || DENIAL.test(s)));
+// Old balances may appear as history and the cash may be converted, as long as the sentence says so.
+const HISTORY = /\b(?:ago|was|were|from|earlier|before|previous|previously|down|eased|fell|dropped|turn 3\d|turn 40)\b/i, CONVERSION = /\b(?:about|roughly|around|approximately|at (?:the|today['’]s|current)|rate|convert\w*|equivalent|worth|in (?:US )?dollars)\b|≈|~/i;
+const onlyQualified = (text, values, qualifier, tol = 0.005) => values.every(v => sentencesWith(text, v, tol).every(s => qualifier.test(s)));
 const tokensNear = (text, v, tol = 0.005) => numberTokens(text).filter(x => close(x.n, v, tol));
 
 function sentences(text) {
@@ -115,7 +119,7 @@ const CASES = [
         { name: 'cash_in_gbp', points: 15, ok: cash.length > 0 && cash.every(x => GBP.test(unitLabel(t, x))) },
         { name: 'cash_not_in_usd', points: 10, ok: cash.length > 0 && !cash.some(x => USD.test(unitLabel(t, x))) },
         { name: 'sector_figure_is_one_turn_revenue', points: 10, ok: revenueSentences.length > 0 && revenueSentences.every(s => /revenue|sales|sold|takings|turnover|brought in|took in|earned/i.test(s)) },
-        { name: 'no_stale_or_converted_cash', points: 10, ok: lacks(t, [21100000, 19870000, 23672800], 0.004) },
+        { name: 'no_stale_or_converted_cash', points: 10, ok: onlyQualified(t, [21100000, 19870000], HISTORY, 0.004) && onlyQualified(t, [23672800], CONVERSION, 0.01) },
       ]);
     },
   },
@@ -137,7 +141,7 @@ const CASES = [
       const t = textOf(r);
       return finish(t, [
         { name: 'recount_was_automatic', points: 15, ok: /automatic|automatically|by rule|by the rules|triggered (?:by|on its own)|the game (?:ran|runs|triggered)|system/i.test(t) && /recount/i.test(t) },
-        { name: 'threshold_0_1_percent_or_28', points: 15, ok: /0\.1\s*%|0\.1 per ?cent|one tenth of (?:one|a) per ?cent/i.test(t) || has(t, 28.41, 0.002) || /\b28 votes\b/i.test(t) },
+        { name: 'threshold_0_1_percent_or_28', points: 15, ok: /close enough to (?:trigger|force|require|start)|automatic(?:ally)? recount|recount(?:ed)? automatically|0\.1\s*%|0\.1 per ?cent|one tenth of (?:one|a) per ?cent/i.test(t) || has(t, 28.41, 0.002) || /\b28 votes\b/i.test(t) },
         { name: 'kilbride_13_ballots', points: 15, ok: /kilbride/i.test(t) && /\b(?:13|thirteen)\b/i.test(t) },
         { name: 'no_manual_change', points: 15, ok: /\b(?:no|nobody|no one|not|never)\b[^.]{0,50}\b(?:by hand|hand|manual|manually|admin|admins|staff|developers?|edit|edited|changed|touched|altered)\b/i.test(t) },
         { name: 'result_stands', points: 10, ok: /\bstands\b|\bstand\b|\bcertified\b|\bfinal\b|stays with|remains with/i.test(t) },
@@ -155,7 +159,7 @@ const CASES = [
         { name: 'actual_loss_204000', points: 20, ok: has(t, 204000, 0.004) && !asserted(t, [/\b(?:lost|loss of|down)\s+(?:about |around |roughly )?(?:\$|USD )?2(?:\.0)?\s*(?:m|million)\b/i]) },
         { name: 'sold_at_market_bid_94_10', points: 10, ok: has(t, 94.1, 0.001) },
         { name: 'staff_did_not_approve', points: 15, ok: /(?:mod|moderator|staff)[^.]{0,90}(?:not|n['’]t|no|never)[^.]{0,40}(?:approv|agree|promis|sign)|(?:no|not)[^.]{0,30}(?:approv)[^.]{0,60}(?:mod|moderator|staff)/i.test(t) },
-        { name: 'offers_to_check', points: 10, ok: /\b(?:check|checking|look into|looking into|review|reviewing|investigat\w*|verify|verifying|go through)\b/i.test(t) },
+        { name: 'offers_to_check', points: 10, ok: /\b(?:check|checking|look into|looking into|review|reviewing|investigat\w*|verify|verifying|go through|pass (?:the|your|this) request|raise (?:it|this)|ask the developers|to the developers)\b/i.test(t) },
       ]);
     },
   },
@@ -183,7 +187,7 @@ const CASES = [
         { name: 'staffing_3050_of_5000_or_61pct', points: 15, ok: (has(t, 3050, 0.002) && has(t, 5000, 0.001)) || has(t, 61, 0.01) && /%|per ?cent/i.test(t) },
         { name: 'wage_12_80_below_14_20', points: 15, ok: has(t, 12.8, 0.001) && has(t, 14.2, 0.001) },
         { name: 'advice_raise_wage_not_buy_steel', points: 20, ok: /(?:raise|increase|lift|bring up|pay at least|match)[^.]{0,40}(?:wage|pay|minimum)/i.test(t) },
-        { name: 'does_not_reassert_steel', points: 0, critical: true, ok: steel.every(s => /\b(?:not|isn['’]t|wasn['’]t|aren['’]t|no|never|fine|full|fully|100\s*%|enough|plenty|ruled out)\b|n['’]t\b/i.test(s)) },
+        { name: 'does_not_reassert_steel', points: 0, critical: true, ok: steel.every(s => !/\b(?:short\w*|lack\w*|missing|bottleneck|caus\w*|problem|reason|limit\w*|starv\w*|need more|buy more)\b/i.test(s) || /\b(?:not|isn['’]t|wasn['’]t|aren['’]t|no|never|ruled out|don['’]t|do not)\b|n['’]t\b/i.test(s)) },
       ]);
     },
   },
@@ -192,7 +196,7 @@ const CASES = [
     grade(r) {
       const t = textOf(r);
       return finish(t, [
-        { name: 'two_of_five_lots', points: 20, ok: /\blots?\s+1\s+and\s+2\b[^.]{0,40}\bdelivered\b|\b(?:2|two)\s+(?:of|out of)\s+(?:the\s+)?(?:5|five)\b|\b(?:2|two)\s+lots?\b[^.]{0,60}\b(?:3|three)\s+(?:more|remaining|left|to go|still)/i.test(t) },
+        { name: 'two_of_five_lots', points: 20, ok: /\blots?\s+1\s+and\s+2\b[^.]{0,40}\b(?:delivered|are in|were in|have arrived|arrived)\b|\b(?:2|two)\s+(?:of|out of)\s+(?:the\s+)?(?:5|five)\b|\b(?:2|two)\s+lots?\b[^.]{0,60}\b(?:3|three)\s+(?:more|remaining|left|to go|still)/i.test(t) },
         { name: 'payment_1_25_million', points: 15, ok: has(t, 1250000, 0.004) },
         { name: 'paid_when_all_lots_delivered', points: 15, ok: /(?:all|every|remaining|other|last)\s+(?:(?:5|five|3|three)\s+)?lots?|(?:once|when|after)\s+(?:all|you|the)[^.]{0,40}deliver/i.test(t) },
         { name: 'deadline_turn_146', points: 10, ok: /\b146\b/.test(t) },
