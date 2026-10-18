@@ -18,6 +18,7 @@ for (const [key, o] of Object.entries(d.outbox)) {
   if ((o.deliveredAt || o.at) < since) continue;
   const job = jobOf(o.destination), text = String(o.content || "");
   if (!job) {
+    if (o.decision && d.decisions?.[o.decision] && o.recipient === ownerId) { notes.push(`Mirrored owner decision [${o.decision}]`); continue; }
     if (o.destination === "owner" || o.destination === ownerId) flags.push(`DM to owner [${key.split(":")[0]}]: ${short(text)}`);
     else notes.push(`DM to ${o.destination} [${key.split(":")[0]}]: ${short(text, 100)}`);
     continue;
@@ -88,4 +89,3 @@ try {
     }
   }
 } catch {}
-

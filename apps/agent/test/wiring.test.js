@@ -432,3 +432,12 @@ test("an admin handoff can retain a closure hold without stopping investigation"
   owner.receive({ id: "release-1615", from: "codex", scope: "Release closure hold", asks: ["Reassess after a verified answer"], tickets: [1615], holdClosure: false }, { ensureTicketJob: () => j });
   assert.equal(j.ownerClosureHold, undefined);
 });
+
+test("withdrawing old questions in an explicit handoff clears their stale admission hold", () => {
+ const f = fixture(), owner = createSupportOwner({ ledger: f.ledger });
+ const j = job("decision-held", { ticket: 1615, ownerDecisionPending: true, state: "blocked" });
+ f.ledger.data.jobs[j.id] = j;
+ (f.ledger.data.decisions ||= {}).d = { id: "d", jobId: j.id, state: "pending" };
+ owner.receive({ id: "clarify-existing", from: "codex", scope: "Respect existing decision", asks: ["Continue within prior ruling"], tickets: [1615] }, { ensureTicketJob: () => j });
+ assert.equal(f.ledger.data.decisions.d.state, "withdrawn"); assert.ok(!j.ownerDecisionPending); assert.equal(j.state, "queued");
+});
