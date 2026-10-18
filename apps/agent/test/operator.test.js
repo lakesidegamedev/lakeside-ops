@@ -2069,3 +2069,10 @@ test("explicit ticket messages reject internal decision handoffs", async () => {
   const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
   await assert.rejects(f.broker.tool(j, "channel_reply", { message: "egg3901: dig done. The options are in your decision DM." }), /player|internal/i);
 });
+
+test("a closure hold blocks resolution but permits a substantive player reply", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777" }, ownerClosureHold: { handoffId: "fixture" } });
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_resolve", args: { message: "Working as designed", actions: ["Explained"] } }), /closure.*held/i);
+  await f.broker.tool(j, "channel_reply", { message: "I am checking the original agreement and why the price changed while you were unable to complete it." });
+  assert.equal(j.channelReplyQueued, true);
+});

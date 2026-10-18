@@ -2076,6 +2076,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!SUPPORT_WRITES.includes(input.tool)) throw new Error(`support write is outside standing permission: tool must be one of ${SUPPORT_WRITES.join(", ")}. To answer the player: tool "support_public_update", args {"message": "..."}.`);
 
       const rows = await supportAuthority(job);
+      if (input.tool === "support_resolve" && (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)) throw new Error("Ticket closure is held by an explicit owner follow-up. Continue investigating and communicating; do not resolve or close it.");
       const args = { ...(input.args || {}), number: job.ticket };
       if (input.tool !== "support_resolve") args.kind = "ticket";
       const definition = (await mcp.list("support")).find(t => t.name === input.tool);
