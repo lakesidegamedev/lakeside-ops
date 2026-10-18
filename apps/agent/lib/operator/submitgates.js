@@ -74,7 +74,7 @@ function remember(session, text) {
 const ASSERTS_APPROVAL = /--(?:approved[-_]?by|approver|override|as[-_]owner|force|skip[-_][\w-]+)\b/i;
 const EXEC = /^(?:\S*\/)?(?:node|bash|sh|python3?|npx|npm run)\s+(?!--test\b)\S+/;
 const EFFECT = /\b(?:relink|transfer|refund|payout|credit|grant|approve|delete|withdraw|reassign)\b/i;
-const SAFE = /--dry-run\b|\bstatus\b|--help\b/i;
+const SAFE = /--dry-run\b|\bstatus\b|--help\b|\b(?:vitest|jest|mocha|tsc|eslint|prettier|tsx?\s+--test)\b|\.(?:test|spec)\.[cm]?[jt]sx?\b/i;
 function effectRefusal(command) {
   for (const segment of String(command).split(/&&|\|\||;|\|/).map((s) => s.trim().replace(/^cd\s+\S+\s*$/, ""))) {
     if (!segment) continue;

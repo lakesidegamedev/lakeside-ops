@@ -7,7 +7,7 @@ const crypto = require("node:crypto");
 const {calculationInputSchema,prepareStructuredSubmission}=require("./structured-submission");
 const { redactSecrets } = require("../text");
 
-function createToolServer({ broker, normalizeImage, port = 0 }) {
+function createToolServer({ broker, normalizeImage, port = 0, effectGuard = false }) {
   const sessions = new Map();
   const server = http.createServer(async (req, res) => {
     const send = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body === undefined ? "" : JSON.stringify(body)); };
@@ -64,7 +64,7 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
           if(!/\bok\b/.test(String(probe?.output??probe?.stdout??JSON.stringify(probe))))throw new Error('Not finished: the task requires '+file+' in the repository root as valid JSON, and it is missing or invalid. Write it (in one piece; keep it under 12 KB), then finish.');
         }
       }
-      if(name==='shell'&&session.job.submitGates&&session.job.submitGates.effects!==false){const refusal=require('./submitgates').effectRefusal(input?.command);if(refusal)throw new Error(refusal);}
+      if(name==='shell'&&(effectGuard||session.job.submitGates?.effects)){const refusal=require('./submitgates').effectRefusal(input?.command);if(refusal)throw new Error(refusal);}
       const prepared=submission?await prepareStructuredSubmission(session.job,submissionInput,{allowCalculations:session.tools.some(tool=>tool.name==='calculate'),calculate:async steps=>(await broker.tool(session.job,'calculate',{steps},session.signal)).steps}):null;
       if(submission){if(prepared?.calculations)require('./submitgates').remember(session,JSON.stringify(prepared.calculations));const refusal=require('./submitgates').check(session,prepared?.result??submissionInput.result);if(refusal){if(prepared?.calculations)session.submissionDraft=undefined;throw new Error(refusal);}}
       const deliverable=prepared?.result??input.result,summary=prepared?.summary??input.summary;
