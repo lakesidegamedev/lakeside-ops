@@ -74,6 +74,9 @@ function createSupportOwner({ ledger, now = () => Date.now() }) {
         for (const x of Object.values(d.decisions || {}).filter((x) => x.jobId === j.id && x.state === "pending")) {
           x.state = "withdrawn"; x.withdrawnReason = `handoff:${handoff.id}`;
         }
+        // The questions above no longer exist. Retaining their admission flag
+        // would prevent the new handoff from ever being incorporated.
+        delete j.ownerDecisionPending;
       }
       if (superseded.length) ledger.audit("approvals_superseded_by_handoff", { handoff: handoff.id, ticket: n, actions: superseded });
       const job = ensureTicketJob(Number(n));

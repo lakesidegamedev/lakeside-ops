@@ -1,0 +1,11 @@
+[Unit]
+Description=Audit live Keir conversation samples every five minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,26 @@
+[Unit]
+Description=Independent Keir conversation and decision-copy audit
+After=network-online.target keir-operator.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/keir-discord.env
+EnvironmentFile=/etc/keir-conversation-audit.env
+ExecStart=/usr/bin/node /opt/keir/current/bin/keir-conversation-audit.js --ledger /var/lib/keir-operator/ledger.json --mcp-config ${KEIR_MCP_CONFIG} --output /var/lib/keir-conversation-audit/latest.json --kanban-id ${KEIR_AUDIT_KANBAN_ID} --exclude ${KEIR_AUDIT_EXCLUDED_TICKETS}
+StateDirectory=keir-conversation-audit
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=55s
+MemoryMax=512M
+CPUQuota=25%
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ReadWritePaths=/var/lib/keir-conversation-audit

@@ -5,6 +5,25 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.18 (2026-10-18)
+
+<!-- Coverage: keir-v5.8.17 (2202599) through this release's decision consistency and audit changes. -->
+
+### For users
+
+- Owner decisions can appear in both the native app and Discord with one shared request and answer. The first authenticated answer wins, and obsolete copies are removed.
+- Existing app-only decisions can gain their Discord copy without creating another approval request.
+- A withdrawn question no longer prevents the ticket from continuing under new guidance.
+
+### For developers
+
+- Guard every decision against second answers, cancel unsent copies, discard obsolete outbox delivery, and clean up late or incorrectly marked legacy Discord cards. Bound and rotate cleanup attempts; treat missing cards as already removed.
+- Add an independent five-minute conversation audit of actual ticket messages, receipts and Discord decision copies. Retain private reply samples and report changed findings and hourly monitoring heartbeats to an optional ops board item. Sampling and transport failures are explicit; the monitor never changes operator state, tickets, decisions or messages.
+- Audit delivery-only-to-card, public internal handoffs, unanswered players, stale conversations, closure against an explicit hold, routine permission requests, missing or divergent decision copies and orphaned decision holds. These are review cues, not automatic semantic verdicts.
+- Configure both channels with KEIR_OWNER_DECISION_CHANNEL=both. The authenticated native app decision API remains the shared source of state. Independent installs retain the existing delivery default.
+- Validate with red-to-green decision race and handoff regression tests, focused approval/app tests, audit tests, and a live read-only audit. The agent release packaging reruns the full suite.
+
+
 ## 5.8.17 (2026-10-18)
 
 <!-- Coverage: keir-v5.8.16 (dfef142) through a25144a, with PR111 corrections through eef22a3; release metadata follows. -->
