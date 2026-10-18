@@ -393,7 +393,7 @@ async function main() {
         kind: z.enum(["ticket"]),
         number: z.number().int(),
         update_kind: z.enum(["development", "heal", "production", "progress", "context"]).default("progress"),
-        delivery_mode: z.enum(["card", "reply"]).optional().default("card"),
+        delivery_mode: z.enum(["card", "reply"]).optional().default("reply"),
         message: z.string().min(1).max(1400),
         deliver: z.boolean().optional().default(false),
       },
