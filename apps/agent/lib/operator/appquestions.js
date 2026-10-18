@@ -8,6 +8,7 @@ function createAppQuestions({ ledger, app, config, now = () => Date.now() }) {
   function ask(job, { title, questions }) {
     if (!isAppJob(job) || job.role !== "owner") throw err(403, "owner app task required");
     if (!Array.isArray(questions) || questions.length < 1 || questions.length > 5) throw err(400, "ask one to five questions");
+    for (const q of questions) require("./decisionpolicy").requireRealDecision(q.prompt);
     const normalized = questions.map((q, i) => {
       if (typeof q.prompt !== "string" || !q.prompt.trim() || q.prompt.length > 500 || !Array.isArray(q.options) || q.options.length < 2 || q.options.length > 6) throw err(400, "questions need a prompt and two to six options");
       return { id: String(i + 1), prompt: q.prompt.trim(), multiple: q.multiple === true, options: q.options.map((o, n) => {

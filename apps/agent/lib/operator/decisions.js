@@ -84,6 +84,7 @@ function makeTldr(options = {}) {
 // merge. An approval then records an exact merge approval at that head
 // (Keir 5.1.1), so later promotions carrying it chain instead of re-asking.
 function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null }) {
+  if (!actionId && !signoff && !binds) require("./decisionpolicy").requireRealDecision(question);
   const d = ledger.data;
   d.decisions ||= {};
   const existing = Object.values(d.decisions).find((x) => x.state === "pending" && x.jobId === jobId && (x.actionId || null) === actionId);
@@ -92,7 +93,9 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
   const text = clean(question);
   const decision = { id, jobId, actionId, question: text, state: "pending", at: Date.now(), sent: {}, ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
   d.decisions[id] = decision;
-  ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, { signoff }), { components: buttons(id), decision: id, recipient: config.ownerId });
+  // The durable decision is already exposed by the authenticated app API and
+  // app push collector. App-only delivery does not mint an approval receipt.
+  if (!require("./decisionpolicy").appDecisions(config)) ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, { signoff }), { components: buttons(id), decision: id, recipient: config.ownerId });
   ledger.audit("decision_opened", { decision: id, job: jobId, action: actionId, signoff: Boolean(signoff) });
   return decision;
 }
