@@ -34,8 +34,10 @@ function engineeringGuard(job, name, input = {}, jobs = {}) {
   return true;
 }
 function engineeringSpec(config = {}) {
-  const match = /^([a-z][\w-]*):([^\s@]+)@(low|medium|high|xhigh)$/.exec(config.engineeringProvider || DEFAULT_PROVIDER);
-  if (!match) throw new Error("Invalid engineeringProvider; expected runner:model@effort");
+  const configured = config.engineeringProvider || DEFAULT_PROVIDER;
+  if (configured === "cursor:auto") return { runner: "cursor", model: "auto", effort: "automatic" };
+  const match = /^([a-z][\w-]*):([^\s@]+)@(low|medium|high|xhigh)$/.exec(configured);
+  if (!match) throw new Error("Invalid engineeringProvider; expected runner:model@effort or cursor:auto");
   return { runner: match[1], model: match[2], effort: match[3] };
 }
 function createEngineering({ ledger, now = Date.now, config = {} }) {
