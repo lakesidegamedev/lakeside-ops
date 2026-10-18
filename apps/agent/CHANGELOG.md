@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Start simple chat with focused context chosen by Jev; literal greetings skip the classifier and use a small brief. Load additional instructions, skills, history and granted tool schemas during the conversation.
+- Show live tool activity by source and operation in chat, retain completed activity with its reply, and place Working inside the conversation.
+- Record preflight time, provider time and prompt size separately for chat-latency diagnosis.
+
 - File native suggestions for verified player and developer sources, with a feedback receipt, original-author attribution and durable retry protection.
 - Ticket answers create visible channel replies; background milestones can still update the intake card.
 - App model controls distinguish Cursor Auto from installation routing and show that Cursor manages its own effort.
