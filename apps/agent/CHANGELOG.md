@@ -5,13 +5,27 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
-- Start simple chat with focused context chosen by Jev; literal greetings skip the classifier and use a small brief. Load additional instructions, skills, history and granted tool schemas during the conversation.
-- Show live tool activity by source and operation in chat, retain completed activity with its reply, and place Working inside the conversation.
-- Record preflight time, provider time and prompt size separately for chat-latency diagnosis.
+## 5.8.17 (2026-10-18)
 
-- File native suggestions for verified player and developer sources, with a feedback receipt, original-author attribution and durable retry protection.
-- Ticket answers create visible channel replies; background milestones can still update the intake card.
-- App model controls distinguish Cursor Auto from installation routing and show that Cursor manages its own effort.
+<!-- Coverage: keir-v5.8.16 (dfef142) through a25144a; release metadata follows. -->
+
+### For users
+
+- Ticket answers and final resolutions appear as new conversation messages instead of edits buried in the opening card.
+- Keir explains and investigates without asking permission. A blocked repair stays on hold while independent work and conversation continue.
+- Owner decisions can stay in the native app instead of also appearing in Discord DMs.
+- Simple chats start with less context and load more instructions and tools as needed. Actual response time still depends on the provider.
+- Native suggestions preserve the original reporter and return a feedback receipt.
+- Chat exposes distinct tool activity. The native iOS Working placement, activity renderer and Cursor settings need the corresponding iOS app update; this agent release alone does not install that update.
+
+### For developers
+
+- PR105: verified suggestion-source attribution and durable intake deduplication; explicit ticket replies; provider-managed Cursor Auto controls.
+- PR106: literal greeting fast path, Jev-directed context profiles, scoped progressive tools/skills/history, first-visible-reply timing and durable tool activity IDs.
+- PR108: support updates default to reply and final resolution notices always post new messages. The support MCP release must be active before this agent.
+- PR109: reject explicit routine permission questions before creating a decision or app choice panel; support KEIR_OWNER_DECISION_CHANNEL=app; require confirmed reply delivery before marking answered; instruct all app context paths to continue authorized independent work around blockers.
+- Exact action approval, provenance, financial repair and executor-attestation fences remain enforced. This release does not implement heal executor attestation.
+- Hosted checks passed for each merged change, including the iPhone simulator for PR106. Targeted delivery, approval, interaction, context and operator regressions passed. Release packaging reruns the agent suite.
 
 ## 5.8.16 (2026-10-18)
 
