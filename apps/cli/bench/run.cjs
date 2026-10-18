@@ -43,7 +43,9 @@ const LIMITS=[90000,90000,50000,45000];
 let SUITE=null;
 const parseDeliverable=t=>{try{return JSON.parse(t)}catch{const m=/\{[\s\S]*\}/.exec(t||'');try{return m?JSON.parse(m[0]):null}catch{return null}}};
 const loadSuite=name=>{if(!name||name==='investigation')return null;if(name==='deep'){const g=require('./deep/grade.cjs');return{name,dir:path.join(__dirname,'deep','cases'),cases:g.CASES,grade:(id,result)=>{const c=g.CASES.find(x=>x.id===id),v=parseDeliverable(result.report);return v?c.grade(v):{score:0,checks:{},verdict:'unstructured-report'};}};}if(name!=='support')throw Error('Suite must be investigation, support or deep');const g=require('./support/grade.cjs');return{name,dir:path.join(__dirname,'support','cases'),cases:g.CASES,grade:(id,result)=>{let t=result.report||'';try{const v=JSON.parse(t);if(typeof v?.reply==='string')t=v.reply;}catch{}return g.CASES.find(c=>c.id===id).grade(t);}};};
-const caseIdOf=i=>SUITE?SUITE.cases[i].id:CASES[i],limitOf=i=>SUITE?SUITE.cases[i].limitMs:LIMITS[i],fixtureDir=c=>SUITE?path.join(SUITE.dir,c):path.join(__dirname,'fixtures',c);
+// KEIR_BENCH_TIME_SCALE stretches every time limit, to separate a speed gap from a quality gap.
+const TIME_SCALE=Number(process.env.KEIR_BENCH_TIME_SCALE||1);
+const caseIdOf=i=>SUITE?SUITE.cases[i].id:CASES[i],limitOf=i=>Math.round((SUITE?SUITE.cases[i].limitMs:LIMITS[i])*TIME_SCALE),fixtureDir=c=>SUITE?path.join(SUITE.dir,c):path.join(__dirname,'fixtures',c);
 const FIELDS=[['stateSpend','totalDeliveredLots','legacyProfit','modernProfit','legacyBuildCost','modernBuildCost','storedPrice','modernCostIndex'],['floor','ceiling','maximum','feasibleBidExists','rootCause','fixBoundary','minimumViableCap']];
 const digest=b=>crypto.createHash('sha256').update(b).digest('hex');
 function treeHash(root){const out={};for(const e of fs.readdirSync(root,{withFileTypes:true})){if(['.git','.git.protected'].includes(e.name)||e.name==='answer.json'||e.name==='action-audit.jsonl')continue;const f=path.join(root,e.name);if(e.isDirectory()){for(const [k,v]of Object.entries(treeHash(f)))out[e.name+'/'+k]=v;}else if(e.isFile())out[e.name]=digest(fs.readFileSync(f));}return out;}
