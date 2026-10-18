@@ -287,3 +287,15 @@ test("an explicit ticket reply posts a new message even when the ticket has an i
   assert.equal(writes.find(w => w.$push).$push.publicUpdates.deliveryMode, "reply");
   assert.ok(posts[0][2].nonce);
 });
+
+test("final resolutions create a new channel message instead of editing the intake card", async () => {
+  const { maybePostTicketChannelUpdate } = require("./ticket-ship-notify");
+  const ticket = { _id: "final-reply", ticketNumber: 42, discordChannelId: "111111111111111111", intake: { cardMessageId: "222222222222222222" }, publicUpdates: [] };
+  let posts = 0, edits = 0;
+  const db = { collection: () => ({ findOne: async () => ticket, updateOne: async () => ({ modifiedCount: 1 }) }) };
+  const result = await maybePostTicketChannelUpdate(db, { ticketNumber: 42, key: "resolution:fixture", kind: "resolution", message: "The fix is live and verified.",
+    postChannel: async () => { posts++; return { posted: true, id: "visible-resolution" }; },
+    editCard: async () => { edits++; return { posted: true, via: "intake-card" }; },
+  });
+  assert.equal(posts, 1); assert.equal(edits, 0); assert.equal(result.delivery.messageId, "visible-resolution");
+});

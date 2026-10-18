@@ -501,7 +501,8 @@ async function maybePostTicketChannelUpdate(db, {
   const now = new Date();
   const existing = (Array.isArray(ticket.publicUpdates) ? ticket.publicUpdates : [])
     .find((entry) => String(entry && entry.key || "") === updateKey);
-  deliveryMode = existing?.deliveryMode || deliveryMode;
+  // A final answer must create visible channel activity before closure.
+  deliveryMode = kind === "resolution" ? "reply" : existing?.deliveryMode || deliveryMode;
   if (!["card", "reply"].includes(deliveryMode)) return { skipped: "invalid delivery mode" };
   const existingStatus = String(existing && existing.delivery && existing.delivery.status || "");
   if (existingStatus === "posted") {
