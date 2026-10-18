@@ -295,7 +295,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     const skills = require("./skills"), skillLane = skills.laneOf(job, quick), controls = require("./appcontrols");
     const skillSelection = job.appOverrides?.skills?.[controls.laneOf(job, quick)] ?? controls.rootOf(ledger.data, job)?.appOverrides?.skills?.[controls.laneOf(job, quick)] ?? controls.preferences(ledger.data, job).skills?.[controls.laneOf(job, quick)];
     const skillPrep = config.skills === false || compact ? { text: "", names: [], errors: [] } : skills.prepare(skillLane, config.skillsRoot, skillSelection);
-    const leanCtx = compact ? null : require("./briefprofile").lean({ job, quick, briefText, tools, skills, skillLane, skillsRoot: config.skillsRoot, skillNames: skillPrep.names, enabled: config.leanContext !== false });
+    const leanCtx = compact ? null : require("./briefprofile").lean({ job, quick, briefText, tools, skills, skillLane, skillsRoot: config.skillsRoot, skillNames: skillPrep.names, enabled: config.leanContext !== false,
+      // KEIR_CORE_BRIEF=1: ticket, command, finding and quick jobs run on the core brief and core tool set.
+      ...(config.coreBrief && ["work", "finding", "quick"].includes(require("./briefprofile").profileOf(job, quick)) ? { coreText: fs.readFileSync(config.coreBriefFile, "utf8") } : {}) });
     const deferred = compact ? chatContext.sessionContext({ job, ledger, broker, config, tools, fullBrief: briefText + OTHER_NOTE + ownerBrief, recallPlayer }) : leanCtx?.session || null;
     if (deferred) context.capabilityCatalog = deferred.names;
     const { url, completionUrl, session, close } = await toolServer.open(job, deferred?.tools || tools, signal, deferred);
