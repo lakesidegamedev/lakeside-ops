@@ -91,7 +91,9 @@ const page = (text, offset = 0) => ({ text: text.slice(offset, offset + PAGE), t
 
 // Everything agent.js needs for one lean activation, or null when the job runs full.
 const CORE_DIRECT = ["finish", "submit_result", "retry_result", "finish_patch", "edit_verify", "checkpoint", "channel_reply", "progress_update", "support_action",
-  "calculate", "view_attachment", "read_servers", "read_tools", "read_tool", "ticket_history", "reporter_state", "ticket_record", "handoff"];
+  "calculate", "view_attachment", "read_servers", "read_tools", "read_tool", "ticket_history", "reporter_state", "ticket_record", "handoff",
+  // Workspace tools stay direct when the broker, not the model's own tools, works the snapshot.
+  "shell", "evidence_batch", "local_file", "repository_snapshot"];
 // Workspace tools a hybrid activation replaces with the model's own (sandboxed) tools.
 const WORKSPACE_TOOLS = ["shell", "evidence_batch", "local_file"];
 function lean({ job, quick, briefText, tools, skills, skillLane, skillsRoot, skillNames, enabled = true, coreText = null, hybrid = false }) {
