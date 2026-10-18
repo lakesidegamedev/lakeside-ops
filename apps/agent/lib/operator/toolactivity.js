@@ -25,7 +25,7 @@ function describe(name, input = {}) {
   const local = LOCAL[name] || [words(name), "wrench.and.screwdriver"];
   return { tool: name, server, operation, title: TITLES[operation] || (source ? name === "read_tools" ? "Discover tools" : words(operation) : local[0]),
     source: source?.[0] || (name === "github" ? "GitHub" : "Keir"), icon: source?.[1] || local[1],
-    what: String(server ? i.tool || "Available tools" : i.action || i.query || i.path || i.section || i.kind || "").slice(0, 100) };
+    what: (JSON.stringify(i).includes("[redacted]") ? "[redacted] " : "") + String(server ? i.tool || "Available tools" : i.action || i.query || i.path || i.section || i.kind || "").slice(0, 100) };
 }
 function start(job, name, input, now = Date.now()) {
   if (job.role !== "owner" || job.internalProbe) return null;
