@@ -3,6 +3,17 @@
 Keir: the A House Divided Discord operator, support desk and /summon bridge.
 New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/release.sh`.
 
+## 5.8.15 (2026-10-18)
+
+### For users
+
+- Keir can use Cursor Auto across conversation, work, coding, investigation,
+  vision, engineering and voice activations.
+
+### For developers
+
+- Isolate each Cursor CLI activation and scope its broker tools to the task.
+
 ## Unreleased
 
 - Route conversation, work, coding, investigation, vision, engineering and voice
