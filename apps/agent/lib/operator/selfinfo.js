@@ -8,7 +8,7 @@ const path = require("node:path");
 const { codingSpec } = require("./delegation");
 
 const ROOT = path.join(__dirname, "..", "..");
-const LABEL = { "gemini-3.8-flash": "Gemini 3.8 Flash", "muse-spark-1.3": "Muse Spark 1.3", "gpt-6.1-sol": "GPT 6.1 SOL", "gpt-6-luna": "GPT 6 Luna", "muse-spark-1.3-contributor": "Muse Spark 1.3 Contributor",
+const LABEL = { auto: "Cursor Auto", "gemini-3.8-flash": "Gemini 3.8 Flash", "muse-spark-1.3": "Muse Spark 1.3", "gpt-6.1-sol": "GPT 6.1 SOL", "gpt-6-luna": "GPT 6 Luna", "muse-spark-1.3-contributor": "Muse Spark 1.3 Contributor",
   "muse-wonder-full-1.0": "Muse Wonder Full 1.0", "muse-wonder-1.0": "Muse Wonder 1.0", "claude-sonnet-5-5": "Claude Sonnet 5.5", "claude-opus-5-5": "Claude Opus 5.5", "deepseek-v4.1-flash": "DeepSeek V4.1 Flash", "deepseek-flash": "DeepSeek V4.1 Flash (1017)" };
 const label = (model) => LABEL[model] || model;
 
@@ -27,7 +27,7 @@ function lane(spec, config) {
   return String(spec || "claude").split(",").map((x) => x.trim()).filter(Boolean).map((entry) => {
     const [head, pinned] = entry.split("@");
     const [runner, model] = head.split(":");
-    return { model: model || (runner === "claude" ? config.model : runner), effort: config.dynamicEffort !== false ? "chosen per task" : "medium" };
+    return { model: model || (runner === "claude" ? config.model : runner), effort: runner === "cursor" ? "managed by Cursor Auto" : config.dynamicEffort !== false ? "chosen per task" : "medium" };
   });
 }
 

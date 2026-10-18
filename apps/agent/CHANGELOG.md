@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Route conversation, work, coding, investigation, vision, engineering and voice
+  activations through Cursor Auto with per-activation broker grants and isolated
+  CLI configuration.
+
 ### For users
 
 - Ticket handoffs now retain the Discord reply route when Keir discovers the ticket channel later, so he can acknowledge and answer in the ticket.

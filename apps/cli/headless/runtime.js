@@ -6,7 +6,7 @@ const { spawn } = require("node:child_process");
 const providers = require("./providers");
 const { invokeClaude } = require("./claude");
 
-const RUNNERS = ["claude", "codex", "muse", "agy", "ollama", "deepseek", "opencode"];
+const RUNNERS = ["claude", "codex", "muse", "agy", "cursor", "ollama", "deepseek", "opencode"];
 function validate(request) {
   if (!request || request.version !== 1 || !RUNNERS.includes(request.runner)) throw new Error("Unsupported CLI activation route or protocol");
   for (const key of ["model", "brief", "prompt", "stateDir"]) if (typeof request[key] !== "string" || !request[key]) throw new Error(`CLI activation needs ${key}`);
@@ -59,6 +59,7 @@ async function executeActivation(request, { spawnImpl = spawn, signal = new Abor
       : request.runner === "codex" ? await providers.invokeCodex(common)
       : request.runner === "muse" ? await providers.invokeMuse(common)
       : request.runner === "agy" ? await providers.invokeAgy(common)
+      : request.runner === "cursor" ? await providers.invokeCursor(common)
       : request.runner === "ollama" ? await openCodeImpl({ ...common,
         model: `keir-ollama/${request.model}`,
         providerEnv: { OLLAMA_API_KEY: ollamaCredential() || (() => { throw new Error("Ollama Cloud credential missing"); })() },

@@ -123,13 +123,13 @@ function createSupportOwner({ ledger, now = () => Date.now() }) {
   // Owner choice of model for one ticket ("have Muse Wonder Full take 1537").
   // Applies from the ticket's next activation: a run in progress is never cut
   // off, and the new model starts from the ticket record and history.
-  const RUNNERS = ["codex", "muse", "claude", "agy", "ollama", "deepseek"];
+  const RUNNERS = ["codex", "muse", "claude", "agy", "cursor", "ollama", "deepseek"];
   const EFFORTS = ["low", "medium", "high", "xhigh"];
   function assignModel(ticket, spec, by, { ensureTicketJob } = {}) {
     const n = Number(ticket);
     if (!Number.isInteger(n) || n <= 0) throw new Error("ticket must be a ticket number");
     const [head, effort = "medium"] = String(spec || "").split("@"), [runner, model] = head.split(":");
-    if (!RUNNERS.includes(runner) || !model || !EFFORTS.includes(effort)) throw new Error("model must be runner:model[@effort], runner one of codex, muse, claude, agy, ollama, deepseek");
+    if (!RUNNERS.includes(runner) || !model || !EFFORTS.includes(effort)) throw new Error("model must be runner:model[@effort], runner one of codex, muse, claude, agy, cursor, ollama, deepseek");
     const job = d.jobs[d.seen[`ticket:${n}`]] || ensureTicketJob?.(n);
     if (!job) throw new Error(`no job for ticket ${n}`);
     job.provider = { lane: "worker", runner, model, effort, at: now(), assignedBy: by || null };

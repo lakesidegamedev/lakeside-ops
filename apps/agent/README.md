@@ -101,6 +101,11 @@ change behaviour most: `KEIR_WORKER_PROVIDER`, `KEIR_QUICK_PROVIDER`,
 `KEIR_CODING_PROVIDER`, `KEIR_RUST_RUNNER_LANES`, `KEIR_RUST_RUNNER_TICKETS`,
 `KEIR_JEV`. Secrets are never committed.
 
+Cursor CLI activations can use `cursor:auto`. Each activation links the host's
+Cursor CLI login into a private temporary home, exposes only that task's Keir
+broker MCP tools, and denies local shell, file and web tools. Cursor login is
+host-managed (`cursor-agent login`); do not put Cursor credentials in this file.
+
 ## Concurrency and usage
 
 Keir has three dedicated coding slots and three investigation slots. Two chat
