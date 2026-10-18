@@ -422,3 +422,13 @@ test("new handoff evidence invalidates an old closing grace without replaying th
   assert.equal(owner.receive(handoff, { ensureTicketJob: () => t }).duplicate, true);
   assert.equal(t.resolutionReadyAt, 7000, "retrying an old handoff cannot reset a later answer");
 });
+
+test("an admin handoff can retain a closure hold without stopping investigation", () => {
+  const f = fixture(), owner = createSupportOwner({ ledger: f.ledger });
+  const j = job("held", { ticket: 1615 });
+  owner.receive({ id: "hold-1615", from: "codex", scope: "Unmet player goal", asks: ["Investigate without closing"], tickets: [1615], holdClosure: true }, { ensureTicketJob: () => j });
+  assert.equal(j.ownerClosureHold.handoffId, "hold-1615");
+  assert.equal(j.state, "queued");
+  owner.receive({ id: "release-1615", from: "codex", scope: "Release closure hold", asks: ["Reassess after a verified answer"], tickets: [1615], holdClosure: false }, { ensureTicketJob: () => j });
+  assert.equal(j.ownerClosureHold, undefined);
+});

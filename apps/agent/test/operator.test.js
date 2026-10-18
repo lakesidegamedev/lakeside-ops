@@ -1513,11 +1513,11 @@ test("a bare mention can point to the same author's recent unanswered question",
   assert.equal(j.source.contextMessageId, q.id);assert.equal(j.source.messageId, m.id);
 });
 
-test("ticket finish fallback accepts a new safe finding and records it for deduplication", async () => {
+test("ticket developer finish summaries stay private even when the finding looks safe", async () => {
   const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
   await f.broker.tool(j, "finish", { state: "done", summary: "The subsidiary history is hidden from the parent company. I am checking the correction." });
-  assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 1);
-  assert.equal(f.ledger.data.ticketPosts[123].length, 1);
+  assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
+  assert.equal(f.ledger.data.ticketPosts?.[123], undefined);
 });
 
 test("ticket finish fallback refuses unverified releases and technical copy", async () => {
@@ -2057,4 +2057,22 @@ for (const delivery of [{ posted: true, via: "intake-card" }, { posted: false, d
   await assert.rejects(f.broker.tool(j, "channel_reply", { message: "I found why the panels differ and am checking the sale path." }), /not confirmed as a new channel message/);
   assert.equal(j.lastPublishedAt, undefined);
   assert.ok(!j.channelReplyQueued);
+});
+
+test("internal developer finish notes never become ticket replies", async () => {
+  const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
+  await f.broker.tool(j, "finish", { state: "done", summary: "egg3901: dig done. Portal or env mismatch; fix options are in your decision DM." });
+  assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
+});
+
+test("explicit ticket messages reject internal decision handoffs", async () => {
+  const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
+  await assert.rejects(f.broker.tool(j, "channel_reply", { message: "egg3901: dig done. The options are in your decision DM." }), /player|internal/i);
+});
+
+test("a closure hold blocks resolution but permits a substantive player reply", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777" }, ownerClosureHold: { handoffId: "fixture" } });
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_resolve", args: { message: "Working as designed", actions: ["Explained"] } }), /closure.*held/i);
+  await f.broker.tool(j, "channel_reply", { message: "I am checking the original agreement and why the price changed while you were unable to complete it." });
+  assert.equal(j.channelReplyQueued, true);
 });

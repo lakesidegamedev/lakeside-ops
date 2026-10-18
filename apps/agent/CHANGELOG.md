@@ -7,11 +7,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## 5.8.17 (2026-10-18)
 
-<!-- Coverage: keir-v5.8.16 (dfef142) through a25144a; release metadata follows. -->
+<!-- Coverage: keir-v5.8.16 (dfef142) through a25144a, with PR111 corrections through eef22a3; release metadata follows. -->
 
 ### For users
 
 - Ticket answers and final resolutions appear as new conversation messages instead of edits buried in the opening card.
+- Internal developer summaries and decision handoffs stay out of player tickets. Support works toward the player's goal and does not treat resignation as acceptance.
 - Keir explains and investigates without asking permission. A blocked repair stays on hold while independent work and conversation continue.
 - Owner decisions can stay in the native app instead of also appearing in Discord DMs.
 - Simple chats start with less context and load more instructions and tools as needed. Actual response time still depends on the provider.
@@ -24,6 +25,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - PR106: literal greeting fast path, Jev-directed context profiles, scoped progressive tools/skills/history, first-visible-reply timing and durable tool activity IDs.
 - PR108: support updates default to reply and final resolution notices always post new messages. The support MCP release must be active before this agent.
 - PR109: reject explicit routine permission questions before creating a decision or app choice panel; support KEIR_OWNER_DECISION_CHANNEL=app; require confirmed reply delivery before marking answered; instruct all app context paths to continue authorized independent work around blockers.
+- PR111: keep developer finish summaries out of tickets, reject internal decision handoffs and diagnostic shorthand, and support trusted closure holds that permit investigation and player replies.
 - Exact action approval, provenance, financial repair and executor-attestation fences remain enforced. This release does not implement heal executor attestation.
 - Hosted checks passed for each merged change, including the iPhone simulator for PR106. Targeted delivery, approval, interaction, context and operator regressions passed. Release packaging reruns the agent suite.
 

@@ -78,6 +78,10 @@ function createSupportOwner({ ledger, now = () => Date.now() }) {
       if (superseded.length) ledger.audit("approvals_superseded_by_handoff", { handoff: handoff.id, ticket: n, actions: superseded });
       const job = ensureTicketJob(Number(n));
       if (!job) continue;
+      // Only the trusted admin handoff may set or release this hold. It
+      // fences closure without withholding investigation or player replies.
+      if (h.holdClosure === true) job.ownerClosureHold = { handoffId: handoff.id, at: now() };
+      else if (h.holdClosure === false) delete job.ownerClosureHold;
       // An explicit handoff transfers the ticket back to Keir. Old claim
       // messages must not reclaim it when history is read on the next run.
       if (job.channelId) {
