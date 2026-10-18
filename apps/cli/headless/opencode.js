@@ -7,7 +7,8 @@ const { spawnBounded } = require("./providers");
 const host = require("./host");
 
 function engineConfig({ model, briefPath, tools, url, maxTurns, providerConfig, toolsMode, effort }) {
-  const permissions = toolsMode === "native"
+  // Hybrid keeps OpenCode's own workspace tools (confined by the caller) and adds the Keir MCP for effects.
+  const permissions = toolsMode === "native" || toolsMode === "hybrid"
     ? [{ action: "*", resource: "*", effect: "allow" }, ...["subagent", "webfetch", "websearch", "question"].map(action => ({ action, resource: "*", effect: "deny" }))]
     : [{ action: "*", resource: "*", effect: "deny" }, ...tools.map(t => ({ action: `keir_${t.name}`, resource: "*", effect: "allow" }))];
   const providers = {};

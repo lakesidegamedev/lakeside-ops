@@ -20,7 +20,7 @@ function validate(request) {
   if (!Array.isArray(request.tools) || request.tools.some(t => typeof t.name !== "string")) throw new Error("Invalid CLI tool grant");
   if (request.viaRust && ["ollama", "deepseek", "opencode"].includes(request.runner)) throw new Error("Selected route has no Rust provider adapter");
   if (request.toolsMode && !["broker", "native", "hybrid"].includes(request.toolsMode)) throw new Error("Invalid tool mode");
-  if (request.toolsMode === "hybrid" && request.runner !== "claude") throw new Error("Hybrid tools are only adapted for the claude runner");
+  if (request.toolsMode === "hybrid" && !["claude", "ollama", "deepseek", "opencode"].includes(request.runner)) throw new Error("Hybrid tools are only adapted for the claude and OpenCode runners");
   if (request.toolsMode === "native" || request.toolsMode === "hybrid") {
     if (!request.worktree || !request.repo || !fs.existsSync(path.join(request.worktree, ".git"))) throw new Error("Native tools need an explicit registered worktree");
     const registered = require("node:child_process").execFileSync("git", ["-C", request.repo, "worktree", "list", "--porcelain"], { encoding: "utf8" });
