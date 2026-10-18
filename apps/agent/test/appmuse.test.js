@@ -177,6 +177,7 @@ test("tool starts change the live chat version and completed activity stays atta
   app.deliver("channel-reply:activity", { content: "The game is running." }, job);
   const reply = app.view().messages.at(-1);
   assert.equal(reply.activity[0].id, id); assert.equal(reply.activity[0].title, "Check game status");
+  assert.ok(job.firstReplyAt); assert.ok(ledger.data.audit.some(row => row.kind === "chat_delivery" && row.job === job.id));
   assert.equal(app.view().tasks[0].live.length, 0, "completed calls appear in the reply only");
   app.deliver("channel-reply:activity-followup", { content: "Anything else?" }, job);
   assert.equal(app.view().messages.at(-1).activity, undefined);

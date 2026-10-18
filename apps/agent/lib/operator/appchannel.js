@@ -143,6 +143,13 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     const chart = entry.chart && entry.files?.[0] && /^chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(path.basename(entry.files[0].path)) ? path.basename(entry.files[0].path) : undefined;
     const cards = agent()?.cardsFor(job) || [];
     const voiceRoot = rootOf(job)?.voiceMode ? rootOf(job) : job.voiceMode ? job : null;
+    if (!job.firstReplyAt && /^(channel-reply|finish):/.test(key) && entry.voiceProgress !== true) {
+      job.firstReplyAt = now();
+      const root = require("./appcontrols").rootOf(d, job) || job;
+      const firstReplyMs = Math.max(0, now() - (root.at || job.at || now()));
+      if (job.contextBudget) job.contextBudget.firstReplyMs = firstReplyMs;
+      ledger.audit("chat_delivery", { job: job.id, firstReplyMs, queueMs: Math.max(0, now() - (entry.at || now())) });
+    }
     const activity = require("./toolactivity").forReply(job);
     const message = append(d, { role: "keir", text, ...(activity.length ? { activity } : {}), ...(entry.voiceProgress === true ? { voiceProgress: true } : {}), jobId: voiceRoot?.id || job.id, ...(voiceRoot && voiceRoot.id !== job.id ? { taskId: job.id } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}), ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), thread: appThread(job), ...(job.appWatch ? { watch: job.appWatch } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}) }, now());
     record(message);
