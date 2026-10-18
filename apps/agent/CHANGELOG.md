@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.20 (2026-10-18)
+
 ### For users
 
 - Asking Keir whether the game can do something now gets an answer checked against the code. If the system does not exist yet, Keir offers to build it, or says who already is.
