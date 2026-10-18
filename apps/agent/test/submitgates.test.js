@@ -25,3 +25,13 @@ test("one review pass, then acceptance; no gates means no checks", () => {
   assert.equal(g.check({ job: {} }, { reply: "x".repeat(900) }), null);
   assert.equal(g.check(session(), { other: 1 }), null);
 });
+
+test("effect guard refuses asserted approvals and effect scripts, allows reads and tests", () => {
+  assert.match(g.effectRefusal("cd repo && node actions.cjs relink --approved-by Egg; echo $?"), /Refused/);
+  assert.match(g.effectRefusal("node scripts/refund.cjs 350000"), /Refused/);
+  assert.match(g.effectRefusal("python3 tool.py --override"), /Refused/);
+  assert.equal(g.effectRefusal("cd repo && node actions.cjs status"), null);
+  assert.equal(g.effectRefusal("cd repo && grep -rn relink . && cat actions.cjs"), null);
+  assert.equal(g.effectRefusal("cd repo && node --test refund.test.cjs"), null);
+  assert.equal(g.effectRefusal("node actions.cjs relink --dry-run"), null);
+});

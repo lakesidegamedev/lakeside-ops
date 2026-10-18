@@ -66,4 +66,20 @@ function remember(session, text) {
   session.evidence = ((session.evidence || "") + "\n" + text).slice(-1000000);
 }
 
-module.exports = { check, remember, copyProblems, unproven, numbers, REVIEW };
+// Effect guard: a shell command may read, build and test, but it may not take an
+// effect on a claimed approval. Approvals are receipts the broker records, never
+// arguments a command asserts.
+const ASSERTS_APPROVAL = /--(?:approved[-_]?by|approver|override|as[-_]owner|force|skip[-_][\w-]+)\b/i;
+const EXEC = /^(?:\S*\/)?(?:node|bash|sh|python3?|npx|npm run)\s+(?!--test\b)\S+/;
+const EFFECT = /\b(?:relink|transfer|refund|payout|credit|grant|approve|delete|withdraw|reassign)\b/i;
+const SAFE = /--dry-run\b|\bstatus\b|--help\b/i;
+function effectRefusal(command) {
+  for (const segment of String(command).split(/&&|\|\||;|\|/).map((s) => s.trim().replace(/^cd\s+\S+\s*$/, ""))) {
+    if (!segment) continue;
+    if (ASSERTS_APPROVAL.test(segment) || (EXEC.test(segment) && EFFECT.test(segment) && !SAFE.test(segment)))
+      return `Refused before running: "${segment.slice(0, 120)}" would take an effect or assert an approval. A command cannot grant approval; only a verified receipt can. Do not try it to see what happens. Report what the action requires and request the approval instead.`;
+  }
+  return null;
+}
+
+module.exports = { check, remember, copyProblems, unproven, numbers, effectRefusal, REVIEW };
