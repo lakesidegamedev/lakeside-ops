@@ -27,7 +27,7 @@ const SOURCES = /^Biography sources/;
 // through call_tool; the completion tools and the everyday reads stay direct.
 const RARE_TOOLS = ["request_heal", "open_suggestion", "chart", "support_directive", "open_ticket", "sentry", "present_choices", "computer", "idea_suggest",
   "feed_post", "merge_into_incident", "merge_related", "artifact_save", "review_fix", "request_action", "execute_action", "view_page", "discord_search",
-  "watch_turn", "goal_update", "task_plan", "local_file", "past_ticket", "similar_reports", "open_channel", "player_note",
+  "watch_turn", "goal_update", "task_plan", "local_file", "past_ticket", "similar_reports", "open_channel", "add_to_ticket", "player_note",
   "owner_updates", "support_updates", "operator_roles", "task_progress"];
 
 // One paragraph per skill: the rule that must always apply. The full text loads

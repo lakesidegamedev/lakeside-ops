@@ -111,7 +111,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
 const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"]);
-const QUICK_TOOLS = ["chart", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
+const QUICK_TOOLS = ["chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -193,6 +193,10 @@ function createMcp(configFile, readToken) {
     if (parsed.ok === false) throw new Error(redactSecrets(JSON.stringify(parsed).slice(0, 2000)));
     const images = (r.content || []).filter((c) => c.type === "image" && /^image\/(png|jpeg|webp|gif)$/.test(c.mimeType || "") && c.data?.length <= 5600000).slice(0, 2);
     if (images.length) parsed._images = images.map((c) => ({ type: "base64", media_type: c.mimeType, data: c.data }));
+    // A form report whose body is only the platform line is described by its
+    // title; Keir told 1584 and 1586 their reports had no text.
+    if (t === "support_get" && parsed.title && !String(parsed.description || "").replace(/^Platform:[^\n]*\n*/i, "").trim())
+      parsed.reportNote = `The player's report is its title: "${String(parsed.title).slice(0, 300)}". Do not tell them it has no description.`;
     return parsed;
   } };
 }
@@ -1951,6 +1955,42 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Check the staging Railway deploy, then promote to main." : "Check the production Railway deploy is live and tell the requester.") : result.nextMove };
       }
       throw new Error("action must be status, merge or promote");
+    }
+    // Owner, 2026-10-19 (incident 1628): "Add enigma here" got "I can't add
+    // people to this channel myself". A developer can now have Keir add a
+    // player to a ticket or incident channel by name.
+    if (name === "add_to_ticket") {
+      const staffAsk = [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && job.role !== "player";
+      if (!developerTask(job) && !(job.kind === "conversation" && staffAsk)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
+      const ticketNo = Number(input.ticket) || ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
+      if (!ticketNo) throw new Error("name the ticket number to add them to");
+      const channelId = (job.channelId && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
+        : d.jobs[d.seen[`ticket:${ticketNo}`]]?.channelId;
+      const ch = channelId && await discord("GET", `/channels/${channelId}`);
+      if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== ticketNo) throw new Error(`no open channel found for ticket ${ticketNo}`);
+      const raw = String(input.user || "").trim();
+      const id = /^<@!?(\d{17,20})>$/.exec(raw)?.[1] || (/^\d{17,20}$/.test(raw) ? raw : null);
+      let member;
+      if (id) member = await discord("GET", `/guilds/${config.guildId}/members/${id}`);
+      else {
+        const q = raw.replace(/^@/, "");
+        if (q.length < 2) throw new Error("give the player's Discord name");
+        const found = await discord("GET", `/guilds/${config.guildId}/members/search?query=${encodeURIComponent(q)}&limit=10`) || [];
+        const names = (m) => [m.user?.username, m.user?.global_name, m.nick].filter(Boolean).map((x) => x.toLowerCase());
+        const exact = found.filter((m) => names(m).includes(q.toLowerCase()));
+        const pick = exact.length === 1 ? exact : found.length === 1 ? found : exact.length ? exact : found;
+        if (pick.length !== 1) throw new Error(pick.length ? `several members match "${q}": ${pick.slice(0, 6).map((m) => `${m.user.username}${m.user.global_name ? ` (${m.user.global_name})` : ""}`).join(", ")}. Ask which one.` : `no server member matches "${q}"`);
+        member = pick[0];
+      }
+      const uid = member?.user?.id; if (!uid) throw new Error("that member could not be found");
+      if (member.user.bot) throw new Error("bots are not added to tickets");
+      const allow = String((1n << 10n) | (1n << 11n) | (1n << 16n) | (1n << 15n));
+      await effect(job, `add-to-ticket:${ticketNo}:${uid}`, async () => {
+        await discord("PUT", `/channels/${channelId}/permissions/${uid}`, { type: 1, allow, deny: "0" });
+        return discord("POST", `/channels/${channelId}/messages`, { content: `<@${uid}> has been added to this ticket.`, allowed_mentions: { users: [uid] } });
+      });
+      ledger.audit("added_to_ticket", { job: job.id, ticket: ticketNo, user: uid, by: job.actorId }); ledger.save();
+      return { added: member.user.username, ticket: ticketNo };
     }
     if (name === "open_channel") {
       if (!developerTask(job) || !job.replyChannel) throw new Error("only a developer's channel task can open a channel to players");
