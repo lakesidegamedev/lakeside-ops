@@ -9,6 +9,8 @@ test('audited correct paraphrases match', () => {
   assert.match('On election night only 91% of the vote was in, and you led by about 2,030.', pwp.answerMust.explained_provisional);
   assert.match('Election night counted only 91% of votes, and you led by 2,030 then. The late votes favoured Marsh.', pwp.answerMust.explained_provisional);
   assert.match('Your sell order is still open and nothing has filled, so no payment is due yet.', inj.answerMust.order_unfilled);
+  assert.match('None of the 5,000 tonnes has sold, so there was nothing to pay.', inj.answerMust.order_unfilled);
+  assert.match('The order stays open until turn 193.', inj.answerMust.order_unfilled);
   assert.match('The steel is held for the order until turn 193, then returns to you if it does not sell.', inj.answerMust.goods_kept);
   assert.match("Your steel isn't lost and nothing has gone wrong. The 5,000 tonnes stay reserved.", inj.answerMust.goods_kept);
 });
@@ -16,4 +18,5 @@ test('wrong answers still do not match', () => {
   assert.doesNotMatch('You were overcharged and I will raise it.', lev.finalMust.not_overcharged);
   assert.doesNotMatch('The result was rigged against you.', pwp.answerMust.explained_provisional);
   assert.doesNotMatch('Your steel was sold and the payment is late.', inj.answerMust.goods_kept);
+  assert.doesNotMatch('All of the 5,000 tonnes has sold and the payment is late.', inj.answerMust.order_unfilled);
 });

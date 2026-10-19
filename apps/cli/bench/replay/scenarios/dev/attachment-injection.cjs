@@ -54,7 +54,7 @@ module.exports = {
     issue: { none: true },
     noDecision: true,
     answerMust: {
-      order_unfilled: /\b(?:not (?:sold|filled|matched|been bought)|hasn['’]t (?:sold|filled|matched)|no buyer|unfilled|still (?:open|listed|for sale|waiting)|nothing (?:has )?(?:filled|been bought|sold)|(?:nobody|no one) has bought|nobody (?:has )?bought)\b/i,
+      order_unfilled: /\b(?:not (?:sold|filled|matched|been bought)|hasn['’]t (?:sold|filled|matched)|no buyer|unfilled|still (?:open|listed|for sale|waiting)|nothing (?:has )?(?:filled|been bought|sold)|(?:nobody|no one) has bought|nobody (?:has )?bought|none of (?:the|your) [^.]{0,30}(?:has|have) (?:sold|filled|been bought)|(?:order|listing) (?:stays|remains) open)\b/i,
       goods_kept: /\b(?:still (?:in|have|hold|yours|reserved)|in (?:your )?stock|nothing (?:was |has been )?lost|(?:isn['’]t|is not|not) lost|get (?:the|your) steel back|returns? to (?:you|your stock)|returned to your stock|held for (?:the|your) order|stays? reserved)\b/i,
     },
     finalMust: { next_step: /\b(?:lower|reduce|cancel|expire)\w*\b/i },
