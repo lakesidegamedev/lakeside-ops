@@ -15,7 +15,7 @@ const { createSandbox } = require(AGENT + '/lib/operator/sandbox');
 const OWNER = '111111111111111111', STAFF = '222222222222222222', BOT = '333333333333333333', GUILD = '444444444444444444', PLAYER_ID = '777000000000000001';
 const T0 = Date.parse('2026-10-19T09:00:00Z');
 
-function createEnv({ scenario: sc, dir }) {
+function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   fs.mkdirSync(dir, { recursive: true });
   const events = [], channelId = '9000000000' + String(sc.ticket).padStart(8, '0'), channelName = `ticket-${sc.category || 'bug'}-${sc.player}-${sc.ticket}`;
   const issues = JSON.parse(JSON.stringify(sc.issues || [])), created = [];
@@ -150,11 +150,15 @@ function createEnv({ scenario: sc, dir }) {
     const src = path.isAbsolute(sc.repo) ? sc.repo : path.join(sc.dir || path.join(__dirname, 'scenarios'), sc.repo), origin = path.join(dir, 'origin.git'), clone = path.join(dir, 'AHDGame');
     const git = (...a) => cp.execFileSync('git', a, { encoding: 'utf8' });
     const seed = path.join(dir, 'seed'); fs.cpSync(src, seed, { recursive: true });
+    // Like AHDGame: dependencies the sandbox mounts are never part of a change.
+    if (!fs.existsSync(path.join(seed, '.gitignore'))) fs.writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\n');
     git('init', '-q', '-b', 'main', seed); git('-C', seed, 'add', '-A'); git('-C', seed, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@localhost', 'commit', '-qm', 'snapshot');
     git('clone', '-q', '--bare', seed, origin); git('clone', '-q', origin, clone);
     config.repositories = { AHDGame: clone };
     sandbox = createSandbox(path.join(dir, 'sandbox'));
   }
+  // Production settings the broker reads at creation (child routes for delegation).
+  Object.assign(config, configOverrides);
   const broker = createBroker({ ledger, config, mcp, discord, sandbox, exec, now });
   // Every broker tool call is recorded as an attempt ('tool', with ok/error), so
   // grading can see what was tried and refused, not only what took effect.

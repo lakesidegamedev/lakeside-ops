@@ -10,7 +10,9 @@ const AGENT = path.resolve(__dirname, '../../../agent');
 const { createAgent } = require(AGENT + '/lib/operator/agent');
 const { createEnv } = require('./env.cjs');
 
-const MAX_ACTIVATIONS = 3, ACTIVATION_MS = 240000;
+// Production limits (/etc/keir-operator.env on 2026-10-19): 36 tool rounds, a
+// 15-minute activation, coding and investigation children on cursor:auto.
+const MAX_ACTIVATIONS = 6, ACTIVATION_MS = 15 * 60000, MAX_ROUNDS = 36, CHILD_ROUTE = process.env.KEIR_REPLAY_CHILD_ROUTE || 'cursor:auto@automatic';
 // Arms are production configurations; only these fields differ.
 const ARMS = {
   full: { leanContext: false, effectGuard: true },          // live since 2026-10-19 (KEIR_LEAN_CONTEXT=0)
@@ -30,10 +32,10 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
   if (fs.existsSync(cell + '/result.json')) return JSON.parse(fs.readFileSync(cell + '/result.json'));
   fs.rmSync(cell, { recursive: true, force: true }); fs.mkdirSync(cell, { recursive: true });
   const sc = loadScenario(setDir, scenarioId);
-  const env = createEnv({ scenario: sc, dir: cell });
+  const env = createEnv({ scenario: sc, dir: cell, configOverrides: { codingProvider: CHILD_ROUTE, investigatorProvider: CHILD_ROUTE } });
   const usageFile = path.join(cell, 'usage.jsonl');
   const config = { ...env.config, ...ARMS[armName], briefFile: path.join(AGENT, 'KEIR.md'), coreBriefFile: path.join(AGENT, 'KEIR-CORE.md'), model: route.split(':')[1]?.split('@')[0],
-    workerProvider: route, quickProvider: route, visionProvider: route, maxRounds: 24, maxTurnMs: ACTIVATION_MS, quickMaxTurnMs: ACTIVATION_MS, skills: true, dynamicEffort: false,
+    workerProvider: route, quickProvider: route, visionProvider: route, maxRounds: MAX_ROUNDS, maxTurnMs: ACTIVATION_MS, codingProvider: CHILD_ROUTE, investigatorProvider: CHILD_ROUTE, quickMaxTurnMs: ACTIVATION_MS, skills: true, dynamicEffort: false,
     rustRunnerLanes: [], usageFile, tagIntake: async () => null };
   const agent = createAgent({ ledger: env.ledger, broker: env.broker, config });
   const result = { key, set: setDir, scenario: scenarioId, route, arm: armName, rep, startedAt: new Date().toISOString(), activations: [] };
@@ -46,6 +48,19 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
       let error = null;
       try { await agent.run(job, ctl.signal); } catch (e) { error = String(e.message).slice(0, 500); } finally { clearTimeout(timer); }
       result.activations.push({ i, wallMs: Date.now() - t0, state: job.state, waitingFor: job.waitingFor || null, error, summary: String(job.summary || '').slice(0, 400) });
+      // The operator's lanes run delegated children; a finished child wakes the parent (delegation.complete).
+      for (let round = 0; round < 3; round++) {
+        const children = Object.values(env.ledger.data.jobs).filter((c) => c.codingParent === job.id && ['queued', 'running'].includes(c.state));
+        if (!children.length) break;
+        for (const child of children) {
+          child.state = 'running'; delete child.wakeAt;
+          const c0 = Date.now(), cc = new AbortController(), ct = setTimeout(() => cc.abort(), ACTIVATION_MS + 60000);
+          let cerr = null;
+          try { await agent.run(child, cc.signal); } catch (e) { cerr = String(e.message).slice(0, 300); } finally { clearTimeout(ct); }
+          (result.children ||= []).push({ parentActivation: i, id: child.id, investigation: Boolean(child.investigation), wallMs: Date.now() - c0, state: child.state, error: cerr });
+        }
+      }
+      if (job.state === 'queued' && i + 1 < MAX_ACTIVATIONS) continue; // woken by a finished child
       // A scripted follow-up: the player writes again after this activation
       // whatever was asked (the gateway wakes the ticket on any new message).
       const follow = (sc.followUps || []).find((f) => f.after === i);
@@ -61,9 +76,12 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
   const usage = fs.existsSync(usageFile) ? fs.readFileSync(usageFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
   // A provider that reports no usage (cursor) is unknown, never zero.
   const tok = (u) => { const t = u.tokens || {}, v = [t.input, t.output, t.cacheRead, t.cacheWrite]; return v.every((x) => x == null) ? null : v.reduce((n, x) => n + (x || 0), 0); };
-  result.usage = usage.map((u) => ({ model: u.model, outcome: u.outcome, durationMs: u.durationMs, tokens: u.tokens, contextBudget: u.contextBudget }));
+  result.usage = usage.map((u) => ({ job: u.job, model: u.model, outcome: u.outcome, durationMs: u.durationMs, tokens: u.tokens, contextBudget: u.contextBudget }));
   result.tokens = usage.length && usage.every((u) => tok(u) !== null) ? usage.reduce((n, u) => n + tok(u), 0) : null;
-  result.wallMs = result.activations.reduce((n, a) => n + a.wallMs, 0);
+  // The ticket task's own activations, separately from children (whose usage may be unknown).
+  const own = usage.filter((u) => u.job === job.id);
+  result.parentTokens = own.length && own.every((u) => tok(u) !== null) ? own.reduce((n, u) => n + tok(u), 0) : null;
+  result.wallMs = result.activations.reduce((n, a) => n + a.wallMs, 0) + (result.children || []).reduce((n, c) => n + c.wallMs, 0);
   result.finalState = job.state;
   result.blockedHostActions = require('./guard.cjs').blocked.length;
   fs.writeFileSync(cell + '/events.json', JSON.stringify(env.events, null, 2));
