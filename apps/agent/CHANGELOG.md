@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.26 (2026-10-19)
+
 ### For developers
 
 - An investigator delegated by a ticket task reads that ticket and its reporter's history, as the ticket task can; any other ticket or player is still refused. Investigators were told to read live game state and then refused it for want of an assigned ticket, so they finished blocked.
