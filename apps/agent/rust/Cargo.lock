@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "harness-core"
-version = "5.9.2"
+version = "5.9.3"
 dependencies = [
  "chrono",
  "regex",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "harness-runner"
-version = "5.9.2"
+version = "5.9.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "harness-store"
-version = "5.9.2"
+version = "5.9.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "keir-shadow-rs"
-version = "5.9.2"
+version = "5.9.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -952,7 +952,7 @@ dependencies = [
 
 [[package]]
 name = "lakeside"
-version = "5.9.2"
+version = "5.9.3"
 dependencies = [
  "anyhow",
  "chrono",

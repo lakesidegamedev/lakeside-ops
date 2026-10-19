@@ -55,16 +55,25 @@ test("saved receipts remain readable and consumption does not copy consent or li
   assert.equal(f.calls(), 0);
 });
 
-for (const mode of ["staff", "paused", "category", "action", "uncertain", "player-wait"]) test(`saved held receipt retains ${mode} fence`, t => {
+for (const mode of ["staff", "paused", "category", "action", "uncertain"]) test(`saved held receipt retains ${mode} fence`, t => {
   const f = fixture(t); delete f.ledger.data.channels.channel.claimedBy;
   if (mode === "staff") f.ledger.data.channels.channel.claimedBy = "staff";
   if (mode === "paused") f.ledger.data.paused = true;
   if (mode === "category") f.ledger.data.channels.channel.category = "moderation";
   if (mode === "action") f.ledger.data.actions.a = { jobId: f.job.id, state: "pending" };
   if (mode === "uncertain") f.job.effects.write = { state: "started" };
-  if (mode === "player-wait") f.job.waitingFor = { kind: "player_reply" };
   f.broker.supportDirectiveTick();
   assert.equal(f.job.state, "waiting"); assert.equal(f.receipt.outcome, "held"); assert.ok(f.receipt.remainingBlockers.length);
+});
+
+// 2026-10-19: an owner "close it" sat held for 2.5 hours on 1615 and 1622
+// behind Keir's own closure grace and player wait.
+for (const mode of ["player-wait", "closure-grace"]) test(`a held directive is released through Keir's own ${mode}`, t => {
+  const f = fixture(t); delete f.ledger.data.channels.channel.claimedBy;
+  if (mode === "player-wait") f.job.waitingFor = { kind: "player_reply" };
+  if (mode === "closure-grace") f.job.resolutionReadyAt = 1;
+  f.broker.supportDirectiveTick();
+  assert.equal(f.job.state, "queued"); assert.equal(f.receipt.outcome, "woken"); assert.equal(f.job.waitingFor, undefined);
 });
 
 test("saved held directive wakes once after an existing hold clears and keeps exact approvals", t => {

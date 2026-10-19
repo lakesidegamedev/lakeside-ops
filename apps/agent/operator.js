@@ -641,6 +641,20 @@ function legacyHandoff() {
   } catch (e) { if (e.code !== "ENOENT") log("legacy handoff: " + e.message); }
 }
 
+// Independent of Keir's own flags: a person's message in a ticket that nobody
+// has read for 30 minutes pages the owner once per stall with the hold that is
+// keeping it, so an unknown stall is seen in half an hour, not hours later
+// (2026-10-19: an owner "close it" sat 2.5 hours behind a held directive).
+function unreadWatchdog(d, now, staffHeld) {
+  for (const j of Object.values(d.jobs)) {
+    if (j.kind !== "ticket" || ["done", "cancelled", "dismissed", "running"].includes(j.state) || j.channelClosed) continue;
+    const oldest = (j.inbox || []).filter((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup|turn-watch)$/.test(String(m.authorId || ""))).map((m) => Date.parse(m.at || m.timestamp || "")).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    if (!oldest || now - oldest < 30 * 60000) continue;
+    const why = broker.supportDirectiveHeld(j) ? "an owner directive is held" : d.channels[j.channelId]?.claimedBy ? "staff claimed it" : config.supportDeferred(j) ? "another coordinator owns support" : staffHeld(j) ? "staff are active in it" : j.ownerDecisionPending ? "an owner decision is pending" : `it is ${j.state}`;
+    ledger.notify(`unread:${j.id}:${oldest}`, "owner", `Ticket ${j.ticket}: a message has been unread for ${Math.round((now - oldest) / 60000)} minutes because ${why}.`);
+  }
+}
+
 function drain() {
   if (stopping) return;
   const d = ledger.data;
@@ -699,6 +713,7 @@ function drain() {
   // Keir 3.0 admission: reserved conversation and owner capacity, aging so
   // nothing starves, one attempt per work record, support preference, and
   // the holds above (support ownership, staff claims, owner decisions).
+  unreadWatchdog(d, now, staffHeld);
   const picks = pickForLanes(Object.values(d.jobs).filter((j) => !broker.supportDirectiveHeld(j)), active, { now,
     supportDeferred: (j) => config.supportDeferred(j) || config.engineeringEnabled && j.kind === "finding" && !j.operatorRole && Object.values(d.watch?.findings || {}).some((f) => f.jobId === j.id && !f.correlatedWith), claimedBy: (channelId) => d.channels[channelId]?.claimedBy });
   for (const { lane, job } of picks) {

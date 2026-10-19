@@ -5,6 +5,13 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.3 (2026-10-19)
+
+### For developers
+
+- Owner and staff directives are no longer held behind Keir's own closure grace or `player_reply` wait. A held directive also kept its ticket out of scheduling: on 1615 and 1622 an owner "close it" sat for 2.5 hours.
+- `unreadWatchdog`: a person's message in a ticket that is unread for 30 minutes pages the owner once per stall, naming the hold that keeps it.
+
 ## 5.9.2 (2026-10-19)
 
 ### For users
