@@ -1315,10 +1315,26 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (PLAYER_PRIVATE.has(input.tool)) {
           if (!job.ticket) throw new Error("player history reads need an assigned ticket");
           await reporterOf(job, signal);
+          // Models name the reporter loosely (sequentialId, characterId, id, name)
+          // or not at all; the only readable character is the reporter, so map
+          // the aliases to character and default to the reporter. A different
+          // character is still refused below (2026-10-19 replay benchmark: 44
+          // refused reads in 18 dev runs, all argument shape, none another player).
+          if (args.character === undefined) {
+            const alias = ["sequentialId", "characterId", "name"].find((k) => args[k] !== undefined) ?? (input.tool === "trace_character" && args.id !== undefined ? "id" : null);
+            if (alias) { args.character = args[alias]; delete args[alias]; }
+            else if (job.reporterCharacter?.id) args.character = String(job.reporterCharacter.id);
+          }
+          if (args.ticket !== undefined && Number(args.ticket) === job.ticket) delete args.ticket;
           const want = String(args.character || "").trim().toLowerCase(), r = job.reporterCharacter;
           if (!want || !((r.id && want === String(r.id)) || (r.name && want === r.name.toLowerCase()))) throw new Error(`player history is limited to this ticket's reporter (${r.name || "unknown"}${r.id ? `, id ${r.id}` : ""})`);
         }
         if (input.tool === "support_get") {
+          // The assigned ticket is the only readable one: fill it in when omitted.
+          if (args.number === undefined && args.ticket !== undefined) args.number = Number(args.ticket);
+          delete args.ticket;
+          if (args.number === undefined && job.ticket) args.number = job.ticket;
+          if (args.kind === undefined || args.kind === "bug") args.kind = "ticket";
           if (!job.ticket || args.kind !== "ticket" || args.number !== job.ticket) throw new Error("read the assigned ticket only");
         } else if (input.server === "support") {
           // Intake needs summaries for deduplication, never other players' transcripts.

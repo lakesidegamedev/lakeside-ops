@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- Reporter-scoped player history reads (`trace_character`, `trace_account`, `character_balance_sheet`, `character_wealth_history`) accept the reporter under the names models use (`sequentialId`, `characterId`, `name`, `id` for trace_character) and default to the reporter when omitted; `support_get` defaults to the assigned ticket. Another player or ticket is still refused. The replay benchmark found 44 refused reads in 18 dev runs, every one argument shape, none another player.
+
 ## 5.8.24 (2026-10-19)
 
 ### For users

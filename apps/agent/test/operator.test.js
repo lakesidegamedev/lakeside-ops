@@ -166,6 +166,23 @@ test("while the owner decides, a support update gets the same one notice as chan
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Still waiting on the developers for their decision." } }), /one notice/);
 });
 
+test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  const seen = [];
+  const orig = f.mcp.call;
+  f.mcp.call = async (server, tool, args, ...rest) => { seen.push([server, tool, args]); if (tool === "support_get") return { number: 123, reporter: { characterName: "Ada Reed", profileUrl: "https://www.ahousedividedgame.com/character/42" } }; if (server === "gamestate") return { ok: true }; return orig(server, tool, args, ...rest); };
+  await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: {} });
+  await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: { sequentialId: 42 } });
+  await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: { name: "Ada Reed", ticket: 123 } });
+  const history = seen.filter(([s, t]) => s === "gamestate" && t === "trace_character").map(([, , a]) => a);
+  assert.deepEqual(history.map((a) => String(a.character).toLowerCase()), ["42", "42", "ada reed"]);
+  assert.ok(history.every((a) => a.sequentialId === undefined && a.ticket === undefined));
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: { characterId: 77 } }), /limited to this ticket's reporter/);
+  await f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: {} });
+  assert.deepEqual(seen.filter(([, t]) => t === "support_get").at(-1)[2], { number: 123, kind: "ticket" });
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { number: 456 } }), /assigned ticket/);
+});
+
 test("support reads cannot access unrelated transcripts or general private knowledge", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123 });
   await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { kind: "ticket", number: 456 } }), /assigned ticket/);
