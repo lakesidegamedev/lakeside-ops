@@ -2425,12 +2425,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
-      // check asks once per card state, so a genuine wait still finishes.
+      // check asks once per set of idle fixes, so a genuine wait still finishes.
+      // Keyed on names only: re-noting or re-staging an item, as the refusal
+      // asks, re-armed it (replay 2026-10-19: 49 runs, median 3 refusals).
       if (state === "waiting" && job.kind === "ticket" && !job.codingParent && job.ticket) {
         const items = d.statusCards?.[job.ticket]?.items || [];
         const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !["done", "dismissed", "cancelled"].includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
         const idle = items.filter((i) => !["main", "confirmed"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
-        const key = hash(idle.map((i) => [i.name, i.stage, i.blocked, i.note]));
+        const key = hash(idle.map((i) => i.name).sort());
         if (idle.length && job.idleItemsReview !== key) {
           job.idleItemsReview = key; ledger.save();
           throw new Error(`Not finished: your progress card has ${idle.length} fix${idle.length > 1 ? "es" : ""} not moving: ${idle.map((i) => `"${i.name}" (${i.blocked ? "paused" : i.stage})`).join("; ")}. A wait on one answer does not pause the others. For each one, either advance it now (investigate it, delegate_fix it, or carry its PR forward; display-only fixes need no developer), or, if it genuinely waits on something, make its card note name exactly what. Then finish again.`);
