@@ -264,10 +264,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (d.paused || job.appPaused || !states.includes(job.state) || job.deadline < now()) throw new Error("task execution authority is inactive");
     require("./supporttakeover").assertCanAct(d, job);
   }
-  async function supportAuthority(job, states) {
+  async function supportAuthority(job, states, { decisionNotice = false } = {}) {
     active(job, states);
     if (config.supportDeferred(job)) throw new Error("another coordinator owns the active support shift");
-    if (job.ownerDecisionPending && job.role !== "owner") throw new Error("ticket is awaiting an owner decision; no automatic write or closure");
+    // A public update while the owner decides follows the same one-notice rule
+    // as channel_reply (guardTicketPost); every other support write still waits.
+    if (job.ownerDecisionPending && job.role !== "owner" && !decisionNotice) throw new Error("ticket is awaiting an owner decision; no automatic write or closure");
     if (!job.ticket) throw new Error("task has no assigned ticket");
     const channels = await discord("GET", `/guilds/${config.guildId}/channels`);
     const channel = channels.find((c) => c.id === job.channelId && c.name.endsWith(`-${job.ticket}`));
@@ -2107,7 +2109,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         input.tool = SUPPORT_WRITES.includes(want) ? want : SUPPORT_WRITES.includes(`support_${want}`) ? `support_${want}` : want; }
       if (!SUPPORT_WRITES.includes(input.tool)) throw new Error(`support write is outside standing permission: tool must be one of ${SUPPORT_WRITES.join(", ")}. To answer the player: tool "support_public_update", args {"message": "..."}.`);
 
-      const rows = await supportAuthority(job);
+      const rows = await supportAuthority(job, undefined, { decisionNotice: input.tool === "support_public_update" });
       if (input.tool === "support_resolve" && (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)) throw new Error("Ticket closure is held by an explicit owner follow-up. Continue investigating and communicating; do not resolve or close it.");
       const args = { ...(input.args || {}), number: job.ticket };
       if (input.tool !== "support_resolve") args.kind = "ticket";
