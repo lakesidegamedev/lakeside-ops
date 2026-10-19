@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.22 (2026-10-18)
+
 ### For users
 
 - When Keir prepares a fix for a reported bug, the report is always linked to the developers' issue for it first, so it reaches the developers working on that bug.
