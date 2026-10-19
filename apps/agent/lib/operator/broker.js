@@ -2274,6 +2274,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (job.repository === "AHDGame") {
         const ticketNo = ticketOf(job);
         const linked = Object.values(d.keirIssues || {}).filter((x) => x.state === "open" && ((ticketNo && (x.ticket === ticketNo || x.tickets?.includes(ticketNo))) || (job.issues || []).includes(x.number))).map((x) => x.number).filter((x) => !new RegExp(`#${x}\\b`).test(body));
+        // A ticket's fix carries its issue (2026-10-19 ticket bench: 2 in 5 runs
+        // published a patch without ever filing or linking one, so the report
+        // never reached the existing issue). raise_to_developers first; its
+        // duplicate check finds the open issue to add evidence to.
+        const anyIssue = Object.values(d.keirIssues || {}).some((x) => (ticketNo && (x.ticket === ticketNo || x.tickets?.includes(ticketNo))) || (job.issues || []).includes(x.number));
+        if (ticketNo && !anyIssue && !/#\d+/.test(body)) throw new Error("This ticket has no GitHub issue yet. File the bug, or add your evidence to the open issue that already covers it, with raise_to_developers (kind bug), then publish the patch; it will reference that issue.");
         // An explicit issue reference in the body means the author chose which
         // issues this PR fixes; otherwise it carries the ticket's open issues.
         const refs = /\b(?:refs?|fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#\d+/i.test(body) ? "" : issues.refsLine(linked);
