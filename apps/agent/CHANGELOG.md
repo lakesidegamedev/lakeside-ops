@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- An expired or unrefreshable model-provider login no longer blocks a task: it waits and retries every fifteen minutes for up to twelve hours. On start, tasks blocked only by a login failure, with nothing external in flight, resume. On 2026-10-19 an OAuth expiry blocked four tickets for hours.
+
 ## 5.8.27 (2026-10-19)
 
 ### For users

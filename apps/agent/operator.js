@@ -13,7 +13,7 @@ const { createSandbox } = require("./lib/operator/sandbox");
 const { createPresence } = require("./lib/operator/presence");
 const { createDiscord, createScanHealth } = require("./lib/operator/discord");
 const { createConversation, isQuick } = require("./lib/operator/conversation");
-const { recoverRejectedWrites, retryReadFailure } = require("./lib/operator/recovery");
+const { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure } = require("./lib/operator/recovery");
 const { LANES, emptyLanes, pickForLanes, laneTimeoutMs, laneClass } = require("./lib/operator/lanes");
 const { createSupportOwner } = require("./lib/operator/supportowner");
 const { createReopenedTickets } = require("./lib/operator/reopened");
@@ -107,6 +107,7 @@ const releaseId = (() => { try { return fs.readFileSync(path.join(__dirname, "RE
 const events = openSink(path.join(config.stateDir, "events.db"), { release: releaseId });
 attachSink(ledger, events);
 recoverRejectedWrites(ledger);
+recoverAuthBlocked(ledger);
 // Keir 3.0: support ownership is an explicit ledger fact. Work defers to the
 // legacy supervisor policy as before, and also to any other operator that
 // owns support, except tickets that operator has handed off.
