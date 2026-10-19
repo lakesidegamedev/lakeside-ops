@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.24 (2026-10-19)
+
 ### For users
 
 - When Keir passes a decision to the developers, the player still gets one message explaining where things stand, whichever way Keir posts it.
