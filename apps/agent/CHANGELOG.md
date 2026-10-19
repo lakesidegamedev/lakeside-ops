@@ -8,6 +8,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ### For developers
 
 - The idle-fix check on a waiting finish asks once per set of idle fixes. It was keyed on each item's stage and note, so re-noting an item as the refusal asks re-armed it: in replay traces 49 runs hit it, with a median of three refusals and about ten tool calls before the finish was accepted.
+- `evidence_batch` with workspace queries loads the AHDGame main snapshot when the task has none, instead of failing as "narrow the query". A sandbox failure now reports the sandbox's error; only real truncation asks to narrow. Replay traces showed 37 runs losing a round this way.
 
 ## 5.8.26 (2026-10-19)
 

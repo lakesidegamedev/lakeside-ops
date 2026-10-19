@@ -2197,6 +2197,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (name === "local_file") return require("./ownermuse-files").localFile(sandbox, job, input, signal);
     if (name === "evidence_batch") {
       if (isQuick(job) || job.role === "player") throw new Error("Evidence batches require an authenticated worker task");
+      // Workspace queries read /workspace/repo. Without a snapshot the batch
+      // failed as "narrow the query" (replay 2026-10-19: 37 runs); load main first.
+      if (!job.repositoryRef && (input.queries || []).some((q) => ["list", "read", "search"].includes(q?.op))) {
+        try { await tool(job, "repository_snapshot", { repository: "AHDGame", ref: "main" }, signal); }
+        catch (e) { throw new Error(`Workspace queries need a repository snapshot and loading one failed (${String(e.message).slice(0, 200)}). Call repository_snapshot first, or send only service queries.`); }
+      }
       return require("./workflow-evidence").createWorkflowEvidence({ sandbox, stateDir: config.stateDir, ledger, now,
         read: (task, args, scopeSignal) => tool(task, "read_tool", args, scopeSignal),
         readTools: (task, args, scopeSignal) => tool(task, "read_tools", args, scopeSignal),
