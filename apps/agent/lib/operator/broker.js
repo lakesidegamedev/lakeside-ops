@@ -285,7 +285,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     active(job);
     const old = job.effects[key];
     if (old?.state === "done") return old.result;
-    if (old && old.state !== "rejected") throw new Error("external action outcome is uncertain; owner inspection required");
+    // A merge receipt is settled from GitHub by effectrecovery.js; asking the
+    // owner to inspect it pinged them about a race that fixes itself (ticket 1619).
+    if (old && old.state !== "rejected") throw new Error(require("./effectrecovery").MERGE_KEY.test(key)
+      ? "This merge's outcome is being checked against GitHub automatically within ten minutes. Do not ask the owner about it: finish waiting with a wakeup of about ten minutes, then re-read the PR."
+      : "external action outcome is uncertain; owner inspection required");
     if (old?.state === "rejected" && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
     job.effects[key] = { state: "started", at: now() }; ledger.save();
     try {
@@ -296,6 +300,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return result;
     } catch (e) {
       job.effects[key].error = redactSecrets(e.message);
+      if (e.code === "GITHUB_MERGE_REFUSED") {
+        // GitHub answered with a definite refusal: nothing merged, and a later call may try again.
+        delete job.effects[key];
+        ledger.audit("effect_rejected", { job: job.id, key, reason: "github refused the merge; nothing merged" }); ledger.save();
+        throw e;
+      }
       if (["MCP_ARGUMENT_REJECTED", "EXTERNAL_WRITE_REFUSED"].includes(e.code)) {
         job.effects[key].state = "rejected";
         ledger.audit("effect_rejected", { job: job.id, key, reason: e.code === "EXTERNAL_WRITE_REFUSED" ? "remote access refused before execution" : "argument validation before execution" }); ledger.save();
@@ -1814,10 +1824,32 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         }
         const g = await gate(pr);
         if (!g.ready) return { number, merged: false, url: pr.html_url, ...g, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix, do not merge." : "Checks still running: finish waiting with a wakeup of about 10 minutes and call this again." };
-        const result = await effect(job, `merge:${number}:${pr.head.sha}`, () => api(["-X", "PUT", `repos/${repo}/pulls/${number}/merge`, "-f", `merge_method=${method}`, "-f", `sha=${pr.head.sha}`]));
+        const mergeOnce = () => api(["-X", "PUT", `repos/${repo}/pulls/${number}/merge`, "-f", `merge_method=${method}`, "-f", `sha=${pr.head.sha}`]);
+        // 405/409/422 are GitHub refusing the merge: nothing merged. "Base branch
+        // was modified" is a race with another merge landing first (ticket 1619
+        // asked the owner to inspect one); re-read and retry once on the same head.
+        const refused = (e) => /\(HTTP (?:405|409|422)\)/.test(String(e?.message || ""));
+        const result = await effect(job, `merge:${number}:${pr.head.sha}`, async () => {
+          try { return await mergeOnce(); } catch (first) {
+            if (!refused(first)) throw first;
+            let last = first;
+            await new Promise((r) => setTimeout(r, config.mergeRetryMs ?? 5000));
+            const latest = await api([`repos/${repo}/pulls/${number}`]);
+            if (latest?.merged && latest.head?.sha === pr.head.sha) return { merged: true, sha: latest.merge_commit_sha };
+            if (latest?.state === "open" && latest.head?.sha === pr.head.sha && /base branch was modified/i.test(first.message)) {
+              try { return await mergeOnce(); } catch (second) { if (!refused(second)) throw second; last = second; }
+            }
+            const error = new Error(`GitHub refused the merge and nothing merged (${redactSecrets(String(last.message)).slice(0, 200)}). Re-read the PR; once it is green and mergeable at the same head, call merge again under the same approval. This needs no owner inspection.`);
+            error.code = "GITHUB_MERGE_REFUSED"; throw error;
+          }
+        });
         if (scopedConsent && result?.merged) { scopedConsent.state = "done"; scopedConsent.completedAt = now(); ledger.save(); }
         if (method === "squash" && !scopedOwner) { try { await exec("/usr/bin/gh", ["api", "-X", "DELETE", `repos/${repo}/git/refs/heads/${pr.head.ref}`]); } catch {} }
-        return { number, merged: Boolean(result?.merged), sha: result?.sha, url: pr.html_url };
+        // Keir told the owner each promotion of an approved economy fix "needs its
+        // own approval" (ticket 1619). Chain consent (5.1) carries it; say so here.
+        const next = result?.merged && method === "squash" && expectBase === "development"
+          ? { nextMove: "Merged to development. Promote it with github promote to staging, then main. A promotion carrying only changes the owner already approved rides those approvals and asks nothing; never tell the owner each promotion needs its own approval." } : {};
+        return { number, merged: Boolean(result?.merged), sha: result?.sha, url: pr.html_url, ...next };
       }
       if (input.action === "status") {
         const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]);

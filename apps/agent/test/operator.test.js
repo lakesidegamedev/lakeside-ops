@@ -1066,6 +1066,40 @@ test("a ticket task still ships its own green non-economy fix", async () => {
   assert.equal(r.merged, true);
 });
 
+test("a base-branch race on merge retries once on the same head instead of asking the owner (ticket 1619)", async () => {
+  let attempts = 0;
+  const pr = { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "abc123", ref: "keir/x" }, html_url: "u" };
+  const f = githubFixture([[/pulls\/10\/files/, files("src/components/Shop.tsx")], [/pulls\/10\/merge/, () => { if (++attempts === 1) throw new Error("gh: Base branch was modified. Review and try the merge again. (HTTP 405)"); return { merged: true, sha: "m1" }; }], [/pulls\/10$/, () => pr], green, [/git\/refs/, {}]]);
+  f.config.mergeRetryMs = 0;
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  const r = await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  assert.equal(r.merged, true); assert.equal(attempts, 2);
+  assert.match(r.nextMove, /rides those approvals/);
+  assert.notEqual(j.state, "blocked");
+  assert.equal(Object.keys(f.ledger.notifications || {}).some((k) => k.startsWith("effect-error")), false);
+});
+
+test("a definite GitHub merge refusal clears the receipt so a later call can retry, with no owner inspection", async () => {
+  const pr = { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "abc123", ref: "keir/x" }, html_url: "u" };
+  let refuse = true;
+  const f = githubFixture([[/pulls\/10\/files/, files("src/components/Shop.tsx")], [/pulls\/10\/merge/, () => { if (refuse) throw new Error("gh: Pull Request is not mergeable (HTTP 405)"); return { merged: true, sha: "m1" }; }], [/pulls\/10$/, () => pr], green, [/git\/refs/, {}]]);
+  f.config.mergeRetryMs = 0;
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  await assert.rejects(f.broker.tool(j, "github", { action: "merge", number: 10 }), /nothing merged.*no owner inspection/);
+  assert.notEqual(j.state, "blocked");
+  assert.equal(j.effects["merge:10:abc123"], undefined);
+  refuse = false;
+  assert.equal((await f.broker.tool(j, "github", { action: "merge", number: 10 })).merged, true);
+});
+
+test("an unsettled merge receipt tells the model it settles itself, not to ask the owner", async () => {
+  const pr = { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ref: "keir/x" }, html_url: "u" };
+  const f = githubFixture([[/pulls\/10\/files/, files("src/components/Shop.tsx")], [/pulls\/10\/merge/, { merged: true }], [/pulls\/10$/, () => pr], green]);
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  j.effects["merge:10:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] = { state: "started", at: 1 };
+  await assert.rejects(f.broker.tool(j, "github", { action: "merge", number: 10 }), /checked against GitHub automatically.*Do not ask the owner/);
+});
+
 test("an owner task needs a separate explicit yes for an economy merge, bound to the PR head", async () => {
   let headSha = "aaa111";
   const f = githubFixture([[/pulls\/10\/files/, files("src/lib/market/governor.ts")], [/pulls\/10\/merge/, { merged: true, sha: "m1" }], [/pulls\/10$/, () => ({ number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: headSha, ref: "keir/x" }, html_url: "u" })], green, [/git\/refs/, {}]]);
