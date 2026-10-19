@@ -36,3 +36,11 @@ test("an owner-directed moderation ticket is no longer treated as moderation-onl
   assert.match(gw, /ownerDirectedAt: now\(\)/);
   assert.match(gw, /&& !d\.channels\[channel\.id\]\?\.ownerDirectedAt\) \{ d\.seen\[key\]/);
 });
+
+// Review 2026-10-19: a ticket held on an owner decision skipped the loop
+// before the conversation wake, so its player went unanswered for hours.
+test("a player message wakes a ticket held on an owner decision", () => {
+  const src = fs.readFileSync(path.join(__dirname, "../operator.js"), "utf8");
+  assert.match(src, /if \(j\.ownerDecisionPending && !\(j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\)\) \{/);
+  assert.match(src, /j\.ownerDecisionPending && j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\) \{ j\.state = "queued"; ledger\.audit\("requeued_for_conversation"/);
+});

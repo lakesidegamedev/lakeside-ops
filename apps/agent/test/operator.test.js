@@ -53,6 +53,22 @@ test("a player cannot approve actions or pause the operator through mentions or 
   assert.equal(f.ledger.data.actions.action.state, "pending"); assert.equal(f.ledger.data.paused, false);
 });
 
+// Review 2026-10-19: players merged into incident 1600 asked Keir directly
+// and waited about 21 hours, because incident chat was dropped unread.
+test("an incident ticket ignores chatter but answers a message that names Keir", () => {
+  const f = fixture(), g = createGateway(f);
+  const ch = { id: "777777777777777777", name: "ticket-incident-keir-1600", type: 0 };
+  f.ledger.data.channels[ch.id] = { category: "incident" };
+  const j = f.ledger.createJob("ticket:1600", { kind: "ticket", role: "support", ticket: 1600, channelId: ch.id, source: {} });
+  j.state = "cancelled";
+  g.ingest(ch, f.msg("my margins are still bad lol", "666666666666666670", "888888888888888888"));
+  assert.equal(f.ledger.data.seen["discord:666666666666666670"], "incident-ticket");
+  assert.equal(j.state, "cancelled");
+  g.ingest(ch, f.msg("@Keir look at the market cap history", "666666666666666671", "888888888888888888"));
+  assert.equal(j.state, "queued");
+  assert.match(j.inbox.at(-1).content, /market cap history/);
+});
+
 test("delegates have support authority; only the owner controls execution and approves", () => {
   const f = fixture(), g = createGateway(f);
   g.ingest(f.ch, f.msg("Keir investigate the broken page", undefined, f.config.staffIds[0]));
@@ -293,6 +309,17 @@ test("ticket closure waits for delivered answer and refuses a new unread player 
   const late = createBroker({ ...f, sandbox: {}, discord: async (method, route) => route.includes("/guilds/") ? f.discord(method, route) : [f.msg("Still broken", undefined, "888888888888888888")], now: () => 4000000 });
   j.observedPlayerAt = 0;
   await assert.rejects(late.tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }), /new player reply/);
+});
+
+// Review 2026-10-19: 1610 was resolved one minute after "live" and 1611 52
+// minutes after, before either player could see the fix.
+test("ticket closure waits after a fix goes live unless the player has replied since", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777", resolutionReadyAt: 1, lastPublishedAt: 1, observedPlayerAt: 1000 });
+  const at = (t) => createBroker({ ...f, sandbox: {}, now: () => t });
+  f.ledger.data.liveSaid = { 123: 3900000 };
+  await assert.rejects(at(4000000).tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }), /went live 2 minutes ago/);
+  await at(3900000 + 2 * 3600000 + 1).tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } });
+  assert.equal(j.resolutionSubmitted, true);
 });
 
 test("owner closure reuses the same ticket coordinator's verified final answer without bypassing grace or unread replies", async () => {

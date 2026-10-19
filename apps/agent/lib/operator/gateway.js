@@ -343,11 +343,17 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       if (d.channels[channel.id]?.claimedBy) return;
       // Moderation tickets belong to the moderators; Keir stays out of them.
       // Incidents are staff-owned catch-alls; merged players post there too.
+      // Anyone who names Keir in an incident gets an answer: players merged
+      // into incident 1600 asked Keir directly and waited about 21 hours.
       const cat = d.channels[channel.id]?.category;
-      if ((cat === "moderation" || cat === "incident") && !d.channels[channel.id]?.ownerDirectedAt) { d.seen[key] = `${cat}-ticket`; ledger.save(); return; }
+      const named = new RegExp(`\\b(?:keir|keith|starmer)\\b|<@!?${config.botId}>`, "i").test(s.content || "");
+      if ((cat === "moderation" || (cat === "incident" && !named)) && !d.channels[channel.id]?.ownerDirectedAt) { d.seen[key] = `${cat}-ticket`; ledger.save(); return; }
       const keyTicket = `ticket:${n}`;
       let job = d.jobs[d.seen[keyTicket]];
       if (!job) job = ledger.createJob(keyTicket, { kind: "ticket", role: "support", ticket: n, channelId: channel.id, source: s, deadline: now() + config.taskLifetimeMs });
+      // An incident job is cancelled on adoption (staff own it); a message
+      // naming Keir brings it back for that conversation.
+      if (job.state === "cancelled" && cat === "incident" && named && !job.channelClosed) { job.state = "queued"; ledger.audit("incident_named", { job: job.id, ticket: n }); }
       if (job.state === "cancelled" || job.channelClosed) return;
       // A finished ticket whose channel is still open is reopened when the player
       // writes again; before, their message was silently dropped.

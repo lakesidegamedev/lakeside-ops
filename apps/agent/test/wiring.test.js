@@ -294,6 +294,38 @@ test("the status card posts once, edits in place, needs receipts and survives de
   assert.match(calls.at(-1).body.embeds[0].description, /Release checks for the main server are running/);
 });
 
+// Review 2026-10-19: a card edit sends no notification, so players heard a
+// fix was live 6 to 28 hours late. The first live stage sends one reply.
+test("a fix reaching the main server sends the player one live reply", async () => {
+  const f = fixture();
+  f.config.guildId = "444444444444444444";
+  const discord = async (method, route) => {
+    if (method === "GET" && route.includes("/messages")) return [];
+    if (method === "GET" && route.startsWith("/channels/")) return { id: "777777777777777777", guild_id: f.config.guildId, name: "ticket-bug-someone-1629" };
+    if (method === "GET" && route.includes("/guilds/")) return [{ id: "777777777777777777", name: "ticket-bug-someone-1629" }];
+    if (method === "GET") return [];
+    if (method === "POST") return { id: "900000000000000001" };
+    return {};
+  };
+  const updates = [];
+  const mcp = { servers: () => [], call: async (server, tool, args) => { if (tool === "support_public_update") updates.push(args); return { ok: true, delivery: { posted: true } }; } };
+  const broker = createBroker({ ledger: f.ledger, config: f.config, mcp, discord, sandbox: {}, now: () => Date.now() });
+  const t = f.ledger.createJob("ticket:1629", { kind: "ticket", role: "support", ticket: 1629, channelId: "777777777777777777", source: {}, deadline: 9e15 });
+  t.state = "running"; t.evidence = [];
+  t.releaseEvidence = { abc1234567: { development: true, staging: true, main: true } };
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "sandbox" }] });
+  assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 0, "no reply before live");
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "main" }] });
+  const live = updates.filter((u) => u.deliver && u.update_kind === "production");
+  assert.equal(live.length, 1);
+  assert.equal(live[0].delivery_mode, "reply"); assert.equal(live[0].update_kind, "production");
+  assert.match(live[0].message, /now live on the main server: Wages for staff a plant does not have\./);
+  // confirmed later, or the card re-sent, never repeats the reply
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "confirmed" }] });
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "main" }] });
+  assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 1);
+});
+
 // Owner, 2026-10-14 (ticket 1539): a card buried under later messages is
 // bumped on a real update, and edited in place while it is still the latest.
 test("the status card is bumped below newer messages only when it has a real update", async () => {
