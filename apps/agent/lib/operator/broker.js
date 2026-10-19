@@ -2142,7 +2142,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
       if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); }
-      if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) throw new Error("terminal statuses require a resolution receipt");
+      if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
+        // Models reach for "waiting_on_player" or "answered", which are not statuses
+        // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).
+        if (!/^(?:resolved|closed|rejected|done|fixed|complete[d]?|wont_?fix|duplicate)$/i.test(String(args.status || ""))) throw new Error(`"${String(args.status || "").slice(0, 40)}" is not a ticket status; use open, triaging, in_progress, blocked or parked. Waiting on the player needs no status: finish waiting with waitFor "player_reply".`);
+        throw new Error("terminal statuses require a resolution receipt");
+      }
       if (input.tool === "support_resolve") {
         const recent = rows.filter((m) => !m.author.bot).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1).at(-1);
         if (recent && Date.parse(recent.timestamp) > (job.observedPlayerAt || job.lastPlayerAt || 0)) throw new Error("new player reply must be investigated before closure");
