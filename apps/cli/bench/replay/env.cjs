@@ -32,12 +32,15 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
     supportRecentVisits: [], timeline: events.filter((e) => e.kind === 'ticket_update').map((e) => ({ message: e.message })), ...(sc.support?.record || {}) });
   const state = { status: 'open', trackerNotes: [], cards: [] };
 
+  // The support service's real input schema for the update tool (zod: message 1 to 1400 chars),
+  // so the broker refuses a malformed update before the effect, as it does live.
+  const SCHEMAS = { support_public_update: { type: 'object', required: ['kind', 'number', 'message'], properties: { kind: { type: 'string', enum: ['ticket'] }, number: { type: 'integer' }, update_kind: { type: 'string', enum: ['development', 'heal', 'production', 'progress', 'context'] }, message: { type: 'string', minLength: 1, maxLength: 1400 }, deliver: { type: 'boolean' } } } };
   const SUPPORT_TOOLS = ['support_public_update', 'support_set_status', 'support_tracker_note', 'support_tracker_sync', 'support_resolve', 'support_get', 'support_search', 'support_list'];
   const mcp = {
     servers: () => ['gamestate', 'support', 'ops-knowledge', 'heal-ops'],
     identity: (server) => ({ server, endpoint: 'replay://' + server }),
     list: async (server) => [...new Set([...(server === 'support' ? SUPPORT_TOOLS : server === 'gamestate' ? Object.keys(sc.game || {}).map((t) => (t === 'character' ? 'trace_character' : t)) : ['knowledge_query', 'kanban_add', 'kanban_list', 'work_report']), ...Object.keys(sc.mcp?.[server] || {})])]
-      .map((name) => ({ name, description: `${server} ${name} (replay fixture)`, inputSchema: { type: 'object', additionalProperties: true } })),
+      .map((name) => ({ name, description: `${server} ${name} (replay fixture)`, inputSchema: SCHEMAS[name] || { type: 'object', additionalProperties: true } })),
     call: async (server, tool, args = {}) => {
       record('mcp', { server, tool, args });
       // Scenario overrides for tools it models specially (e.g. heal-ops planning).
@@ -58,7 +61,7 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
         if (tool === 'support_search' || tool === 'support_list') return { results: sc.support?.similar || [], count: 0 };
         if (tool === 'support_public_update') {
           // Like the real support service: an update needs a message.
-          if (!String(args.message || '').trim()) throw new Error('support_public_update: message is required');
+          if (!String(args.message || '').trim()) throw Object.assign(new Error('MCP error -32602: Input validation error: message is required'), { code: 'MCP_ARGUMENT_REJECTED' });
           record('ticket_update', { message: args.message, deliver: args.deliver !== false, update_kind: args.update_kind });
           if (args.deliver === false) return { ok: true, delivery: { status: 'recorded' } };
           const m = post(args.message, 'support_public_update');
