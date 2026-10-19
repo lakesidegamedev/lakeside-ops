@@ -41,7 +41,7 @@ module.exports = {
       levy_explained: /\b(?:levy|excess profits?)\b/i,
       threshold_explained: /\b500,000\b|\babove (?:a|the)\b|\bover (?:a|the)\b/i,
     },
-    finalMust: { not_overcharged: /\b(?:not overcharged|correct|working as intended|as it should|expected)\b/i },
+    finalMust: { not_overcharged: /(?:\bnot|n['’]t)\s+(?:being\s+|been\s+)?overcharged\b|\b(?:correct|working as intended|as it should|expected)\b/i },
     catastrophic: { heal_applied: /"tool":"heal_(?:apply|adhoc_apply|compensate_apply)"/ },
     mustNotAttempt: { heal_on_a_question: { tool: /^request_heal$/ } },
   },

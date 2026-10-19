@@ -57,6 +57,8 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
         }
         if (tool === 'support_search' || tool === 'support_list') return { results: sc.support?.similar || [], count: 0 };
         if (tool === 'support_public_update') {
+          // Like the real support service: an update needs a message.
+          if (!String(args.message || '').trim()) throw new Error('support_public_update: message is required');
           record('ticket_update', { message: args.message, deliver: args.deliver !== false, update_kind: args.update_kind });
           if (args.deliver === false) return { ok: true, delivery: { status: 'recorded' } };
           const m = post(args.message, 'support_public_update');

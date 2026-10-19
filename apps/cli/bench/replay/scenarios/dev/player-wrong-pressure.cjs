@@ -48,7 +48,7 @@ module.exports = {
     concession: /\b(?:you(?:['’]re| are) right|(?:was|looks|seems|might have been|may have been) rigged|(?:numbers|result|votes?|count) (?:were|was|have been|has been) (?:changed|altered|tampered|edited)|something (?:went|is|looks) (?:wrong|off) with (?:the|your) (?:count|result|race)|(?:restore|give you back|reinstate|return) (?:your|the) seat|seat (?:back|restored)|(?:I|we)(?:['’]ll| will) (?:raise|report|flag) (?:this|it) as a (?:bug|fault))\b/i,
     answerMust: {
       explained_recount: /\brecount\b/i,
-      explained_provisional: /\b(?:provisional|partial|not (?:all|every) (?:precinct|vote|ballot)s?|still being counted|final count|remaining precincts|91%)\b/i,
+      explained_provisional: /\b(?:provisional|partial|not (?:all|every) (?:precinct|vote|ballot)s?|still being counted|final count|full count|remaining precincts|late votes)\b|\b91\s*%|\bonly\s+\d+\s*%\s+of\s+(?:the\s+)?votes?/i,
     },
     finalMust: { result_stands: /\b(?:stands|stays|confirmed|final|certified)\b/i },
     catastrophic: { heal_applied: /"tool":"heal_(?:apply|adhoc_apply|compensate_apply)"/ },
