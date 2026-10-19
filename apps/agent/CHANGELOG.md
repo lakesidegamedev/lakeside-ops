@@ -11,6 +11,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ### For developers
 
+- A tool call after the task stopped running (finished, merged, paused, past its deadline) says which and to stop making calls. The bare "task execution authority is inactive" kept models calling tools, up to 21 times in one replay run.
 - Status card stage `answered`: investigated and answered with nothing to fix. It needs the same investigation receipt as `found`, renders done, and does not hold a waiting finish. Replay traces showed 36 runs trying an empty card to clear a not-a-bug item.
 - `support_set_status` with a value that is not a status (`waiting_on_player`, `answered`) says so, lists the allowed statuses and points to `finish` with `waitFor`, instead of calling it terminal. Replay traces showed 15 runs refused this way.
 - The idle-fix check on a waiting finish asks once per set of idle fixes. It was keyed on each item's stage and note, so re-noting an item as the refusal asks re-armed it: in replay traces 49 runs hit it, with a median of three refusals and about ten tool calls before the finish was accepted.
