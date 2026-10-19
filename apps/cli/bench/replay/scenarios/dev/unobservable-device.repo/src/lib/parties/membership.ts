@@ -16,8 +16,16 @@ export function leaveParty(character: Character, party: Party, turn: number) {
 
 export function removeMember(leader: Character, character: Character, party: Party, turn: number) {
   if (party.leader !== leader.name) return { ok: false, error: "Only the leader can remove members" };
+  const current = character.partyHistory.find((h) => h.party === party.name && h.leftTurn == null);
+  if (!current) return { ok: false, error: "Not a member" };
+  current.leftTurn = turn;
+  current.seniorityTurns = turn - current.joinedTurn;
+  current.ended = "removed";
+  current.removedBy = leader.name;
+  character.party = null;
   party.recentRemovals.push({ member: character.name, turn, by: leader.name });
-  return leaveParty(character, party, turn);
+  logAction(character, { turn, action: "party.remove", party: party.name, requestedBy: leader.name, result: "removed" });
+  return { ok: true };
 }
 
 // Rejoining starts seniority again at 0.
