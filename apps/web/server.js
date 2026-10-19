@@ -2916,6 +2916,7 @@ async function postTicketTriage(num) {
   if (!record || !record.latest) return { skipped: "no assessment" };
   const db = await getDb();
   const ticket = await db.collection("tickets").findOne({ ticketNumber: num });
+  if (ticket?.category === "investigation") return { skipped: "private investigation" };
   // TICKET_TRIAGE_CHANNEL overrides the destination: useful to mirror every
   // triage message into a staff channel, and to exercise this path without
   // writing into a player's channel. Accepts an id or a channel name.
