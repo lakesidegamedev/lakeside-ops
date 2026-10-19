@@ -7,6 +7,31 @@ const filing = new Set();
 const TERMINAL = ["closed", "resolved", "wont_fix", "rejected"];
 const id = value => String(value || "");
 const activeFlags = flags => (flags || []).filter(f => !f.dismissed && !f.reviewedAt);
+// Keep only correlation fields needed for review. Raw cookies, IP addresses and
+// fingerprint values never cross this adapter's boundary.
+function accountCorroboration(flag) {
+  const e = flag.evidence || {};
+  if (flag.type === "shared_tracking_cookie") return { linkedUserIds: (Array.isArray(e.sharedWith) ? e.sharedWith : []).map(u => id(u.userId)).filter(Boolean).slice(0,30) };
+  if (flag.type === "coordinated_login_pattern") return { matches: (Array.isArray(e.matches) ? e.matches : []).slice(0,30).map(m => ({ userId: id(m.otherUserId), username: String(m.otherUsername || ""), overlaps: m.overlapCount, days: m.dayCount })) };
+  if (flag.type === "coordinated_party_funding") return { partners: (Array.isArray(e.partnerUsernames) ? e.partnerUsernames : []).map(String).slice(0,30), events: e.eventCount };
+  return undefined;
+}
+function reviewDecision(candidate, now = new Date()) {
+  // Severity and the number of sensor labels are not abuse evidence. Repeated
+  // automatic payouts, ordinary trading and incomplete ledgers can all be high.
+  // Escalate an alt case only when identity, access timing and repeated benefit
+  // independently point to the SAME pair. Everything else remains diagnostic.
+  const recent = candidate.signals.filter(f => {
+    const age = now.getTime() - new Date(f.detectedAt).getTime();
+    return Number.isFinite(age) && age >= 0 && age <= 7 * 86400000;
+  });
+  const linked = new Set(recent.filter(f => f.type === "shared_tracking_cookie").flatMap(f => f.corroboration?.linkedUserIds || []));
+  const logins = recent.filter(f => f.type === "coordinated_login_pattern").flatMap(f => f.corroboration?.matches || []);
+  const funding = recent.filter(f => f.type === "coordinated_party_funding").map(f => f.corroboration).filter(Boolean);
+  const matches = logins.filter(m => m.username && linked.has(m.userId) && Number.isFinite(m.days) && m.days >= 3 && Number.isFinite(m.overlaps) && m.overlaps >= 6 && funding.some(f => Number.isFinite(f.events) && f.events >= 3 && f.partners?.length === 1 && f.partners[0].toLowerCase() === m.username.toLowerCase()));
+  if (matches.length) return { needsReview: true, reviewReason: "Same account pair shares a tracking cookie, repeatedly logs in together across multiple days, and repeatedly coordinates funding.", reviewBasis: { kind: "corroborated_account_benefit", relatedUserIds: [...new Set(matches.map(m => m.userId))] } };
+  return { needsReview: false, reviewReason: "Sensor observations only. No corroborated account-benefit pattern; money anomalies need balance/ledger reconciliation before escalation.", reviewBasis: null };
+}
 function auditCandidates(accounts, transactions, now = new Date()) {
   const cases = new Map();
   for (const account of accounts) {
@@ -17,7 +42,7 @@ function auditCandidates(accounts, transactions, now = new Date()) {
     const key = `character:${id(account.characterId)}`;
     cases.set(key, { key, subject: account.characterName || key, userId: id(account.userId),
       signals: flags.map(f => ({ source: "suspiciousCharacters", sourceId: id(account._id), type: f.type,
-        severity: f.severity, detail: String(f.detail || "").slice(0, 600), detectedAt: f.detectedAt })), transactions: [] });
+        severity: f.severity, detail: String(f.detail || "").slice(0, 600), detectedAt: f.detectedAt, corroboration: accountCorroboration(f) })), transactions: [] });
   }
   for (const tx of transactions) {
     const flags = activeFlags(tx.suspectFlags);
@@ -33,11 +58,12 @@ function auditCandidates(accounts, transactions, now = new Date()) {
   }
   return [...cases.values()].map(c => ({ ...c, signals: c.signals.sort((a,b) => ({high:0,medium:1,low:2}[a.severity] ?? 3) - ({high:0,medium:1,low:2}[b.severity] ?? 3)).slice(0, 30),
     severity: c.signals.some(f => f.severity === "high") ? "high" : c.signals.some(f => f.severity === "medium") ? "medium" : "low",
-    needsReview: c.signals.some(f => f.severity === "high") || new Set(c.signals.filter(f => f.severity === "medium").map(f => f.type)).size >= 2,
+    ...reviewDecision(c, now),
   })).sort((a,b) => Number(b.needsReview) - Number(a.needsReview) || ({high:0,medium:1,low:2}[a.severity] - {high:0,medium:1,low:2}[b.severity]) || a.key.localeCompare(b.key));
 }
 function investigationSummary(c, at) {
   const evidence = ["Opened by Keir. Private staff investigation. Human review required.", `Audit: ${at}. Subject: ${c.subject} (${c.key}).`,
+    `Reason for review: ${c.reviewReason || "Staff-directed review"}`,
     "Evidence from existing game detectors:",
     ...c.signals.map(f => `- ${f.type} [${f.severity}] ${f.detail} (${f.source}/${f.sourceId}; detected ${f.detectedAt || "unknown"})`),
     "Recent flagged transactions (signed amounts in original currency; anchor value only when recorded):",
@@ -71,7 +97,7 @@ async function scan(db, now = new Date(), { cursor, subjectKey } = {}) {
   ]);
   const candidates = auditCandidates(accounts.slice(0,500).filter(a => allowedCharacters.has(id(a.characterId))),
     transactions.slice(0,10000).filter(t => (t.subjectType === "character" ? allowedCharacters : allowedCorporations).has(id(t.subjectId))), now);
-  return { at: now.toISOString(), accountLookbackDays: 14, financialLookbackHours: 12, currentTurn: game.currentTurn, accountRecords: Math.min(accounts.length,500), transactionRecords: Math.min(transactions.length,10000),
+  return { at: now.toISOString(), eligibilityPolicy: "corroborated-account-benefit-v2", accountLookbackDays: 14, financialLookbackHours: 12, currentTurn: game.currentTurn, accountRecords: Math.min(accounts.length,500), transactionRecords: Math.min(transactions.length,10000),
     nextCursor: transactions.length > 10000 ? id(transactions[9999]._id) : null,
     sourceTruncated: accounts.length > 500 || characters.length > 2000 || corporations.length > 2000,
     truncated: accounts.length > 500 || transactions.length > 10000 || characters.length > 2000 || corporations.length > 2000, candidates };
@@ -111,7 +137,7 @@ function registerInvestigations(server, { auth, db, z, jsonResult, errorResult, 
         const tickets = db.collection("tickets");
         const existing = await tickets.findOne({ category: "investigation", investigationKey: key, status: { $nin: TERMINAL } });
         const audit = await scanImpl(db, new Date(), { subjectKey: key }), candidate = audit.candidates.find(c => c.key === key);
-        if (!candidate?.needsReview) throw new Error("No current candidate warrants staff review for this key");
+        if (!candidate?.needsReview || candidate.reviewBasis?.kind !== "corroborated_account_benefit") throw new Error("No current candidate warrants staff review for this key");
         const guild = process.env.AHD_GUILD_ID || "1465445442987888743", me = await discord("/users/@me");
         const roleIds = [process.env.DISCORD_DEVELOPER_ROLE_ID || process.env.DISCORD_DEV_TEAM_ROLE_ID, process.env.DISCORD_MODERATOR_ROLE_ID];
         const overwrites = staffOverwrites(guild, me.id, roleIds);
@@ -156,4 +182,4 @@ function registerInvestigations(server, { auth, db, z, jsonResult, errorResult, 
       } catch(e) { return errorResult(e.message); } finally { busy.delete(key); }
     });
 }
-module.exports = { auditCandidates, investigationSummary, scan, staffOverwrites, registerInvestigations };
+module.exports = { reviewDecision, accountCorroboration, auditCandidates, investigationSummary, scan, staffOverwrites, registerInvestigations };
