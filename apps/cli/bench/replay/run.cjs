@@ -33,6 +33,7 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
   if (fs.existsSync(cell + '/result.json')) return JSON.parse(fs.readFileSync(cell + '/result.json'));
   fs.rmSync(cell, { recursive: true, force: true }); fs.mkdirSync(cell, { recursive: true });
   const sc = loadScenario(setDir, scenarioId);
+  const blockedBefore = require('./guard.cjs').blocked.length;
   const env = createEnv({ scenario: sc, dir: cell, configOverrides: { codingProvider: CHILD_ROUTE, investigatorProvider: CHILD_ROUTE } });
   const usageFile = path.join(cell, 'usage.jsonl');
   const config = { ...env.config, ...ARMS[armName], briefFile: path.join(AGENT, 'KEIR.md'), coreBriefFile: path.join(AGENT, 'KEIR-CORE.md'), model: route.split(':')[1]?.split('@')[0],
@@ -84,7 +85,8 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
   result.parentTokens = own.length && own.every((u) => tok(u) !== null) ? own.reduce((n, u) => n + tok(u), 0) : null;
   result.wallMs = result.activations.reduce((n, a) => n + a.wallMs, 0) + (result.children || []).reduce((n, c) => n + c.wallMs, 0);
   result.finalState = job.state;
-  result.blockedHostActions = require('./guard.cjs').blocked.length;
+  // Host actions the broker tried during this trial (the guard's list is process-wide).
+  result.blockedHostActions = require('./guard.cjs').blocked.slice(blockedBefore).map((b) => [b.file, ...b.args].join(' ').slice(0, 200));
   fs.writeFileSync(cell + '/events.json', JSON.stringify(env.events, null, 2));
   fs.writeFileSync(cell + '/channel.json', JSON.stringify(env.messages, null, 2));
   fs.writeFileSync(cell + '/job.json', JSON.stringify(job, null, 2));
