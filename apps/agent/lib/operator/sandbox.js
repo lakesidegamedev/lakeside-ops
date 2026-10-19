@@ -107,6 +107,9 @@ function createSandbox(root) {
     if (buf.length !== size) throw new Error("output capture size mismatch");
     return { code, output: buf.toString("utf8"), truncated: false, size };
   }
-  return { workspace, run, capture, deps, attach, fork, remove };
+  // Whether the task has a repository at /workspace/repo: an attached snapshot
+  // overlay, or a repository placed in the workspace directly (prepared trials).
+  const hasRepository = (id) => /^[a-f0-9]{12}$/.test(id) && (fs.existsSync(path.join(overlayDir(id), "base")) || fs.existsSync(path.join(root, id, "repo")));
+  return { workspace, run, capture, deps, attach, fork, remove, hasRepository };
 }
 module.exports = { createSandbox };
