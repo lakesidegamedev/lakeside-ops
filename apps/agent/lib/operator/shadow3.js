@@ -33,7 +33,7 @@ function outboxFindings(data, { now, since, ownerId = null, staffIds = [] }) {
     const text = String(o.content || "");
     const kind = key.split(":")[0];
     if (!job) {
-      if (ownerId && (o.destination === "owner" || o.destination === ownerId))
+      if (ownerId && (o.destination === "owner" || o.destination === ownerId) && !(o.decision && data.decisions?.[o.decision] && o.recipient === ownerId))
         found.push({ kind: "owner-dm", key: kind, text: short(text) });
       continue;
     }

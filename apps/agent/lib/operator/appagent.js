@@ -111,7 +111,7 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
       steps: (j.history || []).slice(-20).map((h) => ({ at: h.at, kind: h.kind, state: h.state, summary: clip(h.summary, 600) })),
       receipts: Object.entries(j.effects || {}).map(([k, e]) => receiptOf(k, e)).sort((a, b) => (a.at || 0) - (b.at || 0)),
       decisions: Object.values(d.decisions || {}).filter((x) => !unproven && x.jobId === j.id && x.state === "pending").map((x) => require("./appdecision").decisionView(d, x, now())),
-      plan: j.plan || [], live: (j.liveLog || []).slice(-30).reverse(), goal: j.appGoal || null, computer: j.appComputer || null,
+      plan: j.plan || [], live: (j.liveLog || []).slice(-30), goal: j.appGoal || null, computer: j.appComputer || null,
       cards: cardsFor(d, j), canRetry: !uncertainOutcome(j) && ["done", "blocked", "cancelled", "waiting"].includes(j.state) && ["command", "conversation"].includes(j.kind), canStop: !CLOSED.includes(j.state),
       canPause: isAppJob(j) && !CLOSED.includes(j.state) && j.state !== "paused", canResume: isAppJob(j) && j.state === "paused" };
   }

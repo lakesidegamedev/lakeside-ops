@@ -27,7 +27,6 @@ struct KeirView: View {
     private var content: some View {
         VStack(spacing: 0) {
             runtimeStrip
-            if keir.thread == "main", (keir.team["open"].number ?? 0) > 0 { KeirWorkingNow(team: keir.team) }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
@@ -47,6 +46,13 @@ struct KeirView: View {
                                 Label("\(task["computer"]["title"].string.nonempty ?? "Keir's computer") · View or take control", systemImage: "desktopcomputer").font(.callout)
                             }
                         }
+                        ForEach(keir.live.filter { $0["state"].string == "running" || !$0["live"].array.isEmpty }, id: \.["id"].string) { task in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(task["status"].string.nonempty ?? "Working on your request").font(.caption).foregroundStyle(OpsTheme.muted)
+                                if !task["live"].array.isEmpty { KeirToolCalls(calls: task["live"].array) }
+                            }.accessibilityIdentifier("keir-chat-working")
+                        }
+                        if keir.thread == "main", (keir.team["open"].number ?? 0) > 0 { KeirWorkingNow(team: keir.team) }
                         ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) { KeirQuestions(panel: $0) }
                         Color.clear.frame(height: 1).id("end")
                     }.padding(.horizontal, 16).padding(.vertical, 16)
@@ -373,6 +379,7 @@ private struct KeirMessage: View {
                     Text("Keir").font(.caption.weight(.semibold))
                     Text(OpsFormat.ago(message["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
                 }
+                if !message["activity"].array.isEmpty { KeirToolCalls(calls: message["activity"].array) }
                 NativeMarkdown(text: message["text"].string).textSelection(.enabled)
                 if !message["chart"].string.isEmpty { KeirChart(name: message["chart"].string) }
                 if !message["cards"].array.isEmpty { KeirCards(cards: message["cards"].array) }

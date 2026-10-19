@@ -131,7 +131,7 @@ const { ECONOMY_PATHS } = blast;
 const isHugePath = (file) => ECONOMY_PATHS.test(file) || /^src\/lib\/equities\//.test(file) || blast.WORKER_PATHS.test(file) || authority.MIGRATION_PATHS.test(file);
 const ticketNumberOf = (name) => Number(/^ticket-.*-(\d+)$/.exec(name || "")?.[1] || 0);
 // Internals that must never reach a player's ticket channel.
-const TECHNICAL = /github\.com|\bPRs?\b|pull request|#\d{3,5}\b|\bCI\b|\bchecks?\b.*\b(?:green|red|pass|fail|run)|\bshard|\bmerg(?:e|ed|ing)\b|\bstaging\b|\bdevelopment branch|\bbranch\b|\bcommit\b|\bvitest\b|\btest files?\b|\.(?:ts|tsx|js)\b|`|turn worker|\bpromot(?:e|ed|ion)\b/i;
+const TECHNICAL = /github\.com|\bPRs?\b|pull request|#\d{3,5}\b|\bCI\b|\bchecks?\b.*\b(?:green|red|pass|fail|run)|\bshard|\bmerg(?:e|ed|ing)\b|\bstaging\b|\bdevelopment branch|\bbranch\b|\bcommit\b|\bvitest\b|\btest files?\b|\.(?:ts|tsx|js)\b|`|turn worker|\bpromot(?:e|ed|ion)\b|\b(?:decision|approval)\s+(?:DM|inbox)\b|\bdig done\b|\b(?:OAuth2?|redirect_uri|return URI|portal\/env|env mismatch)\b/i;
 // Engine and staff vocabulary players never see on a screen (owner, 2026-10-17:
 // "the way he explains things to users is SOOO jargony"). Code-style names too.
 const JARGON = /\b(?:headroom|sell[- ]through|reachable (?:book|market|demand)|(?:order|demand|supply) book|demand throttle|throttl(?:e|ed|ing)|ratchet(?:s|ed|ing)?|fill (?:rate|ratio|share)|nameplate|run[- ]rate|carry[- ]forwards?|clearing (?:price|records?)|settlement (?:span|phase)|cohorts?|baseline(?:s|d)?|multipliers?|coefficients?|config(?:uration)?|feature flags?|the seed|seeded|turn processing|turn engine|NPPs?|coordinator|status card|ledger|telemetry|heuristics?|invariants?)\b|\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b|\b[a-z]+[A-Z][a-zA-Z]+\b|\b[a-z]+_[a-z_]+\b/;
@@ -261,13 +261,19 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   const readScope = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? require("./roles").WATCH_READS : job.kind === "finding" ? FINDING_READS : SUPPORT_READS;
   const readServers = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? Object.keys(require("./roles").WATCH_READS) : job.kind === "finding" ? Object.keys(FINDING_READS) : (job.role === "owner" || developerTask(job)) ? (isQuick(job) ? Object.keys(QUICK_OWNER_READS).filter((s) => mcp.servers().includes(s)) : mcp.servers()) : job.role === "player" ? ["gamestate", "support"] : Object.keys(SUPPORT_READS);
   function active(job, states = ["running"]) {
-    if (d.paused || job.appPaused || !states.includes(job.state) || job.deadline < now()) throw new Error("task execution authority is inactive");
+    // Say why and that the turn is over: the bare phrase kept models calling
+    // tools after a merge or finish (replay 2026-10-19: up to 21 calls).
+    if (d.paused || job.appPaused) throw new Error("task execution authority is inactive: Keir is paused. Stop now: make no more tool calls.");
+    if (!states.includes(job.state)) throw new Error(`task execution authority is inactive: this task is ${job.state}${job.mergedInto ? `, merged into incident ${job.mergedInto}` : ""}. Its turn is over. Stop now: make no more tool calls.`);
+    if (job.deadline < now()) throw new Error("task execution authority is inactive: this task's deadline has passed. Stop now: make no more tool calls.");
     require("./supporttakeover").assertCanAct(d, job);
   }
-  async function supportAuthority(job, states) {
+  async function supportAuthority(job, states, { decisionNotice = false } = {}) {
     active(job, states);
     if (config.supportDeferred(job)) throw new Error("another coordinator owns the active support shift");
-    if (job.ownerDecisionPending && job.role !== "owner") throw new Error("ticket is awaiting an owner decision; no automatic write or closure");
+    // A public update while the owner decides follows the same one-notice rule
+    // as channel_reply (guardTicketPost); every other support write still waits.
+    if (job.ownerDecisionPending && job.role !== "owner" && !decisionNotice) throw new Error("ticket is awaiting an owner decision; no automatic write or closure");
     if (!job.ticket) throw new Error("task has no assigned ticket");
     const channels = await discord("GET", `/guilds/${config.guildId}/channels`);
     const channel = channels.find((c) => c.id === job.channelId && c.name.endsWith(`-${job.ticket}`));
@@ -285,7 +291,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     active(job);
     const old = job.effects[key];
     if (old?.state === "done") return old.result;
-    if (old && old.state !== "rejected") throw new Error("external action outcome is uncertain; owner inspection required");
+    // A merge receipt is settled from GitHub by effectrecovery.js; asking the
+    // owner to inspect it pinged them about a race that fixes itself (ticket 1619).
+    if (old && old.state !== "rejected") throw new Error(require("./effectrecovery").MERGE_KEY.test(key)
+      ? "This merge's outcome is being checked against GitHub automatically within ten minutes. Do not ask the owner about it: finish waiting with a wakeup of about ten minutes, then re-read the PR."
+      : "external action outcome is uncertain; owner inspection required");
     if (old?.state === "rejected" && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
     job.effects[key] = { state: "started", at: now() }; ledger.save();
     try {
@@ -296,6 +306,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return result;
     } catch (e) {
       job.effects[key].error = redactSecrets(e.message);
+      if (e.code === "GITHUB_MERGE_REFUSED") {
+        // GitHub answered with a definite refusal: nothing merged, and a later call may try again.
+        delete job.effects[key];
+        ledger.audit("effect_rejected", { job: job.id, key, reason: "github refused the merge; nothing merged" }); ledger.save();
+        throw e;
+      }
       if (["MCP_ARGUMENT_REJECTED", "EXTERNAL_WRITE_REFUSED"].includes(e.code)) {
         job.effects[key].state = "rejected";
         ledger.audit("effect_rejected", { job: job.id, key, reason: e.code === "EXTERNAL_WRITE_REFUSED" ? "remote access refused before execution" : "argument validation before execution" }); ledger.save();
@@ -409,7 +425,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (!opening.text) { d.disclosed[n] = { at: now(), posted: false, ...(opening.answered ? { answered: true } : { staff: true }) }; ledger.save(); return; }
     try {
       require("./supporttakeover").assertCanAct(d, { ticket: n });
-      await mcp.call("support", "support_public_update", { kind: "ticket", number: n, message: opening.text, deliver: true, update_kind: "progress" }, true);
+      await mcp.call("support", "support_public_update", { kind: "ticket", number: n, message: opening.text, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
       d.disclosed[n] = { at: now(), posted: true, ...(opening.count ? { count: opening.count } : {}) }; ledger.save();
       ledger.audit("disclosure_posted", { ticket: n, count: opening.count || null, returning: !opening.text.startsWith("Hi, I'm Keir") });
     } catch (e) { d.disclosed[n] = { at: now(), posted: false, error: String(e.message).slice(0, 200) }; ledger.save(); }
@@ -465,7 +481,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. No further posts until the decision lands or the player writes; update the status card if the stage changed.`);
     }
     // Monologue cap (ticket 1514: 52 Keir messages to 4 human). After three
-    // consecutive Keir posts with no human reply, progress goes on the card.
+    // consecutive Keir posts, pause ten minutes instead of silencing the ticket indefinitely.
     // One post per task per ten minutes unless the player wrote or it is a
     // question (ticket 1539: two essays a minute apart). A correction is one
     // or two sentences and is never followed by the long version.
@@ -477,12 +493,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (isCorrection(message) && sentences(message).length > 2)
       throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
-    if (run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && !question)
-      throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Put progress on the status card; post again only to ask the player something or when they write.`);
+    if (run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
+      throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
     // A developer asking Keir in the ticket gets one answer, from their own task.
     // The automatic ticket task must not answer it over them (ticket 1510).
     if (job.kind === "ticket") {
-      const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state));
+      const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
       if (dev) throw new Error(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
     }
     const ev = ticketEvidence(ticketNo);
@@ -499,6 +515,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   }
   async function finishPublicText(job) {
     if (!job.replyChannel) return null;
+    // A developer task's bookkeeping is private even when it was requested
+    // inside a player's ticket. Public answers use the explicit reply tool.
+    if (ticketOf(job) && job.kind === "command") return null;
     try {
       let text = publicText(job.summary.replace(/[\u2013\u2014]/g, ","));
       const ticketNo = ticketOf(job);
@@ -581,7 +600,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     ledger.save();
     if (stageChanged) {
       // The public receipt keeps the history the card overwrites.
-      const text = items.map((i) => `${i.name}: ${i.blocked ? "paused" : (i.stage === "confirmed" ? "Live, confirmed in game" : statusCard.STAGES[statusCard.stageIndex(i.stage)].label)}`).join("; ");
+      const text = items.map((i) => `${i.name}: ${i.blocked ? "paused" : (i.stage === "confirmed" ? "Live, confirmed in game" : i.stage === "answered" ? "Answered, no fix needed" : statusCard.labelOf(i.stage))}`).join("; ");
       mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
       recordTicketPost(effectJob, ticketNo, `[status card] ${text}`);
     }
@@ -651,7 +670,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     try {
       const result = await effect(notice, "delivery", () => editing
         ? discord("PATCH", `/channels/${old.channelId}/messages/${old.messageId}`, { content: message, allowed_mentions: { parse: [] } })
-        : mcp.call("support", "support_public_update", { kind: "ticket", number: job.ticket, message, deliver: true, update_kind: "progress" }, true));
+        : mcp.call("support", "support_public_update", { kind: "ticket", number: job.ticket, message, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true));
       const delivery = result.delivery?.delivery || result.delivery || {};
       const delivered = editing || ["posted", "delivered", "sent", "already_posted"].includes(delivery.status) || result.delivery?.posted === true;
       if (!delivered) throw new Error("Waiting update delivery is unconfirmed; inspect receipt.");
@@ -666,6 +685,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }
   }
   function recordTicketPost(job, ticketNo, message) {
+    if (String(message || "").trim() && !/^\[status card\]/.test(message)) job.lastAskAt = now();
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
@@ -886,10 +906,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (job.appSteering && name !== "owner_updates") throw new Error("The owner changed direction. Call owner_updates before continuing this task.");
     // The owner app shows owner tasks' tool calls live.
     const started = now();
+    const callId = appMuse()?.startTool?.(job, name, input);
     const safeLogInput = musePolicy.logInput(input);
     let result;
-    try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started); }
-    catch (e) { appMuse()?.noteTool(job, name, safeLogInput, false, now() - started); throw e; }
+    try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started, callId); }
+    catch (e) { appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId); throw e; }
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v); } catch {}
@@ -931,7 +952,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!config.roleSnapshot || !["watchkeeper", "engineering"].includes(require("./roles").roleOf(job, ledger.data.jobs))) throw new Error("Operator role state is restricted to observer and engineering tasks");
       return config.roleSnapshot();
     }
-    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "merge_related", "merge_into_incident", "execute_action"].includes(name)) throw new Error("finding tasks never post in Discord or execute privileged actions");
+    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)) throw new Error("finding tasks never post in Discord or execute privileged actions");
     if (job.codingParent && !childTools(job).includes(name)) throw new Error(job.investigation ? "Investigators only read: code in the snapshot, live game state, history and past tickets. The worker handles fixes, publication and communication." : "Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.");
     if (name === "recent_changes") return capabilities.recentChanges({ days: input.days, query: input.query, path: input.path });
     if (name === "view_page") {
@@ -1237,8 +1258,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         }
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
-          const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress" };
+          const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
           const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal));
+          const delivery = result.delivery;
+          const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
+          if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
           job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, ticketNo, message);
           const ticketTask = d.jobs[d.seen[`ticket:${ticketNo}`]]; if (ticketTask) ticketTask.lastPublishedAt = now();
           ledger.save();
@@ -1293,14 +1317,32 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           const kept = knowledge.shapeKnowledge(raw, input.tool, { filter: gameKnowledge, limit });
           return input.tool === "knowledge_get" ? (kept || { error: "not game knowledge; unavailable to support tasks" }) : kept;
         }
+        // An investigator reads for its ticket task: same ticket, same reporter, read-only.
+        const scope = !job.ticket && job.investigation && d.jobs[job.codingParent]?.ticket ? d.jobs[job.codingParent] : job;
         if (PLAYER_PRIVATE.has(input.tool)) {
-          if (!job.ticket) throw new Error("player history reads need an assigned ticket");
-          await reporterOf(job, signal);
-          const want = String(args.character || "").trim().toLowerCase(), r = job.reporterCharacter;
+          if (!scope.ticket) throw new Error("player history reads need an assigned ticket");
+          await reporterOf(scope, signal);
+          // Models name the reporter loosely (sequentialId, characterId, id, name)
+          // or not at all; the only readable character is the reporter, so map
+          // the aliases to character and default to the reporter. A different
+          // character is still refused below (2026-10-19 replay benchmark: 44
+          // refused reads in 18 dev runs, all argument shape, none another player).
+          if (args.character === undefined) {
+            const alias = ["sequentialId", "characterId", "name"].find((k) => args[k] !== undefined) ?? (input.tool === "trace_character" && args.id !== undefined ? "id" : null);
+            if (alias) { args.character = args[alias]; delete args[alias]; }
+            else if (scope.reporterCharacter?.id) args.character = String(scope.reporterCharacter.id);
+          }
+          if (args.ticket !== undefined && Number(args.ticket) === scope.ticket) delete args.ticket;
+          const want = String(args.character || "").trim().toLowerCase(), r = scope.reporterCharacter;
           if (!want || !((r.id && want === String(r.id)) || (r.name && want === r.name.toLowerCase()))) throw new Error(`player history is limited to this ticket's reporter (${r.name || "unknown"}${r.id ? `, id ${r.id}` : ""})`);
         }
         if (input.tool === "support_get") {
-          if (!job.ticket || args.kind !== "ticket" || args.number !== job.ticket) throw new Error("read the assigned ticket only");
+          // The assigned ticket is the only readable one: fill it in when omitted.
+          if (args.number === undefined && args.ticket !== undefined) args.number = Number(args.ticket);
+          delete args.ticket;
+          if (args.number === undefined && scope.ticket) args.number = scope.ticket;
+          if (args.kind === undefined || args.kind === "bug") args.kind = "ticket";
+          if (!scope.ticket || args.kind !== "ticket" || args.number !== scope.ticket) throw new Error("read the assigned ticket only");
         } else if (input.server === "support") {
           // Intake needs summaries for deduplication, never other players' transcripts.
           const rows = await mcp.call(input.server, input.tool, { ...args, openOnly: true, limit: 60 }, false, signal);
@@ -1807,10 +1849,32 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         }
         const g = await gate(pr);
         if (!g.ready) return { number, merged: false, url: pr.html_url, ...g, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix, do not merge." : "Checks still running: finish waiting with a wakeup of about 10 minutes and call this again." };
-        const result = await effect(job, `merge:${number}:${pr.head.sha}`, () => api(["-X", "PUT", `repos/${repo}/pulls/${number}/merge`, "-f", `merge_method=${method}`, "-f", `sha=${pr.head.sha}`]));
+        const mergeOnce = () => api(["-X", "PUT", `repos/${repo}/pulls/${number}/merge`, "-f", `merge_method=${method}`, "-f", `sha=${pr.head.sha}`]);
+        // 405/409/422 are GitHub refusing the merge: nothing merged. "Base branch
+        // was modified" is a race with another merge landing first (ticket 1619
+        // asked the owner to inspect one); re-read and retry once on the same head.
+        const refused = (e) => /\(HTTP (?:405|409|422)\)/.test(String(e?.message || ""));
+        const result = await effect(job, `merge:${number}:${pr.head.sha}`, async () => {
+          try { return await mergeOnce(); } catch (first) {
+            if (!refused(first)) throw first;
+            let last = first;
+            await new Promise((r) => setTimeout(r, config.mergeRetryMs ?? 5000));
+            const latest = await api([`repos/${repo}/pulls/${number}`]);
+            if (latest?.merged && latest.head?.sha === pr.head.sha) return { merged: true, sha: latest.merge_commit_sha };
+            if (latest?.state === "open" && latest.head?.sha === pr.head.sha && /base branch was modified/i.test(first.message)) {
+              try { return await mergeOnce(); } catch (second) { if (!refused(second)) throw second; last = second; }
+            }
+            const error = new Error(`GitHub refused the merge and nothing merged (${redactSecrets(String(last.message)).slice(0, 200)}). Re-read the PR; once it is green and mergeable at the same head, call merge again under the same approval. This needs no owner inspection.`);
+            error.code = "GITHUB_MERGE_REFUSED"; throw error;
+          }
+        });
         if (scopedConsent && result?.merged) { scopedConsent.state = "done"; scopedConsent.completedAt = now(); ledger.save(); }
         if (method === "squash" && !scopedOwner) { try { await exec("/usr/bin/gh", ["api", "-X", "DELETE", `repos/${repo}/git/refs/heads/${pr.head.ref}`]); } catch {} }
-        return { number, merged: Boolean(result?.merged), sha: result?.sha, url: pr.html_url };
+        // Keir told the owner each promotion of an approved economy fix "needs its
+        // own approval" (ticket 1619). Chain consent (5.1) carries it; say so here.
+        const next = result?.merged && method === "squash" && expectBase === "development"
+          ? { nextMove: "Merged to development. Promote it with github promote to staging, then main. A promotion carrying only changes the owner already approved rides those approvals and asks nothing; never tell the owner each promotion needs its own approval." } : {};
+        return { number, merged: Boolean(result?.merged), sha: result?.sha, url: pr.html_url, ...next };
       }
       if (input.action === "status") {
         const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]);
@@ -1952,6 +2016,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (bytes.length > 4 * 1024 * 1024) throw new Error("image is oversized");
       return { image: { type: "base64", media_type: a.content_type, data: bytes.toString("base64") } };
     }
+    if (name === "open_suggestion") return require("./suggestionintake").openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal });
     if (name === "open_ticket") {
       if (isAppJob(job)) return require("./ownerintake").openOwnerTicket({ ledger, config, mcp, effect, job, input, signal, now });
       const commanded = job.kind === "command" && ["owner", "support"].includes(job.role);
@@ -2067,9 +2132,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         input.tool = SUPPORT_WRITES.includes(want) ? want : SUPPORT_WRITES.includes(`support_${want}`) ? `support_${want}` : want; }
       if (!SUPPORT_WRITES.includes(input.tool)) throw new Error(`support write is outside standing permission: tool must be one of ${SUPPORT_WRITES.join(", ")}. To answer the player: tool "support_public_update", args {"message": "..."}.`);
 
-      const rows = await supportAuthority(job);
+      const rows = await supportAuthority(job, undefined, { decisionNotice: input.tool === "support_public_update" });
+      if (input.tool === "support_resolve" && (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)) throw new Error("Ticket closure is held by an explicit owner follow-up. Continue investigating and communicating; do not resolve or close it.");
       const args = { ...(input.args || {}), number: job.ticket };
       if (input.tool !== "support_resolve") args.kind = "ticket";
+      // Models name the update text loosely ("body", "text"); the service needs `message`.
+      if (input.tool === "support_public_update" && args.message === undefined) for (const k of ["body", "text", "content"]) if (typeof args[k] === "string") { args.message = args[k]; delete args[k]; break; }
+      if (input.tool === "support_public_update" && !String(args.message || "").trim()) throw new Error('support_public_update needs the player-facing text in args.message: {"tool": "support_public_update", "args": {"message": "..."}}');
       const definition = (await mcp.list("support")).find(t => t.name === input.tool);
       if (!definition?.inputSchema) throw new Error("support write schema unavailable; discover support_tools and retry later");
       // Ticket identity is always broker-bound; all remaining arguments must match the live schema.
@@ -2077,8 +2146,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); }
-      if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) throw new Error("terminal statuses require a resolution receipt");
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); }
+      if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
+        // Models reach for "waiting_on_player" or "answered", which are not statuses
+        // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).
+        if (!/^(?:resolved|closed|rejected|done|fixed|complete[d]?|wont_?fix|duplicate)$/i.test(String(args.status || ""))) throw new Error(`"${String(args.status || "").slice(0, 40)}" is not a ticket status; use open, triaging, in_progress, blocked or parked. Waiting on the player needs no status: finish waiting with waitFor "player_reply".`);
+        throw new Error("terminal statuses require a resolution receipt");
+      }
       if (input.tool === "support_resolve") {
         const recent = rows.filter((m) => !m.author.bot).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1).at(-1);
         if (recent && Date.parse(recent.timestamp) > (job.observedPlayerAt || job.lastPlayerAt || 0)) throw new Error("new player reply must be investigated before closure");
@@ -2133,6 +2207,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (name === "local_file") return require("./ownermuse-files").localFile(sandbox, job, input, signal);
     if (name === "evidence_batch") {
       if (isQuick(job) || job.role === "player") throw new Error("Evidence batches require an authenticated worker task");
+      // Workspace queries read /workspace/repo. Without a snapshot the batch
+      // failed as "narrow the query" (replay 2026-10-19: 37 runs); load main first.
+      if (sandbox.hasRepository?.(job.id) === false && (input.queries || []).some((q) => ["list", "read", "search"].includes(q?.op))) {
+        try { await tool(job, "repository_snapshot", { repository: "AHDGame", ref: "main" }, signal); }
+        catch (e) { throw new Error(`Workspace queries need a repository snapshot and loading one failed (${String(e.message).slice(0, 200)}). Call repository_snapshot first, or send only service queries.`); }
+      }
       return require("./workflow-evidence").createWorkflowEvidence({ sandbox, stateDir: config.stateDir, ledger, now,
         read: (task, args, scopeSignal) => tool(task, "read_tool", args, scopeSignal),
         readTools: (task, args, scopeSignal) => tool(task, "read_tools", args, scopeSignal),
@@ -2233,6 +2313,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (job.repository === "AHDGame") {
         const ticketNo = ticketOf(job);
         const linked = Object.values(d.keirIssues || {}).filter((x) => x.state === "open" && ((ticketNo && (x.ticket === ticketNo || x.tickets?.includes(ticketNo))) || (job.issues || []).includes(x.number))).map((x) => x.number).filter((x) => !new RegExp(`#${x}\\b`).test(body));
+        // A ticket's fix carries its issue (2026-10-19 ticket bench: 2 in 5 runs
+        // published a patch without ever filing or linking one, so the report
+        // never reached the existing issue). raise_to_developers first; its
+        // duplicate check finds the open issue to add evidence to.
+        const anyIssue = Object.values(d.keirIssues || {}).some((x) => (ticketNo && (x.ticket === ticketNo || x.tickets?.includes(ticketNo))) || (job.issues || []).includes(x.number));
+        if (ticketNo && !anyIssue && !/#\d+/.test(body)) throw new Error("This ticket has no GitHub issue yet. File the bug, or add your evidence to the open issue that already covers it, with raise_to_developers (kind bug), then publish the patch; it will reference that issue.");
         // An explicit issue reference in the body means the author chose which
         // issues this PR fixes; otherwise it carries the ticket's open issues.
         const refs = /\b(?:refs?|fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#\d+/i.test(body) ? "" : issues.refsLine(linked);
@@ -2352,15 +2438,21 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       }
       if (developerTask(job) && ["done", "waiting", "blocked"].includes(state) && /offered (?:a |the )?patch|waiting for (?:her|his|their|your) (?:answer|reply).*patch|(?:ask|asking).*(?:whether|if).*(?:prepare|write|make).*(?:patch|fix)/i.test(input.summary || "") && !Object.values(d.actions).some(a => a.jobId === job.id && a.state === "pending")) throw new Error("Prepare the reviewable patch and focused validation now. Patch preparation already has developer authorization; use publish_patch for exact review before publication. Do not wait merely for permission to prepare it.");
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
+      // Waiting on the player needs a post they can answer. Models finished
+      // "asked the player" after the question was refused, or never posted
+      // one (replay 2026-10-19), leaving the player with nothing to answer.
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && (job.lastAskAt || 0) < (job.lastPlayerAt || 0)) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
-      // check asks once per card state, so a genuine wait still finishes.
+      // check asks once per set of idle fixes, so a genuine wait still finishes.
+      // Keyed on names only: re-noting or re-staging an item, as the refusal
+      // asks, re-armed it (replay 2026-10-19: 49 runs, median 3 refusals).
       if (state === "waiting" && job.kind === "ticket" && !job.codingParent && job.ticket) {
         const items = d.statusCards?.[job.ticket]?.items || [];
         const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !["done", "dismissed", "cancelled"].includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
-        const idle = items.filter((i) => !["main", "confirmed"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
-        const key = hash(idle.map((i) => [i.name, i.stage, i.blocked, i.note]));
+        const idle = items.filter((i) => !["main", "confirmed", "answered"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
+        const key = hash(idle.map((i) => i.name).sort());
         if (idle.length && job.idleItemsReview !== key) {
           job.idleItemsReview = key; ledger.save();
           throw new Error(`Not finished: your progress card has ${idle.length} fix${idle.length > 1 ? "es" : ""} not moving: ${idle.map((i) => `"${i.name}" (${i.blocked ? "paused" : i.stage})`).join("; ")}. A wait on one answer does not pause the others. For each one, either advance it now (investigate it, delegate_fix it, or carry its PR forward; display-only fixes need no developer), or, if it genuinely waits on something, make its card note name exactly what. Then finish again.`);
@@ -2429,7 +2521,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // While a developer's own task holds this ticket, the ticket task only
       // comes back in half an hour (or sooner if the player writes); it was
       // waking every minute to be refused (ticket 1518).
-      if (job.kind === "ticket" && ["waiting", "done", "dismissed"].includes(state) && Object.values(d.jobs).some((j) => j.id !== job.id && j.kind === "command" && j.ticket === job.ticket && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state))) job.wakeAt = Math.max(job.wakeAt || 0, now() + 30 * 60000);
+      if (job.kind === "ticket" && ["waiting", "done", "dismissed"].includes(state) && Object.values(d.jobs).some((j) => j.id !== job.id && j.kind === "command" && j.ticket === job.ticket && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(job.ticket) <= (Date.parse(j.source?.at || "") || now()))) job.wakeAt = Math.max(job.wakeAt || 0, now() + 30 * 60000);
       // Claimed automatic tickets stay dormant; only the claiming developer's
       // own command may continue their work. Never turn a model "done" into
       // another scheduled investigation of the same staff-owned ticket.

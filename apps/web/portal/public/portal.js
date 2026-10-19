@@ -1,5 +1,18 @@
 "use strict";
 const $ = id => document.getElementById(id);
+const taskPanel = $("tasks");
+$("messages").append(taskPanel);
+function toolActivity(calls) {
+  const group = document.createElement("div"); group.className = "tool-activity"; group.setAttribute("role", "list");
+  for (const call of calls || []) {
+    const row = document.createElement("div"), title = document.createElement("span"), source = document.createElement("small"), state = document.createElement("span");
+    row.className = "tool-call"; row.dataset.call = call.id || ""; row.dataset.state = call.state || (call.ok ? "completed" : "failed"); row.setAttribute("role", "listitem");
+    title.textContent = call.title || call.tool; source.textContent = call.source || "Keir";
+    state.textContent = call.state === "running" ? "Running" : call.state === "failed" || call.ok === false ? "Failed" : "Completed";
+    row.append(title, source, state); group.append(row);
+  }
+  return group;
+}
 let selected = "main", cursor = 0, version = "", stopped = true, generation = 0;
 function error(e) { $("error").textContent = e.message; $("error").hidden = false; }
 async function api(route, body, signal) {
@@ -21,7 +34,7 @@ async function threads() {
   }
 }
 function select(id, title = "Keir") {
-  navigation(false); $("models").close(); controls = null; controlsVersion = ""; legacyModelSelection = "auto"; $("model-picker").textContent = "Model · Loading…"; selected = id; cursor = 0; version = ""; $("title").textContent = title; $("messages").replaceChildren(); $("tasks").replaceChildren();
+  navigation(false); $("models").close(); controls = null; controlsVersion = ""; legacyModelSelection = "auto"; $("model-picker").textContent = "Model · Loading…"; selected = id; cursor = 0; version = ""; $("title").textContent = title; $("messages").replaceChildren(); $("messages").append(taskPanel); $("tasks").replaceChildren();
   for (const b of $("threads").children) b.setAttribute("aria-current", String(b.dataset.thread === id));
   welcome(); const run = ++generation; poll(run);
 }
@@ -33,7 +46,7 @@ async function poll(run) {
       const view = await api(`/api/keir/app/thread?${q}`, null, controller.signal);
       if (run !== generation) return;
       if (view.messages?.length) $("welcome")?.remove();
-      for (const row of view.messages || []) { const a = document.createElement("article"), author = document.createElement("strong"); a.className = row.role; author.textContent = row.role === "owner" ? "You" : "Keir"; a.append(author, document.createTextNode(row.text)); $("messages").append(a); }
+      for (const row of view.messages || []) { const a = document.createElement("article"), author = document.createElement("strong"); a.className = row.role; author.textContent = row.role === "owner" ? "You" : "Keir"; a.append(author); if (row.activity?.length) a.append(toolActivity(row.activity)); a.append(document.createTextNode(row.text)); $("messages").insertBefore(a, taskPanel); }
       if (view.messages?.length) $("messages").scrollTop = $("messages").scrollHeight;
       cursor = view.cursor; version = view.version; $("connection").textContent = view.controls?.stopped ? "Stopped" : view.working ? "Working" : "Connected"; $("connection").dataset.state = view.controls?.stopped ? "stopped" : view.working ? "working" : "ready";
       legacyModelSelection = view.modelSelection || "auto";
@@ -41,7 +54,8 @@ async function poll(run) {
       $("tasks").replaceChildren();
       for (const task of view.tasks || []) {
         const div = document.createElement("div"), label = document.createElement("span"), stop = document.createElement("button"); div.className = "task";
-        label.textContent = `${task.state}: ${task.status || task.title}${task.provider?.runner ? ` · ${task.provider.runner}:${task.provider.model}${task.provider.effort ? "@" + task.provider.effort : ""}` : ""}${task.skills?.length ? ` · ${task.skills.join(", ")}` : ""}`; stop.textContent = "Stop";
+        label.textContent = `${task.state}: ${task.status || task.title}`; stop.textContent = "Stop";
+        if (task.live?.length) div.append(toolActivity(task.live));
         stop.onclick = () => api("/api/keir/app/cancel", { taskId: task.id }).catch(error); div.append(label, stop); $("tasks").append(div);
       }
     } catch (e) { if (run !== generation || stopped) return; $("connection").textContent = "Reconnecting"; if (e.name !== "AbortError") error(e); await new Promise(r => setTimeout(r, 3000)); }
@@ -174,7 +188,7 @@ function renderModelPicker() {
     button.type = "button"; button.className = "model-option"; button.dataset.route = route.id;
     button.setAttribute("aria-pressed", String(route.id.split("@")[0] === selection.split("@")[0])); button.disabled = route.available === false || controlBusy;
     title.textContent = route.id === "auto" ? "Auto" : route.label;
-    detail.textContent = route.id === "auto" ? (lane === "voice" ? "Alternate Gemini and DeepSeek" : `Installation default: ${controls?.defaults?.[lane] || "not configured"}`) : `${route.provider} · ${route.id}${route.available === false ? " · " + route.reason : ""}`;
+    detail.textContent = route.id === "auto" ? `Installation default: ${controls?.defaults?.[lane] || "not configured"}` : `${route.provider} · ${route.id}${route.effortMode === "provider-managed" ? " · Cursor chooses model and effort" : ""}${route.available === false ? " · " + route.reason : ""}`;
     button.append(title, detail); button.onclick = () => changeControl({ action: "configure", routes: { [lane]: route.id } }); $("model-options").append(button);
   }
   $("model-selected").textContent = `Selected: ${selection}. This is the requested route; completion is reported separately.`;

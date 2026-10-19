@@ -34,4 +34,12 @@ import LakesideCore
         XCTAssertFalse(choices.contains { $0["id"].string == "codex:model@low" })
     }
 
+    func testCursorAutoLabelAndProviderManagedEffortFollowInstallationDefault() {
+        let options: [JSONValue] = [.object(["id": .string("cursor:auto"), "label": .string("Cursor Auto"), "effortMode": .string("provider-managed")])]
+        XCTAssertEqual(KeirProviderName.label("cursor:auto", options: []), "Cursor Auto")
+        XCTAssertTrue(KeirProviderName.providerManaged("cursor:auto", options: options, defaultRoute: "claude:sonnet"))
+        XCTAssertTrue(KeirProviderName.providerManaged("auto", options: options, defaultRoute: "cursor:auto"))
+        XCTAssertFalse(KeirProviderName.providerManaged("claude:sonnet", options: options, defaultRoute: "cursor:auto"))
+    }
+
 }

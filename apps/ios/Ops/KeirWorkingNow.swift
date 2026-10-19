@@ -36,7 +36,7 @@ enum KeirWorkState {
 }
 
 /// Everything Keir is doing, not only this conversation: tickets, findings and
-/// Discord requests. Collapsed it is one line under the title; expanded it lists
+/// Discord requests. Collapsed it is one line in the chat; expanded it lists
 /// the work that most needs attention, each row opening that work.
 struct KeirWorkingNow: View {
     @EnvironmentObject private var router: OpsRouter

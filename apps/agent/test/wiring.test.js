@@ -405,6 +405,18 @@ test("an early investigation card does not claim a cause or a fix is already bei
   assert.match(text, /Checking cause and next step/);
 });
 
+test("a not-a-bug item can be marked answered: it needs the investigation, renders done and does not hold a waiting finish", async () => {
+  const card = require("../lib/operator/statuscard");
+  assert.equal(card.stageAllowed("answered", {}).ok, false);
+  assert.equal(card.stageAllowed("answered", { investigated: { done: true } }).ok, true);
+  const body = card.render({ ticket: 1558, items: [{ name: "Steelworks made nothing", stage: "answered", note: "The coal deal ended; sign a new one" }] });
+  const text = JSON.stringify(body.embeds);
+  assert.match(text, /Answered · no fix needed/);
+  assert.doesNotMatch(text, /Investigating|▱/);
+  assert.equal(body.embeds[0].color, 0x22c55e);
+  assert.equal(card.rowState({ stage: "answered" }), "done");
+});
+
 test("new handoff evidence invalidates an old closing grace without replaying that reset", () => {
   const f = fixture();
   const owner = createSupportOwner({ ledger: f.ledger, now: () => 5000 });
@@ -421,4 +433,23 @@ test("new handoff evidence invalidates an old closing grace without replaying th
   t.resolutionReadyAt = 7000;
   assert.equal(owner.receive(handoff, { ensureTicketJob: () => t }).duplicate, true);
   assert.equal(t.resolutionReadyAt, 7000, "retrying an old handoff cannot reset a later answer");
+});
+
+test("an admin handoff can retain a closure hold without stopping investigation", () => {
+  const f = fixture(), owner = createSupportOwner({ ledger: f.ledger });
+  const j = job("held", { ticket: 1615 });
+  owner.receive({ id: "hold-1615", from: "codex", scope: "Unmet player goal", asks: ["Investigate without closing"], tickets: [1615], holdClosure: true }, { ensureTicketJob: () => j });
+  assert.equal(j.ownerClosureHold.handoffId, "hold-1615");
+  assert.equal(j.state, "queued");
+  owner.receive({ id: "release-1615", from: "codex", scope: "Release closure hold", asks: ["Reassess after a verified answer"], tickets: [1615], holdClosure: false }, { ensureTicketJob: () => j });
+  assert.equal(j.ownerClosureHold, undefined);
+});
+
+test("withdrawing old questions in an explicit handoff clears their stale admission hold", () => {
+ const f = fixture(), owner = createSupportOwner({ ledger: f.ledger });
+ const j = job("decision-held", { ticket: 1615, ownerDecisionPending: true, state: "blocked" });
+ f.ledger.data.jobs[j.id] = j;
+ (f.ledger.data.decisions ||= {}).d = { id: "d", jobId: j.id, state: "pending" };
+ owner.receive({ id: "clarify-existing", from: "codex", scope: "Respect existing decision", asks: ["Continue within prior ruling"], tickets: [1615] }, { ensureTicketJob: () => j });
+ assert.equal(f.ledger.data.decisions.d.state, "withdrawn"); assert.ok(!j.ownerDecisionPending); assert.equal(j.state, "queued");
 });

@@ -12,7 +12,7 @@ test("intake tagging bundles one call and fails open", async () => {
   let seen;
   const job = { id: "j", kind: "ticket", role: "support", ticket: 1522, source: { content: "my plant is stuck at 85% see screenshot", attachments: [{}] } };
   const tags = await tagIntake(job, { ask: async (spec) => { seen = spec; return answers(); }, now: () => 7 });
-  assert.equal(Object.keys(seen.questions).length, 7, "one bundled request");
+  assert.equal(Object.keys(seen.questions).length, 8, "one bundled request");
   assert.equal(tags.kind, "bug_report"); assert.equal(tags.needsVision, true); assert.equal(tags.economy, true); assert.equal(tags.injection, false);
   assert.equal(tags.urgency, "high"); assert.equal(tags.mood, "frustrated"); assert.equal(tags.complexity, "hard"); assert.equal(tags.at, 7);
   const noAttach = await tagIntake({ ...job, source: { content: "x" } }, { ask: async () => answers() });
@@ -21,6 +21,10 @@ test("intake tagging bundles one call and fails open", async () => {
   assert.equal(await tagIntake(job, { ask: async () => null }), null);
   const unknown = await tagIntake(job, { ask: async () => answers({ kind: { choice: "nonsense" } }) });
   assert.equal(unknown.kind, null, "an unoffered choice is no verdict");
+  const focused = await tagIntake(job, { ask: async () => answers({ contextProfile: { choice: "focused" } }) });
+  assert.equal(focused.contextProfile, "focused");
+  const invalidProfile = await tagIntake(job, { ask: async () => answers({ contextProfile: { choice: "unrestricted" } }) });
+  assert.equal(invalidProfile.contextProfile, null);
 });
 
 test("tags set effort without a second Jev call; banter is low", async () => {

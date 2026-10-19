@@ -113,6 +113,7 @@ test("scout is opt-in, durable, bounded, lower priority and obeys the six-hour c
 
 test("provider config is parsed and status excludes actor identifiers and secret text", (t) => {
   assert.deepEqual(engineeringSpec({ engineeringProvider: "codex:gpt-6.1-sol@low" }), { runner: "codex", model: "gpt-6.1-sol", effort: "low" });
+  assert.deepEqual(engineeringSpec({ engineeringProvider: "cursor:auto" }), { runner: "cursor", model: "auto", effort: "automatic" });
   assert.throws(() => engineeringSpec({ engineeringProvider: "bad" }));
   const h = harness(t), job = h.engineering.enqueue(request("safe"));
   job.actorId = "123456789012345678"; job.summary = "Actor 123456789012345678";

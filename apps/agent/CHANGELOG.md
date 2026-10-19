@@ -9,6 +9,205 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - Keir files and updates private Investigation tickets for developer/moderator review, with source evidence, original transaction currencies, uncertainty and suggested checks. Existing cases are deduplicated; sanctions and money changes remain human decisions.
 - Investigation evidence stays out of public ticket receipts, ordinary support searches, automatic repair, merging and player notification flows.
 
+## 5.8.29 (2026-10-19)
+
+### For users
+
+- When Keir waits for your reply, it has always actually asked you something first.
+
+### For developers
+
+- A ticket finish waiting on `player_reply` is refused unless a post reached the player since they last wrote. Replay traces showed finishes saying "asked the player" after the question was refused for length, or with no post at all.
+
+## 5.8.28 (2026-10-19)
+
+### For developers
+
+- An expired or unrefreshable model-provider login no longer blocks a task: it waits and retries every fifteen minutes for up to twelve hours. On start, tasks blocked only by a login failure, with nothing external in flight, resume. On 2026-10-19 an OAuth expiry blocked four tickets for hours.
+
+## 5.8.27 (2026-10-19)
+
+### For users
+
+- When Keir looks into a report and it turns out nothing needs fixing, the progress card says "Answered · no fix needed" instead of staying on "Investigating".
+
+### For developers
+
+- A tool call after the task stopped running (finished, merged, paused, past its deadline) says which and to stop making calls. The bare "task execution authority is inactive" kept models calling tools, up to 21 times in one replay run.
+- Status card stage `answered`: investigated and answered with nothing to fix. It needs the same investigation receipt as `found`, renders done, and does not hold a waiting finish. Replay traces showed 36 runs trying an empty card to clear a not-a-bug item.
+- `support_set_status` with a value that is not a status (`waiting_on_player`, `answered`) says so, lists the allowed statuses and points to `finish` with `waitFor`, instead of calling it terminal. Replay traces showed 15 runs refused this way.
+- The idle-fix check on a waiting finish asks once per set of idle fixes. It was keyed on each item's stage and note, so re-noting an item as the refusal asks re-armed it: in replay traces 49 runs hit it, with a median of three refusals and about ten tool calls before the finish was accepted.
+- `evidence_batch` with workspace queries loads the AHDGame main snapshot when the task has none, instead of failing as "narrow the query". A sandbox failure now reports the sandbox's error; only real truncation asks to narrow. Replay traces showed 37 runs losing a round this way.
+
+## 5.8.26 (2026-10-19)
+
+### For developers
+
+- An investigator delegated by a ticket task reads that ticket and its reporter's history, as the ticket task can; any other ticket or player is still refused. Investigators were told to read live game state and then refused it for want of an assigned ticket, so they finished blocked.
+- A ticket update sent with its text under `body`, `text` or `content` reaches the support service as `message`, and an update with no text is refused before any call with the exact shape to use. Replay traces showed a model sending `body`; the empty update then failed at the service, costing a round.
+
+## 5.8.25 (2026-10-19)
+
+### For developers
+
+- Reporter-scoped player history reads (`trace_character`, `trace_account`, `character_balance_sheet`, `character_wealth_history`) accept the reporter under the names models use (`sequentialId`, `characterId`, `name`, `id` for trace_character) and default to the reporter when omitted; `support_get` defaults to the assigned ticket. Another player or ticket is still refused. The replay benchmark found 44 refused reads in 18 dev runs, every one argument shape, none another player.
+
+## 5.8.24 (2026-10-19)
+
+### For users
+
+- When Keir passes a decision to the developers, the player still gets one message explaining where things stand, whichever way Keir posts it.
+
+### For developers
+
+- While an owner decision is pending, `support_action` with `support_public_update` follows the same one-notice rule as `channel_reply` (guardTicketPost) instead of being refused outright; status, tracker and resolve writes still wait. Found by the replay benchmark: a model that raised the decision and then used the support path could not tell the player anything.
+
+## 5.8.23 (2026-10-19)
+
+### For users
+
+- When Keir prepares a fix for a reported bug, the report is linked to the developers' issue for it first, so it reaches the developers working on that bug.
+
+### For developers
+
+- `publish_patch` refuses on a ticket-scoped job (ticket, or a task in a ticket channel) that has no linked GitHub issue, unless the PR body references one explicitly (`#N`). File the bug or add evidence to the open issue with `raise_to_developers`; its duplicate check finds it. Finding jobs are unaffected. Found by a simulated-ticket benchmark where 2 in 5 runs published a patch without linking the bug.
+- The shell effect guard no longer treats `--force` or `--skip-*` as an approval claim on ordinary commands (git, npm); those flags only count on a script with an effect verb. Approval-claim flags (`--approved-by`, `--approver`, `--as-owner`, `--override`) are still refused on any command. A fixed prohibited/permitted command set is now a test. The guard is a supplementary layer; the broker's effect tools carry the authorization checks.
+
+## 5.8.22 (2026-10-18)
+
+### For users
+
+- An approved fix that loses a merge race with another change is retried automatically instead of asking the owner to check on it.
+- Keir no longer tells the owner that each promotion of an already approved fix needs a fresh approval.
+
+### For developers
+
+- GitHub merge refusals (HTTP 405, 409, 422) are definite: nothing merged. "Base branch was modified" re-reads the PR and retries once on the same head. Any other refusal clears the merge receipt so a later call can retry, with no owner inspection.
+- An unsettled merge receipt now tells the model that effect recovery settles it from GitHub within ten minutes, instead of "owner inspection required".
+- A feature merge to development returns a next move: promote, and promotions carrying only owner-approved changes ride those approvals.
+
+## 5.8.21 (2026-10-19)
+
+### For users
+
+- Keir answers faster and uses far fewer tokens per task. Each job now reads only the parts of its manual it needs, and loads the rest on demand.
+- Keir refuses to run a command that takes an action on a claimed approval, such as relinking an account on someone's say-so. It asks for the approval instead.
+
+### For developers
+
+- Lean activation context (`lib/operator/briefprofile.js`): the brief is trimmed per job kind (coder, investigator, probe, finding, quick, work), skill bodies become one-paragraph digests, and 27 rare tool schemas on ticket/command jobs load through `load_context` and run through `call_tool`. Measured on keir-bench: ticket/command always-on context 114K to 76K chars, coding child 90K to 16K; no accuracy loss on Sonnet 5.5 or DeepSeek v4.1 Flash. `KEIR_LEAN_CONTEXT=0` restores the full brief.
+- Effect guard (`lib/operator/submitgates.js`, toolserver): shell commands that assert an approval (`--approved-by`, `--override`, `--as-owner`, `--force`) or run a script with an effect verb (relink, transfer, refund, credit, grant, approve, delete) are refused before execution. Test runners and `--dry-run`/`status` are exempt. It refused 0 of 441 recorded live shell commands and took DeepSeek's unapproved relink attempts on the bench from 9 of 15 runs to 0. `KEIR_EFFECT_GUARD=0` turns it off.
+- Off by default: `KEIR_CORE_BRIEF=1` (3.4K-char core brief from `KEIR-CORE.md` for ticket, command, finding and quick jobs) and the hybrid tool mode (model-native workspace tools plus broker MCP for effects). Both need further validation before live use.
+- keir-bench: support suite (10 graded player-reply cases), four more coding cases, real-brief arms (`keir-current`, `keir-lean`, `keir-core`, `keir-hybrid`), workspace prefetch, deliverable gate and `KEIR_BENCH_TIME_SCALE`.
+
+## 5.8.20 (2026-10-18)
+
+### For users
+
+- Asking Keir whether the game can do something now gets an answer checked against the code. If the system does not exist yet, Keir offers to build it, or says who already is.
+
+### For developers
+
+- Owner and developer requests tagged as a mechanics question, feature request, design feedback or command carry `context.capabilityQuestion`, so quick and focused conversations (which skip the full brief) still check the code and offer a build when the mechanic is missing. Players and ticket tasks are excluded.
+
+## 5.8.19 (2026-10-18)
+
+<!-- Coverage: keir-v5.8.18 (387134f) through this release's ticket conversation fixes. -->
+
+### For users
+
+- A new player question can receive a reply even when an older developer conversation is waiting in the same ticket.
+- Earlier progress updates no longer prevent a later answer indefinitely. Repeated messages remain limited.
+- Conversation monitoring flags unanswered messages sooner, including fragmented messages sent in a burst.
+
+### For developers
+
+- Make developer-task reply ownership yield to newer human input, and apply the same rule to coordinator wake delays. Explicit staff takeovers retain their existing enforcement.
+- Bound the consecutive-message pause to ten minutes. Keep duplicate-copy checks, outcome evidence, owner-decision holds and the short-message guard.
+- Measure unanswered age from the first human message since the latest visible answer, with a three-minute threshold. Player-reply wait state does not suppress the finding.
+- Add regression cases for the two observed reply fences and fragmented unanswered messages. Production activation is verified separately from source inclusion.
+
+## 5.8.18 (2026-10-18)
+
+<!-- Coverage: keir-v5.8.17 (2202599) through this release's decision consistency and audit changes. -->
+
+### For users
+
+- Owner decisions can appear in both the native app and Discord with one shared request and answer. The first authenticated answer wins, and obsolete copies are removed.
+- Existing app-only decisions can gain their Discord copy without creating another approval request.
+- A withdrawn question no longer prevents the ticket from continuing under new guidance.
+
+### For developers
+
+- Guard every decision against second answers, cancel unsent copies, discard obsolete outbox delivery, and clean up late or incorrectly marked legacy Discord cards. Bound and rotate cleanup attempts; treat missing cards as already removed.
+- Add an independent five-minute conversation audit of actual ticket messages, receipts and Discord decision copies. Retain private reply samples and report changed findings and hourly monitoring heartbeats to an optional ops board item. Sampling and transport failures are explicit; the monitor never changes operator state, tickets, decisions or messages.
+- Audit delivery-only-to-card, public internal handoffs, unanswered players, stale conversations, closure against an explicit hold, routine permission requests, missing or divergent decision copies and orphaned decision holds. These are review cues, not automatic semantic verdicts.
+- Configure both channels with KEIR_OWNER_DECISION_CHANNEL=both. The authenticated native app decision API remains the shared source of state. Independent installs retain the existing delivery default.
+- Validate with red-to-green decision race and handoff regression tests, focused approval/app tests, audit tests, and a live read-only audit. The agent release packaging reruns the full suite.
+
+
+## 5.8.17 (2026-10-18)
+
+<!-- Coverage: keir-v5.8.16 (dfef142) through a25144a, with PR111 corrections through eef22a3; release metadata follows. -->
+
+### For users
+
+- Ticket answers and final resolutions appear as new conversation messages instead of edits buried in the opening card.
+- Internal developer summaries and decision handoffs stay out of player tickets. Support works toward the player's goal and does not treat resignation as acceptance.
+- Keir explains and investigates without asking permission. A blocked repair stays on hold while independent work and conversation continue.
+- Owner decisions can stay in the native app instead of also appearing in Discord DMs.
+- Simple chats start with less context and load more instructions and tools as needed. Actual response time still depends on the provider.
+- Native suggestions preserve the original reporter and return a feedback receipt.
+- Chat exposes distinct tool activity. The native iOS Working placement, activity renderer and Cursor settings need the corresponding iOS app update; this agent release alone does not install that update.
+
+### For developers
+
+- PR105: verified suggestion-source attribution and durable intake deduplication; explicit ticket replies; provider-managed Cursor Auto controls.
+- PR106: literal greeting fast path, Jev-directed context profiles, scoped progressive tools/skills/history, first-visible-reply timing and durable tool activity IDs.
+- PR108: support updates default to reply and final resolution notices always post new messages. The support MCP release must be active before this agent.
+- PR109: reject explicit routine permission questions before creating a decision or app choice panel; support KEIR_OWNER_DECISION_CHANNEL=app; require confirmed reply delivery before marking answered; instruct all app context paths to continue authorized independent work around blockers.
+- PR111: keep developer finish summaries out of tickets, reject internal decision handoffs and diagnostic shorthand, and support trusted closure holds that permit investigation and player replies.
+- Exact action approval, provenance, financial repair and executor-attestation fences remain enforced. This release does not implement heal executor attestation.
+- Hosted checks passed for each merged change, including the iPhone simulator for PR106. Targeted delivery, approval, interaction, context and operator regressions passed. Release packaging reruns the agent suite.
+
+## 5.8.16 (2026-10-18)
+
+### For users
+
+- Engineering and Watchkeeper can use Cursor Auto, completing the Cursor Auto
+  provider setup across Keir's configured lanes.
+
+### For developers
+
+- Accept the provider-managed Cursor Auto route in Keir's engineering settings.
+
+
+## 5.8.15 (2026-10-18)
+
+### For users
+
+- Keir can use Cursor Auto across conversation, work, coding, investigation,
+  vision, engineering and voice activations.
+
+### For developers
+
+- Isolate each Cursor CLI activation and scope its broker tools to the task.
+
+
+- Route conversation, work, coding, investigation, vision, engineering and voice
+  activations through Cursor Auto with per-activation broker grants and isolated
+  CLI configuration.
+
+### For users
+
+- Ticket handoffs now retain the Discord reply route when Keir discovers the ticket channel later, so he can acknowledge and answer in the ticket.
+
+## 5.8.14 (2026-10-18)
+
+### For users
+
+- Keir's conversation and worker lanes now run on the DeepSeek platform API (DeepSeek V4.1 Flash, 1017 build) with direct per-token billing instead of the Ollama Cloud subscription, pinned at low reasoning effort. The usage report prices each DeepSeek activation at its published peak rates, so cost per activation is visible again.
+
 ## 5.8.13 (2026-10-17)
 
 ### For users

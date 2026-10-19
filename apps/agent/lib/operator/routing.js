@@ -1,8 +1,10 @@
 "use strict";
 // Keir 5.1 routing lock (2026-10-15 audit). Models that measurably failed a
 // lane do not get it back by an env edit alone:
-//   - deepseek-v4.1-flash (Ollama Cloud) on the coding lane, Keir 4.x: 39 of
-//     42 activations ended at the turn limit with no patch.
+//   - Ollama Cloud routes, measured on deepseek-v4.1-flash on the coding lane,
+//     Keir 4.x: 39 of 42 activations ended at the turn limit with no patch.
+//     The direct DeepSeek API route (deepseek:deepseek-flash) is a different
+//     deployment and is not covered by that measurement.
 //   - gemini-3.8-flash (Antigravity), 2026-10-12 A/B: timed out on
 //     conversations and investigations.
 // A blocked spec falls back to the lane's default and leaves an alert. Setting
@@ -15,7 +17,7 @@ const { assertAllowedBilling } = require(require("node:path").join(require("./cl
 
 const BAR = { completion: 0.9 };
 const BLOCKED = [
-  { match: /^ollama(?::|@|$)|deepseek/i, lanes: ["coding", "investigator", "worker"], why: "deepseek-v4.1-flash ended 39 of 42 coding activations at the turn limit (Keir 4.x)" },
+  { match: /^ollama(?::|@|$)|deepseek-v4\.1-flash/i, lanes: ["coding", "investigator", "worker"], why: "deepseek-v4.1-flash ended 39 of 42 coding activations at the turn limit (Keir 4.x)" },
   { match: /^agy(?::|@|$)|gemini-3\.8-flash/i, lanes: ["coding", "investigator", "worker"], why: "gemini-3.8-flash timed out in the 2026-10-12 A/B" },
 ];
 

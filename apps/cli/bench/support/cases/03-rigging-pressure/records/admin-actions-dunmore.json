@@ -1,0 +1,11 @@
+{
+  "scope": "Dunmore by-election, turn 70",
+  "manualEdits": [],
+  "events": [
+    { "turn": 70, "type": "first_count_published", "actor": "system" },
+    { "turn": 70, "type": "recount_triggered", "actor": "system" },
+    { "turn": 70, "type": "recount_completed", "actor": "system" },
+    { "turn": 70, "type": "result_certified", "actor": "system" }
+  ],
+  "note": "No staff or developer account touched this election."
+}

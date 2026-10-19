@@ -13,7 +13,7 @@ const { createSandbox } = require("./lib/operator/sandbox");
 const { createPresence } = require("./lib/operator/presence");
 const { createDiscord, createScanHealth } = require("./lib/operator/discord");
 const { createConversation, isQuick } = require("./lib/operator/conversation");
-const { recoverRejectedWrites, retryReadFailure } = require("./lib/operator/recovery");
+const { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure } = require("./lib/operator/recovery");
 const { LANES, emptyLanes, pickForLanes, laneTimeoutMs, laneClass } = require("./lib/operator/lanes");
 const { createSupportOwner } = require("./lib/operator/supportowner");
 const { createReopenedTickets } = require("./lib/operator/reopened");
@@ -40,6 +40,7 @@ const config = {
   stateDir: env.KEIR_OPERATOR_STATE_DIR || "/var/lib/keir-operator",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
+  ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
   guildId: env.KEIR_GUILD_ID || "1465445442987888743", staffIds: (env.KEIR_SUPPORT_DELEGATES || "565289871799746593").split(",").filter(Boolean),
   scanChannels: (env.KEIR_SCAN_CHANNELS || "1470636730884427857,1483974659929145625,1495932687058206822,1488255716753019171,1488255794628788244,1523477015217443028,1474210643841122499,1490571412040188117").split(",").filter(Boolean),
   taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000,
@@ -76,7 +77,7 @@ const config = {
   skills: env.KEIR_SKILLS !== "0",
   knowledgeCorrections: env.KEIR_KNOWLEDGE_CORRECT === "1",
   knowledgePreparation: env.KEIR_KNOWLEDGE_PREPARE === "1" ? { server: env.KEIR_KNOWLEDGE_SERVER || "ops-knowledge", project: env.KEIR_KNOWLEDGE_PROJECT, timeoutMs: positive("KEIR_KNOWLEDGE_TIMEOUT_MS", 5000) } : undefined,
-  briefFile: path.join(__dirname, "KEIR.md"), repositories: { AHDGame: "/root/projects/AHDGame", "lakeside-operator": env.KEIR_SOURCE_REPO || "/root/projects/lakeside-ops", AHDClient: "/root/projects/AHDClient" },
+  briefFile: path.join(__dirname, "KEIR.md"), coreBriefFile: path.join(__dirname, "KEIR-CORE.md"), coreBrief: env.KEIR_CORE_BRIEF === "1", effectGuard: env.KEIR_EFFECT_GUARD !== "0", leanContext: env.KEIR_LEAN_CONTEXT !== "0", repositories: { AHDGame: "/root/projects/AHDGame", "lakeside-operator": env.KEIR_SOURCE_REPO || "/root/projects/lakeside-ops", AHDClient: "/root/projects/AHDClient" },
   // Every public guild text channel or thread is watched for reports, except
   // ticket channels (their own tasks handle them) and explicit exclusions.
   scanExclude: (env.KEIR_SCAN_EXCLUDE || "").split(",").filter(Boolean),
@@ -107,6 +108,7 @@ const releaseId = (() => { try { return fs.readFileSync(path.join(__dirname, "RE
 const events = openSink(path.join(config.stateDir, "events.db"), { release: releaseId });
 attachSink(ledger, events);
 recoverRejectedWrites(ledger);
+recoverAuthBlocked(ledger);
 // Keir 3.0: support ownership is an explicit ledger fact. Work defers to the
 // legacy supervisor policy as before, and also to any other operator that
 // owns support, except tickets that operator has handed off.
@@ -415,6 +417,9 @@ async function flushOutbox() {
         entry.tldrDone = true; ledger.save();
       }
       if (ledger.data.control?.stopped && !entry.controlResponse) continue;
+      if (entry.decision && ledger.data.decisions?.[entry.decision]?.state !== "pending") {
+        entry.deliveredAt = Date.now(); entry.skipped = "decision already answered or withdrawn"; ledger.save(); continue;
+      }
       const channelJob = typeof entry.destination === "string" && entry.destination.startsWith("channel:") ? ledger.data.jobs[entry.destination.slice(8)] : null;
       if (channelJob && isAppJob(channelJob)) {
         entry.messageIds = appChannel.deliver(key, entry, channelJob); entry.deliveredChunks = 1; entry.deliveredAt = Date.now(); ledger.save();
@@ -557,7 +562,12 @@ async function scan() {
       try { await reopenedTickets.adopt(n, ch); } catch (e) { log(`reopened ticket ${n}: ${e.message}`); }
     }
     // A ticket adopted from a handoff before its channel was seen gets it now.
-    if (known && !known.channelId) { known.channelId = ch.id; known.source = { ...known.source, channelId: ch.id, channelName: ch.name }; ledger.save(); }
+    if (known && (!known.channelId || (!known.replyChannel && known.channelId === ch.id))) {
+      known.channelId ||= ch.id;
+      known.replyChannel ||= ch.id;
+      known.source = { ...known.source, channelId: ch.id, channelName: ch.name };
+      ledger.save();
+    }
     if (ledger.data.seen[`ticket:${n}`]) continue;
     const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId: ch.id, source: { content: `Open ticket channel #${ch.name} with no Keir task; adopted by the sweep. Read its history and pick it up.`, channelId: ch.id, at: new Date().toISOString() }, deadline: Date.now() + config.taskLifetimeMs });
     ledger.audit("ticket_adopted_by_sweep", { job: job.id, ticket: n }); ledger.save();
@@ -588,7 +598,7 @@ function ensureTicketJob(n) {
   const existing = d.jobs[d.seen[`ticket:${n}`]];
   if (existing) return existing;
   const channelId = Object.entries(d.channels).find(([, c]) => c.ticket === n)?.[0] || null;
-  const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId,
+  const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId, replyChannel: channelId,
     source: { content: `Ticket ${n} handed off by another operator. Read its history and the handoff, then continue it.`, channelId, at: new Date().toISOString() },
     deadline: Date.now() + config.taskLifetimeMs });
   ledger.audit("ticket_adopted_by_handoff", { job: job.id, ticket: n });

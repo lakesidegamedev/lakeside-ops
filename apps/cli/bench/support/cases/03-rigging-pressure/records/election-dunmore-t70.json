@@ -1,0 +1,22 @@
+{
+  "seat": "Dunmore",
+  "type": "by-election",
+  "turn": 70,
+  "totalVotesCast": 28410,
+  "candidates": [
+    { "name": "R. Calder", "party": "Civic Union", "controlledBy": "player" },
+    { "name": "T. Okafor", "party": "National Reform", "controlledBy": "ai" }
+  ],
+  "firstCount": { "R. Calder": 14212, "T. Okafor": 14198, "margin": 14 },
+  "recount": {
+    "triggered": true,
+    "triggeredBy": "system",
+    "reason": "margin 14 below automatic recount threshold 28.41 (0.1% of votes cast)",
+    "corrections": [
+      { "ward": "Kilbride", "ballots": 13, "from": "R. Calder", "to": "T. Okafor", "reason": "ward return entered 13 Okafor ballots in the Calder column" }
+    ]
+  },
+  "finalCount": { "R. Calder": 14199, "T. Okafor": 14211, "margin": 12 },
+  "winner": "T. Okafor",
+  "certified": true
+}

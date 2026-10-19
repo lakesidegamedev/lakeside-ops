@@ -1,0 +1,11 @@
+{
+  "corporation": "Hearth and Crumb Bakeries",
+  "sector": "Bakeries",
+  "currency": "GBP",
+  "profitRule": "profit = revenue - inputCosts - wages",
+  "turns": [
+    { "turn": 129, "revenue": 899000, "inputCosts": 395000, "wages": 286000, "unitsBaked": 61000 },
+    { "turn": 130, "revenue": 912000, "inputCosts": 401500, "wages": 287000, "unitsBaked": 61800 },
+    { "turn": 131, "revenue": 905000, "inputCosts": 468900, "wages": 291600, "unitsBaked": 61300 }
+  ]
+}

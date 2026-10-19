@@ -84,6 +84,7 @@ function makeTldr(options = {}) {
 // merge. An approval then records an exact merge approval at that head
 // (Keir 5.1.1), so later promotions carrying it chain instead of re-asking.
 function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null }) {
+  if (!actionId && !signoff && !binds) require("./decisionpolicy").requireRealDecision(question);
   const d = ledger.data;
   d.decisions ||= {};
   const existing = Object.values(d.decisions).find((x) => x.state === "pending" && x.jobId === jobId && (x.actionId || null) === actionId);
@@ -92,7 +93,9 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
   const text = clean(question);
   const decision = { id, jobId, actionId, question: text, state: "pending", at: Date.now(), sent: {}, ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
   d.decisions[id] = decision;
-  ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, { signoff }), { components: buttons(id), decision: id, recipient: config.ownerId });
+  // The durable decision is already exposed by the authenticated app API and
+  // app push collector. App-only delivery does not mint an approval receipt.
+  if (!require("./decisionpolicy").appDecisions(config)) ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, { signoff }), { components: buttons(id), decision: id, recipient: config.ownerId });
   ledger.audit("decision_opened", { decision: id, job: jobId, action: actionId, signoff: Boolean(signoff) });
   return decision;
 }
@@ -106,11 +109,13 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     const x = entry.decision && d.decisions?.[entry.decision];
     if (!x) return;
     x.sent[entry.recipient] = { channelId, messageId, content: entry.sentContent };
+    if (x.state !== "pending") x.closedOut = false;
     ledger.save();
   }
 
   const authenticated = Symbol("verified human decision ingress");
   function apply(x, verdict, actor, text, proof = null, via = null) {
+    if (d.decisions?.[x.id] !== x || x.state !== "pending") throw new Error("Decision is stale or already answered");
     const job = d.jobs[x.jobId];
     const action = x.actionId && d.actions[x.actionId];
     const ownerMuse = musePolicy.origin(d, job).scoped || Boolean(action?.ownerMuse);
@@ -165,14 +170,19 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
   }
 
   async function removeCopies(x) {
-    await Promise.all(Object.values(x.sent || {}).filter((s) => s.messageId && !s.deleted).map((s) => discord("DELETE", `/channels/${s.channelId}/messages/${s.messageId}`).then(() => { s.deleted = true; }).catch(() => {})));
+    for (const entry of Object.values(d.outbox || {})) if (entry.decision === x.id && !entry.deliveredAt) {
+      entry.deliveredAt = now(); entry.skipped = `decision ${x.state}`;
+    }
+    await Promise.all(Object.values(x.sent || {}).filter((s) => s.messageId && !s.deleted).map((s) => discord("DELETE", `/channels/${s.channelId}/messages/${s.messageId}`).then(() => { s.deleted = true; }).catch(error => { if (error.status === 404) s.deleted = true; })));
     x.closedOut = Object.values(x.sent || {}).every(s => !s.messageId || s.deleted); ledger.save();
   }
 
   async function check(x) {
+    if (x.state !== "pending") return false;
     for (const [recipient, s] of Object.entries(x.sent)) {
       if (!s.messageId) continue;
       let msg; try { msg = await discord("GET", `/channels/${s.channelId}/messages/${s.messageId}`); } catch { continue; }
+      if (x.state !== "pending") return false;
       if (msg.author?.id !== config.botId) continue;
       const body = String(msg.content || "");
       // The verdict must follow exactly what Keir sent; anything else is ignored.
@@ -212,9 +222,10 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
 
   async function tick() {
     // A decision the task moved past (or whose action resolved) stops asking.
-    for (const x of Object.values(d.decisions || {})) {
-      if (["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain"].includes(x.state) && !x.closedOut && Object.values(x.sent || {}).some((s) => s.messageId && !s.deleted)) await closeOut(x);
-    }
+    const obsolete = Object.values(d.decisions || {}).filter(x => ["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain"].includes(x.state) && (!x.closedOut || Object.values(x.sent || {}).some(s => s.messageId && !s.deleted)));
+    // Bound legacy cleanup and rotate failures so old copies cannot monopolize
+    // the operator loop or starve newer decisions.
+    for (const x of obsolete.sort((a, b) => (a.cleanupAttemptAt || 0) - (b.cleanupAttemptAt || 0)).slice(0, 6)) { x.cleanupAttemptAt = now(); await closeOut(x); }
     for (const x of Object.values(d.decisions || {})) {
       if (x.state !== "pending") continue;
       const job = d.jobs[x.jobId];
@@ -227,6 +238,11 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       }
       if (await check(x)) continue;
       if ((action && action.expiresAt && action.expiresAt < now()) || (!action && now() - x.at > PLAIN_EXPIRY_MS)) { expire(x, action); await closeOut(x); continue; }
+      const ownerKey = `ask:${x.id}:${config.ownerId}`;
+      if (!require("./decisionpolicy").appDecisions(config) && !x.sent[config.ownerId] && !d.outbox[ownerKey]) {
+        ledger.notify(ownerKey, "owner", render(x.question, { tldr: x.tldr, signoff: x.signoff }), { components: buttons(x.id), decision: x.id, recipient: config.ownerId });
+        ledger.save();
+      }
       // Game repairs (heals, compensation) the owner started are still issue work and may escalate.
       const development = x.signoff || x.binds || !action || /publish|merge|promot|release|deploy|github|patch/i.test(String(action.kind || ""));
       if (!x.escalatedAt && now() - x.at > ESCALATE_MS && !musePolicy.origin(d, job).scoped && development && ownerInitiated(d, config, job)) {

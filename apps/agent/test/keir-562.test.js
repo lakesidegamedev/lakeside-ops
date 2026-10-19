@@ -86,6 +86,25 @@ test("one open question does not pause a ticket's other fixes", async (t) => {
   assert.equal(done.state, "waiting");
 });
 
+test("annotating an idle fix as the prompt asks does not re-arm it; a newly idle fix asks again", async (t) => {
+  const f = fixture(t);
+  f.ledger.data.statusCards = { 1577: { items: [{ name: "Steelworks idle", stage: "found", blocked: false, note: "" }] } };
+  const finish = () => f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting on the player." });
+  await assert.rejects(finish(), /not moving/);
+  f.ledger.data.statusCards[1577].items = [{ name: "Steelworks idle", stage: "found", blocked: true, note: "Waiting on your reply about renewal." }];
+  assert.equal((await finish()).state, "waiting");
+  f.job.state = "running";
+  f.ledger.data.statusCards[1577].items.push({ name: "Coal price display", stage: "found", blocked: false, note: "" });
+  await assert.rejects(finish(), /Coal price display/);
+});
+
+test("an answered item does not count as an idle fix", async (t) => {
+  const f = fixture(t);
+  f.ledger.data.statusCards = { 1577: { items: [{ name: "Steelworks made nothing", stage: "answered", blocked: false, note: "" }] } };
+  const done = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting on the player." });
+  assert.equal(done.state, "waiting");
+});
+
 test("a card with every fix live or moving finishes waiting without a prompt", async (t) => {
   const f = fixture(t);
   f.ledger.data.statusCards = { 1577: { items: [{ name: "Dropdowns", stage: "main", blocked: false, note: "" }] } };

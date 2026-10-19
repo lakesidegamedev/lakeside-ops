@@ -272,3 +272,30 @@ test("progress edits the existing card and preserves the actual stage caveat", a
     else process.env.DISCORD_BOT_TOKEN = previousToken;
   }
 });
+
+test("an explicit ticket reply posts a new message even when the ticket has an intake card", async () => {
+  const { maybePostTicketChannelUpdate } = require("./ticket-ship-notify");
+  const ticket = { _id: "visible-reply", ticketNumber: 42, discordChannelId: "111111111111111111", intake: { cardMessageId: "222222222222222222" }, publicUpdates: [] };
+  const writes = [], posts = [];
+  const db = { collection: () => ({ findOne: async () => ticket, updateOne: async (q, update) => { writes.push(update); return { modifiedCount: 1 }; } }) };
+  const result = await maybePostTicketChannelUpdate(db, { ticketNumber: 42, key: "reply:test", kind: "progress", message: "The fix is in testing. I will confirm when it reaches the main server.", deliveryMode: "reply",
+    postChannel: async (...args) => { posts.push(args); return { posted: true, via: "bot", id: "new-message", channel: ticket.discordChannelId }; },
+    editCard: async () => ({ posted: true, via: "intake-card", id: ticket.intake.cardMessageId }),
+  });
+  assert.equal(posts.length, 1, "a reply must create visible channel activity");
+  assert.equal(result.via, "bot"); assert.equal(result.delivery.messageId, "new-message");
+  assert.equal(writes.find(w => w.$push).$push.publicUpdates.deliveryMode, "reply");
+  assert.ok(posts[0][2].nonce);
+});
+
+test("final resolutions create a new channel message instead of editing the intake card", async () => {
+  const { maybePostTicketChannelUpdate } = require("./ticket-ship-notify");
+  const ticket = { _id: "final-reply", ticketNumber: 42, discordChannelId: "111111111111111111", intake: { cardMessageId: "222222222222222222" }, publicUpdates: [] };
+  let posts = 0, edits = 0;
+  const db = { collection: () => ({ findOne: async () => ticket, updateOne: async () => ({ modifiedCount: 1 }) }) };
+  const result = await maybePostTicketChannelUpdate(db, { ticketNumber: 42, key: "resolution:fixture", kind: "resolution", message: "The fix is live and verified.",
+    postChannel: async () => { posts++; return { posted: true, id: "visible-resolution" }; },
+    editCard: async () => { edits++; return { posted: true, via: "intake-card" }; },
+  });
+  assert.equal(posts, 1); assert.equal(edits, 0); assert.equal(result.delivery.messageId, "visible-resolution");
+});

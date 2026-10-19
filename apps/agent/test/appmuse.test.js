@@ -83,7 +83,8 @@ test("Keir's tools write plans, feed, files and ideas only on owner tasks", () =
   assert.equal(agent.task(jobId).plan.length, 2);
   assert.equal(agent.tasks()[0].plan.current, "Read spreads");
   muse.noteTool(job, "read_tool", { server: "gamestate", tool: "fx_quote" }, true, 120);
-  assert.equal(agent.task(jobId).live[0].what, "gamestate.fx_quote");
+  assert.equal(agent.task(jobId).live[0].source, "Game state");
+  assert.equal(agent.task(jobId).live[0].operation, "fx_quote");
   assert.throws(() => muse.toolCall(job, "artifact_save", { title: "x", markdown: "short" }), /markdown content/);
   const saved = muse.toolCall(job, "artifact_save", { title: "Spread report", kind: "report", markdown: "# Spreads\n\nFed funds is 4.2% and the 10y is 5.1%." });
   assert.equal(muse.artifacts()[0].title, "Spread report");
@@ -161,4 +162,23 @@ test("repeated suggestions stay deduplicated and a dismissed idea stays dismisse
 test("stopped automation cannot recreate work or leave a ghost goal",()=>{
  const {ledger,muse,agent,clock}=setup();const goal=muse.addGoal({title:"Keep response time low"});ledger.data.jobs[goal.taskId].state="cancelled";agent.addWatch({condition:"Response time below five seconds"});ledger.data.paused=true;const before=Object.keys(ledger.data.jobs).length;clock.t+=86400001;
  muse.tick();agent.tickWatches();assert.equal(Object.keys(ledger.data.jobs).length,before);assert.throws(()=>muse.addGoal({title:"Another goal"}),/stopped/);assert.equal(muse.goals().length,1);assert.throws(()=>muse.brief(),/stopped/);
+});
+
+test("tool starts change the live chat version and completed activity stays attached to its reply", () => {
+  const { ledger, app, muse } = setup();
+  const { jobId } = app.authenticatedPost("Inspect the current game turn", "activity-fixture");
+  const job = ledger.data.jobs[jobId]; job.state = "running";
+  const before = app.view().version;
+  const id = muse.startTool(job, "read_tool", { server: "gamestate", tool: "game_overview" });
+  const started = app.view();
+  assert.notEqual(started.version, before);
+  assert.equal(started.tasks[0].live[0].id, id); assert.equal(started.tasks[0].live[0].state, "running");
+  muse.noteTool(job, "read_tool", { server: "gamestate", tool: "game_overview" }, true, 120, id);
+  app.deliver("channel-reply:activity", { content: "The game is running." }, job);
+  const reply = app.view().messages.at(-1);
+  assert.equal(reply.activity[0].id, id); assert.equal(reply.activity[0].title, "Check game status");
+  assert.ok(job.firstReplyAt); assert.ok(ledger.data.audit.some(row => row.kind === "chat_delivery" && row.job === job.id));
+  assert.equal(app.view().tasks[0].live.length, 0, "completed calls appear in the reply only");
+  app.deliver("channel-reply:activity-followup", { content: "Anything else?" }, job);
+  assert.equal(app.view().messages.at(-1).activity, undefined);
 });

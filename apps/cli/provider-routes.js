@@ -4,6 +4,7 @@
 const PROVIDERS = [
   { id: "antigravity", name: "Antigravity", billing: "subscription", runner: "agy", backend: "antigravity" },
   { id: "ollama", name: "Ollama Cloud", billing: "subscription", runner: "ollama", backend: "api", prefix: "ollama" },
+  { id: "deepseek", name: "DeepSeek API", billing: "api", runner: "deepseek", backend: "api", prefix: "deepseek" },
   { id: "codex-sub", name: "Codex subscription", billing: "subscription", runner: "codex", backend: "codex" },
   { id: "codex-api", name: "Codex API", billing: "api", runner: "opencode", backend: "api", prefix: "openai" },
   { id: "claude-sub", name: "Claude subscription", billing: "subscription", runner: "claude", backend: "claude" },
@@ -26,6 +27,6 @@ function assertAllowedBilling({ runner, model }) {
   }
 }
 function credentialEnv(env = process.env) {
-  return Object.fromEntries(["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "OLLAMA_API_KEY"].filter(key => env[key]).map(key => [key, env[key]]));
+  return Object.fromEntries(["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_API_KEY", "OPENCODE_GO_API_KEY", "OLLAMA_API_KEY", "DEEPSEEK_API_KEY"].filter(key => env[key]).map(key => [key, env[key]]));
 }
 module.exports = { PROVIDERS, providerRoute, credentialEnv, assertAllowedBilling };

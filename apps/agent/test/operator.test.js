@@ -157,6 +157,81 @@ test("an inherited pending owner decision cannot be turned into an automatic clo
   assert.equal(f.calls.length, 0);
 });
 
+test("while the owner decides, a support update gets the same one notice as channel_reply; other writes wait", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", ownerDecisionPending: true });
+  (f.ledger.data.decisions ||= {}).d1 = { id: "d1", jobId: j.id, state: "pending", at: 4000 };
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_set_status", args: { status: "blocked" } }), /awaiting an owner decision/);
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Confirmed: the licence was charged twice. The developers are deciding what happens next and I will update you here." } });
+  assert.ok(f.calls.some((c) => c[1] === "support_public_update" || JSON.stringify(c).includes("support_public_update")));
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Still waiting on the developers for their decision." } }), /one notice/);
+});
+
+test("a support update written as body or text reaches the service as message; an empty one is refused before any call", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { body: "Lagos is closed, so that route is paused until it reopens." } });
+  const sent = f.calls.filter((c) => JSON.stringify(c).includes("support_public_update")).at(-1);
+  assert.match(JSON.stringify(sent), /"message":"Lagos is closed, so that route is paused until it reopens\."/);
+  assert.doesNotMatch(JSON.stringify(sent), /"body"/);
+  const before = f.calls.length;
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: {} }), /args\.message/);
+  assert.equal(f.calls.length, before);
+  assert.notEqual(j.state, "blocked");
+});
+
+test("a made-up ticket status is named as such with the allowed list; a terminal one still needs a receipt", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_set_status", args: { status: "waiting_on_player" } }), /not a ticket status[\s\S]*in_progress[\s\S]*player_reply/);
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_set_status", args: { status: "resolved" } }), /terminal statuses require a resolution receipt/);
+});
+
+test("a call after the task stopped running says it is over and to stop", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.state = "done"; j.mergedInto = 4290;
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "One more thing." } }), /authority is inactive: this task is done, merged into incident 4290[\s\S]*Stop now/);
+});
+
+test("waiting on the player needs a post to them since they last wrote", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.lastPlayerAt = 1; j.observedPlayerAt = 1;
+  await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /nothing has been posted to them since they last wrote/);
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Were you on the phone app or the website when it happened?" } });
+  assert.ok(j.lastAskAt >= j.lastPlayerAt);
+});
+
+test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  const seen = [];
+  const orig = f.mcp.call;
+  f.mcp.call = async (server, tool, args, ...rest) => { seen.push([server, tool, args]); if (tool === "support_get") return { number: 123, reporter: { characterName: "Ada Reed", profileUrl: "https://www.ahousedividedgame.com/character/42" } }; if (server === "gamestate") return { ok: true }; return orig(server, tool, args, ...rest); };
+  await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: {} });
+  await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: { sequentialId: 42 } });
+  await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: { name: "Ada Reed", ticket: 123 } });
+  const history = seen.filter(([s, t]) => s === "gamestate" && t === "trace_character").map(([, , a]) => a);
+  assert.deepEqual(history.map((a) => String(a.character).toLowerCase()), ["42", "42", "ada reed"]);
+  assert.ok(history.every((a) => a.sequentialId === undefined && a.ticket === undefined));
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_character", args: { characterId: 77 } }), /limited to this ticket's reporter/);
+  await f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: {} });
+  assert.deepEqual(seen.filter(([, t]) => t === "support_get").at(-1)[2], { number: 123, kind: "ticket" });
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { number: 456 } }), /assigned ticket/);
+});
+
+test("an investigator reads its ticket task's ticket and reporter, and nothing wider", async () => {
+  const f = fixture(), parent = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  const job = (key, fields) => { const j = f.ledger.createJob(key, { kind: "coding", investigation: true, role: "support", source: {}, deadline: 9999999999999, ...fields }); j.state = "running"; return j; };
+  const child = job("investigate-1", { codingParent: parent.id });
+  const seen = [];
+  const orig = f.mcp.call;
+  f.mcp.call = async (server, tool, args, ...rest) => { seen.push([server, tool, args]); if (tool === "support_get") return { number: 123, reporter: { characterName: "Ada Reed", profileUrl: "https://www.ahousedividedgame.com/character/42" } }; if (server === "gamestate") return { ok: true }; return orig(server, tool, args, ...rest); };
+  await f.broker.tool(child, "read_tool", { server: "gamestate", tool: "trace_character", args: {} });
+  assert.equal(seen.filter(([s, t]) => s === "gamestate" && t === "trace_character").at(-1)[2].character, "42");
+  await f.broker.tool(child, "read_tool", { server: "support", tool: "support_get", args: {} });
+  assert.deepEqual(seen.filter(([, t]) => t === "support_get").at(-1)[2], { number: 123, kind: "ticket" });
+  await assert.rejects(f.broker.tool(child, "read_tool", { server: "gamestate", tool: "trace_character", args: { character: "77" } }), /limited to this ticket's reporter/);
+  await assert.rejects(f.broker.tool(child, "read_tool", { server: "support", tool: "support_get", args: { number: 456 } }), /assigned ticket/);
+  const orphan = job("investigate-2", {});
+  await assert.rejects(f.broker.tool(orphan, "read_tool", { server: "gamestate", tool: "trace_character", args: {} }), /need an assigned ticket/);
+});
+
 test("support reads cannot access unrelated transcripts or general private knowledge", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123 });
   await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { kind: "ticket", number: 456 } }), /assigned ticket/);
@@ -949,7 +1024,7 @@ test("in a ticket channel, developer-task replies are player register and attach
   const r = await f.broker.tool(j, "channel_reply", { message: "The fix is in testing on dev and heads to the main server next. I'll confirm here when it's live." });
   assert.equal(r.attachedToTicket, 123);
   const call = f.calls.find((c) => c[1] === "support_public_update");
-  assert.equal(call[2].number, 123); assert.equal(call[2].deliver, true);
+  assert.equal(call[2].number, 123); assert.equal(call[2].deliver, true); assert.equal(call[2].delivery_mode, "reply");
   assert.equal(Object.keys(f.ledger.data.outbox).filter((k) => k.startsWith("channel-reply")).length, 0);
 });
 
@@ -1064,6 +1139,40 @@ test("a ticket task still ships its own green non-economy fix", async () => {
   const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
   const r = await f.broker.tool(j, "github", { action: "merge", number: 10 });
   assert.equal(r.merged, true);
+});
+
+test("a base-branch race on merge retries once on the same head instead of asking the owner (ticket 1619)", async () => {
+  let attempts = 0;
+  const pr = { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "abc123", ref: "keir/x" }, html_url: "u" };
+  const f = githubFixture([[/pulls\/10\/files/, files("src/components/Shop.tsx")], [/pulls\/10\/merge/, () => { if (++attempts === 1) throw new Error("gh: Base branch was modified. Review and try the merge again. (HTTP 405)"); return { merged: true, sha: "m1" }; }], [/pulls\/10$/, () => pr], green, [/git\/refs/, {}]]);
+  f.config.mergeRetryMs = 0;
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  const r = await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  assert.equal(r.merged, true); assert.equal(attempts, 2);
+  assert.match(r.nextMove, /rides those approvals/);
+  assert.notEqual(j.state, "blocked");
+  assert.equal(Object.keys(f.ledger.notifications || {}).some((k) => k.startsWith("effect-error")), false);
+});
+
+test("a definite GitHub merge refusal clears the receipt so a later call can retry, with no owner inspection", async () => {
+  const pr = { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "abc123", ref: "keir/x" }, html_url: "u" };
+  let refuse = true;
+  const f = githubFixture([[/pulls\/10\/files/, files("src/components/Shop.tsx")], [/pulls\/10\/merge/, () => { if (refuse) throw new Error("gh: Pull Request is not mergeable (HTTP 405)"); return { merged: true, sha: "m1" }; }], [/pulls\/10$/, () => pr], green, [/git\/refs/, {}]]);
+  f.config.mergeRetryMs = 0;
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  await assert.rejects(f.broker.tool(j, "github", { action: "merge", number: 10 }), /nothing merged.*no owner inspection/);
+  assert.notEqual(j.state, "blocked");
+  assert.equal(j.effects["merge:10:abc123"], undefined);
+  refuse = false;
+  assert.equal((await f.broker.tool(j, "github", { action: "merge", number: 10 })).merged, true);
+});
+
+test("an unsettled merge receipt tells the model it settles itself, not to ask the owner", async () => {
+  const pr = { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ref: "keir/x" }, html_url: "u" };
+  const f = githubFixture([[/pulls\/10\/files/, files("src/components/Shop.tsx")], [/pulls\/10\/merge/, { merged: true }], [/pulls\/10$/, () => pr], green]);
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  j.effects["merge:10:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] = { state: "started", at: 1 };
+  await assert.rejects(f.broker.tool(j, "github", { action: "merge", number: 10 }), /checked against GitHub automatically.*Do not ask the owner/);
 });
 
 test("an owner task needs a separate explicit yes for an economy merge, bound to the PR head", async () => {
@@ -1189,6 +1298,9 @@ test("a second task on the same ticket revises the ticket's open PR instead of o
   const f = publishFixture(uiDiff);
   const other = f.ledger.createJob("dev-1506", { kind: "command", role: "owner", source: { channelName: "ticket-bug-x-1506" }, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/41"] });
   const j = running(f, { repository: "AHDGame", kind: "ticket", role: "support", ticket: 1506 });
+  // A ticket's patch needs its issue first.
+  await assert.rejects(f.broker.tool(j, "publish_patch", { title: "fix(tech): price floor", body: "Same fix." }), /no GitHub issue yet/);
+  (f.ledger.data.keirIssues ||= {})[777] = { number: 777, state: "open", ticket: 1506, url: "https://github.com/lakesidegamedev/AHDGame/issues/777" };
   const r = await f.broker.tool(j, "publish_patch", { title: "fix(tech): price floor", body: "Same fix." });
   assert.equal(r.revised, true); assert.equal(r.pullRequest, "https://github.com/lakesidegamedev/AHDGame/pull/41");
   assert.ok(other);
@@ -1513,11 +1625,11 @@ test("a bare mention can point to the same author's recent unanswered question",
   assert.equal(j.source.contextMessageId, q.id);assert.equal(j.source.messageId, m.id);
 });
 
-test("ticket finish fallback accepts a new safe finding and records it for deduplication", async () => {
+test("ticket developer finish summaries stay private even when the finding looks safe", async () => {
   const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
   await f.broker.tool(j, "finish", { state: "done", summary: "The subsidiary history is hidden from the parent company. I am checking the correction." });
-  assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 1);
-  assert.equal(f.ledger.data.ticketPosts[123].length, 1);
+  assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
+  assert.equal(f.ledger.data.ticketPosts?.[123], undefined);
 });
 
 test("ticket finish fallback refuses unverified releases and technical copy", async () => {
@@ -2047,4 +2159,42 @@ test("OpenCode exhausted empty response hands off the original owner request wit
   assert.equal(worker.needsAck, true);
   assert.equal(f.ledger.data.actions.pending.state, "pending");
   assert.doesNotMatch(job.summary, /Model ended/);
+});
+
+for (const delivery of [{ posted: true, via: "intake-card" }, { posted: false, delivery: { status: "failed" } }]) test(`ticket replies cannot claim delivery from ${JSON.stringify(delivery)}`, async () => {
+  const f = fixture();
+  const original = f.mcp.call;
+  f.mcp.call = async (...args) => args[1] === "support_public_update" ? { ok: true, delivery } : original(...args);
+  const j = running(f, { actorId: f.config.ownerId, ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { authorId: f.config.ownerId, messageId: "666666666666666666", channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" } });
+  await assert.rejects(f.broker.tool(j, "channel_reply", { message: "I found why the panels differ and am checking the sale path." }), /not confirmed as a new channel message/);
+  assert.equal(j.lastPublishedAt, undefined);
+  assert.ok(!j.channelReplyQueued);
+});
+
+test("internal developer finish notes never become ticket replies", async () => {
+  const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
+  await f.broker.tool(j, "finish", { state: "done", summary: "egg3901: dig done. Portal or env mismatch; fix options are in your decision DM." });
+  assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
+});
+
+test("explicit ticket messages reject internal decision handoffs", async () => {
+  const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
+  await assert.rejects(f.broker.tool(j, "channel_reply", { message: "egg3901: dig done. The options are in your decision DM." }), /player|internal/i);
+});
+
+test("a closure hold blocks resolution but permits a substantive player reply", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777" }, ownerClosureHold: { handoffId: "fixture" } });
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_resolve", args: { message: "Working as designed", actions: ["Explained"] } }), /closure.*held/i);
+  await f.broker.tool(j, "channel_reply", { message: "I am checking the original agreement and why the price changed while you were unable to complete it." });
+  assert.equal(j.channelReplyQueued, true);
+});
+
+test("newer player input removes the old developer sibling wake delay", async () => {
+  const f = fixture(), owner = f.config.ownerId;
+  f.ledger.createJob("cmd:old-reply", { kind: "command", role: "owner", actorId: owner, ticket: 7002,
+    source: { authorId: owner, at: new Date(1000).toISOString() }, deadline: 9999999999999 }).state = "waiting";
+  const t = f.ledger.createJob("ticket:7002", { kind: "ticket", role: "support", ticket: 7002,
+    observedPlayerAt: 4000, source: { content: "new question" }, deadline: 9999999999999 }); t.state = "running";
+  await f.broker.tool(t, "finish", { state: "waiting", summary: "Waiting briefly for an independent check", wakeAfterMinutes: 1 });
+  assert.ok(t.wakeAt < 5000 + 30 * 60000);
 });

@@ -223,11 +223,16 @@ function createAppMuse({ ledger, config, app, now = () => Date.now(), drain = ()
   }
 
   // Live work: the last tool calls of an owner task, as they happen.
-  function noteTool(job, name, input, ok, ms) {
+  function startTool(job, name, input) {
+    const id = require("./toolactivity").start(job, name, input, now());
+    if (id) ledger.save();
+    return id;
+  }
+  function noteTool(job, name, input, ok, ms, callId) {
     if (job.role !== "owner" || job.internalProbe) return;
-    const i = require("./ownermuse-policy").logInput(input || {});
-    const what = name === "read_tool" ? `${i.server}.${i.tool}` : name === "github" ? `${i.action || ""} ${i.number ? `#${i.number}` : ""}`.trim() : name === "channel_reply" || name === "feed_post" ? clip(i.message || i.title, 80) : name === "task_plan" ? `${(i.steps || []).length} steps` : clip(i.query || i.path || i.url || i.kind || "", 80);
-    job.liveLog = [...(job.liveLog || []), { at: now(), tool: name, what, ok, ms }].slice(-60);
+    const id = callId || require("./toolactivity").start(job, name, input, now());
+    require("./toolactivity").finish(job, id, ok, ms, now());
+    ledger.save();
   }
 
   // Tool calls from Keir's own tasks.
@@ -336,7 +341,7 @@ function createAppMuse({ ledger, config, app, now = () => Date.now(), drain = ()
     return undefined;
   }
 
-  return { route, tick, toolCall, noteTool, context, feed, addFeed, goals, addGoal, updateGoal, advance, brief, approvals, upcoming, artifacts, identity, suggestedIdeas, decideSuggestion };
+  return { route, tick, toolCall, startTool, noteTool, context, feed, addFeed, goals, addGoal, updateGoal, advance, brief, approvals, upcoming, artifacts, identity, suggestedIdeas, decideSuggestion };
 }
 
 module.exports = { createAppMuse, MUSE_TOOLS, museState, eastern };
