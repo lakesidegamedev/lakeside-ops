@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.30 (2026-10-19)
+
 ### For users
 
 - When Keir's monitoring finds a problem that hit your account, it opens a ticket for you explaining what happened and where the fix stands, so you do not have to report it yourself.
