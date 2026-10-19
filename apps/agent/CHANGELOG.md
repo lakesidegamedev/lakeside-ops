@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.29 (2026-10-19)
+
 ### For users
 
 - When Keir waits for your reply, it has always actually asked you something first.
