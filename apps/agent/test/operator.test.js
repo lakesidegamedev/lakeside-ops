@@ -157,6 +157,15 @@ test("an inherited pending owner decision cannot be turned into an automatic clo
   assert.equal(f.calls.length, 0);
 });
 
+test("while the owner decides, a support update gets the same one notice as channel_reply; other writes wait", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", ownerDecisionPending: true });
+  (f.ledger.data.decisions ||= {}).d1 = { id: "d1", jobId: j.id, state: "pending", at: 4000 };
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_set_status", args: { status: "blocked" } }), /awaiting an owner decision/);
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Confirmed: the licence was charged twice. The developers are deciding what happens next and I will update you here." } });
+  assert.ok(f.calls.some((c) => c[1] === "support_public_update" || JSON.stringify(c).includes("support_public_update")));
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Still waiting on the developers for their decision." } }), /one notice/);
+});
+
 test("support reads cannot access unrelated transcripts or general private knowledge", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123 });
   await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { kind: "ticket", number: 456 } }), /assigned ticket/);

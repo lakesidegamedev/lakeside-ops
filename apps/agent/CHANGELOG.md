@@ -5,6 +5,14 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- When Keir passes a decision to the developers, the player still gets one message explaining where things stand, whichever way Keir posts it.
+
+### For developers
+
+- While an owner decision is pending, `support_action` with `support_public_update` follows the same one-notice rule as `channel_reply` (guardTicketPost) instead of being refused outright; status, tracker and resolve writes still wait. Found by the replay benchmark: a model that raised the decision and then used the support path could not tell the player anything.
+
 ## 5.8.23 (2026-10-19)
 
 ### For users
