@@ -1223,6 +1223,9 @@ test("a second task on the same ticket revises the ticket's open PR instead of o
   const f = publishFixture(uiDiff);
   const other = f.ledger.createJob("dev-1506", { kind: "command", role: "owner", source: { channelName: "ticket-bug-x-1506" }, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/41"] });
   const j = running(f, { repository: "AHDGame", kind: "ticket", role: "support", ticket: 1506 });
+  // A ticket's patch needs its issue first.
+  await assert.rejects(f.broker.tool(j, "publish_patch", { title: "fix(tech): price floor", body: "Same fix." }), /no GitHub issue yet/);
+  (f.ledger.data.keirIssues ||= {})[777] = { number: 777, state: "open", ticket: 1506, url: "https://github.com/lakesidegamedev/AHDGame/issues/777" };
   const r = await f.broker.tool(j, "publish_patch", { title: "fix(tech): price floor", body: "Same fix." });
   assert.equal(r.revised, true); assert.equal(r.pullRequest, "https://github.com/lakesidegamedev/AHDGame/pull/41");
   assert.ok(other);

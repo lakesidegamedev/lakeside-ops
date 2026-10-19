@@ -5,6 +5,14 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- When Keir prepares a fix for a reported bug, the report is linked to the developers' issue for it first, so it reaches the developers working on that bug.
+
+### For developers
+
+- `publish_patch` refuses on a ticket-scoped job (ticket, or a task in a ticket channel) that has no linked GitHub issue, unless the PR body references one explicitly (`#N`). File the bug or add evidence to the open issue with `raise_to_developers`; its duplicate check finds it. Finding jobs are unaffected. Found by a simulated-ticket benchmark where 2 in 5 runs published a patch without linking the bug.
+
 ## 5.8.22 (2026-10-18)
 
 ### For users
