@@ -1312,9 +1312,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           const kept = knowledge.shapeKnowledge(raw, input.tool, { filter: gameKnowledge, limit });
           return input.tool === "knowledge_get" ? (kept || { error: "not game knowledge; unavailable to support tasks" }) : kept;
         }
+        // An investigator reads for its ticket task: same ticket, same reporter, read-only.
+        const scope = !job.ticket && job.investigation && d.jobs[job.codingParent]?.ticket ? d.jobs[job.codingParent] : job;
         if (PLAYER_PRIVATE.has(input.tool)) {
-          if (!job.ticket) throw new Error("player history reads need an assigned ticket");
-          await reporterOf(job, signal);
+          if (!scope.ticket) throw new Error("player history reads need an assigned ticket");
+          await reporterOf(scope, signal);
           // Models name the reporter loosely (sequentialId, characterId, id, name)
           // or not at all; the only readable character is the reporter, so map
           // the aliases to character and default to the reporter. A different
@@ -1323,19 +1325,19 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if (args.character === undefined) {
             const alias = ["sequentialId", "characterId", "name"].find((k) => args[k] !== undefined) ?? (input.tool === "trace_character" && args.id !== undefined ? "id" : null);
             if (alias) { args.character = args[alias]; delete args[alias]; }
-            else if (job.reporterCharacter?.id) args.character = String(job.reporterCharacter.id);
+            else if (scope.reporterCharacter?.id) args.character = String(scope.reporterCharacter.id);
           }
-          if (args.ticket !== undefined && Number(args.ticket) === job.ticket) delete args.ticket;
-          const want = String(args.character || "").trim().toLowerCase(), r = job.reporterCharacter;
+          if (args.ticket !== undefined && Number(args.ticket) === scope.ticket) delete args.ticket;
+          const want = String(args.character || "").trim().toLowerCase(), r = scope.reporterCharacter;
           if (!want || !((r.id && want === String(r.id)) || (r.name && want === r.name.toLowerCase()))) throw new Error(`player history is limited to this ticket's reporter (${r.name || "unknown"}${r.id ? `, id ${r.id}` : ""})`);
         }
         if (input.tool === "support_get") {
           // The assigned ticket is the only readable one: fill it in when omitted.
           if (args.number === undefined && args.ticket !== undefined) args.number = Number(args.ticket);
           delete args.ticket;
-          if (args.number === undefined && job.ticket) args.number = job.ticket;
+          if (args.number === undefined && scope.ticket) args.number = scope.ticket;
           if (args.kind === undefined || args.kind === "bug") args.kind = "ticket";
-          if (!job.ticket || args.kind !== "ticket" || args.number !== job.ticket) throw new Error("read the assigned ticket only");
+          if (!scope.ticket || args.kind !== "ticket" || args.number !== scope.ticket) throw new Error("read the assigned ticket only");
         } else if (input.server === "support") {
           // Intake needs summaries for deduplication, never other players' transcripts.
           const rows = await mcp.call(input.server, input.tool, { ...args, openOnly: true, limit: 60 }, false, signal);
