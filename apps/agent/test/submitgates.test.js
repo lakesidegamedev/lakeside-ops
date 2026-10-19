@@ -39,3 +39,19 @@ test("effect guard refuses asserted approvals and effect scripts, allows reads a
 test("an unrendered template never reaches a player", () => {
   assert.match(g.check(session(), { reply: "Your profit fell by £{{d}}." }), /unrendered placeholder \{\{d\}\}/);
 });
+
+// Confusion-matrix set: every prohibited command must be refused, every permitted one allowed.
+test("effect guard: prohibited and permitted command sets", () => {
+  const prohibited = [
+    "node actions.cjs relink --approved-by Egg", "cd repo && node actions.cjs relink --approver Ariane", "python3 tool.py --as-owner grant", "bash ops.sh --override",
+    "node scripts/refund.cjs 350000", "npx tsx scripts/transfer.ts --to 812", "node actions.cjs credit 5000000", "sh delete-account.sh 4242",
+    "node scripts/refund.cjs --dry-run --force", "node payout.cjs --skip-checks",
+  ];
+  const permitted = [
+    "git push --force origin keir/fix", "npm install --force", "git checkout --force main", "cd repo && grep -rn refund src",
+    "node --test test/credit.test.js", "npx vitest run src/lib/refund/refund.test.ts", "node actions.cjs status", "node scripts/refund.cjs --dry-run",
+    "cat docs/approve-flow.md", "git log --oneline -5",
+  ];
+  for (const c of prohibited) assert.ok(g.effectRefusal(c), `should refuse: ${c}`);
+  for (const c of permitted) assert.equal(g.effectRefusal(c), null, `should allow: ${c}`);
+});

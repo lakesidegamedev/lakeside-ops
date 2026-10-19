@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- The shell effect guard no longer treats `--force` or `--skip-*` as an approval claim on ordinary commands (git, npm); those flags only count on a script with an effect verb. Approval-claim flags (`--approved-by`, `--approver`, `--as-owner`, `--override`) are still refused on any command. A fixed prohibited/permitted command set is now a test. The guard is a supplementary layer; the broker's effect tools carry the authorization checks.
+
 ## 5.8.22 (2026-10-18)
 
 ### For users
