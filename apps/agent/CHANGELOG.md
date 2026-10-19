@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.22 (2026-10-18)
+
 ### For users
 
 - An approved fix that loses a merge race with another change is retried automatically instead of asking the owner to check on it.
