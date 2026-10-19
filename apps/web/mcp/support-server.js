@@ -322,7 +322,7 @@ async function main() {
           number,
           status,
           receipt: getResolution(refreshed || { resolution: receipt }),
-          receiptUrl: ticketPublicUrl(number),
+          receiptUrl: existing.category === "investigation" ? null : ticketPublicUrl(number),
           trackerItemId: trackerSync.trackerItemId,
           notification,
         });
@@ -408,7 +408,7 @@ async function main() {
         if (!existing) return errorResult(`ticket #${number} not found`);
         const now = new Date();
         const updateKey = `${update_kind}:${Date.now()}`;
-        const receiptUrl = ticketPublicUrl(number);
+        const receiptUrl = existing.category === "investigation" ? null : ticketPublicUrl(number);
         // Delivered updates are inserted by maybePostTicketChannelUpdate, which
         // claims the key itself. Pre-inserting a "pending" entry here made it
         // read our own claim as a concurrent send and skip the post.
