@@ -130,3 +130,11 @@ test("a moderation coordinator hold gives the owner a private read-only investig
   assert.equal(pending.ownerInvestigation, undefined); assert.ok(pending.remainingBlockers.includes("pending-action"));
   assert.equal(f.ledger.data.actions.pending.state, "pending"); assert.equal(f.ledger.data.actions.pending.digest, "unchanged");
 });
+
+// 2026-10-19: 1615 refused the owner's "close it" because an earlier owner
+// follow-up had set a closure hold.
+test("an owner directive to close lifts the owner's own closure hold", () => {
+  const src = fs.readFileSync(path.join(__dirname, "../lib/operator/supportdirective.js"), "utf8");
+  assert.match(src, /if \(target\.ownerClosureHold && \/\\b\(\?:close\|resolve\)\\b\/i\.test/);
+  assert.match(src, /delete target\.ownerClosureHold;/);
+});

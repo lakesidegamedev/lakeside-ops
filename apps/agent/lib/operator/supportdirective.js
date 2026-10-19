@@ -127,6 +127,12 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
   const row = {directiveId:id,authorId:config.ownerId,role:"owner",at:new Date(now()).toISOString(),sourceMessageId:message.id,sourceTaskId:job.id,
    content:`Owner instruction from the Ops app (message ${message.id}):\n${message.text}\n${input.context ? `Routing context (not approval authority): ${String(input.context).slice(0,2000)}\n` : ""}Verify the current ticket and act under existing holds and approval IDs. This delivery grants no external-action approval.`,approvalReferences:approvals};
   (target.inbox ||= []).push(row);
+  // The owner asking to close lifts the owner's own earlier closure hold
+  // (2026-10-19: 1615 refused the owner's "close it" because of a hold an
+  // earlier owner follow-up had set).
+  if (target.ownerClosureHold && /\b(?:close|resolve)\b/i.test(String(message.text || "")) && !/\b(?:don'?t|do not|not yet|keep (?:it )?open)\b/i.test(String(message.text || ""))) {
+   ledger.audit("owner_closure_hold_lifted",{job:target.id,ticket:number,directive:id}); delete target.ownerClosureHold;
+  }
   if (!remainingBlockers.length) {
    if (SOFT_WAITS.includes(target.waitingFor?.kind)) delete target.waitingFor;
    if (target.state !== "running") {target.state="queued"; target.wakeAt=0;}

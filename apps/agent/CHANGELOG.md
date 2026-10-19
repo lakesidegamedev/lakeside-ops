@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.4 (2026-10-19)
+
+### For developers
+
+- An owner directive that asks to close or resolve a ticket lifts the owner's own earlier `ownerClosureHold`, unless it says not to close. On 1615 an earlier follow-up's hold made Keir refuse the owner's later "close it".
+
 ## 5.9.3 (2026-10-19)
 
 ### For developers
