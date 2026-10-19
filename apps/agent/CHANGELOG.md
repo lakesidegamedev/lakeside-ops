@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- A ticket update sent with its text under `body`, `text` or `content` reaches the support service as `message`, and an update with no text is refused before any call with the exact shape to use. Replay traces showed a model sending `body`; the empty update then failed at the service, costing a round.
+
 ## 5.8.25 (2026-10-19)
 
 ### For developers

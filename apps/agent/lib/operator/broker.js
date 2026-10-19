@@ -2129,6 +2129,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.tool === "support_resolve" && (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)) throw new Error("Ticket closure is held by an explicit owner follow-up. Continue investigating and communicating; do not resolve or close it.");
       const args = { ...(input.args || {}), number: job.ticket };
       if (input.tool !== "support_resolve") args.kind = "ticket";
+      // Models name the update text loosely ("body", "text"); the service needs `message`.
+      if (input.tool === "support_public_update" && args.message === undefined) for (const k of ["body", "text", "content"]) if (typeof args[k] === "string") { args.message = args[k]; delete args[k]; break; }
+      if (input.tool === "support_public_update" && !String(args.message || "").trim()) throw new Error('support_public_update needs the player-facing text in args.message: {"tool": "support_public_update", "args": {"message": "..."}}');
       const definition = (await mcp.list("support")).find(t => t.name === input.tool);
       if (!definition?.inputSchema) throw new Error("support write schema unavailable; discover support_tools and retry later");
       // Ticket identity is always broker-bound; all remaining arguments must match the live schema.
