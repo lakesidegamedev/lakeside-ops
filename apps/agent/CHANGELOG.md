@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.1 (2026-10-19)
+
 ### For users
 
 - When a fix for your ticket reaches the main server, Keir now tells you in the ticket instead of only updating the progress card.
