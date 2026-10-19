@@ -737,6 +737,7 @@ function renderPublicReceiptBody({ ticket, github }) {
 function makeTicketDetailBody({ ticket, assessment, fixSession, github, viewer = "staff", tracked = null }) {
   const isStaff = viewer !== "public";
   const t = ticket;
+  if (!isStaff && t.category === "investigation") return { extraCss: "", body: "<p>Ticket not found</p>" };
   if (!isStaff) return renderPublicReceiptBody({ ticket: t, github });
   const visits = (t.supportRecentVisits || []).slice(0, 5);
   const supportContext = visits.length ? `<div class="cm-card"><h2>Recent game context (staff only)</h2><p class="cm-muted">Unconfirmed observations from recent game visits. Confirm the affected page and platform with the reporter.</p><ul>${visits.map((visit) => {

@@ -45,6 +45,7 @@ async function mergeTicket({ Tickets, sourceNumber, targetNumber, reason, merged
   const source = await Tickets.findOne({ ticketNumber: sourceNumber });
   if (!source) return { error: `ticket #${sourceNumber} not found` };
   const target = await Tickets.findOne({ ticketNumber: targetNumber });
+  if (source.category === "investigation" || target?.category === "investigation") return { error: "investigation tickets cannot be merged with support tickets" };
   if (!target) return { error: `target ticket #${targetNumber} not found` };
   if (source.mergedInto != null && source.mergedInto !== targetNumber) return { error: `ticket #${sourceNumber} was already merged into #${source.mergedInto}` };
   if (target.mergedInto != null) return { error: `target #${targetNumber} was itself merged into #${target.mergedInto}` };

@@ -5,6 +5,19 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.0 (2026-10-19)
+
+<!-- Coverage: keir-v5.8.30 plus account investigations PR #142. -->
+
+### For users
+
+- Run `/audit` in the owner app to sweep for possible linked accounts, or `/audit preview` to inspect findings. Keir also checks every 12 hours and opens private Investigation tickets for developers and moderators.
+
+### For developers
+
+- Investigation intake requires shared-cookie and coordinated-login signals for the same account pair, excludes either account with moderator notes, and deduplicates reciprocal observations. Tickets contain public profile links and safe aggregate facts, with developer/moderator role pings. Financial warnings stay diagnostic; no automatic sanctions or money changes.
+- Investigation evidence is excluded from public receipts, ordinary support searches, automatic repair, merging and player notifications. Filing checks game intake capability and explicit private-channel permissions before sending evidence, with durable guards against ambiguous retries.
+
 ## 5.8.30 (2026-10-19)
 
 ### For users

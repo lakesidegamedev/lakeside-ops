@@ -45,3 +45,10 @@ test("open incidents are read from the support MCP and cached for a minute", asy
   await openIncidents(mcp, { now: 2000 }); assert.equal(n, 2, "cached");
   await openIncidents(mcp, { now: 70000 }); assert.equal(n, 4, "refreshed after a minute");
 });
+
+test("investigation cards are staff-owned and held from ordinary support",()=>{
+ const {STAFF_OWNED,isModerationChannel}=require("../lib/operator/ticketCategory");
+ assert.equal(ticketCategory([{author:{id:"bot"},embeds:[{fields:[{name:"Category",value:"Investigation"}]}]}],"bot"),"investigation");
+ assert.equal(STAFF_OWNED.has("investigation"),true);
+ assert.equal(isModerationChannel({data:{channels:{private:{category:"investigation"}}}},"private"),true);
+});

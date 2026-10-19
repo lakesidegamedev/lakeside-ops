@@ -51,6 +51,7 @@ const config = {
   computerUrl: env.KEIR_COMPUTER_URL || (env.WORKER_TOKEN ? "http://127.0.0.1:9770" : undefined), computerToken: env.KEIR_COMPUTER_TOKEN || env.WORKER_TOKEN,
   voiceProvider: env.KEIR_VOICE_PROVIDER || "agy:gemini-3.8-flash@low",
   quickProvider: env.KEIR_QUICK_PROVIDER || "claude", workerProvider: env.KEIR_WORKER_PROVIDER || "claude",
+  accountAuditEnabled: env.KEIR_ACCOUNT_AUDIT !== "0",
   rolesEnabled: env.KEIR_ROLES_ENABLED === "1", engineeringEnabled: env.KEIR_ENGINEERING === "1", engineeringScoutEnabled: env.KEIR_ENGINEERING_SCOUT === "1",
   engineeringProvider: env.KEIR_ENGINEERING_PROVIDER || "codex:gpt-6.1-sol@low",
   watchkeeperProvider: env.KEIR_WATCHKEEPER_PROVIDER || "codex:gpt-6.1-sol@low",
@@ -293,6 +294,9 @@ const watch = createWatch({ ledger, mcp, log, config: { enabled: env.KEIR_WATCH 
   viewPage: (url) => require("./lib/operator/capabilities").viewPage(url), propose: (p) => broker.proposeIncident(p) });
 broker.setWatch(watch);
 const engineering = createEngineering({ ledger, config });
+const accountAudit = require("./lib/operator/account-audit").createAccountAudit({ ledger, mcp, config });
+config.runAccountAudit = options => accountAudit.sweep(options);
+setInterval(() => accountAudit.tick().catch(e => log(`account audit: ${e.message}`)), 60000).unref();
 const roles = createRoles({ ledger, engineering, config, mcp, log, held: (job) => config.supportDeferred(job) ||
   ["staff-owned", "staff-active", "owner-decision", "closure-grace"].includes(admissionHold(job, { now: Date.now(), claimedBy: (id) => ledger.data.channels[id]?.claimedBy })) });
 config.roleSnapshot = () => ({ ...roles.snapshot(), roles: roles.status() });
@@ -761,6 +765,15 @@ const server = http.createServer(async (req, res) => {
     try {const b=JSON.parse(raw);const job=ledger.data.jobs[b.sourceTaskId];if(!job)throw new Error("unknown source task");
       const receipt=await broker.supportDirective(job,b);drain();return reply(200,receipt);
     } catch(e) {return reply(409,{error:String(e.message).slice(0,300)});}
+  }
+  if (req.url === "/v5/accounts/audit" && req.method === "GET") return reply(200, accountAudit.status());
+  if (req.url === "/v5/accounts/audit" && req.method === "POST") {
+    let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 1000) return reply(413, { error: "too large" }); }
+    try {
+      const input = JSON.parse(raw || "{}");
+      if (Object.keys(input).some(k => k !== "dryRun") || input.dryRun !== undefined && typeof input.dryRun !== "boolean") return reply(400, { error: "Only boolean dryRun is accepted" });
+      return reply(200, await accountAudit.sweep(input));
+    } catch (e) { return reply(409, { error: String(e.message).slice(0, 200) }); }
   }
   if (req.url === "/v5/roles/status" && req.method === "GET") return reply(200, roles.status());
   if (req.url === "/v5/watchkeeper/verify" && req.method === "POST") {

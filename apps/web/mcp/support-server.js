@@ -22,6 +22,8 @@ const {
 } = require("../ticket-receipt");
 
 const { registerReopen } = require("./support-reopen");
+const { registerInvestigations } = require("./support-investigations");
+
 const { registerCreateSuggestion } = require("./support-create-suggestion");
 const { registerCreateTicket } = require("./support-create-ticket");
 const { registerMerge } = require("./support-merge");
@@ -71,7 +73,7 @@ const ticketShape = (t) => ({
   supportRecentVisits: t.supportRecentVisits || [], description: t.description, reporter: t.reporter || t.discordDisplayName || t.discordUsername || null,
   images: t.imageUrls || [], tags: t.tags || [], messages: (t.messages || []).map((m) => (typeof m === "string" ? m : m.content || m.text)).filter(Boolean),
   statusHistory: t.statusHistory || [], createdAt: t.createdAt, updatedAt: t.updatedAt, fixSessionId: t.fixSessionId || null,
-  trackerItemId: t.trackerItemId || null, resolution: t.resolution || null, publicUpdates: t.publicUpdates || [], receiptUrl: ticketPublicUrl(t.ticketNumber), notificationPolicy: { progressDeliveryDefault: false, receiptLinkKinds: ["opening", "resolution"] }, contextRequest: t.contextRequest || null,
+  trackerItemId: t.trackerItemId || null, resolution: t.resolution || null, publicUpdates: t.publicUpdates || [], receiptUrl: t.category === "investigation" ? null : ticketPublicUrl(t.ticketNumber), notificationPolicy: { progressDeliveryDefault: false, receiptLinkKinds: ["opening", "resolution"] }, contextRequest: t.contextRequest || null,
   intake: t.intake ? {
     cardMessageId: t.intake.cardMessageId || null,
     receiptUrl: t.intake.receiptUrl || null,
@@ -129,7 +131,7 @@ async function main() {
         const out = [];
         const q = {}; if (status) q.status = status; if (tag) q.tags = tag; if (category) q.category = category;
         if (kind !== "suggestion") {
-          const tq = { ...q }; if (openOnly) Object.assign(tq, OPEN_TICKET);
+          const tq = { ...q, category: category && category !== "investigation" ? category : { $ne: "investigation" } }; if (category === "investigation") tq._id = { $exists: false }; if (openOnly) Object.assign(tq, OPEN_TICKET);
           (await Tickets.find(tq).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: s.kind, number: s.number, title: s.title, status: s.status, category: s.category, tags: s.tags, hasImage: s.images.length > 0, createdAt: s.createdAt }); });
         }
         if (kind !== "ticket") {
@@ -144,7 +146,7 @@ async function main() {
       { kind: z.enum(["ticket", "suggestion"]), number: z.number().int() },
       async ({ kind, number }) => {
         const doc = kind === "ticket" ? await Tickets.findOne({ ticketNumber: number }) : await Suggestions.findOne({ issueNumber: number });
-        if (!doc) return errorResult(`${kind} #${number} not found`);
+        if (!doc || kind === "ticket" && doc.category === "investigation" && !auth?.scopes?.write) return errorResult(`${kind} #${number} not found`);
         const item = kind === "ticket" ? ticketShape(doc) : suggestionShape(doc);
         const a = await getAssessment(kind, number);
         const assessment = a ? { summary: a.summary, recommendation: a.recommendation || a.recommendedAction, affectedFiles: a.affectedFiles || [], complexity: a.complexity, risk: a.risk, nextSteps: a.nextSteps, confidence: a.confidence, likelyAlreadyFixed: a.likelyAlreadyFixed, tags: a.tags, model: a.model } : null;
@@ -164,7 +166,7 @@ async function main() {
         const rx = { $regex: query.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), $options: "i" };
         const filt = { $or: [{ title: rx }, { description: rx }, { tags: rx }] };
         const out = [];
-        if (kind !== "suggestion") (await Tickets.find(filt).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: "ticket", number: s.number, title: s.title, status: s.status, tags: s.tags, hasImage: s.images.length > 0 }); });
+        if (kind !== "suggestion") (await Tickets.find({ ...filt, category: { $ne: "investigation" } }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: "ticket", number: s.number, title: s.title, status: s.status, tags: s.tags, hasImage: s.images.length > 0 }); });
         if (kind !== "ticket") (await Suggestions.find(filt).limit(limit).toArray()).forEach((g) => { const s = suggestionShape(g); out.push({ kind: "suggestion", number: s.number, title: s.title, status: s.status, tags: s.tags, hasImage: s.images.length > 0 }); });
         return jsonResult({ query, count: out.length, results: out.slice(0, limit) });
       });
@@ -173,7 +175,7 @@ async function main() {
       { kind: z.enum(["ticket", "suggestion", "all"]).optional().default("all"), limit: z.number().int().min(1).max(40).optional().default(20) },
       async ({ kind, limit }) => {
         const out = [];
-        if (kind !== "suggestion") (await Tickets.find({ imageUrls: { $exists: true, $ne: [] } }).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => out.push({ kind: "ticket", number: t.ticketNumber, title: t.title, status: t.status, images: (t.imageUrls || []).length }));
+        if (kind !== "suggestion") (await Tickets.find({ category: { $ne: "investigation" }, imageUrls: { $exists: true, $ne: [] } }).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => out.push({ kind: "ticket", number: t.ticketNumber, title: t.title, status: t.status, images: (t.imageUrls || []).length }));
         if (kind !== "ticket") (await Suggestions.find({ screenshotUrl: { $nin: [null, ""] } }).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((g) => out.push({ kind: "suggestion", number: g.issueNumber, title: g.title, status: g.status, images: 1 }));
         return jsonResult({ count: out.length, items: out });
       });
@@ -320,7 +322,7 @@ async function main() {
           number,
           status,
           receipt: getResolution(refreshed || { resolution: receipt }),
-          receiptUrl: ticketPublicUrl(number),
+          receiptUrl: existing.category === "investigation" ? null : ticketPublicUrl(number),
           trackerItemId: trackerSync.trackerItemId,
           notification,
         });
@@ -339,6 +341,7 @@ async function main() {
         const key = kind === "ticket" ? { ticketNumber: number } : { issueNumber: number };
         const existing = await col.findOne(key);
         if (!existing) return errorResult(`${kind} #${number} not found`);
+        if (kind === "ticket" && fields.category && fields.category !== existing.category && (fields.category === "investigation" || existing.category === "investigation")) return errorResult("Investigation privacy cannot be changed through category edits");
         const now = new Date();
         const built = merge.buildContentUpdate(kind, existing, fields, auth.name || "agent", now);
         if (built.error) return errorResult(built.error);
@@ -405,7 +408,7 @@ async function main() {
         if (!existing) return errorResult(`ticket #${number} not found`);
         const now = new Date();
         const updateKey = `${update_kind}:${Date.now()}`;
-        const receiptUrl = ticketPublicUrl(number);
+        const receiptUrl = existing.category === "investigation" ? null : ticketPublicUrl(number);
         // Delivered updates are inserted by maybePostTicketChannelUpdate, which
         // claims the key itself. Pre-inserting a "pending" entry here made it
         // read our own claim as a concurrent send and skip the post.
@@ -494,6 +497,8 @@ async function main() {
         return jsonResult(result);
       }
     );
+
+    registerInvestigations(server, { auth, db, z, jsonResult, errorResult });
 
     registerCreateSuggestion(server, { auth, Intake: db.collection("agentSuggestionIntake"), z, jsonResult, errorResult });
     registerCreateTicket(server, { auth, Tickets, z, jsonResult, errorResult, ticketPublicUrl });

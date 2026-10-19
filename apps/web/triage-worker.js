@@ -367,6 +367,7 @@ async function postAssessmentEmbed({ targetType, displayNumber, title, assessmen
 
 // Claim + process a single item. `kind` is "ticket" | "suggestion".
 async function processItem(db, kind, rawItem, { launchTicketFix } = {}) {
+  if (kind === "ticket" && rawItem.category === "investigation") return { skipped: "staff-investigation" };
   const id = rawItem._id;
   const idStr = id.toHexString();
   if (inFlight.has(idStr)) return { skipped: "in-flight" };
@@ -763,7 +764,7 @@ async function runTriageTick(getDb, opts = {}) {
     const repairFloor = { createdAt: { $gte: new Date(TICKET_REPAIR_MIN_CREATED_MS) } };
     const tix = await db
       .collection("tickets")
-      .find({ $and: [notRecentlyTried, repairFloor, { $or: [
+      .find({ $and: [{ category: { $ne: "investigation" } }, notRecentlyTried, repairFloor, { $or: [
         { $and: [
           { status: "open" },
           unassessed,

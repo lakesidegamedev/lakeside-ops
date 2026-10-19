@@ -9,6 +9,7 @@ const COMMANDS = [
   ["/stop", "Stop Keir and all active work"], ["/start", "Enable new work"],
   ["/status", "Show runtime status"], ["/model", "Show or set a work type's provider"],
   ["/approval", "Set ask or yolo for this conversation"], ["/skills", "Show or select skills"],
+  ["/audit", "Sweep account and money anomalies; /audit preview opens no tickets"],
   ["/tasks", "Show active tasks"], ["/new", "Start a conversation"],
 ].map(([id, detail]) => ({ id, detail }));
 const err = (status, message) => Object.assign(new Error(message), { status });
@@ -122,6 +123,7 @@ function createControls({ ledger, config, drain = () => {}, now = Date.now }) {
   function command(text, thread = "main", newThread = null) {
     const [verb, ...args] = text.trim().split(/\s+/);
     if (!COMMANDS.some(c => c.id === verb)) return null;
+    if (verb === "/audit") { if (args.length > 1 || args.length && args[0] !== "preview") throw err(400, "Use /audit or /audit preview"); return null; }
     if (["/stop", "/start"].includes(verb)) { if (args.length) throw err(400, `Use ${verb} without arguments`); update({ action: verb.slice(1), thread }); }
     if (verb === "/approval" && args.length) update({ action: "configure", thread, approvalMode: args[0] });
     if (verb === "/model" && args.length) { if (args.length !== 2) throw err(400, "Use /model conversation|voice|coding|investigation auto|provider:model"); update({ action: "configure", thread, routes: { [args[0]]: args[1] } }); }

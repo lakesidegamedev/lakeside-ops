@@ -2916,6 +2916,7 @@ async function postTicketTriage(num) {
   if (!record || !record.latest) return { skipped: "no assessment" };
   const db = await getDb();
   const ticket = await db.collection("tickets").findOne({ ticketNumber: num });
+  if (ticket?.category === "investigation") return { skipped: "private investigation" };
   // TICKET_TRIAGE_CHANNEL overrides the destination: useful to mirror every
   // triage message into a staff channel, and to exercise this path without
   // writing into a player's channel. Accepts an id or a channel name.
@@ -5227,7 +5228,8 @@ const server = http.createServer(async (req, res) => {
     const isStaff = !!session && session.role === "admin";
     // Staff on the numeric alias go to the one page. The token is minted on
     // demand for tickets the filer has not swept yet.
-    if (!pathname.startsWith("/t/") && isStaff) {
+    const privateInvestigation = isStaff && (await (await getDb()).collection("tickets").findOne({ ticketNumber: num }, { projection: { category: 1 } }))?.category === "investigation";
+    if (!pathname.startsWith("/t/") && isStaff && !privateInvestigation) {
       const token = (linksLedger().tokens || {})[String(num)] || mintTicketToken(num);
       if (token) {
         addSecurityHeaders(res);
@@ -5261,6 +5263,7 @@ const server = http.createServer(async (req, res) => {
       const db = await getDb();
       const ticket = await db.collection("tickets").findOne({ ticketNumber: num });
       if (!ticket) { addSecurityHeaders(res); res.writeHead(404, { "Content-Type": "text/plain" }); res.end("Ticket not found"); return; }
+      if (ticket.category === "investigation" && !isStaff) { addSecurityHeaders(res); res.writeHead(404, { "Content-Type": "text/plain", "Cache-Control": "no-store" }); res.end("Ticket not found"); return; }
       let assessment = null, fixSession = null;
       if (ticket.assessmentId) assessment = await db.collection("assessments").findOne({ _id: ticket.assessmentId });
       if (!assessment) assessment = await db.collection("assessments").findOne({ targetType: "ticket", targetId: ticket._id }, { sort: { createdAt: -1 } });
@@ -5547,8 +5550,8 @@ const server = http.createServer(async (req, res) => {
     }
     const number = Number.parseInt(publicLinkMatch[1], 10);
     const db = await getDb();
-    const ticket = await db.collection("tickets").findOne({ ticketNumber: number }, { projection: { _id: 1 } });
-    if (!ticket) return jsonResponse(404, { error: "Ticket not found" });
+    const ticket = await db.collection("tickets").findOne({ ticketNumber: number }, { projection: { _id: 1, category: 1 } });
+    if (!ticket || ticket.category === "investigation") return jsonResponse(404, { error: "Ticket not found" });
     const token = (linksLedger().tokens || {})[String(number)] || mintTicketToken(number);
     if (!token) return jsonResponse(500, { error: "Could not mint ticket link" });
     const base = PUBLIC_BASE || "https://ops.lakesidegames.net";
