@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- The idle-fix check on a waiting finish asks once per set of idle fixes. It was keyed on each item's stage and note, so re-noting an item as the refusal asks re-armed it: in replay traces 49 runs hit it, with a median of three refusals and about ten tool calls before the finish was accepted.
+
 ## 5.8.26 (2026-10-19)
 
 ### For developers
