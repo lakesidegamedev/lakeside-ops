@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- Brief: when two explanations fit a report and only the player can tell them apart (which screen or device, what they clicked), Keir asks that first and states neither as fact. Proposed by the harness improver; dev replay on DeepSeek v4.1 Flash 58% to 83% (+25 pts [+8, +42]); shipped on owner call without the validation and holdout gate.
+
 ## 5.8.29 (2026-10-19)
 
 ### For users
