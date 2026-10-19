@@ -2199,7 +2199,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (isQuick(job) || job.role === "player") throw new Error("Evidence batches require an authenticated worker task");
       // Workspace queries read /workspace/repo. Without a snapshot the batch
       // failed as "narrow the query" (replay 2026-10-19: 37 runs); load main first.
-      if (!job.repositoryRef && (input.queries || []).some((q) => ["list", "read", "search"].includes(q?.op))) {
+      if (sandbox.hasRepository?.(job.id) === false && (input.queries || []).some((q) => ["list", "read", "search"].includes(q?.op))) {
         try { await tool(job, "repository_snapshot", { repository: "AHDGame", ref: "main" }, signal); }
         catch (e) { throw new Error(`Workspace queries need a repository snapshot and loading one failed (${String(e.message).slice(0, 200)}). Call repository_snapshot first, or send only service queries.`); }
       }

@@ -62,12 +62,12 @@ test('broker batch literal reuse preserves provenance and atomic failure',async 
  assert.deepEqual([...new Set(job.evidence)],[10000,2500,7500,17500]);
 });
 test("workspace evidence without a snapshot loads one first, and says so plainly when it cannot",async t=>{
- const dir=fs.mkdtempSync(path.join(os.tmpdir(),"keir-workflow-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const ledger=createLedger(dir+"/ledger.json");let runs=0;
- const broker=createBroker({ledger,config:{ownerId:"owner",staffIds:[],stateDir:dir,repositories:{}},sandbox:{run:async()=>{runs++;return{code:0,output:JSON.stringify({results:[{op:"list",paths:[]}]})}}},discord:async()=>{throw Error("unexpected")},mcp:{servers:()=>[],call:async()=>{throw Error("unexpected")}}});
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),"keir-workflow-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const ledger=createLedger(dir+"/ledger.json");let runs=0,attached=false;
+ const broker=createBroker({ledger,config:{ownerId:"owner",staffIds:[],stateDir:dir,repositories:{}},sandbox:{hasRepository:()=>attached,run:async()=>{runs++;return{code:0,output:JSON.stringify({results:[{op:"list",paths:[]}]})}}},discord:async()=>{throw Error("unexpected")},mcp:{servers:()=>[],call:async()=>{throw Error("unexpected")}}});
  const job=ledger.createJob("fixture",{kind:"command",role:"owner",actorId:"owner",internalProbe:true,source:{}});job.state="running";
  await assert.rejects(broker.tool(job,"evidence_batch",{queries:[{op:"list",paths:["src"]}]}),/need a repository snapshot[\s\S]*unknown repository/);
  assert.equal(runs,0);
- job.repositoryRef={branch:"main",commit:"abc"};
+ attached=true;
  const ok=await broker.tool(job,"evidence_batch",{queries:[{op:"list",paths:["src"]}]});
  assert.equal(runs,1);assert.equal(ok.results[0].op,"list");
 });
