@@ -7,7 +7,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## 5.9.0 (2026-10-19)
 
-<!-- Coverage: keir-v5.8.29 through 6862b48; account investigations PR #142 and deciding-question brief PR #143. -->
+<!-- Coverage: keir-v5.8.29 through main 7308aa5 plus account investigations PR #142; includes PRs #143, #145 and #146. -->
 
 ### For users
 
@@ -17,7 +17,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 - Investigation intake requires shared-cookie and coordinated-login signals for the same account pair, excludes either account with moderator notes, and deduplicates reciprocal observations. Tickets contain public profile links and safe aggregate facts, with developer/moderator role pings. Financial warnings stay diagnostic; no automatic sanctions or money changes.
 - Investigation evidence is excluded from public receipts, ordinary support searches, automatic repair, merging and player notifications. Filing checks game intake capability and explicit private-channel permissions before sending evidence, with durable guards against ambiguous retries.
+- When Keir's monitoring finds a problem that hit your account, it opens a ticket for you explaining what happened and where the fix stands, so you do not have to report it yourself.
+
+- Proactive tickets: `open_affected_ticket` (finding tasks only, after the finding is raised to the developers) opens a normal bug ticket for one affected character. The broker resolves the player's linked Discord account from the game records (never shown to the model), dedupes per player per finding, and caps at 10 per finding and 20 a day. The ticket's own task follows up through the bug playbook.
 - Brief: when two explanations fit a report and only the player can tell them apart (which screen or device, what they clicked), Keir asks that first and states neither as fact. Proposed by the harness improver; dev replay on DeepSeek v4.1 Flash 58% to 83% (+25 pts [+8, +42]); shipped on owner call without the validation and holdout gate.
+- Self-improving loop (after Harness²): every refused tool call is audited as `tool_refused` (to events.db). `bin/keir-self-review.js` runs nightly (`keir-self-review.timer`, 03:30 New York): it clusters the day's refusals by cause, picks the top recurring one not proposed before (at least 5 refusals across 2 tasks), has an OpenCode coding agent (DeepSeek v4.1 Flash by default) write one deterministic fix with a unit test in a fresh worktree, and opens it as a draft PR for review. At most one PR a night; proposals are remembered so a cause is never proposed twice; raw samples stay private.
 
 
 ## 5.8.29 (2026-10-19)

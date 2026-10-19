@@ -198,6 +198,33 @@ test("waiting on the player needs a post to them since they last wrote", async (
   assert.ok(j.lastAskAt >= j.lastPlayerAt);
 });
 
+test("a confirmed finding opens one bug ticket per affected player; the Discord id never reaches the model", async () => {
+  const DID = String(10n ** 17n + 42n); // an 18-digit fake account id, built at runtime
+  const f = fixture(), j = running(f, { kind: "finding", role: "support", finding: "fp1" });
+  const calls = [];
+  const orig = f.mcp.call;
+  f.mcp.call = async (server, tool, args, ...rest) => {
+    calls.push([server, tool, args]);
+    if (tool === "heal_query" && args.collection === "characters") return { docs: args.filter.sequentialId === 42 ? [{ userId: "u42" }] : [] };
+    if (tool === "heal_query" && args.collection === "users") return { docs: [{ discordId: DID }] };
+    if (tool === "support_create_ticket") return { ticketNumber: 901 };
+    return orig(server, tool, args, ...rest);
+  };
+  const input = { character: 42, title: "Your steelworks lost its coal deliveries", description: "Our checks found your steelworks received no coal on turn 231 because of a fault, not anything you did. The developers have it." };
+  await assert.rejects(f.broker.tool(j, "open_affected_ticket", input), /Raise the finding to the developers first/);
+  j.raisedToDevelopers = [{ id: 7 }];
+  const r = await f.broker.tool(j, "open_affected_ticket", input);
+  assert.equal(r.opened, true); assert.equal(r.ticket, 901);
+  assert.ok(!JSON.stringify(r).includes(DID));
+  const created = calls.find((c) => c[1] === "support_create_ticket")[2];
+  assert.equal(created.discord_user_id, DID); assert.equal(created.category, "bug");
+  assert.equal((await f.broker.tool(j, "open_affected_ticket", input)).already, true);
+  assert.equal(calls.filter((c) => c[1] === "support_create_ticket").length, 1);
+  await assert.rejects(f.broker.tool(j, "open_affected_ticket", { ...input, character: 77 }), /No character 77/);
+  const t = f.ledger.createJob("ticket:123", { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", source: {}, deadline: 9999999999999 }); t.state = "running";
+  await assert.rejects(f.broker.tool(t, "open_affected_ticket", input), /Only a confirmed finding/);
+});
+
 test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   const seen = [];

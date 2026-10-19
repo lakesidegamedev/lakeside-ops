@@ -910,7 +910,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const safeLogInput = musePolicy.logInput(input);
     let result;
     try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started, callId); }
-    catch (e) { appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId); throw e; }
+    catch (e) {
+      appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
+      // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
+      try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
+      throw e;
+    }
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v); } catch {}
@@ -2017,6 +2022,38 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return { image: { type: "base64", media_type: a.content_type, data: bytes.toString("base64") } };
     }
     if (name === "open_suggestion") return require("./suggestionintake").openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal });
+    // Proactive support (owner, 2026-10-19): a confirmed finding that hit a
+    // specific player opens a normal bug ticket for them, so no player is the
+    // first to notice and they can reply. The Discord account is resolved here
+    // from the game records and never shown to the model. Bounded per finding
+    // and per day; one ticket per player per finding.
+    if (name === "open_affected_ticket") {
+      if (job.kind !== "finding") throw new Error("Only a confirmed finding task opens a ticket for an affected player.");
+      if (!(job.raisedToDevelopers || []).length) throw new Error("Raise the finding to the developers first (raise_to_developers), so the ticket can say where the fix stands.");
+      const seq = Number(input.character);
+      if (!Number.isSafeInteger(seq) || seq <= 0) throw new Error("character: the affected character's id (sequentialId) from the records you read.");
+      const title = publicText(input.title || "").slice(0, 200), description = publicText(input.description || "").slice(0, 1500);
+      if (title.length < 8 || description.length < 40) throw new Error("Give a short title and a plain description: what went wrong for this player, what you found in their records, and where the fix stands.");
+      if (TECHNICAL.test(`${title} ${description}`)) throw new Error("Ticket text is for the player: no PR or issue numbers, links, CI, branches, commits or code.");
+      guardPlayerRegister(job, null, description);
+      const p = (d.proactive ||= { opened: {}, days: {} }), day = new Date(now()).toISOString().slice(0, 10), key = `${job.finding || job.id}:${seq}`;
+      if (p.opened[key]) return { opened: false, already: true, ticket: p.opened[key].ticket, instruction: "This player already has a ticket for this finding." };
+      const perFinding = Object.keys(p.opened).filter((k) => k.startsWith(`${job.finding || job.id}:`)).length;
+      if (perFinding >= (config.proactivePerFinding || 10)) throw new Error("This finding already opened its limit of player tickets; propose an incident to staff for the rest.");
+      if ((p.days[day] || 0) >= (config.proactivePerDay || 20)) throw new Error("Today's limit of proactive tickets is reached; propose an incident to staff instead.");
+      const rows = (r) => r?.docs || r?.items || r?.results || [];
+      const character = rows(await mcp.call("heal-ops", "heal_query", { env: "prod", collection: "characters", filter: { sequentialId: seq }, projection: { userId: 1 }, limit: 1 }, false, signal))[0];
+      if (!character?.userId) throw new Error(`No character ${seq} in the game records.`);
+      const user = rows(await mcp.call("heal-ops", "heal_query", { env: "prod", collection: "users", filter: { $expr: { $eq: [{ $toString: "$_id" }, String(character.userId)] } }, projection: { discordId: 1 }, limit: 1 }, false, signal))[0];
+      if (!snowflake(user?.discordId)) throw new Error("This player has no linked Discord account; leave them to the incident or announcement.");
+      const result = await effect(job, `proactive-ticket:${key}`, () => mcp.call("support", "support_create_ticket", { discord_user_id: user.discordId, category: "bug", title,
+        description: `${description}\n\nKeir opened this ticket because our monitoring found the problem on your account. You do not need to do anything unless you want to reply.` }, true, signal));
+      const number = result?.ticketNumber || result?.number || result?.ticket?.number;
+      if (!number) throw new Error("ticket API did not return a number; inspect receipt");
+      p.opened[key] = { ticket: number, at: now(), finding: job.finding || null }; p.days[day] = (p.days[day] || 0) + 1;
+      ledger.audit("proactive_ticket", { job: job.id, finding: job.finding || null, ticket: number }); ledger.save();
+      return { opened: true, ticket: number, instruction: "The ticket is open; its own ticket task follows up with the player. Do not post in it from this finding." };
+    }
     if (name === "open_ticket") {
       if (isAppJob(job)) return require("./ownerintake").openOwnerTicket({ ledger, config, mcp, effect, job, input, signal, now });
       const commanded = job.kind === "command" && ["owner", "support"].includes(job.role);
