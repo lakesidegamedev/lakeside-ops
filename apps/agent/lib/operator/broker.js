@@ -596,7 +596,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     ledger.save();
     if (stageChanged) {
       // The public receipt keeps the history the card overwrites.
-      const text = items.map((i) => `${i.name}: ${i.blocked ? "paused" : (i.stage === "confirmed" ? "Live, confirmed in game" : statusCard.STAGES[statusCard.stageIndex(i.stage)].label)}`).join("; ");
+      const text = items.map((i) => `${i.name}: ${i.blocked ? "paused" : (i.stage === "confirmed" ? "Live, confirmed in game" : i.stage === "answered" ? "Answered, no fix needed" : statusCard.labelOf(i.stage))}`).join("; ");
       mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
       recordTicketPost(effectJob, ticketNo, `[status card] ${text}`);
     }
@@ -2437,7 +2437,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (state === "waiting" && job.kind === "ticket" && !job.codingParent && job.ticket) {
         const items = d.statusCards?.[job.ticket]?.items || [];
         const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !["done", "dismissed", "cancelled"].includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
-        const idle = items.filter((i) => !["main", "confirmed"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
+        const idle = items.filter((i) => !["main", "confirmed", "answered"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
         const key = hash(idle.map((i) => i.name).sort());
         if (idle.length && job.idleItemsReview !== key) {
           job.idleItemsReview = key; ledger.save();

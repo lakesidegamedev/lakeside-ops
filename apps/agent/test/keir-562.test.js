@@ -98,6 +98,13 @@ test("annotating an idle fix as the prompt asks does not re-arm it; a newly idle
   await assert.rejects(finish(), /Coal price display/);
 });
 
+test("an answered item does not count as an idle fix", async (t) => {
+  const f = fixture(t);
+  f.ledger.data.statusCards = { 1577: { items: [{ name: "Steelworks made nothing", stage: "answered", blocked: false, note: "" }] } };
+  const done = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting on the player." });
+  assert.equal(done.state, "waiting");
+});
+
 test("a card with every fix live or moving finishes waiting without a prompt", async (t) => {
   const f = fixture(t);
   f.ledger.data.statusCards = { 1577: { items: [{ name: "Dropdowns", stage: "main", blocked: false, note: "" }] } };

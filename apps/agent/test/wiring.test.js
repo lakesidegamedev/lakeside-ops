@@ -405,6 +405,18 @@ test("an early investigation card does not claim a cause or a fix is already bei
   assert.match(text, /Checking cause and next step/);
 });
 
+test("a not-a-bug item can be marked answered: it needs the investigation, renders done and does not hold a waiting finish", async () => {
+  const card = require("../lib/operator/statuscard");
+  assert.equal(card.stageAllowed("answered", {}).ok, false);
+  assert.equal(card.stageAllowed("answered", { investigated: { done: true } }).ok, true);
+  const body = card.render({ ticket: 1558, items: [{ name: "Steelworks made nothing", stage: "answered", note: "The coal deal ended; sign a new one" }] });
+  const text = JSON.stringify(body.embeds);
+  assert.match(text, /Answered · no fix needed/);
+  assert.doesNotMatch(text, /Investigating|▱/);
+  assert.equal(body.embeds[0].color, 0x22c55e);
+  assert.equal(card.rowState({ stage: "answered" }), "done");
+});
+
 test("new handoff evidence invalidates an old closing grace without replaying that reset", () => {
   const f = fixture();
   const owner = createSupportOwner({ ledger: f.ledger, now: () => 5000 });
