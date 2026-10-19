@@ -2056,14 +2056,25 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!appChannel?.uploads) throw new Error("Private uploads unavailable");
         return appChannel.uploads.inspect(job, input.index, input.page ?? null);
       }
-      if (!snowflake(job.source.messageId) && job.ticket) {
+      // Screenshots uploaded with the ticket form live on the ticket record,
+      // not on a Discord message. A ticket task whose source is a chat message
+      // used to reach only that message, so Keir told 1621 it could not open
+      // screenshots that were attached to the report.
+      const reportImage = async () => {
         const report = await tool(job, "read_tool", {server:"support",tool:"support_get",args:{kind:"ticket",number:job.ticket}}, signal);
-        const image = report._images?.[Number(input.index)];
+        return report._images?.[Number(input.index)] || null;
+      };
+      if (!snowflake(job.source.messageId) && job.ticket) {
+        const image = await reportImage();
         if (!image) throw new Error("No viewable image on this assigned ticket; continue investigating its report and metadata.");
         return {image};
       }
       const original = await discord("GET", `/channels/${job.source.channelId}/messages/${job.source.messageId}`);
       const a = original.attachments?.[Number(input.index)];
+      if (!a && job.ticket) {
+        const image = await reportImage();
+        if (image) return {image, from: "ticket report"};
+      }
       if (!a || !/^image\/(png|jpeg|webp|gif)$/.test(a.content_type || "") || a.size > 4 * 1024 * 1024) throw new Error("no supported bounded source image");
       const url = new URL(a.url);
       if (url.protocol !== "https:" || !["cdn.discordapp.com", "media.discordapp.net"].includes(url.hostname)) throw new Error("attachment host is untrusted");

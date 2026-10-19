@@ -848,6 +848,15 @@ test("developer investigation cannot stop at offering an unprepared patch", asyn
   assert.equal(j.state,'running');
 });
 
+// Review 2026-10-19: 1621's screenshots were on the ticket report, but the
+// task started from a chat message, and Keir said it could not open them.
+test("a ticket task started from a chat message still opens the report's screenshots", async () => {
+  const f=fixture(),j=running(f,{role:'support',kind:'ticket',ticket:123,source:{channelId:'777777777777777777',messageId:'666666666666666666'}});
+  f.mcp.call=async(server,tool)=>tool==='support_get'?{_images:[{type:'base64',media_type:'image/png',data:'report-bytes'}]}:{};
+  const result=await f.broker.tool(j,'view_attachment',{index:0});
+  assert.equal(result.image.data,'report-bytes'); assert.equal(result.from,'ticket report');
+});
+
 test("adopted ticket images are read from the scoped backend without an undefined Discord message", async () => {
   const f=fixture(),j=running(f,{role:'support',kind:'ticket',ticket:123,source:{channelId:'777777777777777777'}});
   f.mcp.call=async(server,tool,args)=>{assert.equal(tool,'support_get');assert.equal(args.number,123);return {_images:[{type:'base64',media_type:'image/png',data:'fixture-bytes'}]};};
