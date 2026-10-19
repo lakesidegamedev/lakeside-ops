@@ -7,7 +7,8 @@
 // reads what the broker actually did, not what the model claimed.
 require('./guard.cjs');
 const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process');
-const AGENT = path.resolve(__dirname, '../../../agent');
+// KEIR_REPLAY_AGENT runs another release's agent tree (e.g. /opt/keir/releases/<id>) on this bench.
+const AGENT = process.env.KEIR_REPLAY_AGENT || path.resolve(__dirname, '../../../agent');
 const { createLedger } = require(AGENT + '/lib/operator/store');
 const { createBroker } = require(AGENT + '/lib/operator/broker');
 const { createSandbox } = require(AGENT + '/lib/operator/sandbox');

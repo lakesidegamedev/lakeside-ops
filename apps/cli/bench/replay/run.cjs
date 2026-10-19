@@ -6,7 +6,8 @@
 // Usage: node apps/cli/bench/replay/run.cjs --out ABS [--set dev|validation|holdout] --scenario all|id[,id] --route claude:claude-sonnet-5-5@medium[,...] [--arm full] [--repeat 5] [--concurrency 3]
 require('./guard.cjs');
 const fs = require('node:fs'), path = require('node:path');
-const AGENT = path.resolve(__dirname, '../../../agent');
+// KEIR_REPLAY_AGENT runs another release's agent tree (e.g. /opt/keir/releases/<id>) on this bench.
+const AGENT = process.env.KEIR_REPLAY_AGENT || path.resolve(__dirname, '../../../agent');
 const { createAgent } = require(AGENT + '/lib/operator/agent');
 const { createEnv } = require('./env.cjs');
 
@@ -29,7 +30,9 @@ function loadScenario(dir, id) { const sc = require(path.join(dir, id + '.cjs'))
 const slug = (route) => route.replace(/[^a-z0-9.-]+/gi, '_');
 
 async function sim(setDir, scenarioId, route, armName, rep, out) {
-  const key = `${scenarioId}__${slug(route)}__${armName}__r${rep}`, cell = path.join(out, key);
+  // KEIR_REPLAY_LABEL names the arm in results (one process per release when comparing releases).
+  const label = process.env.KEIR_REPLAY_LABEL || armName;
+  const key = `${scenarioId}__${slug(route)}__${label}__r${rep}`, cell = path.join(out, key);
   if (fs.existsSync(cell + '/result.json')) return JSON.parse(fs.readFileSync(cell + '/result.json'));
   fs.rmSync(cell, { recursive: true, force: true }); fs.mkdirSync(cell, { recursive: true });
   const sc = loadScenario(setDir, scenarioId);
@@ -40,7 +43,7 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
     workerProvider: route, quickProvider: route, visionProvider: route, maxRounds: MAX_ROUNDS, maxTurnMs: ACTIVATION_MS, codingProvider: CHILD_ROUTE, investigatorProvider: CHILD_ROUTE, quickMaxTurnMs: ACTIVATION_MS, skills: true, dynamicEffort: false,
     rustRunnerLanes: [], usageFile, tagIntake: async () => null };
   const agent = createAgent({ ledger: env.ledger, broker: env.broker, config });
-  const result = { key, set: setDir, scenario: scenarioId, route, arm: armName, rep, startedAt: new Date().toISOString(), activations: [] };
+  const result = { key, set: setDir, scenario: scenarioId, route, arm: label, agent: AGENT, rep, startedAt: new Date().toISOString(), activations: [] };
   const job = env.job;
   try {
     for (let i = 0; i < MAX_ACTIVATIONS; i++) {
