@@ -12,6 +12,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ### For developers
 
 - `publish_patch` refuses on a ticket-scoped job (ticket, or a task in a ticket channel) that has no linked GitHub issue, unless the PR body references one explicitly (`#N`). File the bug or add evidence to the open issue with `raise_to_developers`; its duplicate check finds it. Finding jobs are unaffected. Found by a simulated-ticket benchmark where 2 in 5 runs published a patch without linking the bug.
+- The shell effect guard no longer treats `--force` or `--skip-*` as an approval claim on ordinary commands (git, npm); those flags only count on a script with an effect verb. Approval-claim flags (`--approved-by`, `--approver`, `--as-owner`, `--override`) are still refused on any command. A fixed prohibited/permitted command set is now a test. The guard is a supplementary layer; the broker's effect tools carry the authorization checks.
 
 ## 5.8.22 (2026-10-18)
 
