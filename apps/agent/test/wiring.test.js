@@ -321,6 +321,9 @@ test("a fix reaching the main server sends the player one live reply", async () 
   assert.equal(live[0].delivery_mode, "reply"); assert.equal(live[0].update_kind, "production");
   assert.match(live[0].message, /now live on the main server: Wages for staff a plant does not have\./);
   // confirmed later, or the card re-sent, never repeats the reply
+  // "confirmed" needs a turn after the fix and a game read after that turn
+  await assert.rejects(broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "confirmed" }] }), /watch_turn/);
+  t.turnChecks = [Date.now() - 1000]; t.lastGameReadAt = Date.now();
   await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "confirmed" }] });
   await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "main" }] });
   assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 1);

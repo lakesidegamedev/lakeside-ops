@@ -357,6 +357,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       development: { done: merged || release.some((r) => r.development) },
       staging: { done: release.some((r) => r.staging) },
       main: { done: release.some((r) => r.main) },
+      // "Live, confirmed in game" (review 2026-10-19: 1602's card said it for a
+      // change that never moved the player's mine): a turn processed after
+      // the fix, then a game read after that turn.
+      verified: { done: release.some((r) => r.main) && jobs.some((j) => (j.turnChecks || []).some((at) => (j.lastGameReadAt || 0) > at)) },
       escalated: { done: jobs.some((j) => j.raisedToDevelopers?.length || j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
     };
   }
@@ -1321,7 +1325,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const args = { ...(input.args || {}) };
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
-      if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; }
+      if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
       // Keir 5.6.2: the spin guard counts distinct reads. Re-reading the same
       // card or record every wake is not progress (a finding re-read its own
       // unassigned handoff 463 times overnight, 2026-10-16).
