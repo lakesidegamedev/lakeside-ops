@@ -5,6 +5,14 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- When Keir waits for your reply, it has always actually asked you something first.
+
+### For developers
+
+- A ticket finish waiting on `player_reply` is refused unless a post reached the player since they last wrote. Replay traces showed finishes saying "asked the player" after the question was refused for length, or with no post at all.
+
 ## 5.8.28 (2026-10-19)
 
 ### For developers

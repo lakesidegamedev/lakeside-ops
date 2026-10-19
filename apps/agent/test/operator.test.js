@@ -190,6 +190,14 @@ test("a call after the task stopped running says it is over and to stop", async 
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "One more thing." } }), /authority is inactive: this task is done, merged into incident 4290[\s\S]*Stop now/);
 });
 
+test("waiting on the player needs a post to them since they last wrote", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.lastPlayerAt = 1; j.observedPlayerAt = 1;
+  await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /nothing has been posted to them since they last wrote/);
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Were you on the phone app or the website when it happened?" } });
+  assert.ok(j.lastAskAt >= j.lastPlayerAt);
+});
+
 test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   const seen = [];

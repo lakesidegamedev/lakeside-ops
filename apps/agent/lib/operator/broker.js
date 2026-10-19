@@ -685,6 +685,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }
   }
   function recordTicketPost(job, ticketNo, message) {
+    if (String(message || "").trim() && !/^\[status card\]/.test(message)) job.lastAskAt = now();
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
@@ -2437,6 +2438,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       }
       if (developerTask(job) && ["done", "waiting", "blocked"].includes(state) && /offered (?:a |the )?patch|waiting for (?:her|his|their|your) (?:answer|reply).*patch|(?:ask|asking).*(?:whether|if).*(?:prepare|write|make).*(?:patch|fix)/i.test(input.summary || "") && !Object.values(d.actions).some(a => a.jobId === job.id && a.state === "pending")) throw new Error("Prepare the reviewable patch and focused validation now. Patch preparation already has developer authorization; use publish_patch for exact review before publication. Do not wait merely for permission to prepare it.");
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
+      // Waiting on the player needs a post they can answer. Models finished
+      // "asked the player" after the question was refused, or never posted
+      // one (replay 2026-10-19), leaving the player with nothing to answer.
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && (job.lastAskAt || 0) < (job.lastPlayerAt || 0)) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
