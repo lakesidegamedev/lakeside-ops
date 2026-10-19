@@ -2475,6 +2475,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       }
       if (developerTask(job) && ["done", "waiting", "blocked"].includes(state) && /offered (?:a |the )?patch|waiting for (?:her|his|their|your) (?:answer|reply).*patch|(?:ask|asking).*(?:whether|if).*(?:prepare|write|make).*(?:patch|fix)/i.test(input.summary || "") && !Object.values(d.actions).some(a => a.jobId === job.id && a.state === "pending")) throw new Error("Prepare the reviewable patch and focused validation now. Patch preparation already has developer authorization; use publish_patch for exact review before publication. Do not wait merely for permission to prepare it.");
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
+      // Ticket playbooks: a support ticket finishes done only with its required steps recorded.
+      if (!developerTask(job) && !developerTicket(job) && !ownerDirected(job)) { const why = require("./playbooks").finishRefusal(job, d, state); if (why) throw new Error(why); }
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
