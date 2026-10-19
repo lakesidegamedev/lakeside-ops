@@ -7,6 +7,16 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ### For users
 
+- When Keir prepares a fix for a reported bug, the report is always linked to the developers' issue for it first, so it reaches the developers working on that bug.
+
+### For developers
+
+- `publish_patch` refuses on a ticket with no linked GitHub issue; file or join one with `raise_to_developers` first (its duplicate check finds the open issue). A simulated-ticket benchmark showed 2 in 5 runs publishing a patch without ever linking the bug.
+- `KEIR_LEAN_CONTEXT=digest`: full brief and every tool, with skill bodies replaced by digests. Ablation on the ticket benchmark: on-demand tool schemas caused most failed runs, skill digests alone held accuracy (Sonnet 75.2 vs 72.8 baseline). The 5.8.21 full lean mode stays available but is not recommended for tickets.
+- keir-bench: simulated ticket benchmark (`apps/cli/bench/ticket`) with a scripted player, the broker's real tool names and duplicate check, a hidden solution and a 100-point rubric.
+
+### For users
+
 - An approved fix that loses a merge race with another change is retried automatically instead of asking the owner to check on it.
 - Keir no longer tells the owner that each promotion of an already approved fix needs a fresh approval.
 
