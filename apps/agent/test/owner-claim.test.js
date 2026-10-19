@@ -44,3 +44,10 @@ test("a player message wakes a ticket held on an owner decision", () => {
   assert.match(src, /if \(j\.ownerDecisionPending && !\(j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\)\) \{/);
   assert.match(src, /j\.ownerDecisionPending && j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\) \{ j\.state = "queued"; ledger\.audit\("requeued_for_conversation"/);
 });
+
+test("an unread ticket message pages the owner after 30 minutes with the hold that keeps it", () => {
+  const src = fs.readFileSync(path.join(__dirname, "../operator.js"), "utf8");
+  assert.match(src, /function unreadWatchdog\(d, now, staffHeld\)/);
+  assert.match(src, /unreadWatchdog\(d, now, staffHeld\);\n  const picks = pickForLanes\(/);
+  assert.match(src, /now - oldest < 30 \* 60000/);
+});
