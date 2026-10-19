@@ -178,6 +178,12 @@ test("a support update written as body or text reaches the service as message; a
   assert.notEqual(j.state, "blocked");
 });
 
+test("a made-up ticket status is named as such with the allowed list; a terminal one still needs a receipt", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_set_status", args: { status: "waiting_on_player" } }), /not a ticket status[\s\S]*in_progress[\s\S]*player_reply/);
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_set_status", args: { status: "resolved" } }), /terminal statuses require a resolution receipt/);
+});
+
 test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   const seen = [];
