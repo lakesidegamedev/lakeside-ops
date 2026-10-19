@@ -684,7 +684,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ledger.audit("ci_wait_delivery_uncertain", { job: job.id, notice: notice.id }); ledger.save(); return false;
     }
   }
+  // Which client a player used (mobile app, desktop app, website) is never in
+  // the game records. A post that asks about it is remembered on the ticket.
+  const CLIENT_WORDS = /\b(?:app|apps|mobile|phone|tablet|desktop|website|web site|browser|client|ios|android|iphone|ipad|pc|laptop)\b/i;
+  const asksClient = (text) => String(text || "").split(/(?<=[.!?])\s+/).some((s) => /\?/.test(s) && CLIENT_WORDS.test(s));
   function recordTicketPost(job, ticketNo, message) {
+    if (asksClient(message)) (d.clientAsked ||= {})[ticketNo] = now();
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
@@ -1060,6 +1065,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const number = Number(input.issueNumber);
         const target = await gh([`repos/${GITHUB_OWNER}/AHDGame/issues/${number}`]);
         if (!target || target.pull_request || target.state !== "open") throw new Error(`#${number} is not an open AHDGame issue`);
+        // Ask first: an issue specific to one client (mobile app, desktop app,
+        // website) only fits this report if the player used that client, which
+        // the game never records. Models inferred it ("matches the mobile
+        // swipe") instead of asking (replay 2026-10-19). Required once per ticket.
+        const clientIssue = (target.labels || []).some((l) => /^(?:ahdclient|client|mobile|desktop|ios|android|app|website|web)$/i.test(String(l?.name || l)));
+        if (clientIssue && job.ticket && job.kind === "ticket") {
+          const playerText = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((m) => m && (!job.actorId || m.authorId === job.actorId || m.authorId === undefined)).map((m) => m.content || "").join("\n");
+          if (!CLIENT_WORDS.test(playerText) && !d.clientAsked?.[job.ticket]) throw new Error(`#${number} only affects one client (${(target.labels || []).map((l) => l?.name || l).join(", ")}). The game does not record whether the player used the mobile app, the desktop app or the website. Ask the player which they used before attaching their report or telling them this is the cause; until they answer, say it is one possibility, not the cause.`);
+        }
         const reporter = await reporterOf(job, signal);
         if (job.ticket && !reporter?.name) throw new Error("public issue publication needs a verified reporter identity");
         const note = issues.render({ kind: input.kind === "enhancement" ? "enhancement" : "bug", fields: { summary: `Another report of this. ${String(input.issue?.summary || "").trim()}`.trim(), expected: input.issue?.expected || "", actual: input.issue?.actual || "", steps: input.issue?.steps, where: input.issue?.where, impact: input.issue?.impact || "Same as above.", notes: input.issue?.notes } });

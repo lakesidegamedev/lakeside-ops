@@ -190,6 +190,12 @@ test("a call after the task stopped running says it is over and to stop", async 
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "One more thing." } }), /authority is inactive: this task is done, merged into incident 4290[\s\S]*Stop now/);
 });
 
+test("a ticket post asking which client the player used is remembered for the ask-first gate", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Your record shows a leave from your own account. Were you on the phone app or the website when it happened?" } });
+  assert.ok(f.ledger.data.clientAsked?.[123]);
+});
+
 test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   const seen = [];

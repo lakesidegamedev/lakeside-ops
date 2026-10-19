@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- Ask first on client-specific issues: attaching a ticket to an open issue labelled for one client (AHDClient, mobile, desktop, website) is refused until a ticket post has asked which client the player used, or the player named it. The game never records the client; replay traces showed models inferring it ("matches the mobile swipe") instead of asking.
+
 ## 5.8.28 (2026-10-19)
 
 ### For developers

@@ -47,7 +47,7 @@ test("an issue refuses names, Discord ids, ticket numbers, internal hosts and th
   assert.equal(issues.build({ ...good, kind: "enhancement", expected: "Show last turn's output with a note.", actual: "" }).labels[0], "enhancement");
 });
 
-function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false } = {}) {
+function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false, issueLabels = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-issues-")); dirs.push(dir);
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [],
@@ -75,7 +75,7 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
       return JSON.stringify({ sha: branch, statuses: [{ context: "A House Divided - AHD Production", state: "success" }, { context: "A House Divided - AHD Turn Worker", state: "success" }] });
     }
     if (/^repos\/lakesidegamedev\/AHDGame\/compare\//.test(route)) { const b = decodeURIComponent(route.split("/compare/")[1].split("...")[0]); return JSON.stringify({ status: compare[b] || "diverged" }); }
-    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: [] });
+    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: issueLabels, html_url: `https://github.com/lakesidegamedev/AHDGame/issues/${route.split("/").pop()}`, title: "Fixture issue" });
     return JSON.stringify({ ok: true });
   };
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: {}, now: () => 5000, exec });
@@ -107,6 +107,24 @@ test("raise_to_developers offers a matching open issue instead of filing twice",
   assert.ok(!f.gh.some((a) => a[1] === "POST" && a[2] === "repos/lakesidegamedev/AHDGame/issues"));
   // The player's character name never reaches the public repo.
   await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue: { ...issue, actual: "Lord Fixture saw zero output" }, force: true }), /Lord Fixture/);
+});
+
+test("a client-specific issue needs the player asked which client before their report joins it", async () => {
+  const { title, kind, ...issue } = good;
+  const f = fixture({ issueLabels: [{ name: "bug" }, { name: "AHDClient" }] });
+  f.job.source = { author: "fixtureuser", content: "I got kicked out of my party and never left." };
+  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, issueNumber: 941 }), /only affects one client[\s\S]*Ask the player which they used/);
+  assert.ok(!f.gh.some((a) => a[1] === "POST" && /issues\/941\/comments/.test(a[2])));
+  // Once Keir has asked (any ticket post with a client question), it may attach.
+  f.ledger.data.clientAsked = { 9: 1 };
+  const r = await f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, issueNumber: 941 });
+  assert.equal(r.appended, true);
+  // The player naming their client is enough too; an unlabelled issue never asks.
+  const g = fixture({ issueLabels: [{ name: "AHDClient" }] });
+  g.job.source = { author: "fixtureuser", content: "On the phone app my party vanished." };
+  assert.equal((await g.broker.tool(g.job, "raise_to_developers", { title, detail, kind, issue, issueNumber: 941 })).appended, true);
+  const h = fixture({ issueLabels: [{ name: "bug" }] });
+  assert.equal((await h.broker.tool(h.job, "raise_to_developers", { title, detail, kind, issue, issueNumber: 941 })).appended, true);
 });
 
 test("where closes the issues a live Keir PR references; turn code waits for the turn worker", async () => {
