@@ -910,7 +910,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const safeLogInput = musePolicy.logInput(input);
     let result;
     try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started, callId); }
-    catch (e) { appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId); throw e; }
+    catch (e) {
+      appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
+      // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
+      try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
+      throw e;
+    }
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v); } catch {}
