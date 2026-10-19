@@ -5,6 +5,16 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.5 (2026-10-19)
+
+### For users
+
+- Asking Keir to open a ticket for someone who was once added to an incident now opens their own ticket, instead of folding the report into that incident.
+
+### For developers
+
+- The per-reporter dedup in `open_ticket` skips incident channels. Merged players get a member overwrite on the incident channel, so Simonella's and Moist's reports were both folded into #1600, even on an owner's direct request.
+
 ## 5.9.4 (2026-10-19)
 
 ### For developers
