@@ -494,6 +494,7 @@ async function maybePostTicketChannelUpdate(db, {
   const tickets = db.collection("tickets");
   const ticket = await tickets.findOne({ ticketNumber: Number(ticketNumber) });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   const updateKey = String(key).slice(0, 180);
   const now = new Date();
@@ -601,6 +602,7 @@ async function retryPendingTicketUpdates(db, { limit = 50 } = {}) {
 async function maybePostTicketResolution(db, { ticketNumber, resolution, by } = {}) {
   const ticket = await db.collection("tickets").findOne({ ticketNumber: Number(ticketNumber) });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
   const receipt = getResolution({ ...ticket, resolution: resolution || ticket.resolution });
   if (!receipt) return { skipped: "no resolution receipt" };
   const receiptUrl = ticketPublicUrl(ticketNumber);
@@ -620,6 +622,7 @@ async function maybePostTicketContextRequest(db, { ticketNumber, contextRequest 
   if (!needed.length) return { skipped: "no missing context" };
   const ticket = await db.collection("tickets").findOne({ ticketNumber: Number(ticketNumber) });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
   // A closed/resolved channel is already complete. The receipt still carries
   // the banner, but a new request in a closed conversation would be confusing
   // and would look like support reopened the report.
@@ -830,6 +833,7 @@ async function maybePostOpsTldrForPr(db, {
 
   const ticket = await db.collection("tickets").findOne({ ticketNumber });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   // Prefer the linked fix session; fall back to any recent running fix for this ticket.
   let fix = ticket.fixSessionId
@@ -979,6 +983,7 @@ async function maybePostOpsFindings(db, {
 
   const ticket = await db.collection("tickets").findOne({ ticketNumber });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   let fix = ticket.fixSessionId
     ? await db.collection("fix_sessions").findOne({ _id: ticket.fixSessionId })
@@ -1061,6 +1066,7 @@ async function maybePostOpsHealRequest(db, {
 
   const ticket = await db.collection("tickets").findOne({ ticketNumber });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   let fix = ticket.fixSessionId
     ? await db.collection("fix_sessions").findOne({ _id: ticket.fixSessionId })

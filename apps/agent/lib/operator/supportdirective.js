@@ -8,7 +8,7 @@ const { isAppJob } = require("./appchannel");
 const { ticketOf } = require("./workrecord");
 const { ticketClaim } = require("./ticketClaim");
 const CLOSED = ["closed", "resolved", "merged"];
-const categoryOf = (category) => ["moderation", "incident", "bug", "suggestion"].includes(category) ? category : "mechanics";
+const categoryOf = (category) => ["moderation", "investigation", "incident", "bug", "suggestion"].includes(category) ? category : "mechanics";
 function createSupportDirectives({ ledger, config, mcp, discord, now = () => Date.now() }) {
  const d = ledger.data;
  let flight = Promise.resolve();
@@ -45,7 +45,7 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
  function blockers(job, ticket) {
   const out = [];
   if (d.paused) out.push("paused");
-  if (["moderation", "incident"].includes(d.channels[job.channelId]?.category) && !(d.channels[job.channelId]?.ownerDirectedAt && !d.channels[job.channelId]?.claimedBy)) out.push("staff-category");
+  if (["moderation", "investigation", "incident"].includes(d.channels[job.channelId]?.category) && !(d.channels[job.channelId]?.ownerDirectedAt && !d.channels[job.channelId]?.claimedBy)) out.push("staff-category");
   if (job.resolutionReadyAt) out.push("closure-grace");
   if (job.channelClosed || job.resolved || CLOSED.includes(ticket.status)) out.push("closed-ticket");
   const reason = hold(job,{now:now(),supportDeferred:config.supportDeferred || false,claimedBy:(id)=>d.channels[id]?.claimedBy});

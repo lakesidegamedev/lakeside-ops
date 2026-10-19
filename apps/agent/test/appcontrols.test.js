@@ -188,3 +188,13 @@ test("voice activations skip the effort classifier and run low", async () => {
   assert.deepEqual(await activationEffort({ voiceMode: true }, { config: { chooseEffort }, quick: true, runner: "claude" }), { effort: "low", via: "voice" });
   await assert.rejects(activationEffort({ voiceMode: true, codingParent: "p" }, { config: { chooseEffort }, quick: false, runner: "claude" }), /classifier/);
 });
+
+test("authenticated /audit preview runs locally, preserves preview and deduplicates send retries", async t => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),"keir-audit-command-"));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const ledger=createLedger(path.join(dir,"ledger.json"));let calls=0, options;
+  const config={ownerId:"owner",botId:"bot",taskLifetimeMs:3600000,runAccountAudit:async value=>{calls++;options=value;return{dryRun:true,candidates:2,review:1,opened:[],existing:[],uncertain:[],deferred:0,truncated:false};}};
+  let drains=0;const app=createAppChannel({ledger,config,drain:()=>drains++});
+  const sent=app.post("/audit preview","audit-send","main",{},true);app.post("/audit preview","audit-send","main",{},true);
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);assert.deepEqual(options,{dryRun:true});assert.equal(drains,0);assert.equal(ledger.data.jobs[sent.jobId].state,"done");assert.match(ledger.data.jobs[sent.jobId].summary,/2 subjects flagged/);
+  app.post("/audit preview","untrusted-send","main",{},false);await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);
+});

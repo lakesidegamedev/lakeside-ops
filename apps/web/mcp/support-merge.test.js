@@ -36,3 +36,10 @@ test("refuses non-incident targets by default, moderation sources, closed target
   assert.match((await mergeTicket({ Tickets: T, sourceNumber: 5, targetNumber: 5, discordImpl })).error, /itself/);
   assert.match((await mergeTicket({ Tickets: T, sourceNumber: 6, targetNumber: 5, discordImpl })).error, /already merged/);
 });
+
+test("investigations cannot add a player to a staff channel or export evidence into support",async()=>{
+ for(const side of ["source","target"]){
+  calls.length=0;const T=fakeTickets([{ticketNumber:1,status:"open",category:side==="source"?"investigation":"bug",discordUserId:"player",discordChannelId:"source"},{ticketNumber:2,status:"open",category:side==="target"?"investigation":"bug",discordChannelId:"target"}]);
+  const out=await mergeTicket({Tickets:T,sourceNumber:1,targetNumber:2,requireIncident:false,discordImpl});assert.match(out.error,/investigation/);assert.equal(calls.length,0);assert.equal(T.writes.length,0);
+ }
+});

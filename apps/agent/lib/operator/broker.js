@@ -1131,7 +1131,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (reason.length < 8) throw new Error("give a one-line reason: what makes it the same problem");
       const t = await mcp.call("support", "support_get", { kind: "ticket", number: target }, false, signal);
       if (!t || ["resolved", "closed"].includes(t.status)) throw new Error(`#${target} is not an open ticket`);
-      if (t.category === "moderation") throw new Error("moderation tickets are never merged");
+      if (["moderation", "investigation"].includes(t.category)) throw new Error("moderation tickets are never merged");
       const r = await incidents.mergeIntoIncident({ mcp, ledger, job, target, reason, by: "keir", requireIncident: t.category === "incident", signal });
       return { merged: true, source: job.ticket, target, steps: r?.steps || [], instruction: "This ticket is merged into the older one and its channel is closed. Finish done; do not post again." };
     }

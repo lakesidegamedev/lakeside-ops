@@ -10,6 +10,7 @@ function ticketCategory(rows, botId) {
       const field = (e.fields || []).find((f) => String(f.name).toLowerCase() === "category")?.value;
       const text = String(field || (/#\d+/.test(e.title || "") ? e.title : "") || "").toLowerCase();
       if (!text) continue;
+      if (text.includes("investigation")) return "investigation";
       if (text.includes("moderation")) return "moderation";
       if (text.includes("incident")) return "incident";
       if (text.includes("suggest")) return "suggestion";
@@ -24,8 +25,8 @@ function ticketCategory(rows, botId) {
 // in the channel) sets ownerDirectedAt and lifts the moderation/incident
 // stand-down for that ticket only.
 const ownerDirected = (ledger, channelId) => Boolean(ledger.data.channels?.[channelId]?.ownerDirectedAt);
-const isModerationChannel = (ledger, channelId) => ledger.data.channels?.[channelId]?.category === "moderation" && !ownerDirected(ledger, channelId);
+const isModerationChannel = (ledger, channelId) => ["moderation", "investigation"].includes(ledger.data.channels?.[channelId]?.category) && !ownerDirected(ledger, channelId);
 const isIncidentChannel = (ledger, channelId) => ledger.data.channels?.[channelId]?.category === "incident" && !ownerDirected(ledger, channelId);
 // Categories Keir never opens automatic ticket work in: humans own them.
-const STAFF_OWNED = new Set(["moderation", "incident"]);
+const STAFF_OWNED = new Set(["moderation", "incident", "investigation"]);
 module.exports = { ticketCategory, isModerationChannel, isIncidentChannel, ownerDirected, STAFF_OWNED };

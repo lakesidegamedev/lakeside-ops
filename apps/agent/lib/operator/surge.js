@@ -44,7 +44,7 @@ function createSurge({ ledger, mcp, discord, config, now = () => Date.now(), ask
   // Other open ticket tasks from the last day that a report could duplicate.
   function openTickets(job) {
     return Object.values(d.jobs).filter((j) => j !== job && j.kind === "ticket" && j.ticket && j.ticket !== job.ticket && !TERMINAL.includes(j.state)
-      && !j.mergedInto && !j.internalProbe && now() - (Date.parse(j.at) || j.at || 0) < WINDOW_MS && !(d.channels?.[j.channelId]?.category === "incident" || d.channels?.[j.channelId]?.category === "moderation"))
+      && !j.mergedInto && !j.internalProbe && now() - (Date.parse(j.at) || j.at || 0) < WINDOW_MS && !(d.channels?.[j.channelId]?.category === "incident" || ["moderation", "investigation"].includes(d.channels?.[j.channelId]?.category)))
       .sort((a, b) => a.ticket - b.ticket).slice(-12);
   }
 

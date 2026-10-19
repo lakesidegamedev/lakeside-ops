@@ -16,7 +16,7 @@ function createReopenedTickets({ ledger, config, supportOwner, readTicket, readC
     const canonical = await readTicket(number);
     const conversation = canonical?.conversation;
     const reopenedAt = stamp(conversation?.reopenedAt);
-    if (canonical?.number !== number || !["open", "in_progress", "triaging"].includes(canonical.status) || canonical.resolution || ["moderation", "incident"].includes(canonical.category)) return null;
+    if (canonical?.number !== number || !["open", "in_progress", "triaging"].includes(canonical.status) || canonical.resolution || ["moderation", "investigation", "incident"].includes(canonical.category)) return null;
     if (!conversation?.reopenRequestId || conversation.previousChannelId !== old.channelId || !conversation.channelId || conversation.channelId === old.channelId || !Number.isFinite(reopenedAt) || reopenedAt <= (old.updatedAt || old.at)) return null;
     const handoffs = pending.filter((h) => h.filedAt >= reopenedAt);
     if (!handoffs.length) return null;

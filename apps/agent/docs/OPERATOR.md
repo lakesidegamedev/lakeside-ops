@@ -172,3 +172,14 @@ reflection alongside bounded summaries of work updated in the last twelve hours.
 Raw conversations are excluded. Diary generation has no tools and cannot take
 actions. Reflections are recollections, never policy, authorization, or verified
 evidence. The diary is separate from the existing user notebook and ticket memory.
+
+
+## Account investigations
+
+The owner app supports `/audit` and `/audit preview`. The former scans now and files or updates up to five private cases; the latter only reports screening results. The command is local to authenticated owner intake and does not call a conversational model. The service also scans every 12 hours after a successful filing sweep. Preview does not defer the next scheduled sweep. `bin/keir-audit.js [--preview | --status]` exposes the same authenticated operator API for operators with `KEIR_OPERATOR_ADMIN_TOKEN`.
+
+The account audit reads the game's existing detectors, not arbitrary user text or self-reported balances. It reviews active, undismissed account flags updated in the last 14 days and flagged financial transactions from the last 12 hours/current 12 turns. It excludes deleted subjects, banned users and non-player corporations. Financial pagination preserves the audit timestamp. Reports explicitly mark incomplete coverage if source, page or time limits are reached. A high-severity detector signal, or two distinct medium-severity signal types, warrants review. This is screening, not proof of misconduct. The audit does not impose sanctions, modify money or contact subjects.
+
+The support service requires explicit `DISCORD_DEVELOPER_ROLE_ID` (or `DISCORD_DEV_TEAM_ROLE_ID`) and `DISCORD_MODERATOR_ROLE_ID`. Both must name distinct existing guild roles. Investigation channel overwrites are built from these roles and the bot, never copied from another ticket or inherited as grants to other roles. The returned ACL is checked before evidence is delivered. `AHD_INVESTIGATION_CATEGORY_ID` optionally selects the parent. The game ticket-intake schema and private receipt protections must ship before filing is enabled. `KEIR_ACCOUNT_AUDIT=0` disables recurring and manual sweeps during rollout.
+
+One open case per subject is reused. A changed evidence digest updates its summary inside the verified private channel. The single-writer operator ledger records external filing attempts before sending; an ambiguous result stays held for staff receipt inspection, including across restarts. Do not clear those holds without checking both the game ticket and Discord channel. A channel topic marker detects interrupted registration and prevents blind duplicate creation. Investigation tickets bypass player context prompts, ordinary support triage, public receipts, automatic repair and merge/reopen helpers.

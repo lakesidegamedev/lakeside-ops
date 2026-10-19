@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Scan account and financial anomalies every 12 hours. `/audit` runs a sweep in the owner app; `/audit preview` reports findings without opening tickets.
+- Keir files and updates private Investigation tickets for developer/moderator review, with source evidence, original transaction currencies, uncertainty and suggested checks. Existing cases are deduplicated; sanctions and money changes remain human decisions.
+- Investigation evidence stays out of public ticket receipts, ordinary support searches, automatic repair, merging and player notification flows.
+
 ## 5.8.13 (2026-10-17)
 
 ### For users

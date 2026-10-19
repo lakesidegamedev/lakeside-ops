@@ -83,10 +83,11 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
       throw Object.assign(new Error("the task is no longer available to steer"), { status: 409 });
     const voice = authenticated && options.voice === true;
     const statusRequest = authenticated && readGameStatus && !attachments.length && mode !== "steer" && require("./appstatus").isGameStatusQuery(content);
-    const quick = voice || statusRequest || quickQuestion(content);
+    const auditRequest = authenticated && /^\/audit(?: preview)?$/i.test(content) && config.runAccountAudit && !attachments.length && mode !== "steer";
+    const quick = voice || auditRequest || statusRequest || quickQuestion(content);
     const connectionCheck = authenticated && quick && !attachments.length && mode !== "steer" && /^(?:test|ping)[.!?]*$/i.test(content);
     if (voice && mode === "steer") throw Object.assign(new Error("Send a new voice turn rather than steering a task"), { status: 400 });
-    const live = voice || mode === "new" || connectionCheck || statusRequest ? null : mode === "steer" ? target : Object.values(d.jobs).find((j) => isAppJob(j) && !j.appWatch && (j.appThread || "main") === thread && (!authenticated || musePolicy.origin(d, j).valid) && Boolean(j.voiceMode) === voice && isQuick(j) === quick && !CLOSED.includes(j.state));
+    const live = voice || mode === "new" || connectionCheck || auditRequest || statusRequest ? null : mode === "steer" ? target : Object.values(d.jobs).find((j) => isAppJob(j) && !j.appWatch && (j.appThread || "main") === thread && (!authenticated || musePolicy.origin(d, j).valid) && Boolean(j.voiceMode) === voice && isQuick(j) === quick && !CLOSED.includes(j.state));
     if ((live?.appAttachments?.length || 0) + attachments.length > 120) throw Object.assign(new Error("Start a separate task to add more files"), { status: 413 });
     attachments = attachments.map((a, i) => ({ ...a, index: (live?.appAttachments?.length || 0) + i }));
     const voiceRoute = voice ? require("./appmodels").voiceRoute(config, d, thread) : null;
@@ -115,6 +116,18 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
       job.state = "done"; job.summary = "Received. I’m here."; job.provider = { runner: "local", model: "connection-check", lane: "quick" };
       const reply = append(d, { role: "keir", text: job.summary, jobId: job.id, thread, ...(voice ? { voice: true, provider: job.provider } : {}) }, now()); record(reply);
       ledger.audit("app_connection_check", { job: job.id, message: message.id }); ledger.save(); return { message, jobId: job.id };
+    }
+    if (auditRequest) {
+      job.state = "running"; job.provider = { runner: "local", model: "account-audit", lane: "quick" };
+      ledger.save();
+      Promise.resolve().then(() => config.runAccountAudit({ dryRun: / preview$/i.test(content) })).then(report => {
+        job.state = "done"; job.summary = require("./account-audit").reportText(report); job.updatedAt = now();
+        deliver(`finish:${job.id}`, { content: job.summary }, job); ledger.save();
+      }).catch(error => {
+        job.state = "blocked"; job.summary = `Account audit could not complete: ${error.message}`; job.updatedAt = now();
+        deliver(`error-reply:${job.id}`, { content: job.summary }, job); ledger.save();
+      });
+      return { message, jobId: job.id };
     }
     if (statusRequest) {
       job.state = "running"; job.provider = { runner: "local", model: "live-game-status", lane: "quick" };
