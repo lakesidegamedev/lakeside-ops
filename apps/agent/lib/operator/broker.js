@@ -2227,7 +2227,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (commanded && job.openedTickets?.[reportId]) { job.openedTickets[reportId].requestMessageId = requestMessageId; ledger.save(); return job.openedTickets[reportId]; }
       const channels = await discord("GET", `/guilds/${config.guildId}/channels`);
       // Conservative per-reporter deduplication; a second issue belongs in the existing channel.
-      const existing = channels.find((c) => /^ticket-.*-\d+$/.test(c.name) && c.permission_overwrites?.some((p) => p.id === original.author.id && p.type === 1));
+      // Incident channels are excluded: merging a player into an incident adds
+      // them to its channel, so every player ever merged into #1600 had all
+      // later reports folded into it (2026-10-19: Simonella, then Moist, on an
+      // owner's direct request).
+      const existing = channels.find((c) => /^ticket-.*-\d+$/.test(c.name) && !/^ticket-incident-/.test(c.name) && d.channels[c.id]?.category !== "incident" && c.permission_overwrites?.some((p) => p.id === original.author.id && p.type === 1));
       if (existing) {
         const number = Number(/-(\d+)$/.exec(existing.name)[1]);
         if (commanded) return { ...attachCommandTicket(number, existing.id), existingChannel: existing.id, instruction: `This report is already tracked in ticket #${number} (<#${existing.id}>) and was added to it. Post one short line here pointing to it unless the developer asked for something else in this channel, then finish done; the ticket's support task carries it on there.` };

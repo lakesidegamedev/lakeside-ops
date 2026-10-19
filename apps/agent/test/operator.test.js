@@ -618,6 +618,21 @@ test("owner ticket request in ordinary chat opens for the verified player's repo
   assert.ok(Object.values(f.ledger.data.jobs).some((t) => t.kind === "ticket" && t.ticket === 123 && t.role === "support"));
 });
 
+// 2026-10-19: Simonella and Moist had been merged into incident 1600, so the
+// reporter check folded every new report of theirs into it, even on an owner's
+// direct "make a ticket".
+test("a reporter's membership of an incident channel does not swallow their new ticket", async () => {
+  const f = fixture(), requestId = "666666666666666660", reportId = "666666666666666661", reporter = "888888888888888888";
+  const request = f.msg("Keir make a ticket for this report", requestId);
+  const report = f.msg("does Split rival plants actually work", reportId, reporter);
+  const j = running(f, { actorId: f.config.ownerId, channelId: f.ch.id, replyChannel: f.ch.id, source: { messageId: requestId, channelId: f.ch.id, authorId: f.config.ownerId, content: request.content } });
+  const incident = { id: "999999999999999999", name: "ticket-incident-starmerbot-1600", permission_overwrites: [{ id: reporter, type: 1 }] };
+  const discord = async (_, route) => route.includes("/guilds/") ? [f.ch, incident] : route === `/channels/${f.ch.id}` ? { ...f.ch, guild_id: f.config.guildId } : route.endsWith("/" + reportId) ? report : request;
+  const broker = createBroker({ ...f, discord, sandbox: {} });
+  const result = await broker.tool(j, "open_ticket", { title: "Split rival plants never succeeds", description: "A player reports the split action failing every time.", category: "bug", reportMessageId: reportId });
+  assert.equal(result.ticketNumber, 123); assert.equal(result.existingChannel, undefined);
+});
+
 test("a bare acknowledgment is not another task, including after completion", () => {
   const f = fixture(), g = createGateway(f);
   g.ingest(f.ch, f.msg("Keir check the profile"));
