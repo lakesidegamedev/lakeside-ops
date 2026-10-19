@@ -322,6 +322,17 @@ test("ticket closure waits after a fix goes live unless the player has replied s
   assert.equal(j.resolutionSubmitted, true);
 });
 
+// Review 2026-10-19: 1592 asked the player the same question four times.
+test("the same question is asked at most twice", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  const at = (t) => createBroker({ ...f, sandbox: {}, now: () => t });
+  const ask = (t, text) => at(t).tool(j, "support_action", { tool: "support_public_update", args: { message: text } });
+  await ask(1e9, "Did you set the public float to 49 percent when you listed the company?");
+  await ask(1e9 + 3600000, "Quick check: did you set the public float to 49 percent at listing?");
+  await assert.rejects(ask(1e9 + 7200000, "Can you confirm whether the public float was set to 49 percent at listing?"), /already asked the player this 2 times/);
+  await ask(1e9 + 7300000, "Which page shows the wrong share count for your company?");
+});
+
 test("owner closure reuses the same ticket coordinator's verified final answer without bypassing grace or unread replies", async () => {
   const f = fixture(), channelId = "777777777777777777";
   const coordinator = f.ledger.createJob("ticket:123", { kind: "ticket", role: "support", ticket: 123, channelId, resolutionReadyAt: 1, lastPublishedAt: 1 });
@@ -835,6 +846,15 @@ test("developer investigation cannot stop at offering an unprepared patch", asyn
   const f=fixture(),actor=f.config.staffIds[0],j=running(f,{role:'support',kind:'command',actorId:actor,source:{authorId:actor}});
   await assert.rejects(f.broker.tool(j,'finish',{state:'waiting',summary:'Found the cause and offered a patch. Waiting for her answer.'}),/Prepare the reviewable patch/);
   assert.equal(j.state,'running');
+});
+
+// Review 2026-10-19: 1621's screenshots were on the ticket report, but the
+// task started from a chat message, and Keir said it could not open them.
+test("a ticket task started from a chat message still opens the report's screenshots", async () => {
+  const f=fixture(),j=running(f,{role:'support',kind:'ticket',ticket:123,source:{channelId:'777777777777777777',messageId:'666666666666666666'}});
+  f.mcp.call=async(server,tool)=>tool==='support_get'?{_images:[{type:'base64',media_type:'image/png',data:'report-bytes'}]}:{};
+  const result=await f.broker.tool(j,'view_attachment',{index:0});
+  assert.equal(result.image.data,'report-bytes'); assert.equal(result.from,'ticket report');
 });
 
 test("adopted ticket images are read from the scoped backend without an undefined Discord message", async () => {

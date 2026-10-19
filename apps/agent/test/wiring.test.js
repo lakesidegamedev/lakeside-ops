@@ -321,9 +321,38 @@ test("a fix reaching the main server sends the player one live reply", async () 
   assert.equal(live[0].delivery_mode, "reply"); assert.equal(live[0].update_kind, "production");
   assert.match(live[0].message, /now live on the main server: Wages for staff a plant does not have\./);
   // confirmed later, or the card re-sent, never repeats the reply
+  // "confirmed" needs a turn after the fix and a game read after that turn
+  await assert.rejects(broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "confirmed" }] }), /watch_turn/);
+  t.turnChecks = [Date.now() - 1000]; t.lastGameReadAt = Date.now();
   await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "confirmed" }] });
   await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "main" }] });
   assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 1);
+});
+
+// Owner, 2026-10-19 (incident 1628): "Add enigma here" got "I can't add
+// people to this channel myself".
+test("a developer can have Keir add a player to a ticket channel; a player cannot", async () => {
+  const f = fixture();
+  f.config.guildId = "444444444444444444";
+  const calls = [];
+  const discord = async (method, route, body) => {
+    calls.push({ method, route, body });
+    if (method === "GET" && route.startsWith("/channels/")) return { id: "777777777777777777", guild_id: f.config.guildId, name: "ticket-incident-starmerbot-1628" };
+    if (method === "GET" && route.includes("/members/search")) return [{ user: { id: "404326423352836126", username: "01enigma", global_name: "Enigma" } }, { user: { id: "500000000000000001", username: "enigmatic" } }];
+    if (method === "POST") return { id: "900000000000000002" };
+    return {};
+  };
+  const broker = createBroker({ ledger: f.ledger, config: f.config, mcp: { servers: () => [], call: async () => ({}) }, discord, sandbox: {}, now: () => Date.now() });
+  const owner = f.ledger.createJob("cmd:add", { kind: "command", role: "owner", actorId: f.config.ownerId, channelId: "777777777777777777", source: { authorId: f.config.ownerId, channelName: "ticket-incident-starmerbot-1628" }, deadline: 9e15 });
+  owner.state = "running";
+  const r = await broker.tool(owner, "add_to_ticket", { user: "enigma", ticket: 1628 });
+  assert.deepEqual(r, { added: "01enigma", ticket: 1628 });
+  const put = calls.find((c) => c.method === "PUT");
+  assert.equal(put.route, "/channels/777777777777777777/permissions/404326423352836126");
+  assert.equal(put.body.type, 1);
+  const player = f.ledger.createJob("conv:p", { kind: "conversation", role: "player", actorId: "888888888888888888", channelId: "777777777777777777", source: { authorId: "888888888888888888" }, deadline: 9e15 });
+  player.state = "running";
+  await assert.rejects(broker.tool(player, "add_to_ticket", { user: "enigma", ticket: 1628 }));
 });
 
 // Owner, 2026-10-14 (ticket 1539): a card buried under later messages is

@@ -323,3 +323,13 @@ test("a current developer request retains its reply task", async () => {
   f.job.observedPlayerAt = 4000;
   await assert.rejects(say(f, "I have more information about the purchase."), /developer's own task/);
 });
+
+// Review 2026-10-19: 1602's player was sent "Let me discover the tools I have
+// access to", the model narrating its own start-up.
+test("tool-discovery narration is runtime talk; ordinary tool words are not", () => {
+  const { runtimeTalk } = require("../lib/operator/playercopy");
+  assert.ok(runtimeTalk("I'll start by understanding the available tools and then answer the question."));
+  assert.ok(runtimeTalk("Let me discover the tools I have access to."));
+  assert.equal(runtimeTalk("Check the tools menu on your corporation page."), null);
+  assert.equal(runtimeTalk("I'll start by checking your mine's sales."), null);
+});

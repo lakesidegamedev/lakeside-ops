@@ -111,7 +111,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
 const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"]);
-const QUICK_TOOLS = ["chart", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
+const QUICK_TOOLS = ["chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -193,6 +193,10 @@ function createMcp(configFile, readToken) {
     if (parsed.ok === false) throw new Error(redactSecrets(JSON.stringify(parsed).slice(0, 2000)));
     const images = (r.content || []).filter((c) => c.type === "image" && /^image\/(png|jpeg|webp|gif)$/.test(c.mimeType || "") && c.data?.length <= 5600000).slice(0, 2);
     if (images.length) parsed._images = images.map((c) => ({ type: "base64", media_type: c.mimeType, data: c.data }));
+    // A form report whose body is only the platform line is described by its
+    // title; Keir told 1584 and 1586 their reports had no text.
+    if (t === "support_get" && parsed.title && !String(parsed.description || "").replace(/^Platform:[^\n]*\n*/i, "").trim())
+      parsed.reportNote = `The player's report is its title: "${String(parsed.title).slice(0, 300)}". Do not tell them it has no description.`;
     return parsed;
   } };
 }
@@ -357,6 +361,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       development: { done: merged || release.some((r) => r.development) },
       staging: { done: release.some((r) => r.staging) },
       main: { done: release.some((r) => r.main) },
+      // "Live, confirmed in game" (review 2026-10-19: 1602's card said it for a
+      // change that never moved the player's mine): a turn processed after
+      // the fix, then a game read after that turn.
+      verified: { done: release.some((r) => r.main) && jobs.some((j) => (j.turnChecks || []).some((at) => (j.lastGameReadAt || 0) > at)) },
       escalated: { done: jobs.some((j) => j.raisedToDevelopers?.length || j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
     };
   }
@@ -490,6 +498,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const mine = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.jobId === job.id && !String(p.text || "").startsWith("[status card]")).at(-1);
     if (mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
       throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
+    // The same question again (1592 asked one question four times in 31
+    // hours): asking twice is a reminder, a third time is not progress.
+    const asked = repeatedQuestion(ticketNo, message);
+    if (asked >= 2) throw new Error(`Not posted: you have already asked the player this ${asked} times. Do not ask again; work with what you have, say what you will assume, or finish waiting for their reply.`);
     if (isCorrection(message) && sentences(message).length > 2)
       throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
@@ -713,7 +725,21 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ledger.audit("ci_wait_delivery_uncertain", { job: job.id, notice: notice.id }); ledger.save(); return false;
     }
   }
+  // Questions Keir put to a player, as word sets, kept for a week.
+  const questionWords = (text) => new Set(String(text).toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 3));
+  const questionsIn = (text) => sentences(String(text || "")).filter((x) => /\?\s*$/.test(x)).map(questionWords).filter((w) => w.size >= 3);
+  const similar = (a, b) => { let n = 0; for (const w of a) if (b.has(w)) n++; return n >= 3 ? n / Math.max(1, Math.min(a.size, b.size)) : 0; };
+  function repeatedQuestion(ticketNo, message) {
+    const prior = (d.askedQuestions?.[ticketNo] || []).map((q) => new Set(q.words));
+    let most = 0;
+    for (const q of questionsIn(message)) most = Math.max(most, prior.filter((p) => similar(q, p) >= 0.5).length);
+    return most;
+  }
   function recordTicketPost(job, ticketNo, message) {
+    if (!/^\[status card\]/.test(message)) {
+      const qs = questionsIn(message);
+      if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
+    }
     if (String(message || "").trim() && !/^\[status card\]/.test(message)) job.lastAskAt = now();
     if (!/^\[status card\]/.test(message) && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
     const posts = (d.ticketPosts ||= {});
@@ -1321,7 +1347,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const args = { ...(input.args || {}) };
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
-      if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; }
+      if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
       // Keir 5.6.2: the spin guard counts distinct reads. Re-reading the same
       // card or record every wake is not progress (a finding re-read its own
       // unassigned handoff 463 times overnight, 2026-10-16).
@@ -1930,6 +1956,42 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       }
       throw new Error("action must be status, merge or promote");
     }
+    // Owner, 2026-10-19 (incident 1628): "Add enigma here" got "I can't add
+    // people to this channel myself". A developer can now have Keir add a
+    // player to a ticket or incident channel by name.
+    if (name === "add_to_ticket") {
+      const staffAsk = [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && job.role !== "player";
+      if (!developerTask(job) && !(job.kind === "conversation" && staffAsk)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
+      const ticketNo = Number(input.ticket) || ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
+      if (!ticketNo) throw new Error("name the ticket number to add them to");
+      const channelId = (job.channelId && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
+        : d.jobs[d.seen[`ticket:${ticketNo}`]]?.channelId;
+      const ch = channelId && await discord("GET", `/channels/${channelId}`);
+      if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== ticketNo) throw new Error(`no open channel found for ticket ${ticketNo}`);
+      const raw = String(input.user || "").trim();
+      const id = /^<@!?(\d{17,20})>$/.exec(raw)?.[1] || (/^\d{17,20}$/.test(raw) ? raw : null);
+      let member;
+      if (id) member = await discord("GET", `/guilds/${config.guildId}/members/${id}`);
+      else {
+        const q = raw.replace(/^@/, "");
+        if (q.length < 2) throw new Error("give the player's Discord name");
+        const found = await discord("GET", `/guilds/${config.guildId}/members/search?query=${encodeURIComponent(q)}&limit=10`) || [];
+        const names = (m) => [m.user?.username, m.user?.global_name, m.nick].filter(Boolean).map((x) => x.toLowerCase());
+        const exact = found.filter((m) => names(m).includes(q.toLowerCase()));
+        const pick = exact.length === 1 ? exact : found.length === 1 ? found : exact.length ? exact : found;
+        if (pick.length !== 1) throw new Error(pick.length ? `several members match "${q}": ${pick.slice(0, 6).map((m) => `${m.user.username}${m.user.global_name ? ` (${m.user.global_name})` : ""}`).join(", ")}. Ask which one.` : `no server member matches "${q}"`);
+        member = pick[0];
+      }
+      const uid = member?.user?.id; if (!uid) throw new Error("that member could not be found");
+      if (member.user.bot) throw new Error("bots are not added to tickets");
+      const allow = String((1n << 10n) | (1n << 11n) | (1n << 16n) | (1n << 15n));
+      await effect(job, `add-to-ticket:${ticketNo}:${uid}`, async () => {
+        await discord("PUT", `/channels/${channelId}/permissions/${uid}`, { type: 1, allow, deny: "0" });
+        return discord("POST", `/channels/${channelId}/messages`, { content: `<@${uid}> has been added to this ticket.`, allowed_mentions: { users: [uid] } });
+      });
+      ledger.audit("added_to_ticket", { job: job.id, ticket: ticketNo, user: uid, by: job.actorId }); ledger.save();
+      return { added: member.user.username, ticket: ticketNo };
+    }
     if (name === "open_channel") {
       if (!developerTask(job) || !job.replyChannel) throw new Error("only a developer's channel task can open a channel to players");
       const minutes = Math.max(5, Math.min(240, Number(input.minutes) || 30));
@@ -2034,14 +2096,25 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!appChannel?.uploads) throw new Error("Private uploads unavailable");
         return appChannel.uploads.inspect(job, input.index, input.page ?? null);
       }
-      if (!snowflake(job.source.messageId) && job.ticket) {
+      // Screenshots uploaded with the ticket form live on the ticket record,
+      // not on a Discord message. A ticket task whose source is a chat message
+      // used to reach only that message, so Keir told 1621 it could not open
+      // screenshots that were attached to the report.
+      const reportImage = async () => {
         const report = await tool(job, "read_tool", {server:"support",tool:"support_get",args:{kind:"ticket",number:job.ticket}}, signal);
-        const image = report._images?.[Number(input.index)];
+        return report._images?.[Number(input.index)] || null;
+      };
+      if (!snowflake(job.source.messageId) && job.ticket) {
+        const image = await reportImage();
         if (!image) throw new Error("No viewable image on this assigned ticket; continue investigating its report and metadata.");
         return {image};
       }
       const original = await discord("GET", `/channels/${job.source.channelId}/messages/${job.source.messageId}`);
       const a = original.attachments?.[Number(input.index)];
+      if (!a && job.ticket) {
+        const image = await reportImage();
+        if (image) return {image, from: "ticket report"};
+      }
       if (!a || !/^image\/(png|jpeg|webp|gif)$/.test(a.content_type || "") || a.size > 4 * 1024 * 1024) throw new Error("no supported bounded source image");
       const url = new URL(a.url);
       if (url.protocol !== "https:" || !["cdn.discordapp.com", "media.discordapp.net"].includes(url.hostname)) throw new Error("attachment host is untrusted");

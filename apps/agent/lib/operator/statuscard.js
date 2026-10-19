@@ -20,7 +20,7 @@ const STAGES = [
   { id: "sandbox", label: "On the sandbox", needs: "staging" },
   { id: "main", label: "Live on the main server", needs: "main" },
 ];
-const CONFIRMED = { id: "confirmed", label: "Live · confirmed in game", needs: "main" };
+const CONFIRMED = { id: "confirmed", label: "Live · confirmed in game", needs: "verified" };
 // Investigated and answered, nothing to fix (working as intended, or the
 // player's own action). Without it a not-a-bug item could neither leave the
 // card nor finish (replay 2026-10-19: 36 runs sent an empty card).
@@ -36,7 +36,8 @@ function stageAllowed(stage, evidence = {}) {
   const s = stageIndex(stage) < 0 ? null : stageOf(stage);
   if (!s) return { ok: false, reason: `unknown stage "${stage}"; use one of ${[...STAGES.map((x) => x.id), "confirmed", "answered"].join(", ")}` };
   if (s.needs === "investigated" && !evidence.investigated?.done) return { ok: false, reason: `"${s.label}" needs the cause investigated first: read the live game state, data or code for this ticket. Until then post no card, or say what you are checking` };
-  if (s.needs && s.needs !== "investigated" && !evidence[s.needs]?.done) return { ok: false, reason: `"${s.label}" needs github where to show the fix on ${s.needs}` };
+  if (s.needs === "verified" && !evidence.verified?.done) return { ok: false, reason: `"${s.label}" needs a turn processed after the fix (watch_turn) and a read of the player's game data after it. Until then use "main"` };
+  if (s.needs && s.needs !== "investigated" && s.needs !== "verified" && !evidence[s.needs]?.done) return { ok: false, reason: `"${s.label}" needs github where to show the fix on ${s.needs}` };
   return { ok: true };
 }
 

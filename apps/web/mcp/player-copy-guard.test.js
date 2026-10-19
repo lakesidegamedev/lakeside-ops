@@ -8,6 +8,7 @@ test("internal release details are refused in player copy", () => {
   assert.equal(internalTerm("I filed it as AHDGame issue #4440.").kind, "a PR or issue number");
   assert.equal(internalTerm("It passed the full CI gate and has merged to development.").kind, "CI");
   assert.equal(internalTerm("Fix options are in your decision DM.").kind, "internal routing");
+  assert.equal(internalTerm("Let me discover the tools I have access to.").kind, "agent narration");
 });
 
 test("ordinary player copy passes", () => {
