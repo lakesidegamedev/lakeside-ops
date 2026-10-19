@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.0 (2026-10-19)
+
+<!-- Coverage: keir-v5.8.29 through 6862b48; account investigations PR #142 and deciding-question brief PR #143. -->
+
 ### For users
 
 - Run `/audit` in the owner app to sweep for possible linked accounts, or `/audit preview` to inspect findings. Keir also checks every 12 hours and opens private Investigation tickets for developers and moderators.
