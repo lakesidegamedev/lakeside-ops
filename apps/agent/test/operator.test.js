@@ -53,6 +53,22 @@ test("a player cannot approve actions or pause the operator through mentions or 
   assert.equal(f.ledger.data.actions.action.state, "pending"); assert.equal(f.ledger.data.paused, false);
 });
 
+// Review 2026-10-19: players merged into incident 1600 asked Keir directly
+// and waited about 21 hours, because incident chat was dropped unread.
+test("an incident ticket ignores chatter but answers a message that names Keir", () => {
+  const f = fixture(), g = createGateway(f);
+  const ch = { id: "777777777777777777", name: "ticket-incident-keir-1600", type: 0 };
+  f.ledger.data.channels[ch.id] = { category: "incident" };
+  const j = f.ledger.createJob("ticket:1600", { kind: "ticket", role: "support", ticket: 1600, channelId: ch.id, source: {} });
+  j.state = "cancelled";
+  g.ingest(ch, f.msg("my margins are still bad lol", "666666666666666670", "888888888888888888"));
+  assert.equal(f.ledger.data.seen["discord:666666666666666670"], "incident-ticket");
+  assert.equal(j.state, "cancelled");
+  g.ingest(ch, f.msg("@Keir look at the market cap history", "666666666666666671", "888888888888888888"));
+  assert.equal(j.state, "queued");
+  assert.match(j.inbox.at(-1).content, /market cap history/);
+});
+
 test("delegates have support authority; only the owner controls execution and approves", () => {
   const f = fixture(), g = createGateway(f);
   g.ingest(f.ch, f.msg("Keir investigate the broken page", undefined, f.config.staffIds[0]));

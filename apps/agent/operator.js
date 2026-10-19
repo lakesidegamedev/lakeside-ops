@@ -14,6 +14,7 @@ const { createPresence } = require("./lib/operator/presence");
 const { createDiscord, createScanHealth } = require("./lib/operator/discord");
 const { createConversation, isQuick } = require("./lib/operator/conversation");
 const { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure } = require("./lib/operator/recovery");
+const humanInbox = (j) => (j.inbox || []).some((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup)$/.test(String(m.authorId || "")));
 const { LANES, emptyLanes, pickForLanes, laneTimeoutMs, laneClass } = require("./lib/operator/lanes");
 const { createSupportOwner } = require("./lib/operator/supportowner");
 const { createReopenedTickets } = require("./lib/operator/reopened");
@@ -659,7 +660,12 @@ function drain() {
     }
     if (j.role !== "owner" && !["command", "conversation"].includes(j.kind) && j.ticket && !["done", "cancelled"].includes(j.state)) {
       if (d.channels[j.channelId]?.claimedBy) { j.state = "deferred"; j.summary = "Staff owns this ticket; automatic work is deferred."; continue; }
-      if (j.ownerDecisionPending) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; continue; }
+      // A player or staff message still reaches the conversation wake below:
+      // this used to "continue" first, so a ticket held on an owner decision
+      // never answered its player (review 2026-10-19: 1613, 1619, 1625 sat
+      // 5 to 7 hours overnight).
+      if (j.ownerDecisionPending && !(j.kind === "ticket" && !j.channelClosed && humanInbox(j))) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; continue; }
+      if (j.ownerDecisionPending) j.state = "blocked";
     }
     if (j.resolutionSubmitted && !j.resolved && !["done", "cancelled", "blocked"].includes(j.state)) {
       if (now - j.resolutionSubmittedAt > 20 * 60000) {
@@ -684,7 +690,7 @@ function drain() {
     // Keir 5.6 (owner, 2026-10-16): an open owner decision holds writes and
     // closure, never the conversation. A player or staff message still wakes
     // the ticket so it gets an answer; supportAuthority keeps effects held.
-    else if (j.state === "blocked" && j.ownerDecisionPending && j.kind === "ticket" && !j.channelClosed && (j.inbox || []).some((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup)$/.test(String(m.authorId || "")))) { j.state = "queued"; ledger.audit("requeued_for_conversation", { job: j.id, ticket: j.ticket || null }); }
+    else if (j.state === "blocked" && j.ownerDecisionPending && j.kind === "ticket" && !j.channelClosed && humanInbox(j)) { j.state = "queued"; ledger.audit("requeued_for_conversation", { job: j.id, ticket: j.ticket || null }); }
     const expiry = require("./lib/operator/deadline").expireDeadline(j, now, { lifetimeMs: config.taskLifetimeMs });
     if (expiry === "extended") ledger.audit("deadline_extended", { job: j.id, ticket: j.ticket || null, until: j.deadline });
     else if (expiry === "blocked") ledger.notify(`deadline:${j.id}`, "owner", `Task ${j.id}: ${j.summary}`);
