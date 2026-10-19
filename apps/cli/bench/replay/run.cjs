@@ -18,6 +18,7 @@ const ARMS = {
   full: { leanContext: false, effectGuard: true },          // live since 2026-10-19 (KEIR_LEAN_CONTEXT=0)
   lean: { leanContext: true, effectGuard: true },           // 5.8.21 lean context (reverted)
   digest: { leanContext: 'digest', effectGuard: true },     // candidate (needs digest-mode code)
+  facts: { leanContext: false, effectGuard: true, playerOnlyFacts: true }, // candidate C2: unrecorded player facts in ticket context
 };
 
 // Scenario sets: dev (diagnose and tune), validation (compare candidates), holdout

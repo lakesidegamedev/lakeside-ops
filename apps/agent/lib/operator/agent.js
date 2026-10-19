@@ -268,6 +268,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       context.statusCard = card ? { status: card.status, items: card.items, updatedMinutesAgo: Math.round((Date.now() - (card.at || 0)) / 60000) }
         : "missing: create this ticket's progress card with status_card in this activation, from what is verified now";
     }
+    // Candidate C2 (KEIR_PLAYER_FACTS=1, 2026-10-19): the facts the server never
+    // records, so a diagnosis that depends on one is asked or stated as an
+    // assumption instead of asserted. Same list for every ticket.
+    if (config.playerOnlyFacts && job.kind === "ticket" && job.role !== "player") context.playerOnlyFacts = { facts: ["which client or device they used (website, desktop app, phone)", "exactly what they clicked or typed", "what they expected to happen", "what their screen showed"], rule: "The game records none of these. If your diagnosis or advice depends on one, ask the player one focused question or state it as an assumption; never assert it as fact." };
     // Keir 2.3: private notes about this ticket's reporter (never for player tasks).
     if (broker.notebook && job.ticket && job.role !== "player") { try { const r = await broker.reporterOf(job); if (r?.id) context.playerNotes = broker.notebook.notesFor(r.id); } catch {} }
     const recallPlayer = job.role === "player" ? undefined : job.role === "owner" ? "*" : job.reporterCharacter?.id || undefined;
