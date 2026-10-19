@@ -5,6 +5,19 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- When a fix for your ticket reaches the main server, Keir now tells you in the ticket instead of only updating the progress card.
+- Naming Keir in an incident ticket now gets an answer, and replying while your ticket waits on a developer decision wakes Keir.
+- Tickets stay open for at least two hours after a fix goes live, so you have time to see it work.
+
+### For developers
+
+- An activation with zero tokens, no tool call and no text is a provider failure: it waits and retries every 15 minutes (up to 12 hours) and alerts the owner hourly. On 2026-10-19 these empty runs left tickets 1626 and 1627 unanswered.
+- The owner-decision hold no longer skips the conversation wake (`humanInbox`). Incident channels ingest messages that name Keir and revive the cancelled incident job.
+- `liveNotice` posts one production reply the first time a card item reaches main or confirmed, skipped if Keir said "live" in the last 15 minutes. `support_resolve` is refused for `KEIR_LIVE_GRACE_MINUTES` (default 120) after a live post unless the player replied since.
+- Brief: no guessed values for players to try, no "works" without the player's path, the title is part of the report, single explicit corrections, no next-turn forecasts.
+
 ## 5.9.0 (2026-10-19)
 
 <!-- Coverage: keir-v5.8.30 plus account investigations PR #142. -->
