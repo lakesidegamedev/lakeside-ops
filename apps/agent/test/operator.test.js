@@ -322,6 +322,17 @@ test("ticket closure waits after a fix goes live unless the player has replied s
   assert.equal(j.resolutionSubmitted, true);
 });
 
+// Review 2026-10-19: 1592 asked the player the same question four times.
+test("the same question is asked at most twice", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  const at = (t) => createBroker({ ...f, sandbox: {}, now: () => t });
+  const ask = (t, text) => at(t).tool(j, "support_action", { tool: "support_public_update", args: { message: text } });
+  await ask(1e9, "Did you set the public float to 49 percent when you listed the company?");
+  await ask(1e9 + 3600000, "Quick check: did you set the public float to 49 percent at listing?");
+  await assert.rejects(ask(1e9 + 7200000, "Can you confirm whether the public float was set to 49 percent at listing?"), /already asked the player this 2 times/);
+  await ask(1e9 + 7300000, "Which page shows the wrong share count for your company?");
+});
+
 test("owner closure reuses the same ticket coordinator's verified final answer without bypassing grace or unread replies", async () => {
   const f = fixture(), channelId = "777777777777777777";
   const coordinator = f.ledger.createJob("ticket:123", { kind: "ticket", role: "support", ticket: 123, channelId, resolutionReadyAt: 1, lastPublishedAt: 1 });

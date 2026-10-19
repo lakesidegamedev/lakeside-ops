@@ -494,6 +494,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const mine = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.jobId === job.id && !String(p.text || "").startsWith("[status card]")).at(-1);
     if (mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
       throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
+    // The same question again (1592 asked one question four times in 31
+    // hours): asking twice is a reminder, a third time is not progress.
+    const asked = repeatedQuestion(ticketNo, message);
+    if (asked >= 2) throw new Error(`Not posted: you have already asked the player this ${asked} times. Do not ask again; work with what you have, say what you will assume, or finish waiting for their reply.`);
     if (isCorrection(message) && sentences(message).length > 2)
       throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
@@ -717,7 +721,21 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ledger.audit("ci_wait_delivery_uncertain", { job: job.id, notice: notice.id }); ledger.save(); return false;
     }
   }
+  // Questions Keir put to a player, as word sets, kept for a week.
+  const questionWords = (text) => new Set(String(text).toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 3));
+  const questionsIn = (text) => sentences(String(text || "")).filter((x) => /\?\s*$/.test(x)).map(questionWords).filter((w) => w.size >= 3);
+  const similar = (a, b) => { let n = 0; for (const w of a) if (b.has(w)) n++; return n >= 3 ? n / Math.max(1, Math.min(a.size, b.size)) : 0; };
+  function repeatedQuestion(ticketNo, message) {
+    const prior = (d.askedQuestions?.[ticketNo] || []).map((q) => new Set(q.words));
+    let most = 0;
+    for (const q of questionsIn(message)) most = Math.max(most, prior.filter((p) => similar(q, p) >= 0.5).length);
+    return most;
+  }
   function recordTicketPost(job, ticketNo, message) {
+    if (!/^\[status card\]/.test(message)) {
+      const qs = questionsIn(message);
+      if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
+    }
     if (String(message || "").trim() && !/^\[status card\]/.test(message)) job.lastAskAt = now();
     if (!/^\[status card\]/.test(message) && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
     const posts = (d.ticketPosts ||= {});
