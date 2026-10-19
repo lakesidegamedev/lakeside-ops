@@ -36,7 +36,7 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
     workerProvider: route, quickProvider: route, visionProvider: route, maxRounds: 24, maxTurnMs: ACTIVATION_MS, quickMaxTurnMs: ACTIVATION_MS, skills: true, dynamicEffort: false,
     rustRunnerLanes: [], usageFile, tagIntake: async () => null };
   const agent = createAgent({ ledger: env.ledger, broker: env.broker, config });
-  const result = { key, scenario: scenarioId, route, arm: armName, rep, startedAt: new Date().toISOString(), activations: [] };
+  const result = { key, set: setDir, scenario: scenarioId, route, arm: armName, rep, startedAt: new Date().toISOString(), activations: [] };
   const job = env.job;
   try {
     for (let i = 0; i < MAX_ACTIVATIONS; i++) {
@@ -55,9 +55,10 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
     }
   } catch (e) { result.error = String(e.stack || e).slice(0, 1500); }
   const usage = fs.existsSync(usageFile) ? fs.readFileSync(usageFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
-  const tok = (u) => { const t = u.tokens || {}; return (t.input || 0) + (t.output || 0) + (t.cacheRead || 0) + (t.cacheWrite || 0); };
+  // A provider that reports no usage (cursor) is unknown, never zero.
+  const tok = (u) => { const t = u.tokens || {}, v = [t.input, t.output, t.cacheRead, t.cacheWrite]; return v.every((x) => x == null) ? null : v.reduce((n, x) => n + (x || 0), 0); };
   result.usage = usage.map((u) => ({ model: u.model, outcome: u.outcome, durationMs: u.durationMs, tokens: u.tokens, contextBudget: u.contextBudget }));
-  result.tokens = usage.reduce((n, u) => n + tok(u), 0);
+  result.tokens = usage.length && usage.every((u) => tok(u) !== null) ? usage.reduce((n, u) => n + tok(u), 0) : null;
   result.wallMs = result.activations.reduce((n, a) => n + a.wallMs, 0);
   result.finalState = job.state;
   result.blockedHostActions = require('./guard.cjs').blocked.length;
