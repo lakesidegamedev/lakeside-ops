@@ -44,3 +44,22 @@ test("lean session defers rare tools, keeps completion tools direct and loads om
   assert.equal(bp.lean({ job: { ...job, voiceMode: true }, quick: true, briefText: text, tools: TOOLS, skills, skillLane: lane, skillNames: [] }), null);
   assert.equal(bp.lean({ job, quick: false, briefText: text, tools: TOOLS, skills, skillLane: lane, skillNames: [], enabled: false }), null);
 });
+
+test("digest mode keeps the full brief and every tool, and only digests skills", async () => {
+  const { createAgent } = require("../lib/operator/agent");
+  const { EventEmitter } = require("node:events");
+  const os = require("node:os");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "digest-"));
+  const seen = [];
+  const ledger = { data: { actions: {}, jobs: {}, channels: {} }, save() {}, audit() {} };
+  const job = { id: "aaaaaaaaaaaa", kind: "command", role: "owner", source: { content: "Check this", at: new Date().toISOString() }, rounds: 0, tags: { kind: "command" } };
+  ledger.data.jobs[job.id] = job;
+  const agent = createAgent({ ledger, broker: { tool: async (j, name) => { if (name === "finish") j.state = "done"; } },
+    config: { leanContext: "digest", stateDir: root, briefFile: path.join(__dirname, "../KEIR.md"), model: "test", workerProvider: "claude", maxRounds: 2, maxTurnMs: 500,
+      spawnImpl: (cmd, args) => { const c = new EventEmitter(); c.pid = 999999; c.stdout = new EventEmitter(); c.stderr = new EventEmitter(); seen.push(args);
+        c.stdin = { end() { setImmediate(() => { c.stdout.emit("data", JSON.stringify({ type: "result", subtype: "success", result: "Checked.", usage: {} }) + "\n"); c.emit("close", 0); }); } }; return c; } } });
+  job.state = "running"; await agent.run(job, new AbortController().signal).catch(() => {});
+  assert.equal(job.contextBudget?.lean, "digest");
+  assert.ok(job.contextBudget.briefChars > 55000 && job.contextBudget.briefChars < 70000, String(job.contextBudget.briefChars));
+  assert.ok(job.contextBudget.initialTools > 40, String(job.contextBudget.initialTools));
+});

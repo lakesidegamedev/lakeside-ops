@@ -115,7 +115,7 @@ function createWorld({ repoDir, stateDir }) {
         });
         return { results };
       }
-      case 'publish_patch': return { pr: 4321, url: 'https://example.invalid/pull/4321', base: 'development' };
+      case 'publish_patch': if (!state.issuesTouched.length && !state.newIssues.length && !/#\d+/.test(String(input.body || ''))) throw new Error('This ticket has no GitHub issue yet. File the bug, or add your evidence to the open issue that already covers it, with raise_to_developers (kind bug), then publish the patch; it will reference that issue.'); return { pr: 4321, url: 'https://example.invalid/pull/4321', base: 'development' };
       case 'shell': {
         const command = String(input.command || '').replaceAll('/workspace/repo', repoDir).replace(/^cd repo\s*(&&|;)\s*/, '').replace(/^cd repo\//, 'cd ');
         const r = cp.spawnSync('/usr/bin/bash', ['--noprofile', '--norc', '-c', command], { cwd: repoDir, encoding: 'utf8', timeout: 10000, maxBuffer: 200000 });

@@ -19,6 +19,16 @@ const LIMIT_MS = 150000, MAX_ACTIVATIONS = 3;
 function arm(name) {
   const k = require('../keir-arm.cjs');
   if (name === 'baseline') return { ...k.build('keir-current', 'support'), guard: false, prefetch: false, keirContext: true };
+  // Ablations of the lean context, one change at a time against the baseline.
+  if (['onlybrief', 'onlydefer', 'onlydigest', 'digest'].includes(name)) {
+    const fs2 = require('node:fs'), bp = require(AGENT + '/lib/operator/briefprofile'), skills = require(AGENT + '/lib/operator/skills'), { TOOL_NOTE } = require(AGENT + '/lib/operator/agent');
+    const KEIR = fs2.readFileSync(AGENT + '/KEIR.md', 'utf8'), base = k.build('keir-current', 'support'), job = { kind: 'ticket', role: 'support', ticket: 1 }, prep = skills.prepare('worker');
+    const ctx = bp.lean({ job, quick: false, briefText: KEIR, tools: base.tools, skills, skillLane: 'worker', skillNames: prep.names });
+    const brief = name === 'onlybrief' ? ctx.brief + TOOL_NOTE + prep.text : name === 'onlydefer' ? KEIR + TOOL_NOTE + prep.text : KEIR + TOOL_NOTE + ctx.skillDigest(prep.names);
+    // digest = what ships: skill digests plus the effect guard.
+    const tools = name === 'onlydefer' ? ctx.session.tools : base.tools, deferred = name === 'onlydefer' ? ctx.session : null;
+    return { tools, deferred, brief, guard: name === 'digest', prefetch: false, keirContext: true, stats: { briefChars: brief.length, toolSchemaChars: JSON.stringify(tools).length, tools: tools.length } };
+  }
   // live = Keir 5.8.21 as deployed: lean context and effect guard, no prefetch.
   if (name === 'live') return { ...k.build('keir-lean', 'support'), guard: true, prefetch: false, keirContext: true };
   if (name === 'advanced') return { ...k.build('keir-lean', 'support'), guard: true, prefetch: true, keirContext: true };

@@ -300,7 +300,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     const leanCtx = compact ? null : require("./briefprofile").lean({ job, quick, briefText, tools, skills, skillLane, skillsRoot: config.skillsRoot, skillNames: skillPrep.names, enabled: config.leanContext !== false,
       // KEIR_CORE_BRIEF=1: ticket, command, finding and quick jobs run on the core brief and core tool set.
       ...(config.coreBrief && ["work", "finding", "quick"].includes(require("./briefprofile").profileOf(job, quick)) ? { coreText: fs.readFileSync(config.coreBriefFile, "utf8") } : {}) });
-    const deferred = compact ? chatContext.sessionContext({ job, ledger, broker, config, tools, fullBrief: briefText + OTHER_NOTE + ownerBrief, recallPlayer }) : leanCtx?.session || null;
+    // KEIR_LEAN_CONTEXT=digest keeps the full brief and every tool and only replaces
+    // skill bodies with digests: the one part of lean that held accuracy on the
+    // 2026-10-19 ticket benchmark (on-demand tools caused failed runs).
+    const digestOnly = config.leanContext === "digest";
+    const deferred = compact ? chatContext.sessionContext({ job, ledger, broker, config, tools, fullBrief: briefText + OTHER_NOTE + ownerBrief, recallPlayer }) : !digestOnly && leanCtx?.session || null;
     if (deferred) context.capabilityCatalog = deferred.names;
     const { url, completionUrl, session, close } = await toolServer.open(job, deferred?.tools || tools, signal, deferred);
     let result;
@@ -330,18 +334,18 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       job.activeSkills = skillBrief.names; ledger.save();
       if (skillBrief.errors.length) ledger.audit("skills_unavailable", { job: job.id, lane: skillLane, errors: skillBrief.errors });
       if (job.codingContract && !quick && !job.investigation && job.role !== "player") context.codingPreparation = await require("./coding-context").prepareCodingContext(job, input => broker.tool(job,"evidence_batch",input,signal));
-      const common = { spawnImpl, stateDir: config.stateDir, model, effort: chosen.effort, brief: (leanCtx ? leanCtx.brief : briefText) + skillText + OTHER_NOTE + ownerBrief, prompt: JSON.stringify(context), tools: session.tools, url, completionUrl, maxTurns: maxRounds, timeoutMs: budget, signal };
+      const common = { spawnImpl, stateDir: config.stateDir, model, effort: chosen.effort, brief: (leanCtx && !digestOnly ? leanCtx.brief : briefText) + skillText + OTHER_NOTE + ownerBrief, prompt: JSON.stringify(context), tools: session.tools, url, completionUrl, maxTurns: maxRounds, timeoutMs: budget, signal };
       // Keir 4.0 phase 4 canary: lanes listed in KEIR_RUST_RUNNER_LANES (quick,
       // worker, probe) run their activation through the Rust runner, which
       // keeps the loop, the trace and admission; tools and state stay here.
       const lane = quick ? "quick" : "worker";
       // API model loops use OpenCode; native Rust transports remain explicit.
       const viaRust = !["ollama", "deepseek", "opencode"].includes(p) && rustLaneAllowed(config, job, lane);
-      const runnerBrief = compact ? chatContext.SMALL_BRIEF : p === "claude" && !viaRust ? (leanCtx ? leanCtx.brief + TOOL_NOTE : brief) + skillText : common.brief;
+      const runnerBrief = compact ? chatContext.SMALL_BRIEF : p === "claude" && !viaRust ? (leanCtx && !digestOnly ? leanCtx.brief + TOOL_NOTE : brief) + skillText : common.brief;
       ledger.audit("activation_skills", { job: job.id, lane: skillLane, skills: skillBrief.names, disabled: config.skills === false,
         skillChars: skillText.length, skillBytes: Buffer.byteLength(skillText), briefChars: runnerBrief.length, briefBytes: Buffer.byteLength(runnerBrief),
         degraded: skillBrief.errors.length > 0 });
-      job.contextBudget = { profile: contextProfile, preflightMs: Date.now() - preflightAt, briefChars: runnerBrief.length, contextChars: common.prompt.length, toolSchemaChars: JSON.stringify(session.tools).length, initialTools: session.tools.length, ...(leanCtx ? { lean: leanCtx.profile, omittedSections: leanCtx.omitted.length, deferredTools: leanCtx.deferredNames.length } : {}) };
+      job.contextBudget = { profile: contextProfile, preflightMs: Date.now() - preflightAt, briefChars: runnerBrief.length, contextChars: common.prompt.length, toolSchemaChars: JSON.stringify(session.tools).length, initialTools: session.tools.length, ...(leanCtx ? (digestOnly ? { lean: "digest" } : { lean: leanCtx.profile, omittedSections: leanCtx.omitted.length, deferredTools: leanCtx.deferredNames.length }) : {}) };
       ledger.audit("activation_context", { job: job.id, ...job.contextBudget }); ledger.save();
       const providerAt = Date.now();
       result = await invokeCli({ ...common, brief: runnerBrief, runner: p, job, lane,

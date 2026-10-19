@@ -53,10 +53,12 @@ function grade(world) {
   const cardText = card ? JSON.stringify(card) : '';
   add('status_card', card ? (DEV_REFS.test(cardText) ? 6 : 10) : 0, 10, card ? 'card set' : 'no card');
 
-  // 8. Receipt: a support_action public update attaches to the ticket record (6, Keir's
-  // designed path); a tracker note or status change adds the rest (4).
-  const publicUpdate = log.some((e) => e.tool === 'support_action' && e.input?.tool === 'support_public_update');
-  add('receipt', (publicUpdate ? 6 : 0) + (state.trackerNotes.length || state.ticketStatus !== 'open' ? 4 : 0), 10, `public update ${publicUpdate}, notes ${state.trackerNotes.length}, status ${state.ticketStatus}`);
+  // 8. Receipt. In the real broker a ticket-channel channel_reply is sent as a
+  // support_public_update and a status-card stage change is also written to the
+  // receipt, so any player-facing post counts (6); a card, tracker note or
+  // status change adds the rest (4).
+  const onRecord = log.some((e) => e.ok && (e.tool === 'channel_reply' || (e.tool === 'support_action' && e.input?.tool === 'support_public_update')));
+  add('receipt', (onRecord ? 6 : 0) + (state.statusCard || state.trackerNotes.length || state.ticketStatus !== 'open' ? 4 : 0), 10, `on record ${onRecord}, card ${Boolean(state.statusCard)}, notes ${state.trackerNotes.length}, status ${state.ticketStatus}`);
 
   // 9. Final player reply after the answer: workaround, known fault, copy rules (15)
   const answerAt = world.channel.find((m) => m.role === 'player' && m.at > 0)?.at ?? Infinity;
