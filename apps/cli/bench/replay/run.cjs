@@ -1,0 +1,85 @@
+'use strict';
+// Replay runner: production createAgent + createBroker + tool server, on a
+// scenario's stubbed externals. A scripted player answers questions between
+// activations through the job inbox, as the gateway would. Results keep the
+// full event trace, per-activation usage and timing.
+// Usage: node apps/cli/bench/replay/run.cjs --out ABS [--set dev|validation|holdout] --scenario all|id[,id] --route claude:claude-sonnet-5-5@medium[,...] [--arm full] [--repeat 5] [--concurrency 3]
+require('./guard.cjs');
+const fs = require('node:fs'), path = require('node:path');
+const AGENT = path.resolve(__dirname, '../../../agent');
+const { createAgent } = require(AGENT + '/lib/operator/agent');
+const { createEnv } = require('./env.cjs');
+
+const MAX_ACTIVATIONS = 3, ACTIVATION_MS = 240000;
+// Arms are production configurations; only these fields differ.
+const ARMS = {
+  full: { leanContext: false, effectGuard: true },          // live since 2026-10-19 (KEIR_LEAN_CONTEXT=0)
+  lean: { leanContext: true, effectGuard: true },           // 5.8.21 lean context (reverted)
+  digest: { leanContext: 'digest', effectGuard: true },     // candidate (needs digest-mode code)
+};
+
+// Scenario sets: dev (diagnose and tune), validation (compare candidates), holdout
+// (final promotion only; lives outside the repository, never read while tuning).
+const SETS = { dev: path.join(__dirname, 'scenarios', 'dev'), validation: path.join(__dirname, 'scenarios', 'validation'), holdout: process.env.KEIR_REPLAY_HOLDOUT || '/root/misc/keir-replay-holdout' };
+function scenarioIds(arg, dir) { const all = fs.readdirSync(dir).filter((f) => f.endsWith('.cjs') && !f.endsWith('.test.cjs')).map((f) => f.slice(0, -4)).sort(); return arg === 'all' ? all : arg.split(','); }
+function loadScenario(dir, id) { const sc = require(path.join(dir, id + '.cjs')); return { ...sc, dir }; }
+const slug = (route) => route.replace(/[^a-z0-9.-]+/gi, '_');
+
+async function sim(setDir, scenarioId, route, armName, rep, out) {
+  const key = `${scenarioId}__${slug(route)}__${armName}__r${rep}`, cell = path.join(out, key);
+  if (fs.existsSync(cell + '/result.json')) return JSON.parse(fs.readFileSync(cell + '/result.json'));
+  fs.rmSync(cell, { recursive: true, force: true }); fs.mkdirSync(cell, { recursive: true });
+  const sc = loadScenario(setDir, scenarioId);
+  const env = createEnv({ scenario: sc, dir: cell });
+  const usageFile = path.join(cell, 'usage.jsonl');
+  const config = { ...env.config, ...ARMS[armName], briefFile: path.join(AGENT, 'KEIR.md'), coreBriefFile: path.join(AGENT, 'KEIR-CORE.md'), model: route.split(':')[1]?.split('@')[0],
+    workerProvider: route, quickProvider: route, visionProvider: route, maxRounds: 24, maxTurnMs: ACTIVATION_MS, quickMaxTurnMs: ACTIVATION_MS, skills: true, dynamicEffort: false,
+    rustRunnerLanes: [], usageFile, tagIntake: async () => null };
+  const agent = createAgent({ ledger: env.ledger, broker: env.broker, config });
+  const result = { key, scenario: scenarioId, route, arm: armName, rep, startedAt: new Date().toISOString(), activations: [] };
+  const job = env.job;
+  try {
+    for (let i = 0; i < MAX_ACTIVATIONS; i++) {
+      job.state = 'running'; delete job.wakeAt;
+      const asked = env.events.filter((e) => e.kind === 'post').length;
+      const t0 = Date.now(), ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), ACTIVATION_MS + 60000);
+      let error = null;
+      try { await agent.run(job, ctl.signal); } catch (e) { error = String(e.message).slice(0, 500); } finally { clearTimeout(timer); }
+      result.activations.push({ i, wallMs: Date.now() - t0, state: job.state, waitingFor: job.waitingFor || null, error, summary: String(job.summary || '').slice(0, 400) });
+      if (job.state !== 'waiting') break;
+      // The player answers the newest question posted this activation, if any.
+      const q = env.events.slice(0).filter((e) => e.kind === 'post').slice(asked).reverse().find((e) => /\?/.test(e.text));
+      if (!q) break;
+      const hit = (sc.answers || []).find((a) => a.when.test(q.text));
+      env.playerReply(hit ? hit.text : sc.fallbackAnswer || "I'm not sure what you mean.");
+    }
+  } catch (e) { result.error = String(e.stack || e).slice(0, 1500); }
+  const usage = fs.existsSync(usageFile) ? fs.readFileSync(usageFile, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
+  const tok = (u) => { const t = u.tokens || {}; return (t.input || 0) + (t.output || 0) + (t.cacheRead || 0) + (t.cacheWrite || 0); };
+  result.usage = usage.map((u) => ({ model: u.model, outcome: u.outcome, durationMs: u.durationMs, tokens: u.tokens, contextBudget: u.contextBudget }));
+  result.tokens = usage.reduce((n, u) => n + tok(u), 0);
+  result.wallMs = result.activations.reduce((n, a) => n + a.wallMs, 0);
+  result.finalState = job.state;
+  result.blockedHostActions = require('./guard.cjs').blocked.length;
+  fs.writeFileSync(cell + '/events.json', JSON.stringify(env.events, null, 2));
+  fs.writeFileSync(cell + '/channel.json', JSON.stringify(env.messages, null, 2));
+  fs.writeFileSync(cell + '/job.json', JSON.stringify(job, null, 2));
+  fs.writeFileSync(cell + '/result.json', JSON.stringify(result, null, 2));
+  fs.appendFileSync(path.join(out, 'results.jsonl'), JSON.stringify(result) + '\n');
+  console.log(`DONE ${key} activations=${result.activations.length} state=${job.state} tokens=${Math.round(result.tokens / 1000)}K wall=${Math.round(result.wallMs / 1000)}s${result.error ? ' ERROR' : ''}`);
+  return result;
+}
+
+async function main(argv = process.argv.slice(2)) {
+  const o = { set: 'dev', scenario: 'all', route: 'claude:claude-sonnet-5-5@medium', arm: 'full', repeat: '1', concurrency: '2' };
+  for (let i = 0; i < argv.length; i += 2) o[argv[i].replace(/^--/, '')] = argv[i + 1];
+  if (!o.out || !path.isAbsolute(o.out)) throw Error('--out ABSOLUTE_DIR required');
+  fs.mkdirSync(o.out, { recursive: true });
+  const jobs = [];
+  for (let r = 1; r <= Number(o.repeat); r++) for (const s of scenarioIds(o.scenario, SETS[o.set])) for (const route of o.route.split(',')) for (const a of o.arm.split(',')) jobs.push([SETS[o.set], s, route, a, r]);
+  let next = 0;
+  await Promise.all(Array.from({ length: Number(o.concurrency) }, async () => { while (next < jobs.length) { const j = jobs[next++]; try { await sim(...j, o.out); } catch (e) { console.log('SIM_ERROR', j.join(' '), e.message); } } }));
+  console.log('REPLAY_COMPLETE ' + jobs.length);
+}
+if (require.main === module) main().catch((e) => { console.error(e.stack || e.message); process.exitCode = 1; });
+module.exports = { sim, ARMS };
