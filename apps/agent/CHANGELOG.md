@@ -5,6 +5,22 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.2 (2026-10-19)
+
+### For users
+
+- Developers can ask Keir to add someone to a ticket or incident channel.
+- Keir can now see screenshots attached to the ticket form, and treats a ticket's title as the report when nothing else was written.
+- Keir asks you the same question at most twice.
+
+### For developers
+
+- `add_to_ticket` (owner or developer request, including quick conversations): resolves a member by name or mention, refuses ambiguous matches, grants view/send/history/attach and posts a mention.
+- The "confirmed" card stage needs a `watch_turn` turn check (`job.turnChecks`) followed by a game read (`job.lastGameReadAt`).
+- `view_attachment` falls back to ticket report images when the source message has none. `support_get` results with a platform-only description carry `reportNote`.
+- The repeated-question guard refuses a post whose question shares at least half of its words (3 or more) with two earlier questions in the ticket.
+- Tool-discovery narration is runtime talk in Keir and refused by the support service guard.
+
 ## 5.9.1 (2026-10-19)
 
 ### For users
