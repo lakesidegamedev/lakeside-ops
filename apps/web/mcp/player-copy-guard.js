@@ -10,6 +10,7 @@ const INTERNAL = [
   [/\bCI\b|\bCI gate\b|\bautomated checks\b/i, "CI"],
   [/\b(?:merged|merge) (?:to|into) (?:development|staging|main)\b|\bdevelopment branch\b/i, "a branch"],
   [/\b(?:decision|approval)\s+(?:DM|inbox)\b/i, "internal routing"],
+  [/\btools (?:I have|available to me)\b|\b(?:discover(?:ing)?|understand(?:ing)?) (?:the |my )?(?:available )?tools\b/i, "agent narration"],
 ];
 
 function internalTerm(message) {
