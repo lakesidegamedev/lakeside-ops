@@ -295,6 +295,17 @@ test("ticket closure waits for delivered answer and refuses a new unread player 
   await assert.rejects(late.tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }), /new player reply/);
 });
 
+// Review 2026-10-19: 1610 was resolved one minute after "live" and 1611 52
+// minutes after, before either player could see the fix.
+test("ticket closure waits after a fix goes live unless the player has replied since", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777", resolutionReadyAt: 1, lastPublishedAt: 1, observedPlayerAt: 1000 });
+  const at = (t) => createBroker({ ...f, sandbox: {}, now: () => t });
+  f.ledger.data.liveSaid = { 123: 3900000 };
+  await assert.rejects(at(4000000).tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }), /went live 2 minutes ago/);
+  await at(3900000 + 2 * 3600000 + 1).tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } });
+  assert.equal(j.resolutionSubmitted, true);
+});
+
 test("owner closure reuses the same ticket coordinator's verified final answer without bypassing grace or unread replies", async () => {
   const f = fixture(), channelId = "777777777777777777";
   const coordinator = f.ledger.createJob("ticket:123", { kind: "ticket", role: "support", ticket: 123, channelId, resolutionReadyAt: 1, lastPublishedAt: 1 });

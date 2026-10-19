@@ -715,6 +715,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   }
   function recordTicketPost(job, ticketNo, message) {
     if (String(message || "").trim() && !/^\[status card\]/.test(message)) job.lastAskAt = now();
+    if (!/^\[status card\]/.test(message) && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
@@ -2235,6 +2236,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const sharedAnswerAt = coordinator?.kind === "ticket" && coordinator.ticket === job.ticket && coordinator.channelId === job.channelId ? coordinator.resolutionReadyAt || 0 : 0;
         const answerAt = sharedAnswerAt || job.resolutionReadyAt;
         if (!answerAt || now() - answerAt < config.closeGraceMs) throw new Error("give the player the final answer and wait for the closure grace period");
+        // Review 2026-10-19: 1610 resolved one minute after "live", 1611 52
+        // minutes after (the player's deliveries had fallen), 1630 before the
+        // change shipped. After a fix goes live the player gets a turn to see
+        // it; a player reply since then is handled by the rule above.
+        const liveAt = d.liveSaid?.[job.ticket] || 0;
+        const liveGrace = config.liveGraceMs ?? 2 * 3600000;
+        const playerSince = lastHuman && lastHuman.author.id !== config.ownerId && !config.staffIds.includes(lastHuman.author.id) && Date.parse(lastHuman.timestamp) > liveAt;
+        if (liveAt && now() - liveAt < liveGrace && !playerSince) throw new Error(`Not closed: a fix went live ${Math.round((now() - liveAt) / 60000)} minutes ago. Give the player at least ${Math.round(liveGrace / 60000)} minutes and a turn to see it, then check their numbers before resolving.`);
       }
       validateArguments(args, definition.inputSchema);
       if (input.tool === "support_tracker_note") {
