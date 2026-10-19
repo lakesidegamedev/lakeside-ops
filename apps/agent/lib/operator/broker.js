@@ -261,7 +261,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   const readScope = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? require("./roles").WATCH_READS : job.kind === "finding" ? FINDING_READS : SUPPORT_READS;
   const readServers = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? Object.keys(require("./roles").WATCH_READS) : job.kind === "finding" ? Object.keys(FINDING_READS) : (job.role === "owner" || developerTask(job)) ? (isQuick(job) ? Object.keys(QUICK_OWNER_READS).filter((s) => mcp.servers().includes(s)) : mcp.servers()) : job.role === "player" ? ["gamestate", "support"] : Object.keys(SUPPORT_READS);
   function active(job, states = ["running"]) {
-    if (d.paused || job.appPaused || !states.includes(job.state) || job.deadline < now()) throw new Error("task execution authority is inactive");
+    // Say why and that the turn is over: the bare phrase kept models calling
+    // tools after a merge or finish (replay 2026-10-19: up to 21 calls).
+    if (d.paused || job.appPaused) throw new Error("task execution authority is inactive: Keir is paused. Stop now: make no more tool calls.");
+    if (!states.includes(job.state)) throw new Error(`task execution authority is inactive: this task is ${job.state}${job.mergedInto ? `, merged into incident ${job.mergedInto}` : ""}. Its turn is over. Stop now: make no more tool calls.`);
+    if (job.deadline < now()) throw new Error("task execution authority is inactive: this task's deadline has passed. Stop now: make no more tool calls.");
     require("./supporttakeover").assertCanAct(d, job);
   }
   async function supportAuthority(job, states, { decisionNotice = false } = {}) {

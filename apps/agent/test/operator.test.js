@@ -184,6 +184,12 @@ test("a made-up ticket status is named as such with the allowed list; a terminal
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_set_status", args: { status: "resolved" } }), /terminal statuses require a resolution receipt/);
 });
 
+test("a call after the task stopped running says it is over and to stop", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.state = "done"; j.mergedInto = 4290;
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "One more thing." } }), /authority is inactive: this task is done, merged into incident 4290[\s\S]*Stop now/);
+});
+
 test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   const seen = [];
