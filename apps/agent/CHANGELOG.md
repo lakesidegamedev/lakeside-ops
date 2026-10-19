@@ -5,6 +5,17 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- An approved fix that loses a merge race with another change is retried automatically instead of asking the owner to check on it.
+- Keir no longer tells the owner that each promotion of an already approved fix needs a fresh approval.
+
+### For developers
+
+- GitHub merge refusals (HTTP 405, 409, 422) are definite: nothing merged. "Base branch was modified" re-reads the PR and retries once on the same head. Any other refusal clears the merge receipt so a later call can retry, with no owner inspection.
+- An unsettled merge receipt now tells the model that effect recovery settles it from GitHub within ten minutes, instead of "owner inspection required".
+- A feature merge to development returns a next move: promote, and promotions carrying only owner-approved changes ride those approvals.
+
 ## 5.8.21 (2026-10-19)
 
 ### For users
