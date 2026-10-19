@@ -161,9 +161,11 @@ function createEnv({ scenario: sc, dir }) {
 
   // The player answers a question between activations, the way the gateway queues a new message.
   function playerReply(text) {
+    clock += 5 * 60000; // the player answers a few minutes later
     const m = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: PLAYER_ID, username: sc.player, bot: false }, content: text, timestamp: new Date(now()).toISOString(), channel_id: channelId };
     messages.push(m); record('player', { text });
     (job.inbox ||= []).push({ content: text, authorId: PLAYER_ID, author: sc.player, messageId: m.id, at: m.timestamp });
+    job.lastPlayerAt = job.observedPlayerAt = Date.parse(m.timestamp); ledger.save();
     return m;
   }
   return { broker, ledger, config, job, mcp, discord, exec, events, messages, state, issues, created, playerReply, channelId, now };
