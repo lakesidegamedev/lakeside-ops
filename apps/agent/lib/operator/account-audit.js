@@ -37,7 +37,7 @@ function createAccountAudit({ ledger, mcp, config = {}, now = Date.now }) {
       } while (cursor && pages < 20 && now() - started < 240000 && !d.paused);
       audit.candidates = [...candidates.values()];
       audit.truncated = sourceTruncated || Boolean(cursor) || audit.truncated && !audit.nextCursor;
-      if (!dryRun && audit.filingConfigured === false) throw new Error("Investigation staff roles or game API credentials are not configured; preview remains available");
+      if (!dryRun && audit.filingConfigured === false) throw new Error("Investigation staff roles, credentials or game API support are unavailable; preview remains available");
       const review = audit.candidates.filter(c => c.needsReview).sort((a,b) => Number(Boolean(s.cases[a.key])) - Number(Boolean(s.cases[b.key])));
       const report = { at, pages, dryRun, candidates: audit.candidates.length, review: review.length, truncated: audit.truncated,
         opened: [], existing: [], uncertain: [], deferred: 0, signals: {} };

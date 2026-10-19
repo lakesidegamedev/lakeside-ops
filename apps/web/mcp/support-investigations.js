@@ -90,7 +90,14 @@ function registerInvestigations(server, { auth, db, z, jsonResult, errorResult, 
     if (!auth?.scopes?.write) return errorResult("staff write scope required");
     try {
       const roles = [process.env.DISCORD_DEVELOPER_ROLE_ID || process.env.DISCORD_DEV_TEAM_ROLE_ID, process.env.DISCORD_MODERATOR_ROLE_ID];
-      const filingConfigured = roles.every(r => /^\d{15,22}$/.test(r)) && roles[0] !== roles[1] && !!process.env.DISCORD_BOT_API_KEY;
+      let filingConfigured = roles.every(r => /^\d{15,22}$/.test(r)) && roles[0] !== roles[1] && !!process.env.DISCORD_BOT_API_KEY;
+      if (filingConfigured) {
+        try {
+          const base = process.env.AHD_GAME_API_URL || "https://ahousedividedgame.com";
+          const capability = await fetch(`${base}/api/discord-bot/tickets?capabilities=1`, { headers: { "X-Bot-Token": process.env.DISCORD_BOT_API_KEY }, signal: AbortSignal.timeout(10000) });
+          filingConfigured = capability.ok && (await capability.json()).investigationIntake === true;
+        } catch { filingConfigured = false; }
+      }
       return jsonResult({ ...await scanImpl(db, at ? new Date(at) : new Date(), { cursor }), filingConfigured });
     } catch(e) { return errorResult(e.message); }
   });
@@ -129,6 +136,8 @@ function registerInvestigations(server, { auth, db, z, jsonResult, errorResult, 
           }
           return jsonResult({ ok: true, duplicate: true, updated: existing.investigationDigest !== summaryDigest, ticketNumber: existing.ticketNumber, channelId: existing.discordChannelId });
         }
+        const capability = await fetch(`${api}/api/discord-bot/tickets?capabilities=1`, { headers: { "X-Bot-Token": token }, signal: AbortSignal.timeout(10000) });
+        if (!capability.ok || !(await capability.json()).investigationIntake) throw new Error("Game API does not yet support investigation intake; no channel created");
         const channels = await discord(`/guilds/${guild}/channels`);
         if (channels.some(c => c.topic === `keir-investigation:${key}`)) throw new Error("An investigation channel already exists for this subject; inspect its registration before retrying");
         const { ticketNumber } = await game("/api/discord-bot/tickets/reserve", {});
