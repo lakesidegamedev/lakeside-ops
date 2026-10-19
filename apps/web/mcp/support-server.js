@@ -406,6 +406,10 @@ async function main() {
         const key = { ticketNumber: number };
         const existing = await col.findOne(key);
         if (!existing) return errorResult(`ticket #${number} not found`);
+        if (deliver && existing.category !== "investigation") {
+          const leak = require("./player-copy-guard").internalTerm(message);
+          if (leak) return errorResult(`Not delivered: "${leak.match}" is ${leak.kind}. Players see what changed and where the fix is (being built, in testing, on the sandbox, live on the main server), never PRs, issues, CI or branches.`);
+        }
         const now = new Date();
         const updateKey = `${update_kind}:${Date.now()}`;
         const receiptUrl = existing.category === "investigation" ? null : ticketPublicUrl(number);
