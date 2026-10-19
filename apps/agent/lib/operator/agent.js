@@ -262,6 +262,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     if (job.ticket) job.evidence.push(...require("./knowledge").numbersIn(require("./knowledge").ticketRecord(ledger, job.ticket).facts.filter((f) => !f.closedAt).map((f) => f.text).join("\n")).map((n) => n.value));
     job.evidenceText = ""; job.reviewRefusals = 0;
     context.ticketRecord = job.ticket ? require("./knowledge").ticketRecord(ledger, job.ticket) : undefined;
+    context.playbook = require("./playbooks").contextFor(job, ledger.data);
     // Keir 3.1: every open ticket keeps one progress card. Show the current
     // card, or say plainly that it is missing so this activation creates it.
     if (job.kind === "ticket" && job.ticket && job.role !== "player") {
