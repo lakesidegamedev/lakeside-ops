@@ -195,6 +195,23 @@ test("reporter-scoped reads fill in the reporter and the assigned ticket; anothe
   await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { number: 456 } }), /assigned ticket/);
 });
 
+test("an investigator reads its ticket task's ticket and reporter, and nothing wider", async () => {
+  const f = fixture(), parent = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  const job = (key, fields) => { const j = f.ledger.createJob(key, { kind: "coding", investigation: true, role: "support", source: {}, deadline: 9999999999999, ...fields }); j.state = "running"; return j; };
+  const child = job("investigate-1", { codingParent: parent.id });
+  const seen = [];
+  const orig = f.mcp.call;
+  f.mcp.call = async (server, tool, args, ...rest) => { seen.push([server, tool, args]); if (tool === "support_get") return { number: 123, reporter: { characterName: "Ada Reed", profileUrl: "https://www.ahousedividedgame.com/character/42" } }; if (server === "gamestate") return { ok: true }; return orig(server, tool, args, ...rest); };
+  await f.broker.tool(child, "read_tool", { server: "gamestate", tool: "trace_character", args: {} });
+  assert.equal(seen.filter(([s, t]) => s === "gamestate" && t === "trace_character").at(-1)[2].character, "42");
+  await f.broker.tool(child, "read_tool", { server: "support", tool: "support_get", args: {} });
+  assert.deepEqual(seen.filter(([, t]) => t === "support_get").at(-1)[2], { number: 123, kind: "ticket" });
+  await assert.rejects(f.broker.tool(child, "read_tool", { server: "gamestate", tool: "trace_character", args: { character: "77" } }), /limited to this ticket's reporter/);
+  await assert.rejects(f.broker.tool(child, "read_tool", { server: "support", tool: "support_get", args: { number: 456 } }), /assigned ticket/);
+  const orphan = job("investigate-2", {});
+  await assert.rejects(f.broker.tool(orphan, "read_tool", { server: "gamestate", tool: "trace_character", args: {} }), /need an assigned ticket/);
+});
+
 test("support reads cannot access unrelated transcripts or general private knowledge", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123 });
   await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { kind: "ticket", number: 456 } }), /assigned ticket/);
