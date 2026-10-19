@@ -162,6 +162,11 @@ function usageRecord(job, result, durationMs, model, provider = "claude-cli-subs
     inputIncludesCache: provider.startsWith("codex-") || provider.startsWith("antigravity-"),
     estimatedUsd: null, notionalUsd: typeof result?.total_cost_usd === "number" ? result.total_cost_usd : null };
 }
+function emptyActivation(result, session) {
+  const u = result?.usage || {};
+  if (typeof u.input_tokens !== "number" || typeof u.output_tokens !== "number") return false;
+  return u.input_tokens + u.output_tokens + (u.cache_read_input_tokens || 0) === 0 && !(session?.calls > 0) && !String(result?.result || "").trim();
+}
 function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
   const usageFile = config.usageFile || path.join(config.stateDir, "usage.jsonl");
   function recordUsage(job, result, durationMs, effort) {
@@ -362,6 +367,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     recordUsage(job, result, Date.now() - startedAt, effortUsed);
     job.rounds += result.num_turns || session.calls || 1; job.updatedAt = Date.now(); ledger.save();
     if (result.is_error && result.subtype !== "error_max_turns") throw new Error("model request failed: " + redactSecrets(String(result.result || result.subtype || "unknown error")).slice(0, 600));
+    // 2026-10-19 03:00-07:00 ET: Claude runs returned "success" in about a
+    // second with zero tokens and no tool call. Each looked like a finished
+    // turn, so tickets 1626 and 1627 got no reply and their players gave up.
+    // An activation that never reached the model is a provider failure.
+    if (job.state === "running" && emptyActivation(result, session)) throw new Error("model request failed: empty activation (no tokens, no tool call, no text) " + redactSecrets(String(result.result || "")).slice(0, 300));
     if (job.state !== "running") return;
     if (result.subtype === "error_max_turns" || quick && job.voiceMode && !String(result.result || "").trim()) {
       if (quick && job.voiceMode && require("./voiceturn").finalReplyQueued(ledger.data, job)) {
@@ -414,4 +424,4 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
   }
   return { run, canRun: () => true, openToolSession };
 }
-module.exports = { usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };
+module.exports = { emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };

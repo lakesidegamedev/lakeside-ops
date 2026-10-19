@@ -61,9 +61,21 @@ function recoverAuthBlocked(ledger, now = Date.now()) {
   if (recovered) ledger.save();
   return recovered;
 }
+// A provider that answers with nothing (no tokens, no tool call) is down for
+// every task at once (2026-10-19, about four hours), so retry on the login
+// cadence rather than spending the three quick transient retries.
+function waitForEmptyProvider(job, error, now = Date.now()) {
+  if (!/^model request failed: empty activation/.test(error.message)) return false;
+  job.emptyWaits = (job.emptyWaits || 0) + 1;
+  if (job.emptyWaits > 48) return false;
+  job.state = "waiting"; job.wakeAt = now + (job.emptyWaits === 1 ? 60000 : 15 * 60000);
+  job.summary = "The model provider returned an empty reply; retrying automatically. Nothing external was left half done.";
+  return true;
+}
 function retryReadFailure(job, error, now = Date.now()) {
   if (Object.values(job.effects).some(e => e.state === "started")) return false;
   if (waitForAuth(job, error, now)) return true;
+  if (waitForEmptyProvider(job, error, now)) return true;
   // Native admission refuses before a model or tool starts. Wait for host
   // capacity instead of presenting a missing approval to the owner.
   if (/^model request failed: rust runner: resource admission refused:/.test(error.message)) {
@@ -79,4 +91,4 @@ function retryReadFailure(job, error, now = Date.now()) {
   job.summary = "A temporary read or model connection failure interrupted investigation. Retrying automatically; no uncertain external write will be repeated.";
   return true;
 }
-module.exports = { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure, waitForQuota, waitForAuth };
+module.exports = { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure, waitForQuota, waitForAuth, waitForEmptyProvider };

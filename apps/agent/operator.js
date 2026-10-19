@@ -708,7 +708,11 @@ function drain() {
       // unsettled receipt is effect recovery's job (a restart blocked ticket 1578).
       const startedHere = Object.values(job.effects).some((e) => e.state === "started" && (e.at || 0) >= startedAt);
       if (controller.signal.aborted && (d.paused || config.supportDeferred(job) || stopping || staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy)) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(Date.now() + 60000, rootJob(job, d.jobs).staffActiveUntil || 0); }
-      else if (retryReadFailure(job, e)) { ledger.audit("transient_retry", {job:job.id, attempt:job.transientFailures}); }
+      else if (retryReadFailure(job, e)) {
+        ledger.audit("transient_retry", {job:job.id, attempt:job.transientFailures, emptyWaits: job.emptyWaits});
+        // One owner alert an hour while the provider answers with nothing.
+        if (/^model request failed: empty activation/.test(e.message)) ledger.notify(`empty-provider:${Math.floor(Date.now() / 3600000)}`, "owner", `The model provider is returning empty replies (task ${job.id}). Tasks retry every 15 minutes; check the provider login or quota.`);
+      }
       else {
         job.state = "blocked"; job.summary = redactSecrets(e.message);
         ledger.notify(`error:${job.id}:${job.rounds}`, "owner", `Task ${job.id} stopped: ${job.summary}`);
