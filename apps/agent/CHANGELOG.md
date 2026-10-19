@@ -5,10 +5,16 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
-- Scan account and financial anomalies every 12 hours. `/audit` runs a sweep in the owner app; `/audit preview` reports findings without opening tickets.
-- Keir files and updates private Investigation tickets for developer/moderator review, with source evidence, original transaction currencies, uncertainty and suggested checks. Existing cases are deduplicated; sanctions and money changes remain human decisions.
-- Common sensor observations no longer trigger investigation tickets by severity or count. Cases require shared-cookie and coordinated-login signals for the same pair, skip either account when moderator notes exist, and ping developers/moderators with profile links and safe aggregate facts. Funding is not required; unreconciled financial warnings stay diagnostic.
-- Investigation evidence stays out of public ticket receipts, ordinary support searches, automatic repair, merging and player notification flows.
+### For users
+
+- Run `/audit` in the owner app to sweep for possible linked accounts, or `/audit preview` to inspect findings. Keir also checks every 12 hours and opens private Investigation tickets for developers and moderators.
+
+### For developers
+
+- Investigation intake requires shared-cookie and coordinated-login signals for the same account pair, excludes either account with moderator notes, and deduplicates reciprocal observations. Tickets contain public profile links and safe aggregate facts, with developer/moderator role pings. Financial warnings stay diagnostic; no automatic sanctions or money changes.
+- Investigation evidence is excluded from public receipts, ordinary support searches, automatic repair, merging and player notifications. Filing checks game intake capability and explicit private-channel permissions before sending evidence, with durable guards against ambiguous retries.
+- Brief: when two explanations fit a report and only the player can tell them apart (which screen or device, what they clicked), Keir asks that first and states neither as fact. Proposed by the harness improver; dev replay on DeepSeek v4.1 Flash 58% to 83% (+25 pts [+8, +42]); shipped on owner call without the validation and holdout gate.
+
 
 ## 5.8.29 (2026-10-19)
 
