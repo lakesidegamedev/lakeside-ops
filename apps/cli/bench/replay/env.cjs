@@ -155,7 +155,10 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
     // Like AHDGame: dependencies the sandbox mounts are never part of a change.
     if (!fs.existsSync(path.join(seed, '.gitignore'))) fs.writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\n');
     git('init', '-q', '-b', 'main', seed); git('-C', seed, 'add', '-A'); git('-C', seed, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@localhost', 'commit', '-qm', 'snapshot');
-    git('clone', '-q', '--bare', seed, origin); git('clone', '-q', origin, clone);
+    git('clone', '-q', '--bare', seed, origin);
+    // Like AHDGame: patches publish against development, which matches main here.
+    git('-C', origin, 'branch', 'development', 'main');
+    git('clone', '-q', origin, clone);
     config.repositories = { AHDGame: clone };
     sandbox = createSandbox(path.join(dir, 'sandbox'));
   }
