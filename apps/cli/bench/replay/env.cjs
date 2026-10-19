@@ -133,7 +133,8 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
         return JSON.stringify({ number: i.number, title: i.title, body: i.body, state: i.state, html_url: `https://github.com/lakesidegamedev/AHDGame/issues/${i.number}`, labels: (i.labels || []).map((name) => ({ name })) });
       }
       if (/repos\/[^/]+\/AHDGame\/issues$/.test(url) && isPost) { const n = 900 + created.length; const i = { number: n, title: field('title'), body: field('body'), state: 'open', labels: [] }; created.push(i); record('issue_create', { number: n, title: i.title, body: i.body }); return JSON.stringify({ number: n, html_url: `https://github.com/lakesidegamedev/AHDGame/issues/${n}` }); }
-      if (/\/pulls\/\d+$/.test(url)) return JSON.stringify({ state: 'closed', head: { ref: 'x' } });
+      // A real pull request shape (no PR exists in a replay unless the scenario adds one).
+      if ((m = /\/pulls\/(\d+)$/.exec(url))) return JSON.stringify({ number: Number(m[1]), title: 'Unrelated closed pull request', state: 'closed', merged: false, base: { ref: 'development' }, head: { ref: 'x', sha: '0'.repeat(40) }, html_url: `https://github.com/lakesidegamedev/AHDGame/pull/${m[1]}` });
       return 'null';
     }
     // git and tar run for real (snapshots are local); anything else is refused and recorded.
