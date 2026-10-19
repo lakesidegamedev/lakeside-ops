@@ -23,7 +23,7 @@ const URGENT_GAP_MS = 60000;
 const MAX_LINES = 6;
 const MAX_PENDING = 60;
 const BOARD_ITEMS = 8;
-const STAGE_LABEL = { found: "investigating", written: "fix written", tested: "tested on development", sandbox: "on the sandbox", main: "live on the main server", confirmed: "live and confirmed in game" };
+const STAGE_LABEL = { found: "investigating", written: "fix written", tested: "tested on development", sandbox: "on the sandbox", main: "live on the main server", confirmed: "live and confirmed in game", answered: "answered, no fix needed" };
 const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const sentence = (s, n = 180) => { const t = clip(s, n).replace(/[–—]/g, ","); return t && !/[.!?…]$/.test(t) ? `${t}.` : t; };
 
