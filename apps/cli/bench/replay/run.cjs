@@ -46,6 +46,10 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
       let error = null;
       try { await agent.run(job, ctl.signal); } catch (e) { error = String(e.message).slice(0, 500); } finally { clearTimeout(timer); }
       result.activations.push({ i, wallMs: Date.now() - t0, state: job.state, waitingFor: job.waitingFor || null, error, summary: String(job.summary || '').slice(0, 400) });
+      // A scripted follow-up: the player writes again after this activation
+      // whatever was asked (the gateway wakes the ticket on any new message).
+      const follow = (sc.followUps || []).find((f) => f.after === i);
+      if (follow && i + 1 < MAX_ACTIVATIONS) { env.playerReply(follow.text); continue; }
       if (job.state !== 'waiting') break;
       // The player answers the newest question posted this activation, if any.
       const q = env.events.slice(0).filter((e) => e.kind === 'post').slice(asked).reverse().find((e) => /\?/.test(e.text));

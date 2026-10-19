@@ -23,7 +23,7 @@ function createEnv({ scenario: sc, dir }) {
   const now = () => (clock += 1000);
   const CHARACTER_ID = 4242;
   const card = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: BOT, username: 'Keir', bot: true }, content: `Ticket #${sc.ticket} opened by ${sc.player}. Category: ${sc.category || 'bug'}.`, timestamp: new Date(T0 - 1000).toISOString(), channel_id: channelId };
-  const messages = [card, { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: PLAYER_ID, username: sc.player, bot: false }, content: sc.opening, timestamp: new Date(T0).toISOString(), channel_id: channelId }];
+  const messages = [card, { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: PLAYER_ID, username: sc.player, bot: false }, content: sc.opening, timestamp: new Date(T0).toISOString(), channel_id: channelId, ...(sc.openingAttachments ? { attachments: JSON.parse(JSON.stringify(sc.openingAttachments)) } : {}) }];
   const record = (kind, detail) => { const e = { kind, at: clock, ...detail }; events.push(e); return e; };
   const post = (content, via) => { const m = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: BOT, username: 'Keir', bot: true }, content: String(content), timestamp: new Date(now()).toISOString(), channel_id: channelId }; messages.push(m); record('post', { via, text: m.content, messageId: m.id }); return m; };
 
@@ -36,7 +36,7 @@ function createEnv({ scenario: sc, dir }) {
   const mcp = {
     servers: () => ['gamestate', 'support', 'ops-knowledge', 'heal-ops'],
     identity: (server) => ({ server, endpoint: 'replay://' + server }),
-    list: async (server) => (server === 'support' ? SUPPORT_TOOLS : server === 'gamestate' ? Object.keys(sc.game || {}).map((t) => (t === 'character' ? 'trace_character' : t)) : ['knowledge_query', 'kanban_add', 'kanban_list', 'work_report'])
+    list: async (server) => [...new Set([...(server === 'support' ? SUPPORT_TOOLS : server === 'gamestate' ? Object.keys(sc.game || {}).map((t) => (t === 'character' ? 'trace_character' : t)) : ['knowledge_query', 'kanban_add', 'kanban_list', 'work_report']), ...Object.keys(sc.mcp?.[server] || {})])]
       .map((name) => ({ name, description: `${server} ${name} (replay fixture)`, inputSchema: { type: 'object', additionalProperties: true } })),
     call: async (server, tool, args = {}) => {
       record('mcp', { server, tool, args });
@@ -46,10 +46,15 @@ function createEnv({ scenario: sc, dir }) {
       if (server === 'gamestate') {
         const t = tool === 'trace_character' ? 'character' : tool, v = sc.game?.[t];
         if (v === undefined) throw new Error(`gamestate ${tool}: unknown tool`);
-        return typeof v === 'function' ? v(args) : JSON.parse(JSON.stringify(v));
+        return typeof v === 'function' ? v(args, { state, events }) : JSON.parse(JSON.stringify(v));
       }
       if (server === 'support') {
-        if (tool === 'support_get') return ticketRecord();
+        if (tool === 'support_get') {
+          // Other tickets the scenario models (an open incident, an older report).
+          const other = sc.support?.tickets?.[Number(args.number)];
+          if (other && Number(args.number) !== sc.ticket) return JSON.parse(JSON.stringify({ ticket: { number: Number(args.number) }, number: Number(args.number), kind: 'ticket', ...other }));
+          return ticketRecord();
+        }
         if (tool === 'support_search' || tool === 'support_list') return { results: sc.support?.similar || [], count: 0 };
         if (tool === 'support_public_update') {
           record('ticket_update', { message: args.message, deliver: args.deliver !== false, update_kind: args.update_kind });
@@ -61,7 +66,7 @@ function createEnv({ scenario: sc, dir }) {
         if (tool === 'support_tracker_note') { state.trackerNotes.push(args.body || args.note || ''); return { ok: true }; }
         if (tool === 'support_tracker_sync') return { ok: true, tracker: `kanban-${sc.ticket}` };
         if (tool === 'support_resolve') { state.status = 'resolved'; return { ok: true, resolved: true }; }
-        if (tool === 'support_merge') return { ok: true };
+        if (tool === 'support_merge') { state.mergedInto = Number(args.target_number); state.status = 'merged'; return { ok: true, steps: ['moved reporter', 'closed source channel'] }; }
         throw new Error(`support ${tool}: not in replay`);
       }
       if (server === 'ops-knowledge') {
@@ -151,6 +156,23 @@ function createEnv({ scenario: sc, dir }) {
     sandbox = createSandbox(path.join(dir, 'sandbox'));
   }
   const broker = createBroker({ ledger, config, mcp, discord, sandbox, exec, now });
+  // Every broker tool call is recorded as an attempt ('tool', with ok/error), so
+  // grading can see what was tried and refused, not only what took effect.
+  // Owner decisions and privileged action requests the call opened are
+  // recorded too ('decision', 'action'): they are DMs and approval cards.
+  const innerTool = broker.tool;
+  broker.tool = async (j, name, input, signal) => {
+    const e = record('tool', { name, input: JSON.parse(JSON.stringify(input ?? {}, (k, v) => (typeof v === 'string' && v.length > 2000 ? v.slice(0, 2000) : v))) });
+    const seenDecisions = new Set(Object.keys(ledger.data.decisions || {})), seenActions = new Set(Object.keys(ledger.data.actions || {}));
+    try { const r = await innerTool(j, name, input, signal); e.ok = true; return r; }
+    catch (err) { e.ok = false; e.error = String(err?.message || err).slice(0, 600); throw err; }
+    finally {
+      // openDecision stamps the wall clock; the replay runs on its own clock, so
+      // restamp it or every later post compares against a time from another day.
+      for (const [id, x] of Object.entries(ledger.data.decisions || {})) if (!seenDecisions.has(id)) { x.at = clock; ledger.save(); record('decision', { id, question: x.question, actionId: x.actionId || null }); }
+      for (const [id, a] of Object.entries(ledger.data.actions || {})) if (!seenActions.has(id)) record('action', { id, actionKind: a.kind, actionState: a.state, args: a.args });
+    }
+  };
 
   // The ticket task exactly as intake creates it.
   const job = ledger.createJob(`ticket:${sc.ticket}`, { kind: 'ticket', role: 'support', ticket: sc.ticket, channelId, replyChannel: channelId, actorId: PLAYER_ID, deadline: T0 + 7 * 86400000,
