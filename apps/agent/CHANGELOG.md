@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.8.27 (2026-10-19)
+
 ### For users
 
 - When Keir looks into a report and it turns out nothing needs fixing, the progress card says "Answered · no fix needed" instead of staying on "Investigating".
