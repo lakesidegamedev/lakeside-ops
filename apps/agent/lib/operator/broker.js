@@ -604,7 +604,36 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
       recordTicketPost(effectJob, ticketNo, `[status card] ${text}`);
     }
+    await liveNotice(effectJob, ticketNo, card.items || [], items);
     return { messageId, channelId, posted: !card.messageId || card.messageId !== messageId, bumped };
+  }
+  // A card edit sends no notification, so a fix reaching the main server went
+  // unnoticed for 6 to 28 hours (review 2026-10-19: 1584, 1590, 1617 missed a
+  // contract, 1625, 1628, 1629). The first time a fix is live, a short reply
+  // tells the player, unless Keir already said so in the last 15 minutes.
+  async function liveNotice(effectJob, ticketNo, before, after) {
+    const live = (i) => !i.blocked && (i.stage === "main" || i.stage === "confirmed");
+    const card = d.statusCards?.[ticketNo]; if (!card) return false;
+    const told = new Set([...(card.liveNotified || []), ...before.filter(live).map((i) => i.name)]);
+    const fresh = after.filter((i) => live(i) && !told.has(i.name));
+    if (!fresh.length) return false;
+    card.liveNotified = [...told, ...fresh.map((i) => i.name)].slice(-20); ledger.save();
+    const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !/^\[status card\]/.test(p.text) && /\blive\b/i.test(p.text));
+    if (said) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
+    const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
+    const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
+      + "\n\nChanges to the game's numbers apply from the next turn. If you still see the problem after that, reply here.";
+    try {
+      guardPlayerRegister(effectJob, ticketNo, message);
+      const key = `live-notice:${ticketNo}:${crypto.createHash("sha1").update(names.join("|")).digest("hex").slice(0, 10)}`;
+      await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true));
+      effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
+      ledger.audit("live_notice", { job: effectJob.id, ticket: ticketNo, items: names.length }); ledger.save();
+      return true;
+    } catch (error) {
+      ledger.audit("live_notice_failed", { job: effectJob.id, ticket: ticketNo, reason: String(error.message).slice(0, 300) }); ledger.save();
+      return false;
+    }
   }
   // Ownership checks without a running task (admin path and CI waits).
   function cardOwnership(ticketNo) {
