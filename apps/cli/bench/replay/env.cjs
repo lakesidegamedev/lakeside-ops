@@ -167,7 +167,9 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   }
   // Production settings the broker reads at creation (child routes for delegation).
   Object.assign(config, configOverrides);
-  const broker = createBroker({ ledger, config, mcp, discord, sandbox, exec, now });
+  // Production passes a notebook (remember, recall, player notes); each trial gets its own, empty.
+  const notebook = require(AGENT + '/lib/operator/knowledge').createNotebook({ file: path.join(dir, 'notebook.json') });
+  const broker = createBroker({ ledger, config, mcp, discord, sandbox, exec, now, notebook });
   // Every broker tool call is recorded as an attempt ('tool', with ok/error), so
   // grading can see what was tried and refused, not only what took effect.
   // Owner decisions and privileged action requests the call opened are
