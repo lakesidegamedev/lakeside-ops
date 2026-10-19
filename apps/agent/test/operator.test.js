@@ -166,6 +166,18 @@ test("while the owner decides, a support update gets the same one notice as chan
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Still waiting on the developers for their decision." } }), /one notice/);
 });
 
+test("a support update written as body or text reaches the service as message; an empty one is refused before any call", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { body: "Lagos is closed, so that route is paused until it reopens." } });
+  const sent = f.calls.filter((c) => JSON.stringify(c).includes("support_public_update")).at(-1);
+  assert.match(JSON.stringify(sent), /"message":"Lagos is closed, so that route is paused until it reopens\."/);
+  assert.doesNotMatch(JSON.stringify(sent), /"body"/);
+  const before = f.calls.length;
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: {} }), /args\.message/);
+  assert.equal(f.calls.length, before);
+  assert.notEqual(j.state, "blocked");
+});
+
 test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   const seen = [];
