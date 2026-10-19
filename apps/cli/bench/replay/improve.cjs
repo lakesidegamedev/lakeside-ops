@@ -107,13 +107,16 @@ function propose(o, ev, lib, i) {
   fs.writeFileSync(promptFile, promptFor(o, ev, lib, i));
   try { sh('/root/bin/provider-agent-run.sh', ['opencode', MAIN, wt, promptFile, o.proposer, log], { stdio: ['ignore', 'pipe', 'pipe'], timeout: o.proposeTimeoutMs }); }
   catch (e) { fs.appendFileSync(path.join(o.out, 'improve.log'), `propose ${i} exited: ${String(e.message).slice(0, 300)}\n`); }
-  const diff = git(['diff', '--', ...EDITABLE], wt), all = git(['status', '--porcelain'], wt).split('\n').filter(Boolean).map((l) => l.slice(3));
-  const why = admissible(wt, all, diff, o.baseWt);
+  // The runner checkpoints the agent's output as commits: compare with the base commit.
+  const baseSha = git(['rev-parse', o.base]).trim();
+  const diff = git(['diff', baseSha, '--', ...EDITABLE], wt);
+  const all = [...new Set([...git(['diff', '--name-only', baseSha], wt).split('\n'), ...git(['status', '--porcelain'], wt).split('\n').map((l) => l.slice(3))].filter(Boolean))];
+  const why = admissible(wt, all, diff, o.baseWt, baseSha);
   fs.writeFileSync(path.join(o.out, `${name}.patch`), diff);
   return { i, name, wt, agentDir: path.join(wt, 'apps/agent'), diff, files: all, rejected: why };
 }
 
-function admissible(wt, files, diff, baseWt = REPO) {
+function admissible(wt, files, diff, baseWt = REPO, baseSha = 'HEAD') {
   if (!diff.trim()) return 'no change';
   const outside = files.filter((f) => !EDITABLE.includes(f));
   if (outside.length) return `edited outside the editable surface: ${outside.join(', ')}`;
@@ -122,7 +125,7 @@ function admissible(wt, files, diff, baseWt = REPO) {
     try { sh('node', ['--check', path.join(wt, 'apps/agent/lib/operator/agent.js')]); } catch { return 'agent.js no longer parses'; }
     const shape = (dir) => sh('node', ['-e', `const {TOOLS}=require(${JSON.stringify(path.join(dir, 'apps/agent/lib/operator/agent.js'))});console.log(JSON.stringify(TOOLS.map(t=>[t.name,t.input_schema])))`], { env: { ...process.env, NODE_PATH: process.env.NODE_PATH || '' } });
     try { if (shape(wt) !== shape(baseWt)) return 'changed a tool name or schema'; } catch (e) { return 'agent.js failed to load: ' + String(e.message).slice(0, 120); }
-    const outsideTools = git(['diff', '-U0', '--', 'apps/agent/lib/operator/agent.js'], wt).split('\n').filter((l) => l.startsWith('@@')).some((h) => { const m = /-(\d+)(?:,(\d+))?/.exec(h); const a = Number(m[1]), n = Number(m[2] ?? 1); return a < 18 || a + n > toolsEnd(baseWt); });
+    const outsideTools = git(['diff', '-U0', baseSha, '--', 'apps/agent/lib/operator/agent.js'], wt).split('\n').filter((l) => l.startsWith('@@')).some((h) => { const m = /-(\d+)(?:,(\d+))?/.exec(h); const a = Number(m[1]), n = Number(m[2] ?? 1); return a < 18 || a + n > toolsEnd(baseWt); });
     if (outsideTools) return 'edited agent.js outside the TOOLS descriptions';
   }
   return null;
@@ -133,7 +136,7 @@ function compose(o, winners) {
   const name = `improve-${o.stamp}-composed`, wt = path.join(MAIN, 'worktrees', name);
   git(['worktree', 'add', '-q', '--detach', wt, o.base]);
   for (const c of winners) { try { git(['apply', '--3way', path.join(o.out, `${c.name}.patch`)], wt); } catch { return { name, wt, agentDir: path.join(wt, 'apps/agent'), rejected: `${c.name} conflicts with the others` }; } }
-  const diff = git(['diff', '--', ...EDITABLE], wt);
+  const diff = git(['diff', git(['rev-parse', o.base]).trim(), '--', ...EDITABLE], wt);
   fs.writeFileSync(path.join(o.out, `${name}.patch`), diff);
   return { name, wt, agentDir: path.join(wt, 'apps/agent'), diff, rejected: null };
 }
