@@ -25,7 +25,7 @@ function createAccountAudit({ ledger, mcp, config = {}, now = Date.now }) {
         if (!Array.isArray(audit?.candidates) || typeof audit.truncated !== "boolean") throw new Error("Invalid account audit receipt");
         at ||= audit.at; pages++; sourceTruncated ||= audit.sourceTruncated === true;
         for (const c of audit.candidates) {
-          c.needsReview = c.needsReview === true && c.reviewBasis?.kind === "corroborated_account_benefit";
+          c.needsReview = c.needsReview === true && c.reviewBasis?.kind === "shared_cookie_coordinated_login";
           const previous = candidates.get(c.key);
           if (previous) {
             c.signals = [...previous.signals,...c.signals].sort((a,b) => ({high:0,medium:1,low:2}[a.severity] ?? 3) - ({high:0,medium:1,low:2}[b.severity] ?? 3)).slice(0,30);
@@ -81,6 +81,6 @@ function createAccountAudit({ ledger, mcp, config = {}, now = Date.now }) {
   return { sweep, tick, status };
 }
 function reportText(r) {
-  return `Account audit ${r.dryRun ? "preview" : "complete"}: ${r.candidates} subjects with sensor observations, ${r.review} ticket-ready cases. ${r.opened.length} investigation tickets opened, ${r.existing.length} already tracked, ${r.deferred} deferred, ${r.uncertain.length} need receipt inspection.${r.truncated ? " Source limits were reached; this is a partial sweep." : ""}\n` + r.opened.map(t => `Investigation #${t.ticketNumber}`).join("\n");
+  return `Account audit ${r.dryRun ? "preview" : "complete"}: ${r.review} account-pair investigation${r.review === 1 ? " qualifies" : "s qualify"}. ${r.opened.length} investigation tickets opened, ${r.existing.length} already tracked, ${r.deferred} deferred, ${r.uncertain.length} need receipt inspection.${r.truncated ? " Source limits were reached; this is a partial sweep." : ""}\n` + r.opened.map(t => `Investigation #${t.ticketNumber}`).join("\n");
 }
 module.exports = { createAccountAudit, reportText, INTERVAL };

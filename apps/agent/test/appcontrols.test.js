@@ -197,7 +197,7 @@ test("authenticated /audit preview runs locally, preserves preview and deduplica
   const config={ownerId:"owner",botId:"bot",taskLifetimeMs:3600000,runAccountAudit:async value=>{calls++;options=value;return{dryRun:true,candidates:2,review:1,opened:[],existing:[],uncertain:[],deferred:0,truncated:false};}};
   let drains=0;const app=createAppChannel({ledger,config,drain:()=>drains++});
   const sent=app.post("/audit preview","audit-send","main",{},true);app.post("/audit preview","audit-send","main",{},true);
-  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);assert.deepEqual(options,{dryRun:true});assert.equal(drains,0);assert.equal(ledger.data.jobs[sent.jobId].state,"done");assert.match(ledger.data.jobs[sent.jobId].summary,/2 subjects with sensor observations/);
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);assert.deepEqual(options,{dryRun:true});assert.equal(drains,0);assert.equal(ledger.data.jobs[sent.jobId].state,"done");assert.match(ledger.data.jobs[sent.jobId].summary,/1 account-pair investigation/);
   app.post("/audit preview","untrusted-send","main",{},false);await new Promise(resolve=>setImmediate(resolve));assert.equal(calls,1);
 });
 
