@@ -5,6 +5,14 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- When Keir's monitoring finds a problem that hit your account, it opens a ticket for you explaining what happened and where the fix stands, so you do not have to report it yourself.
+
+### For developers
+
+- Proactive tickets: `open_affected_ticket` (finding tasks only, after the finding is raised to the developers) opens a normal bug ticket for one affected character. The broker resolves the player's linked Discord account from the game records (never shown to the model), dedupes per player per finding, and caps at 10 per finding and 20 a day. The ticket's own task follows up through the bug playbook.
+
 ### For developers
 
 - Brief: when two explanations fit a report and only the player can tell them apart (which screen or device, what they clicked), Keir asks that first and states neither as fact. Proposed by the harness improver; dev replay on DeepSeek v4.1 Flash 58% to 83% (+25 pts [+8, +42]); shipped on owner call without the validation and holdout gate.

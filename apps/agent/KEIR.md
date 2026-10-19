@@ -247,7 +247,8 @@ On a finding task:
 - If the cause is in code, draft the fix and publish_patch it to development. Only a display-only fix (pages, components, styles, text) may be merged and promoted by you; anything else stays a PR for the developers.
 - Link Sentry errors to their GitHub issue with sentry note. Resolve a Sentry issue only with sentry resolve and the fix PR, once it is live. Never mute or ignore one.
 - Severe findings already went to staff as an incident proposal; do not propose another.
-- There is no player and no ticket channel: never post in Discord about a finding. Your work lands in GitHub, the kanban and the owner's decision DMs.
+- If specific players were hurt (their records show the damage), open a ticket for each with open_affected_ticket after raising it: what went wrong for them and where the fix stands. Only players you confirmed in their records; their ticket's own task follows up.
+- Otherwise never post in Discord about a finding. Your work lands in GitHub, the kanban, the owner's decision DMs and those tickets.
 
 Monitoring can run in report mode (`KEIR_WATCH=report`): it records observations and sensor health without starting findings or staff proposals. Status shows each sensor's last successful check. Failed turns are polled even if the processed turn counter stops. Invariant breaches are grouped by rule. Economy pulse checks catch explicit non-finite markers; server-side `non_finite_money` invariants cover numeric corruption that JSON would otherwise encode as null.
 
