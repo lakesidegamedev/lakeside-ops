@@ -74,6 +74,52 @@ function redactRaw(value, depth = 0) {
   if (Array.isArray(value)) return value.map((x) => redactRaw(x, depth + 1));
   return Object.fromEntries(Object.entries(value).filter(([k]) => !RAW_FIELD_CLOSED.test(k)).map(([k, x]) => [k, redactRaw(x, depth + 1)]));
 }
+// The model writes ObjectId values the way the driver prints them, as
+// {"$oid": hex}. The query transport sends plain JSON, so Mongo refuses the
+// shape ("unknown operator: $oid", or "cannot nest $ under $in" when it sits
+// inside an $in array). A bare hex string is not a fix either: it never matches
+// an ObjectId field, so the read would succeed and return nothing. Translate
+// each $oid into an equality on the id's string form instead.
+const RAW_OID = /^[0-9a-f]{24}$/i;
+function rawReadFilter(filter) {
+  const isOid = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" && RAW_OID.test(v.$oid);
+  // The expression that replaces a $oid condition on one field, or null when
+  // the value is not an extended JSON id.
+  const idExpression = (key, value) => {
+    if (isOid(value)) return { $eq: [{ $toString: `$${key}` }, value.$oid.toLowerCase()] };
+    if (value && typeof value === "object" && !Array.isArray(value) && Array.isArray(value.$in) && value.$in.some(isOid))
+      return { $in: [{ $toString: `$${key}` }, value.$in.map((x) => isOid(x) ? x.$oid.toLowerCase() : x)] };
+    return null;
+  };
+  const combine = (base, expr) => {
+    if (!expr.length) return base;
+    const all = expr.map((e) => ({ $expr: e }));
+    return Object.keys(base).length ? { $and: [base, ...all] } : all.length === 1 ? all[0] : { $and: all };
+  };
+  const walk = (f) => {
+    const out = {}, expr = [];
+    for (const [key, value] of Object.entries(f || {})) {
+      if (["$and", "$or", "$nor"].includes(key) && Array.isArray(value)) {
+        out[key] = value.map((sub) => {
+          const inner = walk(sub);
+          return combine(inner.filter, inner.expr);
+        });
+      } else if (key.startsWith("$")) {
+        out[key] = value;
+      } else {
+        const expression = idExpression(key, value);
+        if (!expression) { out[key] = value; continue; }
+        expr.push(expression);
+        // Any sibling operator on the same field stays in place.
+        const rest = isOid(value) ? {} : Object.fromEntries(Object.entries(value).filter(([k]) => k !== "$in"));
+        if (Object.keys(rest).length) out[key] = rest;
+      }
+    }
+    return { filter: out, expr };
+  };
+  const { filter: base, expr } = walk(filter);
+  return combine(base, expr);
+}
 function rawReadArgs(tool, args) {
   if (tool === "heal_collections") return { env: "prod" };
   const collection = String(args.collection || "");
@@ -83,7 +129,7 @@ function rawReadArgs(tool, args) {
   // Server-side JavaScript is never a read a support task needs.
   const script = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_OPERATOR_CLOSED.test(k) || script(x));
   if (script(args.filter) || script(args.sort)) throw new Error("server-side script operators are closed to support reads");
-  const out = { env: "prod", collection, filter: args.filter || {} };
+  const out = { env: "prod", collection, filter: rawReadFilter(args.filter || {}) };
   if (tool === "heal_query") {
     out.limit = Math.min(Math.max(Number(args.limit) || 25, 1), 50);
     if (args.projection) out.projection = args.projection;

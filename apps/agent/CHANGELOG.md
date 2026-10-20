@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- Game-record reads accept extended JSON ids (`{"$oid": "..."}`) in `heal_query` and `heal_count` filters and translate them into id-string comparisons, instead of passing a shape Mongo refuses with `unknown operator: $oid` or `cannot nest $ under $in`.
+
 ## 5.9.5 (2026-10-19)
 
 ### For users
