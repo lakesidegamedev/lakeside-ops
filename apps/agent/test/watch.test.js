@@ -40,6 +40,7 @@ test("a failed turn is a hard, severe finding: one task and one incident proposa
   const job = Object.values(h.l.data.jobs).find((j) => j.kind === "finding");
   assert.equal(job.role, "support");
   assert.match(job.source.content, /before any player reported it/);
+  assert.equal(job.source.role, "system");
   assert.equal(h.proposals.length, 1);
   assert.equal(h.proposals[0].source, "watch");
   // Seen again: no second task, no second proposal.

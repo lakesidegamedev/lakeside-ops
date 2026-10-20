@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- Watcher-created findings no longer wake every minute while awaiting the next game turn. They can subscribe to that turn and resume when it is processed.
+
 ## 5.9.5 (2026-10-19)
 
 ### For users

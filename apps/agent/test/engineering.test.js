@@ -73,7 +73,7 @@ test("never takes over running, terminal, claimed, approval or uncertain finding
 test("engineering ancestry guard denies privileged writes and broad reads, permits draft publication", () => {
   const root = { id: "root", kind: "finding", operatorRole: "engineering" }, jobs = { root };
   for (const [name, input] of [["channel_reply", {}], ["request_heal", {}], ["execute_action", {}], ["support_action", {}], ["status_card", {}], ["github", { action: "merge" }], ["github", { action: "promote" }], ["github", { action: "close" }], ["raise_to_developers", { kind: "decision" }], ["finish", { needsOwner: true }], ["read_tool", { server: "gamestate", tool: "trace_account" }], ["read_tool", { server: "heal-ops", tool: "heal_apply" }]]) assert.throws(() => engineeringGuard(root, name, input, jobs), /Engineering/);
-  for (const name of ["repository_snapshot", "shell", "delegate_fix", "review_fix", "publish_patch", "checkpoint", "finish"]) assert.equal(engineeringGuard(root, name, {}, jobs), true);
+  for (const name of ["repository_snapshot", "shell", "delegate_fix", "review_fix", "publish_patch", "watch_turn", "checkpoint", "finish"]) assert.equal(engineeringGuard(root, name, {}, jobs), true);
   assert.equal(engineeringGuard(root, "github", { action: "status" }, jobs), true);
   assert.equal(engineeringGuard(root, "raise_to_developers", { kind: "bug" }, jobs), true);
   assert.equal(engineeringGuard(root, "read_tool", { server: "engine", tool: "engine_health" }, jobs), true);
@@ -83,7 +83,7 @@ test("engineering ancestry guard denies privileged writes and broad reads, permi
 test("coding and investigation children inherit restrictions while retaining their narrower tool sets", () => {
   const root = { id: "root", operatorRole: "engineering" }, child = { id: "child", codingParent: "root" }, grandchild = { id: "grandchild", codingParent: "child", investigation: true }, jobs = { root, child, grandchild };
   assert.equal(engineeringGuard(child, "shell", {}, jobs), true);
-  for (const name of ["publish_patch", "delegate_fix", "channel_reply", "read_tool"]) assert.throws(() => engineeringGuard(child, name, {}, jobs));
+  for (const name of ["publish_patch", "delegate_fix", "channel_reply", "watch_turn", "read_tool"]) assert.throws(() => engineeringGuard(child, name, {}, jobs));
   assert.equal(engineeringGuard(grandchild, "read_tool", { server: "engine", tool: "engine_health" }, jobs), true);
   assert.throws(() => engineeringGuard(grandchild, "read_tool", { server: "gamestate", tool: "trace_account" }, jobs));
   assert.throws(() => engineeringGuard(grandchild, "publish_patch", {}, jobs));

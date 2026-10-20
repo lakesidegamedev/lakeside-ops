@@ -153,7 +153,7 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
       const prior = recurring ? `\n\nThis was raised before and is still happening after that work finished (${f.afterJobAtRecur || RECUR_AFTER} more observations).${f.issue ? ` Its issue is #${f.issue}.` : ""} Check whether the fix is merged and live where it runs (turn code needs turn-worker/production). If it is live, the fix did not work: say so with the evidence. If it is not live yet, record what it waits on. Add to the existing issue and item; do not file new ones.` : "";
       const job = ledger.createJob(`finding:${f.fp}:${f.firstSeen}${recurring ? `:recur${f.recurrences}` : ""}`, { kind: "finding", role: "support", repository: "AHDGame", finding: f.fp, deadline: now() + 24 * HOUR,
         ...(f.issue ? { issues: [f.issue] } : {}),
-        source: { content: `Keir watch found this before any player reported it.\n\n${f.title}\n\n${f.evidence}${prior}`, at: new Date(now()).toISOString() } });
+        source: { role: "system", content: `Keir watch found this before any player reported it.\n\n${f.title}\n\n${f.evidence}${prior}`, at: new Date(now()).toISOString() } });
       f.state = "raised"; f.jobId = job.id; f.raisedAt = now(); w.spawned.push(now()); delete f.afterJob;
       ledger.audit("watch_finding_raised", { fp: f.fp, job: job.id, sensor: f.sensor, severe: f.severe });
       out.push(f);

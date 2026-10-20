@@ -2654,7 +2654,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // A reply wait, long requested wait or vision run leaving the player unanswered hands back to
       // the driver instead of sleeping (ticket 1542 waited fifteen minutes).
       const playerAt = (t) => (typeof t === "number" ? t : Date.parse(t) || 0);
-      if (state === "waiting" && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15) && Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt)) > (job.lastPublishedAt || 0)) job.wakeAt = now() + 60000;
+      if (state === "waiting" && ["ticket", "command", "conversation"].includes(job.kind) && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15) && Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt)) > (job.lastPublishedAt || 0)) job.wakeAt = now() + 60000;
       // A promotion held for the owner's waking hours wakes when the window opens, not every quarter hour.
       if (state === "waiting" && job.promotionHoldUntil > now()) job.wakeAt = Math.max(job.wakeAt || 0, job.promotionHoldUntil);
       // Turn and CI watches wake their task; no timer polling meanwhile.
