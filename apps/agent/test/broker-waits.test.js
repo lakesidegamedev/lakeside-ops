@@ -73,6 +73,13 @@ test("explicit long ordinary waits cannot bury unanswered evidence", async (t) =
   await f.finish({ wakeAfterMinutes: 360 }); assert.equal(f.job.wakeAt, NOW + MINUTE);
 });
 
+test("watcher findings keep their requested turn wait even with a polluted player clock", async (t) => {
+  const f = fixture(t, { kind: "finding", ticket: null, channelId: null, source: { content: "Turn 322 failed", at: new Date(NOW - 1000).toISOString() }, observedPlayerAt: NOW - 1000 });
+  await f.finish({ wakeAfterMinutes: 35 });
+  assert.equal(f.job.state, "waiting");
+  assert.equal(f.job.wakeAt, NOW + 35 * MINUTE);
+});
+
 test("activation clears a prior reply gate before durably entering running state", async (t) => {
   const f = fixture(t); await f.finish({ waitFor: "player_reply" });
   const { createAgent } = require("../lib/operator/agent");
