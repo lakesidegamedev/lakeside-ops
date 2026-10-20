@@ -27,6 +27,7 @@ const { registerInvestigations } = require("./support-investigations");
 const { registerCreateSuggestion } = require("./support-create-suggestion");
 const { registerCreateTicket } = require("./support-create-ticket");
 const { registerMerge } = require("./support-merge");
+const { isSuggestionDone, requestSuggestionAnnouncement } = require("./support-suggestion-announce");
 
 const PORT = parseInt(process.env.SUPPORT_MCP_PORT || "9735", 10);
 const OPEN_TICKET = { status: { $nin: ["closed", "resolved", "rejected"] } };
@@ -192,7 +193,7 @@ async function main() {
 
     server.tool(
       "support_set_status",
-      "Update a non-terminal status of a ticket or suggestion (WRITE-scoped token required). Appends an entry to statusHistory. Gameplay and mechanics ticket statuses also sync their tracker item: open or triaging maps to open, in_progress maps to active, and blocked or parked maps to blocked. For a ticket becoming resolved or closed, always call support_resolve so the end-user receipt, actions, follow-up, and ticket-channel notification are persisted together.",
+      "Update a non-terminal status of a ticket or suggestion (WRITE-scoped token required). Appends an entry to statusHistory. Gameplay and mechanics ticket statuses also sync their tracker item: open or triaging maps to open, in_progress maps to active, and blocked or parked maps to blocked. For a ticket becoming resolved or closed, always call support_resolve so the end-user receipt, actions, follow-up, and ticket-channel notification are persisted together. Setting a suggestion to completed posts it to the suggestions channel straight away; put what changed, in player words, in the note.",
       {
         kind: z.enum(["ticket", "suggestion"]),
         number: z.number().int(),
@@ -230,12 +231,17 @@ async function main() {
           },
           $push: { statusHistory: entry },
         });
+        // A completed suggestion posts to the suggestions channel now, not on
+        // the next turn. The note becomes the post's "what changed".
+        const announcement =
+          kind === "suggestion" && isSuggestionDone(status) ? await requestSuggestionAnnouncement() : null;
         return jsonResult({
           ok: true,
           kind,
           number,
           previousStatus: existing.status ?? null,
           status,
+          ...(announcement ? { announcement } : {}),
         });
       }
     );
