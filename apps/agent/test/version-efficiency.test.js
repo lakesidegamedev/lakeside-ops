@@ -102,6 +102,13 @@ test("canonical reopen excludes the previous ticket success from version counts"
   assert.equal(report.versions[0].ticketsWorkedOn, 1);
 });
 
+test("unobserved canonical receipts are reported as missing coverage, not measured zero success", () => {
+  const data = fixture(); delete data.ticketOutcomes;
+  const report = versionEfficiency(data, [row()], { until: 12000 });
+  assert.equal(report.resolvedTickets, 0); assert.equal(report.versions[0].ticketsWorkedOn, 1);
+  assert.equal(report.outcomeCoverage.unobservedTickets, 1); assert.equal(report.outcomeCoverage.observedTickets, 0);
+});
+
 test("immutable release files, history and SQLite attribution are read-only", async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "release-efficiency-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const releaseDir = path.join(dir, "releases"), build = path.join(releaseDir, "build"); fs.mkdirSync(build, { recursive: true });

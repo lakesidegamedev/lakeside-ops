@@ -144,6 +144,9 @@ function versionEfficiency(data, inputRows, { history = [], events = [], milesto
       "Older thrown/interrupted runs often lack a matching event-sink release. Versioned activation failure rates can therefore be selection-biased.",
       "Pre-usage retention and unlogged external work cannot be reconstructed. Current reopened tickets are excluded from resolution success."],
     trackedTickets: performance.trackedTickets, resolvedTickets: tickets.length,
+    outcomeCoverage: { observedTickets: performance.observedTickets, unobservedTickets: performance.unobservedTickets,
+      pendingTickets: performance.pending, unverifiedClosures: performance.unverifiedClosures,
+      assistedResolutions: performance.assisted.tickets },
     unknownCompletionVersionTickets: tickets.filter(t => !t.resolverVersionKnown).length,
     cohorts, versions: exactVersions, matchedWork, tickets };
 }
