@@ -65,7 +65,9 @@ function revise(data, message, patch, now) {
   const changed = Object.keys(patch).some((k) => patch[k] !== undefined && current[k] !== patch[k]) || clearsProvisional || clearsProgress;
   // A repeated status line is not news: leave the row and the thread version alone.
   if (!changed) return current;
-  const next = { ...current, ...patch, rev: ++t.rev, editedAt: now };
+  const next = { ...current, ...patch, rev: ++t.rev };
+  // Only a changed answer is "edited"; a moving progress line is not.
+  if (patch.text !== undefined && patch.text !== current.text) next.editedAt = now;
   if (patch.provisional !== true) delete next.provisional;
   if (patch.progress === undefined) delete next.progress;
   t.messages = t.messages.map((m, n) => (n === i ? next : m));
