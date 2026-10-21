@@ -485,6 +485,7 @@ function stopModerationTicket(channelId, number, category = "moderation") {
   }
 }
 
+let performanceReconciliation = null;
 async function scan() {
   const channels = await discord("GET", `/guilds/${config.guildId}/channels`);
   for (const recipient of new Set([config.ownerId, ...config.staffIds])) {
@@ -587,6 +588,13 @@ async function scan() {
       }
       for (const slot of Object.values(active)) if (slot?.job.id === job.id) slot.controller.abort();
     }
+  }
+  // Performance sensors must not delay intake or the next support scan.
+  if (!performanceReconciliation) {
+    performanceReconciliation = require("./lib/operator/ticketoutcomes").reconcileTickets({ ledger,
+      readTicket: number => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(8000)) })
+      .catch(e => log(`performance reconciliation: ${redactSecrets(e.message)}`))
+      .finally(() => { performanceReconciliation = null; });
   }
   ledger.save();
 }
@@ -765,6 +773,15 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (!authorized(req)) return reply(401, { error: "unauthorized" });
+  if (req.url?.split("?")[0] === "/v5/performance" && req.method === "GET") {
+    try {
+      const url = new URL(req.url, "http://localhost");
+      const until = Date.now(), days = Number(url.searchParams.get("days") || 30);
+      if (!Number.isFinite(days) || days <= 0 || days > 3650) return reply(400, { error: "days must be between 0 and 3650" });
+      return reply(200, await require("./lib/operator/ticketperformance").readTicketPerformance(ledger.data,
+        config.usageFile || path.join(config.stateDir, "usage.jsonl"), { since: Math.max(0, until - days * 86400000), until }));
+    } catch { return reply(503, { error: "Performance data unavailable" }); }
+  }
   if (req.url === "/v5/usage" && req.method === "GET") {
     const until = Date.now();
     try {

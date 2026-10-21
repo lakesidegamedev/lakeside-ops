@@ -653,7 +653,33 @@ $('#kh-view').onclick=e=>{const b=e.target.closest('button');if(!b)return;table=
 let timer=null;
 function schedule(ms){clearTimeout(timer);timer=setTimeout(load,ms)}
 let inFlight=null;
+let performanceAt=0,performanceLoading=false;
+async function loadPerformance(){
+  if(performanceLoading||paused||Date.now()-performanceAt<60000)return;
+  performanceLoading=true;performanceAt=Date.now();
+  const host=$('#kh-performance');
+  try{
+    const days=$('#kh-performance-days').value;
+    const response=await fetch('/api/keir/hub/performance?days='+days,{cache:'no-store',signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw Error('Performance unavailable');
+    const p=await response.json(),r=p.resolved;
+    const val=n=>n==null?'unknown':Number(n).toLocaleString(undefined,{maximumFractionDigits:2});
+    const time=n=>n==null?'unknown':dur(n);
+    const usd=n=>n==null?'unknown':'$'+Number(n).toFixed(4);
+    const row=(label,d,format)=>'<tr><th scope="row">'+label+'</th><td>'+format(d.median)+'</td><td>'+format(d.mean)+'</td><td>'+format(d.p95)+'</td><td>'+d.n+'</td></tr>';
+    setHtml(host,'<p>'+r.tickets+' Keir-resolved · '+p.assisted.tickets+' assisted · '+p.reopenedTickets+' reopened · '+p.unobservedTickets+' awaiting observation</p>'+
+      '<div style="overflow-x:auto"><table style="width:100%;text-align:left"><thead><tr><th>Metric</th><th>Median</th><th>Average</th><th>p95</th><th>Samples</th></tr></thead><tbody>'+
+      row('Resolution time',r.resolutionMs,time)+row('Time from pickup',r.pickupToResolutionMs,time)+row('Model turns',r.turns,val)+row('API-equivalent USD',r.apiEquivalentUsd,usd)+'</tbody></table></div>'+
+      '<p class="kh-muted">Subscription charges are unknown. Estimates use complete token usage; missing data is excluded. Mixed-model tickets appear under each contributor.</p>'+
+      '<details><summary>Models and ticket outcomes</summary><div style="overflow-x:auto"><table style="width:100%;text-align:left"><thead><tr><th>Provider / model</th><th>Tickets</th><th>Median turns</th><th>Average estimate</th></tr></thead><tbody>'+
+      p.byModel.map(m=>'<tr><th scope="row">'+esc(m.provider)+' / '+esc(m.model)+'</th><td>'+m.tickets+'</td><td>'+val(m.turns.median)+'</td><td>'+usd(m.apiEquivalentUsd.mean)+'</td></tr>').join('')+'</tbody></table></div>'+
+      p.tickets.slice(0,100).map(t=>'<p>#'+t.ticket+' · '+esc(t.credit)+' · '+time(t.resolutionMs)+' · '+val(t.turns)+' turns · '+usd(t.apiEquivalentUsd)+' estimate · '+t.models.map(m=>esc(m.model)).join(', ')+'</p>').join('')+'</details>');
+  }catch{host.textContent='Ticket performance unavailable. It will appear when the operator supports tracking.'}
+  finally{performanceLoading=false}
+}
+$('#kh-performance-days').onchange=()=>{performanceAt=0;loadPerformance()};
 function load(){if(paused)return Promise.resolve();if(inFlight)return inFlight;
+  loadPerformance();
   inFlight=(async()=>{try{const r=await fetch('/api/keir/hub',{cache:'no-store',signal:AbortSignal.timeout(30000)});if(r.status===401){location.href='/';return}if(!r.ok)throw Error('HTTP '+r.status);
     const next=await r.json();if(!next||!next.kpis||!next.stream||!Array.isArray(next.activity)||!Array.isArray(next.workers))throw Error('Incomplete dashboard response');
     const previous=S;try{S=next;render()}catch(e){S=previous;throw e}
@@ -688,6 +714,7 @@ function makeKeirHubBody() {
   </header>
   <div class="kh-note" id="kh-src"></div>
   <section class="kt rise" id="kh-throughput" aria-label="Delivery throughput"></section>
+  <section class="kh-panel rise" aria-label="Ticket resolution performance"><div class="kh-ph"><h2>Ticket resolution performance</h2><label>Window <select id="kh-performance-days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label></div><div class="kh-pb" id="kh-performance">Loading ticket outcomes.</div></section>
   <section class="kh-panel kh-now rise" style="--i:1">
     <div class="kh-nowhead"><div class="kh-say"><div class="kh-say1" id="kh-say1">Reading Keir</div><div class="kh-say2" id="kh-say2"></div><div class="kh-say3" id="kh-say3"></div></div><div class="kh-orbs" id="kh-orbs"></div></div>
     <div class="kh-tailwrap" id="kh-tail" hidden></div>

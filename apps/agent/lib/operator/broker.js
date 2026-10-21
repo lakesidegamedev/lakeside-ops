@@ -111,7 +111,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
 const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"]);
-const QUICK_TOOLS = ["chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
+const QUICK_TOOLS = ["ticket_performance", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -983,6 +983,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   async function toolInner(job, name, input, signal) {
     active(job);
     musePolicy.guard(ledger, config, job, name, input);
+    if (name === "ticket_performance") {
+      if (job.role !== "owner") throw new Error("ticket performance requires an owner task");
+      const days = input.days ?? 30, until = now();
+      if (!Number.isFinite(days) || days <= 0 || days > 3650) throw new Error("days must be between 0 and 3650");
+      return require("./ticketperformance").readTicketPerformance(d,
+        config.usageFile || path.join(config.stateDir, "usage.jsonl"), { since: Math.max(0, until - days * 86400000), until });
+    }
     if (name === "support_updates") return supportDirectives.updates(job);
     if (supportDirectives.held(job)) throw new Error("Support directive is held by an existing approval, staff, category or conversation hold; no tool may bypass it.");
     if ((job.inbox || []).some((r)=>r.directiveId)) throw new Error("New owner guidance arrived from the app. Read support_updates before your next tool or external action.");
@@ -2285,6 +2292,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.tool === "support_public_update" && !String(args.message || "").trim()) throw new Error('support_public_update needs the player-facing text in args.message: {"tool": "support_public_update", "args": {"message": "..."}}');
       const definition = (await mcp.list("support")).find(t => t.name === input.tool);
       if (!definition?.inputSchema) throw new Error("support write schema unavailable; discover support_tools and retry later");
+      if (input.tool === "support_resolve" && definition.inputSchema.properties?.attribution) {
+        args.attribution = { agent: "keir", jobId: job.id, evidence: `Keir resolution submitted by job ${job.id}` };
+      }
       // Ticket identity is always broker-bound; all remaining arguments must match the live schema.
       if (args.message) args.message = publicText(args.message);
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
@@ -2336,7 +2346,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         else ledger.notify(`delivery:${job.id}:${hash(args)}`, "owner", `Ticket ${job.ticket}: public update delivery needs verification.`);
       }
       if (input.tool === "support_resolve") {
-        job.resolutionSubmitted = true; job.resolutionSubmittedAt = now();
+        if (result?.ok !== true) throw new Error("support resolution was not confirmed; no success recorded");
+        job.resolutionSubmitted = true; job.resolutionSubmittedAt ||= now();
+        if (result.receipt?.receiptId) job.resolutionReceiptId = result.receipt.receiptId;
+        if (result.receipt?.receiptId) {
+          require("./ticketoutcomes").observeTicket(d, job, { number: job.ticket, status: result.status || "resolved",
+            resolution: result.receipt, resolutionAttribution: { agent: "keir", jobId: job.id, evidence: "keir-resolution-submission" },
+            conversation: { channelId: job.channelId } }, now());
+        }
         // Keir 2.0: every resolution becomes a recallable note.
         try { notebook?.remember({ kind: "resolution", text: `Ticket ${job.ticket}: ${String(args.message || job.summary || "").slice(0, 600)}`, ticket: job.ticket, by: job.id }); } catch {}
         try { const r = await reporterOf(job, signal); if (r?.id) notebook?.remember({ kind: "player", player: r.id, text: `${r.name || "Player"} raised ticket ${job.ticket}${r.title ? ` ("${String(r.title).slice(0, 80)}")` : ""}; resolved: ${String(args.message || job.summary || "").slice(0, 400)}`, ticket: job.ticket, by: job.id }); } catch {}

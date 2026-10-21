@@ -38,6 +38,12 @@ async function handleKeirHubRoute(req, res, pathname, { resolveSession, addSecur
   if (session.role !== "admin") { addSecurityHeaders(res); res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }); res.end("Not found"); return true; }
   addSecurityHeaders(res);
   const json = (status, value) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); return true; };
+  if (pathname === "/api/keir/hub/performance") {
+    const days = Number(new URL(req.url, "http://localhost").searchParams.get("days") || 30);
+    if (!Number.isFinite(days) || days <= 0 || days > 3650) return json(400, { error: "Invalid days" });
+    try { return json(200, await actions.ticketPerformance({ days })); }
+    catch { return json(503, { error: "Ticket performance unavailable. The operator must support performance tracking." }); }
+  }
   if (isWrite) {
     if (!sameOrigin(req)) return json(403, { error: "cross-origin write refused" });
     let body; try { body = await readBody(req); } catch (e) { return json(e.status || 400, { error: e.message }); }

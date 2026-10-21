@@ -84,6 +84,7 @@ function computeMetrics(data, usageRows = [], { now = Date.now() } = {}) {
 
   return {
     at: now,
+    ticketPerformance: require("./ticketperformance").ticketPerformance(data, usageRows, { until: now }),
     ackLatencyMs: ack,
     ackBreakdownMs: { fromJobCreation: summarize(ackFromJob), ingest: summarize(ackIngest),
       fallbackToJobCreation: ackFallbacks },

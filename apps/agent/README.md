@@ -208,3 +208,43 @@ Literal greetings use a compact brief without a classifier call, notebook recall
 Compact sessions expose `load_context` and `call_tool`. Context is paged; a model can discover an original tool's schema and invoke it in the same multi-turn activation. The dispatcher only accepts tools from that session's original role-filtered grant and keeps normal broker checks, cancellation and completion guards. Skills respect the owner's configured selection. Loading context does not grant authority or turn a chat into a coding session.
 
 `activation_context` and usage records distinguish preflight time, provider time, brief/context size and initial tool-schema size. These measurements diagnose latency; smaller prompts alone are not a wall-clock speed guarantee. Tool activity carries a stable call ID, source, operation, presentation label and state. Replies retain completed activity once; the live chat projection excludes those already-delivered calls.
+
+# Ticket resolution performance
+
+Ask Keir for ticket performance using the owner-only `ticket_performance` tool
+(`days`, default 30), or read the authenticated operator endpoint
+`GET /v5/performance?days=30`. The read-only `bin/keir-metrics.js` report also
+includes lifetime ticket performance from its ledger and usage files.
+The admin Keir hub shows the same metrics with 7, 30 and 90 day windows,
+model contributions and individual ticket outcomes.
+
+The report includes mean, median, p90/p95, min/max and sample counts for elapsed
+resolution time, model turns, activations and cost per ticket, plus daily trends
+and provider/model contributions. Resolution time starts at canonical ticket
+creation; pickup time starts at Keir's first attempt on the ticket.
+The selected window applies to resolution dates and includes all logged work
+through resolution, including earlier conversations after reopening, coding
+children and the activation that closes it. Reopening never resets work costs.
+Turns are model turns, not game turns or player messages. A mixed-model ticket
+appears in each contributing model's group, so those counts are not additive.
+
+Only a canonical support resolution receipt establishes success. Deleted
+channels, finished tasks, proposed answers and merged duplicates do not count.
+The tracker polls a bounded number of known tickets per scan, including old done
+tasks, to discover external closures and backfill historical outcomes. It reports
+unobserved tickets while that backfill proceeds. Reopened conversations stop
+counting as current successes; their previous evidence remains in the ledger.
+
+When closing for Keir, call `support_resolve` with
+`attribution: { agent: "keir", jobId: "<resolver job, if known>", evidence: "<verified fix or answer>" }`.
+Keir supplies its own attribution automatically when the support server supports
+it. Attribution survives a different closer or delivery retry, and is archived
+when the ticket reopens. Historical Keir resolution submissions also establish
+credit. Other canonical closures after Keir work are reported separately as
+assisted, so a human fix does not silently become a Keir resolution.
+
+Actual billed USD, CLI notional USD and API-equivalent token estimates are
+separate. Subscription charges cannot be allocated from tokens. Unknown models,
+missing usage or missing turns remain unknown, with coverage counts and known
+cost subtotals exposed. Existing usage-log retention limits historical coverage;
+the tracker cannot reconstruct missing activations or unlogged external work.

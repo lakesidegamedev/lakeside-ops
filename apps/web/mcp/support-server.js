@@ -68,6 +68,7 @@ async function refreshDiscordUrls(urls) {
 }
 
 const ticketShape = (t) => ({
+  resolutionAttribution: t.resolutionAttribution || null,
   kind: "ticket", number: t.ticketNumber, title: t.title, category: t.category, status: t.status,
   conversation: { channelId: t.discordChannelId || null, previousChannelId: t.reopenRequest?.oldChannelId || null, reopenRequestId: t.reopenRequest?.state === "complete" ? t.reopenRequest.id : null, reopenedAt: t.reopenRequest?.state === "complete" ? t.reopenRequest.completedAt : null },
   supportRecentVisits: t.supportRecentVisits || [], description: t.description, reporter: t.reporter || t.discordDisplayName || t.discordUsername || null,
@@ -250,8 +251,13 @@ async function main() {
         actions: z.array(z.string().min(1).max(500)).max(12).optional().default([]).describe("specific player-facing actions completed"),
         followUp: z.string().max(2000).optional().describe("what the player should do next, if anything"),
         source: z.enum(["discord", "agent", "ops"]).optional().default("agent"),
+        attribution: z.object({
+          agent: z.string().min(1).max(80).describe("Agent that did the resolution work, e.g. keir, independent of who closes it"),
+          jobId: z.string().min(1).max(160).optional().describe("Resolver job ID when known"),
+          evidence: z.string().min(1).max(1000).describe("Evidence for resolution credit, such as a job, fix or verified answer"),
+        }).optional().describe("Credit the resolver when closing on its behalf. Existing credit is preserved when omitted."),
       },
-      async ({ number, status, message, actions, followUp, source }) => {
+      async ({ number, status, message, actions, followUp, source, attribution }) => {
         if (!auth || auth.scopes?.write !== true) return errorResult("write scope required — this token is read-only");
         const key = { ticketNumber: number };
         const existing = await Tickets.findOne(key);
@@ -269,6 +275,8 @@ async function main() {
             ...(status === "closed" ? { closedAt: now, closedBy: auth.name || "agent" } : { resolvedAt: now, resolvedBy: auth.name || "agent" }),
           },
         };
+        const credit = require("./support-attribution").resolutionAttribution(existing, attribution, { by: auth.name || "agent", now });
+        if (credit) update.$set.resolutionAttribution = credit;
         if (!sameResolution) {
           update.$push = {
             statusHistory: {
