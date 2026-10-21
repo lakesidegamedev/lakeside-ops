@@ -33,6 +33,15 @@ function mcpUrl(suffix) {
 //   /mcp                  knowledge
 //   /community/mcp        community
 //   /gamestate/mcp        …
+//
+// `connect` says how an agent reaches the server:
+//   "http"   public route on the MCP host, reachable from anywhere with a token
+//   "local"  on this box only (127.0.0.1), for the internal fleet
+//   "stdio"  a local process launched by the agent
+//
+// Every MCP server this box hosts is listed here, public or internal. The
+// catalogue is what the drift check compares the live fleet against, so a
+// server that is missing from it is a server nobody is watching.
 const MCP_DEFS = [
   { key: "ops-knowledge", icon: "📚", name: "Ops Knowledge", transport: "HTTP · public", health: 9725, connect: "http",
     path: "/mcp", desc: "Docs, skills & memory — semantic search + save. Scoped, token-gated.",
@@ -66,12 +75,53 @@ const MCP_DEFS = [
   { key: "lore", icon: "📜", name: "Lore", transport: "HTTP · public", health: 9750, connect: "http",
     path: "/lore/mcp", desc: "The world's authored lore: countries and eras, the wider world registry, blocs and charters, the history of the eras, the player wiki and the glossary. Also serves MCP resources (lore://wiki/<slug>, lore://country/<id>) and the world_brief prompt.",
     tools: ["lore_overview", "lore_countries", "lore_country", "lore_world_entities", "lore_world_entity", "lore_organizations", "lore_historical_events", "lore_wiki_search", "lore_wiki_page", "lore_glossary", "lore_parties"] },
+  { key: "tracker", icon: "🧭", name: "Tracker", transport: "HTTP · public", health: 9741, connect: "http",
+    path: "/tracker/mcp", desc: "The long-running tracker: projects, goals, tasks, checks and notes, keyed so work outlives the session that started it.",
+    tools: ["track_upsert", "track_list", "track_get", "track_note", "track_summary"] },
+  { key: "lean-lab", icon: "📐", name: "Lean Lab", transport: "HTTP · public", health: 9746, connect: "http",
+    path: "/lean-lab/mcp", desc: "Per-state electoral-lean dashboard for a country and era: electorate measurement, seed tuning and the run record.",
+    tools: ["lean_overview", "lean_state", "lean_whatif", "lean_solve", "lean_patch"] },
+
+  // ── Internal fleet: this box only. Not reachable from the public host. ─────
+  { key: "heal-ops", icon: "🩹", name: "Heal Ops", transport: "HTTP · on-box", health: 9747, connect: "local",
+    desc: "Paired remediation: the code fix and the data heal for a defect in the remediation ledger, with the environments each one touches.",
+    tools: ["heal_list", "heal_status", "heal_detect", "heal_plan", "heal_apply", "heal_verify", "heal_history", "heal_rollback", "heal_query", "heal_count", "heal_collections", "heal_adhoc_plan", "heal_adhoc_apply", "heal_compensate_plan", "heal_compensate_apply", "heal_scaffold", "heal_indexes"] },
+  { key: "masscomm", icon: "📣", name: "Mass Communications", transport: "HTTP · on-box", health: 9748, connect: "local",
+    desc: "Player announcements: resolve the audience from prod users, dry run it, and send.",
+    tools: ["comm_audience", "comm_preview", "comm_send", "comm_status"] },
+  { key: "company-knowledge", icon: "🏢", name: "Company Knowledge", transport: "HTTP · on-box", health: 9761, connect: "local",
+    desc: "The Lakeside company knowledge scope: what the company knows about itself and where that knowledge lives.",
+    tools: ["company_context", "company_search", "company_get", "company_list", "company_save", "company_history", "company_archive"] },
+  { key: "lakeside-hub", icon: "🗄️", name: "Lakeside Hub", transport: "HTTP · on-box", health: 9745, connect: "local",
+    desc: "The company and product hub: the brief, the next move, owner decisions, blockers, and the product kanban it keeps.",
+    tools: ["hub_brief", "hub_work_report", "hub_summary", "hub_kanban_list", "hub_kanban_add", "hub_kanban_update", "hub_github_sync", "hub_execution_report"] },
+  { key: "metroforge", icon: "🛠️", name: "MetroForge", transport: "HTTP · on-box", health: 9737, connect: "local",
+    desc: "MetroForge repo and live deploy health: the current SHA, branch, dirty state and the deploy history.",
+    tools: ["mf_status", "mf_cities", "mf_leaderboard", "mf_smoke", "mf_sim_run"] },
+  { key: "grand-century", icon: "🏛️", name: "Grand Century", transport: "HTTP · on-box", health: 9740, connect: "local",
+    desc: "Grand Century repo and live deploy health: the current SHA, branch, dirty state and the deploy history.",
+    tools: ["gc_status", "gc_worldsim"] },
+  { key: "paseo", icon: "🚶", name: "Paseo Agents", transport: "HTTP · on-box", health: 6767, connect: "local",
+    localPath: "/mcp/agents",
+    desc: "The Paseo agent registry: the coding agents on this box, their workspaces, and the sessions they are running.",
+    tools: ["create_workspace", "list_workspaces", "archive_workspace", "create_agent", "send_agent_prompt", "get_agent_status", "list_agents", "cancel_agent", "archive_agent", "kill_agent", "update_agent", "rename_workspace", "list_workspace_scripts", "start_workspace_script", "stop_workspace_script", "list_terminals", "create_terminal", "kill_terminal", "capture_terminal", "send_terminal_keys", "create_schedule", "create_heartbeat", "delete_heartbeat", "list_schedules", "inspect_schedule", "pause_schedule", "resume_schedule", "delete_schedule", "update_schedule", "schedule_logs", "run_schedule_once", "list_providers", "list_models", "list_profiles", "inspect_provider", "get_agent_activity", "set_agent_mode", "list_pending_permissions", "respond_to_permission"] },
+  { key: "glitchtip", icon: "🐛", name: "Glitchtip", transport: "stdio", health: null, connect: "stdio",
+    url: "@karsten684/glitchtip-mcp-server",
+    desc: "A House Divided error tracking: the issues players hit, with the stack traces.",
+    tools: [] },
 ];
+
+/** The on-box URL of a server the fleet check and the agents page reach. */
+function localMcpUrl(d) {
+  if (!d || !d.health) return null;
+  return `http://127.0.0.1:${d.health}${d.localPath || "/mcp"}`;
+}
 
 function getMcpCatalog() {
   return MCP_DEFS.map((d) => ({
     ...d,
     url: mcpUrl(d.path),
+    localUrl: d.connect === "local" ? localMcpUrl(d) : null,
   }));
 }
 
@@ -102,4 +152,5 @@ module.exports = {
   buildGettingStarted,
   mcpUrl,
   mcpBase,
+  localMcpUrl,
 };

@@ -14,7 +14,7 @@
 "use strict";
 
 const { z } = require("zod");
-const { MCP_DEFS } = require("../mcp-catalog");
+const { MCP_DEFS, localMcpUrl } = require("../mcp-catalog");
 
 const DEFAULT_TIMEOUT_MS = 8000;
 
@@ -57,8 +57,33 @@ function rpc(url, method, params, token, timeoutMs = DEFAULT_TIMEOUT_MS) {
     .finally(() => clearTimeout(timer));
 }
 
+/**
+ * The token to ask one server with.
+ *
+ * Most of the fleet shares the ops-knowledge service token. A server with its
+ * own auth domain (the hub has its own) is asked with its own token, named
+ * MCP_FLEET_TOKEN_<KEY> in the environment, and falls back to the service
+ * token.
+ */
+function tokenFor(def) {
+  if (def && def.key) {
+    const specific = process.env[`MCP_FLEET_TOKEN_${def.key.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`];
+    if (specific) return specific;
+  }
+  return process.env.OPS_KNOWLEDGE_MCP_TOKEN || process.env.MCP_FLEET_TOKEN || null;
+}
+
 function localUrl(def) {
-  return `http://127.0.0.1:${def.health}/mcp`;
+  return localMcpUrl(def) || `http://127.0.0.1:${def.health}/mcp`;
+}
+
+/**
+ * A stdio server is launched by the agent, not by the box, so there is
+ * nothing to ask over HTTP. It is in the catalogue for the directory, and it
+ * is reported as such rather than as a broken server.
+ */
+function isStdio(def) {
+  return def.connect === "stdio" || !def.health;
 }
 
 /** Call one tool on another server and parse its JSON result. */
@@ -112,19 +137,25 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
       include_tools: z.boolean().optional().default(true).describe("include the tool names of each server"),
     },
     async ({ server, include_tools }) => {
-      const token = process.env.OPS_KNOWLEDGE_MCP_TOKEN || process.env.MCP_FLEET_TOKEN;
+      const token = tokenFor(null);
       if (!token) {
         return errorResult("no fleet token configured: set OPS_KNOWLEDGE_MCP_TOKEN (a read-scoped agent token) so this server can ask the other servers what they expose");
       }
       const defs = server ? MCP_DEFS.filter((d) => d.key === server) : MCP_DEFS;
       if (!defs.length) return errorResult(`no hosted server is keyed "${server}". Known: ${MCP_DEFS.map((d) => d.key).join(", ")}`);
-      const described = await Promise.all(defs.map((d) => describeServer(d, token)));
+      const described = await Promise.all(
+        defs.map(async (d) => {
+          if (isStdio(d)) return { key: d.key, name: d.name, url: d.url || null, health: null, reachable: null, transport: "stdio", note: "launched by the agent, not served over HTTP" };
+          const one = await describeServer(d, tokenFor(d) || token);
+          return { ...one, transport: d.connect === "local" ? "on-box" : "public" };
+        })
+      );
       const out = described.map((d) => {
         const row = { ...d };
         if (!include_tools) delete row.tools;
         return row;
       });
-      const down = out.filter((d) => !d.reachable);
+      const down = out.filter((d) => d.reachable === false);
       return jsonResult({
         ok: down.length === 0,
         cataloguedServers: MCP_DEFS.length,
@@ -176,4 +207,4 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
   );
 }
 
-module.exports = { registerFleetTools, describeServer, callTool };
+module.exports = { registerFleetTools, describeServer, callTool, tokenFor };

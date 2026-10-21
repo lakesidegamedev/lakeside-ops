@@ -14,8 +14,8 @@
 // It is read-only: it calls tools/list on each server and nothing else.
 
 const path = require("path");
-const { MCP_DEFS } = require(path.join(__dirname, "..", "mcp-catalog.js"));
-const { describeServer } = require(path.join(__dirname, "..", "mcp", "fleet-tools.js"));
+const { MCP_DEFS, localMcpUrl } = require(path.join(__dirname, "..", "mcp-catalog.js"));
+const { describeServer, tokenFor } = require(path.join(__dirname, "..", "mcp", "fleet-tools.js"));
 
 /**
  * The catalogue marks write-scoped tools with a trailing star, because a
@@ -38,7 +38,10 @@ async function main() {
     process.exit(2);
   }
 
-  const described = await Promise.all(MCP_DEFS.map((d) => describeServer(d, token)));
+  const described = await Promise.all(
+    MCP_DEFS.filter((d) => d.connect !== "stdio" && d.health).map((d) => describeServer(d, tokenFor(d) || token))
+  );
+  const stdio = MCP_DEFS.filter((d) => d.connect === "stdio" || !d.health).map((d) => d.key);
   const drift = [];
   const scopes = [];
   for (const d of described) {
@@ -64,6 +67,7 @@ async function main() {
   const report = {
     checkedAt: new Date().toISOString(),
     cataloguedServers: MCP_DEFS.length,
+    stdioServers: stdio,
     reachable: described.filter((d) => d.reachable).length,
     liveTools: described.reduce((n, d) => n + (d.toolCount || 0), 0),
     drift,
