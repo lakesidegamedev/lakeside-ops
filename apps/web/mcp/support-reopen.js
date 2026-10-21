@@ -31,7 +31,7 @@ async function reopenTicket({ Tickets, number, receiptId, reason, by, ticketPubl
       return { ok: true, alreadyReopened: true, number, channelId: live.id, receiptUrl: ticketPublicUrl(number) };
     }
     if (!terminal(ticket.status) || ticket.resolution?.receiptId !== receiptId) throw new Error("exact terminal resolution receipt no longer matches");
-    if (ticket.mergedInto != null || ticket.category === "moderation") throw new Error("merged or moderation tickets need manual staff handling");
+    if (ticket.mergedInto != null || ["moderation", "investigation"].includes(ticket.category)) throw new Error("merged or moderation tickets need manual staff handling");
     if (!/^\d{15,22}$/.test(ticket.discordUserId || "")) throw new Error("original reporter is unavailable");
     if (!ticket.discordChannelId) throw new Error("original channel identity is required");
     const old = await discordImpl(`/channels/${ticket.discordChannelId}`, { allow404: true });

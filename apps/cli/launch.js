@@ -106,6 +106,9 @@ function prepare(settings, env = process.env) {
   const cloud = settings.provider === "ollama" ? { ollama: {
     npm: "@ai-sdk/openai-compatible", name: "Ollama Cloud", options: { baseURL: "https://ollama.com/v1" },
     models: { [selectedModel.slice("ollama/".length)]: { name: selectedModel.slice("ollama/".length), tool_call: true } },
+  } } : settings.provider === "deepseek" ? { deepseek: {
+    npm: "@ai-sdk/openai-compatible", name: "DeepSeek API", options: { baseURL: "https://api.deepseek.com/v1" },
+    models: { [selectedModel.slice("deepseek/".length)]: { name: selectedModel.slice("deepseek/".length), tool_call: true } },
   } } : {};
   const childEnv = {
     ...env,
@@ -117,7 +120,7 @@ function prepare(settings, env = process.env) {
     OPENCODE_DISABLE_TERMINAL_TITLE: "true",
     OPENCODE_CONFIG_CONTENT: JSON.stringify({
       ...inline,
-      ...(settings.provider === "ollama" ? { provider: { ...(inline.provider || {}), ...cloud } } : {}),
+      ...(Object.keys(cloud).length ? { provider: { ...(inline.provider || {}), ...cloud } } : {}),
       mcp: { ...engineConnections(env), ...(inline.mcp || {}) },
       skills: { ...(inline.skills || {}), paths: [...(inline.skills?.paths || []), path.join(skillRoot(), "vendor"), path.join(__dirname, "design-skills")] },
       command: { ...skillCommands(), ...(inline.command || {}) },

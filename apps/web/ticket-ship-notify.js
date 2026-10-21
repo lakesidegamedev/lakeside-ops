@@ -6,6 +6,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 
@@ -320,7 +321,7 @@ async function postDiscordWebhook(content, { mentionRoleIds } = {}) {
     const r = await fetch(webhook, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(discordMentionPayload(content, mentionRoleIds)),
+      body: JSON.stringify({ ...discordMentionPayload(content, mentionRoleIds), ...(nonce ? { nonce, enforce_nonce: true } : {}) }),
       signal: AbortSignal.timeout(10000),
     });
     if (!r.ok) {
@@ -360,7 +361,7 @@ async function postDiscordEmbed(channelIdOrName, embed, { content } = {}) {
   }
 }
 
-async function postDiscordBot(channelIdOrName, content, { mentionRoleIds } = {}) {
+async function postDiscordBot(channelIdOrName, content, { mentionRoleIds, nonce } = {}) {
   const token = process.env.DISCORD_BOT_TOKEN || "";
   if (!token) return { skipped: "no bot token" };
   let channelId = String(channelIdOrName || "");
@@ -375,7 +376,7 @@ async function postDiscordBot(channelIdOrName, content, { mentionRoleIds } = {})
         Authorization: `Bot ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(discordMentionPayload(content, mentionRoleIds)),
+      body: JSON.stringify({ ...discordMentionPayload(content, mentionRoleIds), ...(nonce ? { nonce, enforce_nonce: true } : {}) }),
       signal: AbortSignal.timeout(10000),
     });
     if (!r.ok) {
@@ -488,17 +489,22 @@ async function maybePostTicketChannelUpdate(db, {
   receiptUrl,
   postChannel = postDiscordBot,
   editCard = editTicketIntakeCard,
+  deliveryMode = "card",
 } = {}) {
   if (!Number.isInteger(Number(ticketNumber))) return { skipped: "no ticket number" };
   if (!String(key || "").trim()) return { skipped: "no update key" };
   const tickets = db.collection("tickets");
   const ticket = await tickets.findOne({ ticketNumber: Number(ticketNumber) });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   const updateKey = String(key).slice(0, 180);
   const now = new Date();
   const existing = (Array.isArray(ticket.publicUpdates) ? ticket.publicUpdates : [])
     .find((entry) => String(entry && entry.key || "") === updateKey);
+  // A final answer must create visible channel activity before closure.
+  deliveryMode = kind === "resolution" ? "reply" : existing?.deliveryMode || deliveryMode;
+  if (!["card", "reply"].includes(deliveryMode)) return { skipped: "invalid delivery mode" };
   const existingStatus = String(existing && existing.delivery && existing.delivery.status || "");
   if (existingStatus === "posted") {
     return { skipped: "already posted", alreadyPosted: true, posted: true, ticketNumber: Number(ticketNumber), key: updateKey };
@@ -539,6 +545,7 @@ async function maybePostTicketChannelUpdate(db, {
           publicUpdates: {
             key: updateKey,
             kind: String(kind || "update").slice(0, 40),
+            deliveryMode,
             message: safeMessage,
             at: now,
             ...(url ? { receiptUrl: url } : {}),
@@ -552,9 +559,9 @@ async function maybePostTicketChannelUpdate(db, {
   if (!updateWasModified(claim)) return { skipped: "already claimed", ticketNumber: Number(ticketNumber), key: updateKey };
 
   const result = ticket.discordChannelId
-    ? ticket.intake && ticket.intake.cardMessageId
+    ? deliveryMode !== "reply" && ticket.intake && ticket.intake.cardMessageId
       ? await editCard(ticket, { kind, message: safeMessage, receiptUrl: url, updateKey })
-      : await postChannel(ticket.discordChannelId, content)
+      : await postChannel(ticket.discordChannelId, content, { nonce: crypto.createHash("sha256").update(`${ticketNumber}:${updateKey}`).digest("hex").slice(0, 24) })
     : { skipped: "no ticket channel" };
   const delivery = playerUpdateDelivery(result, new Date(), attempts);
   const set = {
@@ -592,6 +599,7 @@ async function retryPendingTicketUpdates(db, { limit = 50 } = {}) {
         kind: update.kind,
         message: update.message,
         receiptUrl: update.receiptUrl,
+        deliveryMode: update.deliveryMode || "card",
       }));
     }
   }
@@ -601,6 +609,7 @@ async function retryPendingTicketUpdates(db, { limit = 50 } = {}) {
 async function maybePostTicketResolution(db, { ticketNumber, resolution, by } = {}) {
   const ticket = await db.collection("tickets").findOne({ ticketNumber: Number(ticketNumber) });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
   const receipt = getResolution({ ...ticket, resolution: resolution || ticket.resolution });
   if (!receipt) return { skipped: "no resolution receipt" };
   const receiptUrl = ticketPublicUrl(ticketNumber);
@@ -620,6 +629,7 @@ async function maybePostTicketContextRequest(db, { ticketNumber, contextRequest 
   if (!needed.length) return { skipped: "no missing context" };
   const ticket = await db.collection("tickets").findOne({ ticketNumber: Number(ticketNumber) });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
   // A closed/resolved channel is already complete. The receipt still carries
   // the banner, but a new request in a closed conversation would be confusing
   // and would look like support reopened the report.
@@ -830,6 +840,7 @@ async function maybePostOpsTldrForPr(db, {
 
   const ticket = await db.collection("tickets").findOne({ ticketNumber });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   // Prefer the linked fix session; fall back to any recent running fix for this ticket.
   let fix = ticket.fixSessionId
@@ -979,6 +990,7 @@ async function maybePostOpsFindings(db, {
 
   const ticket = await db.collection("tickets").findOne({ ticketNumber });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   let fix = ticket.fixSessionId
     ? await db.collection("fix_sessions").findOne({ _id: ticket.fixSessionId })
@@ -1061,6 +1073,7 @@ async function maybePostOpsHealRequest(db, {
 
   const ticket = await db.collection("tickets").findOne({ ticketNumber });
   if (!ticket) return { skipped: "ticket not found" };
+  if (ticket.category === "investigation") return { skipped: "private investigation" };
 
   let fix = ticket.fixSessionId
     ? await db.collection("fix_sessions").findOne({ _id: ticket.fixSessionId })

@@ -149,3 +149,11 @@ test("shadow3 does not count closure grace as silence", () => {
   const kinds = shadowReport(data, { now }).anomalies.map((a) => a.kind);
   assert.equal(kinds.includes("silent-ticket"), false);
 });
+
+test("a mirrored owner decision is expected communication, not an unsolicited owner DM", () => {
+ const { outboxFindings } = require("../lib/operator/shadow3");
+ const data = { jobs: {}, decisions: { d: { id: "d", state: "pending" } }, outbox: { "ask:d:owner": { at: 100, deliveredAt: 101, destination: "owner", recipient: "owner", decision: "d", content: "Choose a product direction" } } };
+ assert.equal(outboxFindings(data, { now: 200, since: 0, ownerId: "owner" }).filter(f => f.kind === "owner-dm").length, 0);
+ delete data.outbox["ask:d:owner"].decision;
+ assert.equal(outboxFindings(data, { now: 200, since: 0, ownerId: "owner" }).filter(f => f.kind === "owner-dm").length, 1);
+});

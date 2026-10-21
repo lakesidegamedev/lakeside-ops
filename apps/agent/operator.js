@@ -13,7 +13,8 @@ const { createSandbox } = require("./lib/operator/sandbox");
 const { createPresence } = require("./lib/operator/presence");
 const { createDiscord, createScanHealth } = require("./lib/operator/discord");
 const { createConversation, isQuick } = require("./lib/operator/conversation");
-const { recoverRejectedWrites, retryReadFailure } = require("./lib/operator/recovery");
+const { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure } = require("./lib/operator/recovery");
+const humanInbox = (j) => (j.inbox || []).some((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup)$/.test(String(m.authorId || "")));
 const { LANES, emptyLanes, pickForLanes, laneTimeoutMs, laneClass } = require("./lib/operator/lanes");
 const { createSupportOwner } = require("./lib/operator/supportowner");
 const { createReopenedTickets } = require("./lib/operator/reopened");
@@ -40,9 +41,10 @@ const config = {
   stateDir: env.KEIR_OPERATOR_STATE_DIR || "/var/lib/keir-operator",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
+  ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
   guildId: env.KEIR_GUILD_ID || "1465445442987888743", staffIds: (env.KEIR_SUPPORT_DELEGATES || "565289871799746593").split(",").filter(Boolean),
   scanChannels: (env.KEIR_SCAN_CHANNELS || "1470636730884427857,1483974659929145625,1495932687058206822,1488255716753019171,1488255794628788244,1523477015217443028,1474210643841122499,1490571412040188117").split(",").filter(Boolean),
-  taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000,
+  taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000, liveGraceMs: positive("KEIR_LIVE_GRACE_MINUTES", 120) * 60000,
   maxIntakePerHour: positive("KEIR_MAX_INTAKE_PER_HOUR", 4), maxRounds: positive("KEIR_MAX_TOOL_ROUNDS", 24),
   maxTurnMs: positive("KEIR_MAX_TURN_MINUTES", 15) * 60000, dailyBudget: positive("KEIR_DAILY_BUDGET_USD", 20),
   model: env.KEIR_MODEL || "claude-opus-5-5",
@@ -50,6 +52,7 @@ const config = {
   computerUrl: env.KEIR_COMPUTER_URL || (env.WORKER_TOKEN ? "http://127.0.0.1:9770" : undefined), computerToken: env.KEIR_COMPUTER_TOKEN || env.WORKER_TOKEN,
   voiceProvider: env.KEIR_VOICE_PROVIDER || "agy:gemini-3.8-flash@low",
   quickProvider: env.KEIR_QUICK_PROVIDER || "claude", workerProvider: env.KEIR_WORKER_PROVIDER || "claude",
+  accountAuditEnabled: env.KEIR_ACCOUNT_AUDIT !== "0",
   rolesEnabled: env.KEIR_ROLES_ENABLED === "1", engineeringEnabled: env.KEIR_ENGINEERING === "1", engineeringScoutEnabled: env.KEIR_ENGINEERING_SCOUT === "1",
   engineeringProvider: env.KEIR_ENGINEERING_PROVIDER || "codex:gpt-6.1-sol@low",
   watchkeeperProvider: env.KEIR_WATCHKEEPER_PROVIDER || "codex:gpt-6.1-sol@low",
@@ -75,7 +78,7 @@ const config = {
   skills: env.KEIR_SKILLS !== "0",
   knowledgeCorrections: env.KEIR_KNOWLEDGE_CORRECT === "1",
   knowledgePreparation: env.KEIR_KNOWLEDGE_PREPARE === "1" ? { server: env.KEIR_KNOWLEDGE_SERVER || "ops-knowledge", project: env.KEIR_KNOWLEDGE_PROJECT, timeoutMs: positive("KEIR_KNOWLEDGE_TIMEOUT_MS", 5000) } : undefined,
-  briefFile: path.join(__dirname, "KEIR.md"), repositories: { AHDGame: "/root/projects/AHDGame", "lakeside-operator": env.KEIR_SOURCE_REPO || "/root/projects/lakeside-ops", AHDClient: "/root/projects/AHDClient" },
+  briefFile: path.join(__dirname, "KEIR.md"), coreBriefFile: path.join(__dirname, "KEIR-CORE.md"), coreBrief: env.KEIR_CORE_BRIEF === "1", effectGuard: env.KEIR_EFFECT_GUARD !== "0", leanContext: env.KEIR_LEAN_CONTEXT !== "0", repositories: { AHDGame: "/root/projects/AHDGame", "lakeside-operator": env.KEIR_SOURCE_REPO || "/root/projects/lakeside-ops", AHDClient: "/root/projects/AHDClient" },
   // Every public guild text channel or thread is watched for reports, except
   // ticket channels (their own tasks handle them) and explicit exclusions.
   scanExclude: (env.KEIR_SCAN_EXCLUDE || "").split(",").filter(Boolean),
@@ -106,6 +109,7 @@ const releaseId = (() => { try { return fs.readFileSync(path.join(__dirname, "RE
 const events = openSink(path.join(config.stateDir, "events.db"), { release: releaseId });
 attachSink(ledger, events);
 recoverRejectedWrites(ledger);
+recoverAuthBlocked(ledger);
 // Keir 3.0: support ownership is an explicit ledger fact. Work defers to the
 // legacy supervisor policy as before, and also to any other operator that
 // owns support, except tickets that operator has handed off.
@@ -291,6 +295,9 @@ const watch = createWatch({ ledger, mcp, log, config: { enabled: env.KEIR_WATCH 
   viewPage: (url) => require("./lib/operator/capabilities").viewPage(url), propose: (p) => broker.proposeIncident(p) });
 broker.setWatch(watch);
 const engineering = createEngineering({ ledger, config });
+const accountAudit = require("./lib/operator/account-audit").createAccountAudit({ ledger, mcp, config });
+config.runAccountAudit = options => accountAudit.sweep(options);
+setInterval(() => accountAudit.tick().catch(e => log(`account audit: ${e.message}`)), 60000).unref();
 const roles = createRoles({ ledger, engineering, config, mcp, log, held: (job) => config.supportDeferred(job) ||
   ["staff-owned", "staff-active", "owner-decision", "closure-grace"].includes(admissionHold(job, { now: Date.now(), claimedBy: (id) => ledger.data.channels[id]?.claimedBy })) });
 config.roleSnapshot = () => ({ ...roles.snapshot(), roles: roles.status() });
@@ -411,6 +418,9 @@ async function flushOutbox() {
         entry.tldrDone = true; ledger.save();
       }
       if (ledger.data.control?.stopped && !entry.controlResponse) continue;
+      if (entry.decision && ledger.data.decisions?.[entry.decision]?.state !== "pending") {
+        entry.deliveredAt = Date.now(); entry.skipped = "decision already answered or withdrawn"; ledger.save(); continue;
+      }
       const channelJob = typeof entry.destination === "string" && entry.destination.startsWith("channel:") ? ledger.data.jobs[entry.destination.slice(8)] : null;
       if (channelJob && isAppJob(channelJob)) {
         entry.messageIds = appChannel.deliver(key, entry, channelJob); entry.deliveredChunks = 1; entry.deliveredAt = Date.now(); ledger.save();
@@ -554,7 +564,12 @@ async function scan() {
       try { await reopenedTickets.adopt(n, ch); } catch (e) { log(`reopened ticket ${n}: ${e.message}`); }
     }
     // A ticket adopted from a handoff before its channel was seen gets it now.
-    if (known && !known.channelId) { known.channelId = ch.id; known.source = { ...known.source, channelId: ch.id, channelName: ch.name }; ledger.save(); }
+    if (known && (!known.channelId || (!known.replyChannel && known.channelId === ch.id))) {
+      known.channelId ||= ch.id;
+      known.replyChannel ||= ch.id;
+      known.source = { ...known.source, channelId: ch.id, channelName: ch.name };
+      ledger.save();
+    }
     if (ledger.data.seen[`ticket:${n}`]) continue;
     const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId: ch.id, source: { content: `Open ticket channel #${ch.name} with no Keir task; adopted by the sweep. Read its history and pick it up.`, channelId: ch.id, at: new Date().toISOString() }, deadline: Date.now() + config.taskLifetimeMs });
     ledger.audit("ticket_adopted_by_sweep", { job: job.id, ticket: n }); ledger.save();
@@ -592,7 +607,7 @@ function ensureTicketJob(n) {
   const existing = d.jobs[d.seen[`ticket:${n}`]];
   if (existing) return existing;
   const channelId = Object.entries(d.channels).find(([, c]) => c.ticket === n)?.[0] || null;
-  const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId,
+  const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId, replyChannel: channelId,
     source: { content: `Ticket ${n} handed off by another operator. Read its history and the handoff, then continue it.`, channelId, at: new Date().toISOString() },
     deadline: Date.now() + config.taskLifetimeMs });
   ledger.audit("ticket_adopted_by_handoff", { job: job.id, ticket: n });
@@ -634,6 +649,20 @@ function legacyHandoff() {
   } catch (e) { if (e.code !== "ENOENT") log("legacy handoff: " + e.message); }
 }
 
+// Independent of Keir's own flags: a person's message in a ticket that nobody
+// has read for 30 minutes pages the owner once per stall with the hold that is
+// keeping it, so an unknown stall is seen in half an hour, not hours later
+// (2026-10-19: an owner "close it" sat 2.5 hours behind a held directive).
+function unreadWatchdog(d, now, staffHeld) {
+  for (const j of Object.values(d.jobs)) {
+    if (j.kind !== "ticket" || ["done", "cancelled", "dismissed", "running"].includes(j.state) || j.channelClosed) continue;
+    const oldest = (j.inbox || []).filter((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup|turn-watch)$/.test(String(m.authorId || ""))).map((m) => Date.parse(m.at || m.timestamp || "")).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    if (!oldest || now - oldest < 30 * 60000) continue;
+    const why = broker.supportDirectiveHeld(j) ? "an owner directive is held" : d.channels[j.channelId]?.claimedBy ? "staff claimed it" : config.supportDeferred(j) ? "another coordinator owns support" : staffHeld(j) ? "staff are active in it" : j.ownerDecisionPending ? "an owner decision is pending" : `it is ${j.state}`;
+    ledger.notify(`unread:${j.id}:${oldest}`, "owner", `Ticket ${j.ticket}: a message has been unread for ${Math.round((now - oldest) / 60000)} minutes because ${why}.`);
+  }
+}
+
 function drain() {
   if (stopping) return;
   const d = ledger.data;
@@ -653,7 +682,12 @@ function drain() {
     }
     if (j.role !== "owner" && !["command", "conversation"].includes(j.kind) && j.ticket && !["done", "cancelled"].includes(j.state)) {
       if (d.channels[j.channelId]?.claimedBy) { j.state = "deferred"; j.summary = "Staff owns this ticket; automatic work is deferred."; continue; }
-      if (j.ownerDecisionPending) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; continue; }
+      // A player or staff message still reaches the conversation wake below:
+      // this used to "continue" first, so a ticket held on an owner decision
+      // never answered its player (review 2026-10-19: 1613, 1619, 1625 sat
+      // 5 to 7 hours overnight).
+      if (j.ownerDecisionPending && !(j.kind === "ticket" && !j.channelClosed && humanInbox(j))) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; continue; }
+      if (j.ownerDecisionPending) j.state = "blocked";
     }
     if (j.resolutionSubmitted && !j.resolved && !["done", "cancelled", "blocked"].includes(j.state)) {
       if (now - j.resolutionSubmittedAt > 20 * 60000) {
@@ -678,7 +712,7 @@ function drain() {
     // Keir 5.6 (owner, 2026-10-16): an open owner decision holds writes and
     // closure, never the conversation. A player or staff message still wakes
     // the ticket so it gets an answer; supportAuthority keeps effects held.
-    else if (j.state === "blocked" && j.ownerDecisionPending && j.kind === "ticket" && !j.channelClosed && (j.inbox || []).some((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup)$/.test(String(m.authorId || "")))) { j.state = "queued"; ledger.audit("requeued_for_conversation", { job: j.id, ticket: j.ticket || null }); }
+    else if (j.state === "blocked" && j.ownerDecisionPending && j.kind === "ticket" && !j.channelClosed && humanInbox(j)) { j.state = "queued"; ledger.audit("requeued_for_conversation", { job: j.id, ticket: j.ticket || null }); }
     const expiry = require("./lib/operator/deadline").expireDeadline(j, now, { lifetimeMs: config.taskLifetimeMs });
     if (expiry === "extended") ledger.audit("deadline_extended", { job: j.id, ticket: j.ticket || null, until: j.deadline });
     else if (expiry === "blocked") ledger.notify(`deadline:${j.id}`, "owner", `Task ${j.id}: ${j.summary}`);
@@ -687,6 +721,7 @@ function drain() {
   // Keir 3.0 admission: reserved conversation and owner capacity, aging so
   // nothing starves, one attempt per work record, support preference, and
   // the holds above (support ownership, staff claims, owner decisions).
+  unreadWatchdog(d, now, staffHeld);
   const picks = pickForLanes(Object.values(d.jobs).filter((j) => !broker.supportDirectiveHeld(j)), active, { now,
     supportDeferred: (j) => config.supportDeferred(j) || config.engineeringEnabled && j.kind === "finding" && !j.operatorRole && Object.values(d.watch?.findings || {}).some((f) => f.jobId === j.id && !f.correlatedWith), claimedBy: (channelId) => d.channels[channelId]?.claimedBy });
   for (const { lane, job } of picks) {
@@ -702,7 +737,11 @@ function drain() {
       // unsettled receipt is effect recovery's job (a restart blocked ticket 1578).
       const startedHere = Object.values(job.effects).some((e) => e.state === "started" && (e.at || 0) >= startedAt);
       if (controller.signal.aborted && (d.paused || config.supportDeferred(job) || stopping || staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy)) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(Date.now() + 60000, rootJob(job, d.jobs).staffActiveUntil || 0); }
-      else if (retryReadFailure(job, e)) { ledger.audit("transient_retry", {job:job.id, attempt:job.transientFailures}); }
+      else if (retryReadFailure(job, e)) {
+        ledger.audit("transient_retry", {job:job.id, attempt:job.transientFailures, emptyWaits: job.emptyWaits});
+        // One owner alert an hour while the provider answers with nothing.
+        if (/^model request failed: empty activation/.test(e.message)) ledger.notify(`empty-provider:${Math.floor(Date.now() / 3600000)}`, "owner", `The model provider is returning empty replies (task ${job.id}). Tasks retry every 15 minutes; check the provider login or quota.`);
+      }
       else {
         job.state = "blocked"; job.summary = redactSecrets(e.message);
         ledger.notify(`error:${job.id}:${job.rounds}`, "owner", `Task ${job.id} stopped: ${job.summary}`);
@@ -768,6 +807,15 @@ const server = http.createServer(async (req, res) => {
     try {const b=JSON.parse(raw);const job=ledger.data.jobs[b.sourceTaskId];if(!job)throw new Error("unknown source task");
       const receipt=await broker.supportDirective(job,b);drain();return reply(200,receipt);
     } catch(e) {return reply(409,{error:String(e.message).slice(0,300)});}
+  }
+  if (req.url === "/v5/accounts/audit" && req.method === "GET") return reply(200, accountAudit.status());
+  if (req.url === "/v5/accounts/audit" && req.method === "POST") {
+    let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 1000) return reply(413, { error: "too large" }); }
+    try {
+      const input = JSON.parse(raw || "{}");
+      if (Object.keys(input).some(k => k !== "dryRun") || input.dryRun !== undefined && typeof input.dryRun !== "boolean") return reply(400, { error: "Only boolean dryRun is accepted" });
+      return reply(200, await accountAudit.sweep(input));
+    } catch (e) { return reply(409, { error: String(e.message).slice(0, 200) }); }
   }
   if (req.url === "/v5/roles/status" && req.method === "GET") return reply(200, roles.status());
   if (req.url === "/v5/watchkeeper/verify" && req.method === "POST") {

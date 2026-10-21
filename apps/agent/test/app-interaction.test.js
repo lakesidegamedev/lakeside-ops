@@ -193,3 +193,11 @@ test("a pending question whose task is gone expires instead of asking the owner 
   const listed = q.list("main");
   assert.equal(listed[0].state, "expired");
 });
+
+test("asking permission to explain cannot create a Needs you panel", async t => {
+  const { ledger, app, broker } = fixture(t);
+  const receipt = app.authenticatedPost("Explain the ticket finding", undefined, "main", { mode: "new" });
+  const job = ledger.data.jobs[receipt.jobId]; job.state = "running";
+  await assert.rejects(broker.tool(job, "present_choices", { title: "Explain?", questions: [{ prompt: "Would you like me to explain the result?", options: [{ label: "Yes" }, { label: "Later" }] }] }), /No owner decision/);
+  assert.equal(Object.values(ledger.data.appThread.questions || {}).filter(q => q.state === "pending").length, 0);
+});

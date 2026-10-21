@@ -154,7 +154,7 @@ test("blocked on the owner: one notice, then silence until the decision or the p
 test("monologue cap: three Keir posts with no human reply, then the card only", async () => {
   const f = fixture();
   for (const m of ["The budget check is being investigated against your corporation.", "The mismatch is between two revenue figures the page and the save use.", "Confirmed: the save check reads an older revenue figure than the page."]) {
-    assert.equal((await say(f, m)).published, true); f.tick(20 * 60000);
+    f.tick(20 * 60000); assert.equal((await say(f, m)).published, true);
   }
   assert.equal(f.ledger.data.monologue[1522].count, 3);
   await assert.rejects(say(f, "Still looking at the save path for the earlier revenue figure."), /posted 3 times/);
@@ -298,4 +298,38 @@ test("Keir introduces itself once per player, welcomes returning players with th
   assert.equal(await run({ uid: f.config.ownerId, prior: 3 }), "The fund buys only Austrian bonds because candidates are sorted by country code.", "staff: no introduction, the reply is the first post");
   assert.match(await run({ uid: "888888888888888888", prior: 0, fail: true }), /^Hi, I'm Keir/, "lookup failure falls back to the introduction");
   assert.equal(await run({ uid: "888888888888888888", prior: 10, introduced: true, answered: true }), "The fund buys only Austrian bonds because candidates are sorted by country code.", "a ticket someone already answered gets no opening: the reply is the next post");
+});
+
+test("a waiting developer sibling cannot silence a newer player question", async () => {
+  const f = fixture();
+  f.ledger.createJob("cmd:old", { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 1522,
+    source: { authorId: f.config.ownerId, content: "Are you there?", at: new Date(1000).toISOString() } }).state = "waiting";
+  f.job.observedPlayerAt = 4000;
+  assert.equal((await say(f, "Your open buy order uses the purchase allowance. Cancel it before trying a new purchase.")).published, true);
+});
+
+test("a quiet interval permits a new useful answer after three earlier updates", async () => {
+  const f = fixture();
+  for (const m of ["The price limit is being investigated.", "The cost calculation is different on the bid screen.", "The tender ceiling needs to include those costs."]) {
+    await say(f, m); f.tick(20 * 60000);
+  }
+  assert.equal((await say(f, "You can now submit your bid from the contract page.")).published, true);
+});
+
+test("a current developer request retains its reply task", async () => {
+  const f = fixture();
+  f.ledger.createJob("cmd:new", { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 1522,
+    source: { authorId: f.config.ownerId, content: "Investigate this", at: new Date(4500).toISOString() } }).state = "running";
+  f.job.observedPlayerAt = 4000;
+  await assert.rejects(say(f, "I have more information about the purchase."), /developer's own task/);
+});
+
+// Review 2026-10-19: 1602's player was sent "Let me discover the tools I have
+// access to", the model narrating its own start-up.
+test("tool-discovery narration is runtime talk; ordinary tool words are not", () => {
+  const { runtimeTalk } = require("../lib/operator/playercopy");
+  assert.ok(runtimeTalk("I'll start by understanding the available tools and then answer the question."));
+  assert.ok(runtimeTalk("Let me discover the tools I have access to."));
+  assert.equal(runtimeTalk("Check the tools menu on your corporation page."), null);
+  assert.equal(runtimeTalk("I'll start by checking your mine's sales."), null);
 });

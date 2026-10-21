@@ -1,0 +1,11 @@
+{
+  "contractId": "RC-5531",
+  "title": "Pennine rail tender",
+  "contractor": "Pennine Rail Co",
+  "currency": "USD",
+  "lotsOrdered": 5,
+  "valuePerLot": 250000,
+  "payment": { "amount": 1250000, "releasedWhen": "all 5 lots delivered", "paidSoFar": 0 },
+  "deliveryDeadlineTurn": 146,
+  "currentTurn": 140
+}

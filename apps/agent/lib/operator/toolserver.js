@@ -7,7 +7,7 @@ const crypto = require("node:crypto");
 const {calculationInputSchema,prepareStructuredSubmission}=require("./structured-submission");
 const { redactSecrets } = require("../text");
 
-function createToolServer({ broker, normalizeImage, port = 0 }) {
+function createToolServer({ broker, normalizeImage, port = 0, effectGuard = false }) {
   const sessions = new Map();
   const server = http.createServer(async (req, res) => {
     const send = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(body === undefined ? "" : JSON.stringify(body)); };
@@ -32,8 +32,16 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
     if (msg.method === "ping") return ok({});
     if (msg.method === "tools/list") return ok({ tools: session.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.input_schema })) });
     if (msg.method !== "tools/call") return send(200, { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
-    const { name, arguments: input = {} } = msg.params || {};
-    if (!session.tools.some((t) => t.name === name)) return ok({ isError: true, content: [{ type: "text", text: `tool ${name} is not available in this task` }] });
+    let { name, arguments: input = {} } = msg.params || {};
+    const indirect = name === "call_tool" && session.deferred;
+    if (indirect) {
+      const target = session.deferred.availableTools.find(t => t.name === input?.name);
+      if (!target || !session.tools.some(t => t.name === "call_tool")) return ok({ isError: true, content: [{ type: "text", text: "Tool is outside this conversation's original grant" }] });
+      try { require("./broker").validateArguments(input.args, target.input_schema); }
+      catch (error) { return ok({ isError: true, content: [{ type: "text", text: error.message }] }); }
+      name = target.name; input = input.args;
+    }
+    if (!(indirect ? session.deferred.availableTools : session.tools).some((t) => t.name === name)) return ok({ isError: true, content: [{ type: "text", text: `tool ${name} is not available in this task` }] });
     const finishingCall=name === "finish" || name === "submit_result" || name === "retry_result" || name === "finish_patch" || name === "edit_verify" && input.complete === true;
     if (session.completion || session.finishing || finishingCall && session.pending) return ok({ isError: true, content: [{ type: "text", text: "Activation is finished or another tool is still running; finish only after all tool results are verified." }] });
     session.pending++;
@@ -49,15 +57,32 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
         submissionInput={result:draft.result,summary:draft.summary,calculations:input.calculations};
       }else if(submission&&input.result!==undefined)delete session.submissionDraft;
       if(submission&&submissionInput.result===undefined)throw new Error('submit_result requires result matching the advertised task schema'+(session.job.resultSchema?.required?.length?'; required fields: '+session.job.resultSchema.required.join(', '):''));
+      // Deliverable gate: a task that names required files cannot finish done without them.
+      if((name==='finish'&&input?.state==='done'||submission)&&session.job.requiredFiles?.length){
+        for(const file of session.job.requiredFiles){
+          const probe=await broker.tool(session.job,'shell',{command:'cd repo && node -e '+JSON.stringify("JSON.parse(require('fs').readFileSync("+JSON.stringify(file)+",'utf8'));console.log('ok')")},session.signal).catch(e=>({output:String(e.message)}));
+          if(!/\bok\b/.test(String(probe?.output??probe?.stdout??JSON.stringify(probe))))throw new Error('Not finished: the task requires '+file+' in the repository root as valid JSON, and it is missing or invalid. Write it (in one piece; keep it under 12 KB), then finish.');
+        }
+      }
+      if(name==='shell'&&(effectGuard||session.job.submitGates?.effects)){const refusal=require('./submitgates').effectRefusal(input?.command);if(refusal)throw new Error(refusal);}
       const prepared=submission?await prepareStructuredSubmission(session.job,submissionInput,{allowCalculations:session.tools.some(tool=>tool.name==='calculate'),calculate:async steps=>(await broker.tool(session.job,'calculate',{steps},session.signal)).steps}):null;
+      if(submission){if(prepared?.calculations)require('./submitgates').remember(session,JSON.stringify(prepared.calculations));const refusal=require('./submitgates').check(session,prepared?.result??submissionInput.result);if(refusal){if(prepared?.calculations)session.submissionDraft=undefined;throw new Error(refusal);}}
       const deliverable=prepared?.result??input.result,summary=prepared?.summary??input.summary;
       const submissionSummary=(typeof summary==='string'&&summary.trim()?summary:typeof deliverable?.answer==='string'&&deliverable.answer.trim()?deliverable.answer:'Structured result submitted.').slice(0,4000);
       const effectiveInput=submission?{state:'done',result:deliverable,summary:submissionSummary}:input;
-      const result = await broker.tool(session.job, submission?'finish':name, effectiveInput, session.signal);
+      if (session.signal?.aborted) throw new Error("activation aborted");
+      let result;
+      if (name === "load_context" && session.deferred) {
+        require("./broker").validateArguments(input, session.tools.find(t => t.name === "load_context").input_schema);
+        const callId = require("./toolactivity").start(session.job, "load_context", input);
+        try { result = await session.deferred.load(input); require("./toolactivity").finish(session.job, callId, true, 0); }
+        catch (error) { require("./toolactivity").finish(session.job, callId, false, 0); throw error; }
+      } else result = await broker.tool(session.job, submission?'finish':name, effectiveInput, session.signal);
       const images = result?.image ? [result.image] : result?._images || [];
       const safe = result && typeof result === "object" ? { ...result } : result;
       if (safe && typeof safe === "object") { delete safe._images; delete safe.image; }
       const content = [{ type: "text", text: redactSecrets(JSON.stringify(safe ?? null)).slice(0, 22000) }];
+      require("./submitgates").remember(session, content[0].text);
       for (const source of images) {
         try { const img = normalizeImage(source); content.push({ type: "image", data: img.data, mimeType: img.media_type }); }
         catch (e) { content.push({ type: "text", text: e.message }); }
@@ -92,7 +117,7 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
   });
   const ready = new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve(server.address().port)));
   server.unref();
-  async function open(job, tools, signal) {
+  async function open(job, tools, signal, deferred = null) {
     const calculationSteps=tools.find(tool=>tool.name==='calculate')?.input_schema?.properties?.steps;
     if (job.resultSchema&&tools.some(tool=>tool.name==='finish')) tools = tools.filter(tool=>tool.name!=='submit_result').flatMap(tool => {
       if(tool.name!=='finish')return[tool];
@@ -103,7 +128,7 @@ function createToolServer({ broker, normalizeImage, port = 0 }) {
           input_schema:{type:'object',properties:{result:calculationSteps?calculationInputSchema(job.resultSchema):job.resultSchema,summary:{type:'string',maxLength:4000},...(calculationSteps?{calculations:calculationSteps}:{})},required:['result'],additionalProperties:false}},...(calculationSteps?[{name:'retry_result',description:'Retry a previously rejected calculated report using its returned draftId and corrected calculations. The full report and summary are retained for this activation; do not resend them. Keep every calculation ID referenced by the retained report. A new submit_result replaces the previous draft. The original result schema, calculator authority, completion and approval guards still apply. No draft can be reused after accepted completion or in another activation.',input_schema:{type:'object',properties:{draftId:{type:'string',pattern:'^[a-f0-9]{32}$'},calculations:calculationSteps},required:['draftId','calculations'],additionalProperties:false}}]:[])];
     });
     const token = crypto.randomBytes(24).toString("hex");
-    const session = { job, tools, signal, calls: 0, pending: 0, finishing: false, waiters: new Set() };
+    const session = { job, tools, signal, deferred, calls: 0, pending: 0, finishing: false, waiters: new Set() };
     sessions.set(token, session);
     const url = `http://127.0.0.1:${await ready}/mcp/${token}`;
     return { url, completionUrl: url + "/completion", tools, session, close: () => { sessions.delete(token); for (const waiter of session.waiters) { waiter.writeHead(410); waiter.end(); } session.waiters.clear(); } };

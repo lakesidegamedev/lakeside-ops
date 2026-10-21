@@ -37,7 +37,7 @@ function playerLeak(text, { strict = true } = {}) {
 
 // Runtime trouble is Keir's business, never the player's (ticket 1507:
 // "I hit an error and stopped" then "ignore the error message above").
-const RUNTIME_TALK = /\bI hit an error\b|\bignore the error\b|\berror message above\b|\bmy (?:previous|last) (?:run|session|activation)\b|\bthis session\b|\bactivation\b|\bturn limit\b|\btimed out on my end\b|\bquota\b/i;
+const RUNTIME_TALK = /\bI hit an error\b|\bignore the error\b|\berror message above\b|\bmy (?:previous|last) (?:run|session|activation)\b|\bthis session\b|\bactivation\b|\bturn limit\b|\btimed out on my end\b|\bquota\b|\b(?:the |my )?(?:available )?tools (?:I have|available to me|I can use)\b|\b(?:discover(?:ing)?|understand(?:ing)?) (?:the |my )?(?:available )?tools\b/i;
 function runtimeTalk(text) { const m = RUNTIME_TALK.exec(String(text || "")); return m ? m[0] : null; }
 
 // A player is addressed by their Discord username or display name exactly.

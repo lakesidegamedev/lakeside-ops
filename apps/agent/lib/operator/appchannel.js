@@ -83,10 +83,11 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
       throw Object.assign(new Error("the task is no longer available to steer"), { status: 409 });
     const voice = authenticated && options.voice === true;
     const statusRequest = authenticated && readGameStatus && !attachments.length && mode !== "steer" && require("./appstatus").isGameStatusQuery(content);
-    const quick = voice || statusRequest || quickQuestion(content);
+    const auditRequest = authenticated && /^\/audit(?: preview)?$/i.test(content) && config.runAccountAudit && !attachments.length && mode !== "steer";
+    const quick = voice || auditRequest || statusRequest || quickQuestion(content);
     const connectionCheck = authenticated && quick && !attachments.length && mode !== "steer" && /^(?:test|ping)[.!?]*$/i.test(content);
     if (voice && mode === "steer") throw Object.assign(new Error("Send a new voice turn rather than steering a task"), { status: 400 });
-    const live = voice || mode === "new" || connectionCheck || statusRequest ? null : mode === "steer" ? target : Object.values(d.jobs).find((j) => isAppJob(j) && !j.appWatch && (j.appThread || "main") === thread && (!authenticated || musePolicy.origin(d, j).valid) && Boolean(j.voiceMode) === voice && isQuick(j) === quick && !CLOSED.includes(j.state));
+    const live = voice || mode === "new" || connectionCheck || auditRequest || statusRequest ? null : mode === "steer" ? target : Object.values(d.jobs).find((j) => isAppJob(j) && !j.appWatch && (j.appThread || "main") === thread && (!authenticated || musePolicy.origin(d, j).valid) && Boolean(j.voiceMode) === voice && isQuick(j) === quick && !CLOSED.includes(j.state));
     if ((live?.appAttachments?.length || 0) + attachments.length > 120) throw Object.assign(new Error("Start a separate task to add more files"), { status: 413 });
     attachments = attachments.map((a, i) => ({ ...a, index: (live?.appAttachments?.length || 0) + i }));
     const voiceRoute = voice ? require("./appmodels").voiceRoute(config, d, thread) : null;
@@ -116,6 +117,18 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
       const reply = append(d, { role: "keir", text: job.summary, jobId: job.id, thread, ...(voice ? { voice: true, provider: job.provider } : {}) }, now()); record(reply);
       ledger.audit("app_connection_check", { job: job.id, message: message.id }); ledger.save(); return { message, jobId: job.id };
     }
+    if (auditRequest) {
+      job.state = "running"; job.provider = { runner: "local", model: "account-audit", lane: "quick" };
+      ledger.save();
+      Promise.resolve().then(() => config.runAccountAudit({ dryRun: / preview$/i.test(content) })).then(report => {
+        job.state = "done"; job.summary = require("./account-audit").reportText(report); job.updatedAt = now();
+        deliver(`finish:${job.id}`, { content: job.summary }, job); ledger.save();
+      }).catch(error => {
+        job.state = "blocked"; job.summary = `Account audit could not complete: ${error.message}`; job.updatedAt = now();
+        deliver(`error-reply:${job.id}`, { content: job.summary }, job); ledger.save();
+      });
+      return { message, jobId: job.id };
+    }
     if (statusRequest) {
       job.state = "running"; job.provider = { runner: "local", model: "live-game-status", lane: "quick" };
       ledger.audit("app_game_status", { job: job.id }); ledger.save();
@@ -143,7 +156,15 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     const chart = entry.chart && entry.files?.[0] && /^chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(path.basename(entry.files[0].path)) ? path.basename(entry.files[0].path) : undefined;
     const cards = agent()?.cardsFor(job) || [];
     const voiceRoot = rootOf(job)?.voiceMode ? rootOf(job) : job.voiceMode ? job : null;
-    const message = append(d, { role: "keir", text, ...(entry.voiceProgress === true ? { voiceProgress: true } : {}), jobId: voiceRoot?.id || job.id, ...(voiceRoot && voiceRoot.id !== job.id ? { taskId: job.id } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}), ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), thread: appThread(job), ...(job.appWatch ? { watch: job.appWatch } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}) }, now());
+    if (!job.firstReplyAt && /^(channel-reply|finish):/.test(key) && entry.voiceProgress !== true) {
+      job.firstReplyAt = now();
+      const root = require("./appcontrols").rootOf(d, job) || job;
+      const firstReplyMs = Math.max(0, now() - (root.at || job.at || now()));
+      if (job.contextBudget) job.contextBudget.firstReplyMs = firstReplyMs;
+      ledger.audit("chat_delivery", { job: job.id, firstReplyMs, queueMs: Math.max(0, now() - (entry.at || now())) });
+    }
+    const activity = require("./toolactivity").forReply(job);
+    const message = append(d, { role: "keir", text, ...(activity.length ? { activity } : {}), ...(entry.voiceProgress === true ? { voiceProgress: true } : {}), jobId: voiceRoot?.id || job.id, ...(voiceRoot && voiceRoot.id !== job.id ? { taskId: job.id } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}), ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), thread: appThread(job), ...(job.appWatch ? { watch: job.appWatch } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}) }, now());
     record(message);
     if (/^(channel-reply|finish|error-reply):/.test(key)) { clearStatus(d, job.id); delete job.progressMessageId; }
     return [message.id];
@@ -156,7 +177,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     for (const id of Object.keys(t.status)) if (!d.jobs[id] || CLOSED.includes(d.jobs[id].state)) delete t.status[id];
     const jobs = Object.values(d.jobs).filter((j) => appJob(j) && !CLOSED.includes(j.state));
     const inThread = (x) => !thread || (x || "main") === thread;
-    const tasks = jobs.filter((j) => inThread(appThread(j))).map((j) => ({ id: j.id, kind: j.kind, state: j.state, status: t.status[j.id]?.text || null, at: j.at, thread: appThread(j), title: String(j.codingParent ? `${j.investigation ? "Investigation" : "Coding"}: ${d.jobs[j.codingParent]?.source?.content || "Delegated work"}` : j.source?.content || "Task").slice(0, 100), overrides: j.appOverrides || {}, provider: j.provider ? { ...j.provider, effort: j.effort?.effort || j.provider.effort || null } : null, skills: j.activeSkills || [], model: j.provider?.model || null, modelRoute: j.provider?.route || "auto", steering: Boolean(j.appSteering), computer: j.appComputer || null, blocker: j.ownerMuseBlocker || null, approvals: pendingDecisions().filter(x => x.jobId === j.id) }));
+    const tasks = jobs.filter((j) => inThread(appThread(j))).map((j) => ({ id: j.id, kind: j.kind, state: j.state, status: t.status[j.id]?.text || null, at: j.at, thread: appThread(j), title: String(j.codingParent ? `${j.investigation ? "Investigation" : "Coding"}: ${d.jobs[j.codingParent]?.source?.content || "Delegated work"}` : j.source?.content || "Task").slice(0, 100), overrides: j.appOverrides || {}, provider: j.provider ? { ...j.provider, effort: j.effort?.effort || j.provider.effort || null } : null, skills: j.activeSkills || [], live: require("./toolactivity").pending(j), contextBudget: j.contextBudget || null, model: j.provider?.model || null, modelRoute: j.provider?.route || "auto", steering: Boolean(j.appSteering), computer: j.appComputer || null, blocker: j.ownerMuseBlocker || null, approvals: pendingDecisions().filter(x => x.jobId === j.id) }));
     // The working-now board covers all of Keir's work, not only app tasks. It is
     // computed on the update tick; only its content, not its clock, changes the version.
     const b = t.updates?.board || null;

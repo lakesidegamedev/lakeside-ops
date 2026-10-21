@@ -12,6 +12,10 @@ const RATES = {
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5, cacheWrite1h: 8, source: claudeSource },
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5, cacheWrite1h: 4, source: claudeSource },
   "gemini-3.8-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.75, source: geminiSource },
+  // DeepSeek bills peak and off-peak rates (off-peak is half). Peak is used as
+  // the standard scenario, so an estimate never understates a peak-hour call.
+  // No cache-write charge: a cache miss is already priced at the miss rate.
+  "deepseek-flash": { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0, verified: "2026-10-18", source: "https://api-docs.deepseek.com/quick_start/pricing" },
 };
 const count = n => Number.isFinite(n) && n >= 0;
 function ratesFor(model, at) {
@@ -42,7 +46,7 @@ function estimate(row) {
   const maxWriteCost = !split && r.cacheWrite1h ? write * r.cacheWrite1h : writeCost;
   const upperUsd = r.longContext ? (inputCost * 2 + t.output * r.output * 1.5) / 1e6
     : (input * r.input + read * r.cacheRead + maxWriteCost + t.output * r.output) / 1e6;
-  return { status: "estimated", usd, upperUsd, source: r.source, verifiedAt: VERIFIED };
+  return { status: "estimated", usd, upperUsd, source: r.source, verifiedAt: r.verified || VERIFIED };
 }
 function empty() {
   return { activations: 0, measuredActivations: 0, pricedActivations: 0, durationMs: 0,
@@ -82,7 +86,7 @@ function usageReport(rows, { since = Date.now() - 86400000, until = Date.now() }
   }
   return { since: new Date(since).toISOString(), until: new Date(until).toISOString(),
     pricing: { verifiedAt: VERIFIED, currency: "USD", basis: "Standard text-token API-equivalent scenario, not subscription charges", actualBilledUsd: null,
-      assumptions: ["Input totals include cached input for Codex and Gemini; Claude input excludes cache reads and writes. Do not add cacheRead to inclusive input.",
+      assumptions: ["Input totals include cached input for Codex and Gemini; Claude and DeepSeek input excludes cache reads and writes. Do not add cacheRead to inclusive input.",
         "USD covers only priced activations. Missing usage and unknown models are excluded, never treated as free.",
         "Lower scenario uses standard short-context rates and 5m cache writes. Upper scenario uses all-long-context OpenAI rates or 1h Claude writes where TTL is missing.",
         "Tier, regional premiums, tools, audio and cache storage are excluded. Activations ending in the window are counted in full; in-flight usage is not yet available."], rates: RATES },

@@ -1,0 +1,12 @@
+{
+  "corporationId": "corp-bench-0142",
+  "sector": "Shipbuilding",
+  "location": "Clydeside, Scotland",
+  "turn": 42,
+  "reportingCurrency": "USD",
+  "reportingNote": "Sector profit and loss is reported in the world anchor currency (USD), for one turn only.",
+  "revenue": 235500,
+  "inputCosts": 151200,
+  "wages": 61800,
+  "netProfit": 22500
+}

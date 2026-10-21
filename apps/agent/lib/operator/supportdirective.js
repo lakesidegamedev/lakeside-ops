@@ -1,4 +1,5 @@
 "use strict";
+const SOFT_WAITS = ["developer_reply", "player_reply"];
 // Owner guidance crosses surfaces as a durable inbox delivery, never as new
 // approval authority. The original owner message and immutable action IDs stay
 // authoritative; a model's paraphrase cannot approve an external effect.
@@ -8,7 +9,7 @@ const { isAppJob } = require("./appchannel");
 const { ticketOf } = require("./workrecord");
 const { ticketClaim } = require("./ticketClaim");
 const CLOSED = ["closed", "resolved", "merged"];
-const categoryOf = (category) => ["moderation", "incident", "bug", "suggestion"].includes(category) ? category : "mechanics";
+const categoryOf = (category) => ["moderation", "investigation", "incident", "bug", "suggestion"].includes(category) ? category : "mechanics";
 function createSupportDirectives({ ledger, config, mcp, discord, now = () => Date.now() }) {
  const d = ledger.data;
  let flight = Promise.resolve();
@@ -45,8 +46,11 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
  function blockers(job, ticket) {
   const out = [];
   if (d.paused) out.push("paused");
-  if (["moderation", "incident"].includes(d.channels[job.channelId]?.category) && !(d.channels[job.channelId]?.ownerDirectedAt && !d.channels[job.channelId]?.claimedBy)) out.push("staff-category");
-  if (job.resolutionReadyAt) out.push("closure-grace");
+  if (["moderation", "investigation", "incident"].includes(d.channels[job.channelId]?.category) && !(d.channels[job.channelId]?.ownerDirectedAt && !d.channels[job.channelId]?.claimedBy)) out.push("staff-category");
+  // Closure grace and a wait for the player are Keir's own soft waits, not
+  // holds on the owner: an owner "close it" was held behind them for 2.5
+  // hours on 1615 and 1622 (2026-10-19), and a held directive also keeps the
+  // ticket out of scheduling.
   if (job.channelClosed || job.resolved || CLOSED.includes(ticket.status)) out.push("closed-ticket");
   const reason = hold(job,{now:now(),supportDeferred:config.supportDeferred || false,claimedBy:(id)=>d.channels[id]?.claimedBy});
   if (reason) out.push(reason);
@@ -54,7 +58,7 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
   if (Object.values(job.effects || {}).some((e)=>e.state === "started")) out.push("uncertain-effect");
   if (Object.values(d.decisions || {}).some((x)=>x.jobId === job.id && x.state === "pending")) out.push("pending-decision");
   if (Object.values(d.actions || {}).some((x)=>x.jobId === job.id && ["pending","executing"].includes(x.state))) out.push("pending-action");
-  if (job.waitingFor && job.waitingFor.kind !== "developer_reply") out.push(job.waitingFor.kind);
+  if (job.waitingFor && !SOFT_WAITS.includes(job.waitingFor.kind)) out.push(job.waitingFor.kind);
   return [...new Set(out)];
  }
  function recipient(input, number, channelId) {
@@ -110,7 +114,7 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
   if (prior) {
    prior.remainingBlockers=remainingBlockers;prior.category=ticket.category;
    if (!remainingBlockers.length && !prior.incorporatedAt && (target.inbox || []).some((r)=>r.directiveId === id)) {
-    if (target.waitingFor?.kind === "developer_reply") delete target.waitingFor;
+    if (SOFT_WAITS.includes(target.waitingFor?.kind)) delete target.waitingFor;
     if (target.state !== "running") {target.state="queued";target.wakeAt=0;}
     prior.outcome=target.state === "running" ? "pending" : "woken";
    }
@@ -123,8 +127,14 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
   const row = {directiveId:id,authorId:config.ownerId,role:"owner",at:new Date(now()).toISOString(),sourceMessageId:message.id,sourceTaskId:job.id,
    content:`Owner instruction from the Ops app (message ${message.id}):\n${message.text}\n${input.context ? `Routing context (not approval authority): ${String(input.context).slice(0,2000)}\n` : ""}Verify the current ticket and act under existing holds and approval IDs. This delivery grants no external-action approval.`,approvalReferences:approvals};
   (target.inbox ||= []).push(row);
+  // The owner asking to close lifts the owner's own earlier closure hold
+  // (2026-10-19: 1615 refused the owner's "close it" because of a hold an
+  // earlier owner follow-up had set).
+  if (target.ownerClosureHold && /\b(?:close|resolve)\b/i.test(String(message.text || "")) && !/\b(?:don'?t|do not|not yet|keep (?:it )?open)\b/i.test(String(message.text || ""))) {
+   ledger.audit("owner_closure_hold_lifted",{job:target.id,ticket:number,directive:id}); delete target.ownerClosureHold;
+  }
   if (!remainingBlockers.length) {
-   if (target.waitingFor?.kind === "developer_reply") delete target.waitingFor;
+   if (SOFT_WAITS.includes(target.waitingFor?.kind)) delete target.waitingFor;
    if (target.state !== "running") {target.state="queued"; target.wakeAt=0;}
   }
   const outcome = remainingBlockers.length ? "held" : target.state === "running" ? "pending" : created ? "created" : previousState === "queued" ? "reused" : "woken";
@@ -170,7 +180,7 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
    const remaining=blockers(job,{status:"open"});
    if (JSON.stringify(receipt.remainingBlockers) !== JSON.stringify(remaining)) {receipt.remainingBlockers=remaining;mirror(receipt);ledger.save();}
    if (!remaining.length) {
-    if (job.waitingFor?.kind === "developer_reply") delete job.waitingFor;
+    if (SOFT_WAITS.includes(job.waitingFor?.kind)) delete job.waitingFor;
     if (job.state !== "running") {job.state="queued";job.wakeAt=0;}
     receipt.state=job.state;receipt.outcome=job.state === "running" ? "pending" : "woken";receipt.releasedAt=now();
     mirror(receipt);ledger.audit("support_directive_released",{directive:receipt.id,job:job.id});ledger.save();

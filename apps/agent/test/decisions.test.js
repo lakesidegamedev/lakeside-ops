@@ -133,3 +133,59 @@ test("a proposal replaced from the app removes its obsolete Discord approval car
   assert.ok(t.messages["old-message"].deleted);
   assert.equal(x.closedOut, true);
 });
+
+test("routine explanation requests do not create approval blockers", () => {
+  const t = setup();
+  for (const question of ["May I explain the result?", "Ticket 1615: Should I explain why the panels differ?", "Do you want me to investigate this?", "Permission to post an update?"]) {
+    assert.throws(() => openDecision(t.ledger, t.config, { jobId: "j1", question }), /No owner decision/);
+  }
+  assert.equal(Object.keys(t.data.decisions).length, 0);
+  assert.equal(Object.keys(t.data.outbox).length, 0);
+});
+
+test("app decision delivery retains the exact pending action without sending an owner DM", async () => {
+  const t = setup(); t.config.ownerDecisionChannel = "app";
+  t.data.actions.a1.expiresAt = Date.now() + 86400000;
+  const x = openDecision(t.ledger, t.config, { jobId: "j1", actionId: "a1", question: "Credit the exact missing grant" });
+  assert.equal(x.state, "pending"); assert.equal(x.actionId, "a1");
+  assert.equal(Object.keys(t.data.outbox).length, 0);
+  assert.equal(t.data.actions.a1.state, "pending");
+  await t.decisions.applyAuthenticatedApp(x, "approve", OWNER);
+  assert.equal(t.data.actions.a1.state, "approved");
+});
+
+test("the first app or Discord answer wins and a queued copy is cancelled", async () => {
+  const t = setup();
+  const x = openDecision(t.ledger, t.config, { jobId: "j1", actionId: "a1", question: "Approve exact action" });
+  await t.decisions.applyAuthenticatedApp(x, "approve", OWNER);
+  assert.equal(x.state, "approve");
+  assert.ok(Object.values(t.data.outbox).every(o => o.deliveredAt && o.skipped));
+  assert.throws(() => t.decisions.apply(x, "reject", OWNER), /already answered|stale/);
+  assert.equal(t.data.actions.a1.state, "approved");
+});
+
+test("restoring dual delivery queues the same existing app decision once", async () => {
+  const t = setup(); t.config.ownerDecisionChannel = "app";
+  const x = openDecision(t.ledger, t.config, { jobId: "j1", question: "Choose a product direction" });
+  t.config.ownerDecisionChannel = "both";
+  await t.decisions.tick(); await t.decisions.tick();
+  const copies = Object.values(t.data.outbox).filter(o => o.decision === x.id && o.recipient === OWNER);
+  assert.equal(copies.length, 1); assert.match(copies[0].content, /Choose a product direction/);
+  assert.equal(Object.keys(t.data.decisions).length, 1);
+});
+
+test("a late Discord delivery after an app answer is removed on the next tick", async () => {
+  const t = setup();
+  const x = openDecision(t.ledger, t.config, { jobId: "j1", question: "Choose a direction" });
+  await t.decisions.applyAuthenticatedApp(x, "explain", OWNER, "Take the documented route");
+  t.send(OWNER, "late");
+  await t.decisions.tick();
+  assert.ok(t.messages.late.deleted);
+  assert.equal(x.state, "explain");
+});
+
+test("legacy closedOut bookkeeping cannot hide a still visible decision copy", async () => {
+ const t = setup(); const x = openDecision(t.ledger, t.config, { jobId: "j1", question: "Old direction" });
+ t.send(OWNER, "stale"); x.state = "withdrawn"; x.closedOut = true;
+ await t.decisions.tick(); assert.ok(t.messages.stale.deleted);
+});

@@ -101,6 +101,11 @@ change behaviour most: `KEIR_WORKER_PROVIDER`, `KEIR_QUICK_PROVIDER`,
 `KEIR_CODING_PROVIDER`, `KEIR_RUST_RUNNER_LANES`, `KEIR_RUST_RUNNER_TICKETS`,
 `KEIR_JEV`. Secrets are never committed.
 
+Cursor CLI activations can use `cursor:auto`. Each activation links the host's
+Cursor CLI login into a private temporary home, exposes only that task's Keir
+broker MCP tools, and denies local shell, file and web tools. Cursor login is
+host-managed (`cursor-agent login`); do not put Cursor credentials in this file.
+
 ## Concurrency and usage
 
 Keir has three dedicated coding slots and three investigation slots. Two chat
@@ -187,6 +192,23 @@ imports a mutable checkout. OpenCode executes OpenCode and Ollama Cloud routes.
 Other subscription routes retain their selected model and authentication.
 Existing Rust lane settings select a compatibility transport inside the CLI.
 Task state and authorization remain in the operator and broker.
+
+### Native suggestion filing
+
+`open_suggestion` files through the support MCP and the game's existing suggestion API. Discord filing binds the submitter to a freshly fetched human source message; app filing binds it to the authenticated owner's unchanged request. The reply includes the native suggestion number and feedback URL. Native intake owns optional GitHub mirroring.
+
+The support MCP needs `DISCORD_BOT_TOKEN`, `DISCORD_BOT_API_KEY`, and `AHD_GAME_API_URL`; `KEIR_OWNER_ID` must match the operator when accepting owner app submissions. Its `agentSuggestionIntake` collection retains one durable claim per source. A timed-out submission is held for receipt inspection rather than retried as a new suggestion.
+
+Ticket answers request `delivery_mode: reply`, which creates a new channel message. Background milestones retain `card` delivery. Release the support MCP's new write schema before activating an operator that requests reply delivery or suggestion intake.
+
+### Progressive chat context and activity
+
+Literal greetings use a compact brief without a classifier call, notebook recall or unrelated task context. Jev's existing bundled intake decision can choose `focused` for other simple conversation turns; uncertain decisions, attached evidence, voice, tickets and coding retain the full path.
+
+Compact sessions expose `load_context` and `call_tool`. Context is paged; a model can discover an original tool's schema and invoke it in the same multi-turn activation. The dispatcher only accepts tools from that session's original role-filtered grant and keeps normal broker checks, cancellation and completion guards. Skills respect the owner's configured selection. Loading context does not grant authority or turn a chat into a coding session.
+
+`activation_context` and usage records distinguish preflight time, provider time, brief/context size and initial tool-schema size. These measurements diagnose latency; smaller prompts alone are not a wall-clock speed guarantee. Tool activity carries a stable call ID, source, operation, presentation label and state. Replies retain completed activity once; the live chat projection excludes those already-delivered calls.
+
 # Ticket resolution performance
 
 Ask Keir for ticket performance using the owner-only `ticket_performance` tool

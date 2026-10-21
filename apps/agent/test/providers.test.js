@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
-const { invokeAgy, invokeMuse } = require("../lib/operator/providers");
+const { invokeAgy, invokeCursor, invokeMuse } = require("../lib/operator/providers");
 
 // A fake child process that records what it was launched with.
 function fakeSpawn(stdout, onLaunch, code = 0) {
@@ -34,6 +34,29 @@ test("agy runs with only Keir's tools allowed, its shell denied, and a Claude-sh
   assert.ok(seen.settings.permissions.deny.includes("command(*)"));
   assert.match(seen.task, /BRIEF[\s\S]*"task":1/);
   assert.deepEqual([r.result, r.num_turns, r.is_error], ["done", 3, false]);
+});
+
+test("Cursor Auto gets a private auth link, only the activation MCP and no local tools", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-cursor-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const authFile = path.join(dir, "auth.json"); fs.writeFileSync(authFile, "{}", { mode: 0o600 });
+  const input = { ...base(), stateDir: dir, model: "auto", authFile,
+    tools: [{ name: "read_servers" }, { name: "finish" }] };
+  let seen;
+  const result = await invokeCursor({ ...input, spawnImpl: fakeSpawn("Keir finished.", (cmd, args, opts) => {
+    const home = opts.env.HOME, ws = args[args.indexOf("--workspace") + 1];
+    seen = { cmd, args, home: opts.env.HOME,
+      mcp: JSON.parse(fs.readFileSync(path.join(home, ".cursor/mcp.json"), "utf8")),
+      permissions: JSON.parse(fs.readFileSync(path.join(ws, ".cursor/cli.json"), "utf8")),
+      auth: fs.realpathSync(path.join(home, ".config/cursor/auth.json")) };
+  }) });
+  assert.equal(result.subtype, "success"); assert.equal(result.result, "Keir finished.");
+  assert.equal(seen.args[seen.args.indexOf("--model") + 1], "auto");
+  assert.ok(seen.args.includes("--approve-mcps")); assert.ok(seen.args.includes("--trust"));
+  assert.deepEqual(Object.keys(seen.mcp.mcpServers), ["keir"]);
+  assert.deepEqual(seen.permissions.permissions.allow, ["Mcp(keir:read_servers)", "Mcp(keir:finish)"]);
+  assert.ok(seen.permissions.permissions.deny.includes("Shell(*)"));
+  assert.equal(seen.auth, authFile);
+  assert.equal(fs.existsSync(seen.home), false, "activation home is removed after completion");
 });
 test("Antigravity receives large briefs over stdin rather than a host path its sandbox cannot read", async () => {
   let input, args;

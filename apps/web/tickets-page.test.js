@@ -339,3 +339,10 @@ describe("makeTicketsListBody", () => {
     assert.ok(body.includes('href="/tickets/42"'));
   });
 });
+
+describe("investigation privacy",()=>{
+ it("never renders investigation metadata through a public receipt",()=>{
+  const rendered=makeTicketDetailBody({ticket:{ticketNumber:999,category:"investigation",title:"Confidential subject",description:"Private detector evidence",messages:[{content:"Secret transcript"}],status:"open"},viewer:"public"});
+  assert.match(rendered.body,/Ticket not found/);assert.doesNotMatch(rendered.body,/Confidential|Private detector|Secret transcript|999/);
+ });
+});

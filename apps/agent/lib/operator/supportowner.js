@@ -74,10 +74,17 @@ function createSupportOwner({ ledger, now = () => Date.now() }) {
         for (const x of Object.values(d.decisions || {}).filter((x) => x.jobId === j.id && x.state === "pending")) {
           x.state = "withdrawn"; x.withdrawnReason = `handoff:${handoff.id}`;
         }
+        // The questions above no longer exist. Retaining their admission flag
+        // would prevent the new handoff from ever being incorporated.
+        delete j.ownerDecisionPending;
       }
       if (superseded.length) ledger.audit("approvals_superseded_by_handoff", { handoff: handoff.id, ticket: n, actions: superseded });
       const job = ensureTicketJob(Number(n));
       if (!job) continue;
+      // Only the trusted admin handoff may set or release this hold. It
+      // fences closure without withholding investigation or player replies.
+      if (h.holdClosure === true) job.ownerClosureHold = { handoffId: handoff.id, at: now() };
+      else if (h.holdClosure === false) delete job.ownerClosureHold;
       // An explicit handoff transfers the ticket back to Keir. Old claim
       // messages must not reclaim it when history is read on the next run.
       if (job.channelId) {
@@ -123,13 +130,13 @@ function createSupportOwner({ ledger, now = () => Date.now() }) {
   // Owner choice of model for one ticket ("have Muse Wonder Full take 1537").
   // Applies from the ticket's next activation: a run in progress is never cut
   // off, and the new model starts from the ticket record and history.
-  const RUNNERS = ["codex", "muse", "claude", "agy", "ollama"];
+  const RUNNERS = ["codex", "muse", "claude", "agy", "cursor", "ollama", "deepseek"];
   const EFFORTS = ["low", "medium", "high", "xhigh"];
   function assignModel(ticket, spec, by, { ensureTicketJob } = {}) {
     const n = Number(ticket);
     if (!Number.isInteger(n) || n <= 0) throw new Error("ticket must be a ticket number");
     const [head, effort = "medium"] = String(spec || "").split("@"), [runner, model] = head.split(":");
-    if (!RUNNERS.includes(runner) || !model || !EFFORTS.includes(effort)) throw new Error("model must be runner:model[@effort], runner one of codex, muse, claude, agy");
+    if (!RUNNERS.includes(runner) || !model || !EFFORTS.includes(effort)) throw new Error("model must be runner:model[@effort], runner one of codex, muse, claude, agy, cursor, ollama, deepseek");
     const job = d.jobs[d.seen[`ticket:${n}`]] || ensureTicketJob?.(n);
     if (!job) throw new Error(`no job for ticket ${n}`);
     job.provider = { lane: "worker", runner, model, effort, at: now(), assignedBy: by || null };

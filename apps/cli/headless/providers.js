@@ -80,6 +80,37 @@ async function invokeAgy({ spawnImpl, stateDir, model, effort, brief, prompt, to
   } finally { cleanup(); }
 }
 
+/** Cursor Agent CLI. Each activation gets a private HOME containing only its
+ *  auth link and the scoped Keir broker MCP. The model stays on Cursor Auto;
+ *  Cursor selects the model for each request under the account's usage mode. */
+async function invokeCursor({ spawnImpl, stateDir, model = "auto", brief, prompt, tools, url, timeoutMs, signal, authFile }) {
+  if (model !== "auto") throw new Error("Keir Cursor activations must use Cursor Auto");
+  const { dir, cleanup } = scratch(stateDir, "cursor-runs");
+  try {
+    const home = path.join(dir, "home"), ws = path.join(dir, "ws");
+    const cursorConfig = path.join(home, ".cursor"), authDir = path.join(home, ".config", "cursor");
+    fs.mkdirSync(cursorConfig, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(authDir, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(ws, ".cursor"), { recursive: true, mode: 0o700 });
+    const auth = authFile || host.credential(".config/cursor/auth.json");
+    if (!fs.existsSync(auth)) throw new Error("Cursor CLI is not logged in; run cursor-agent login as the Keir service owner");
+    fs.symlinkSync(auth, path.join(authDir, "auth.json"));
+    fs.writeFileSync(path.join(cursorConfig, "mcp.json"), JSON.stringify({ mcpServers: { keir: { url } } }), { mode: 0o600 });
+    fs.writeFileSync(path.join(ws, ".cursor", "cli.json"), JSON.stringify({ permissions: {
+      allow: tools.map(t => `Mcp(keir:${t.name})`),
+      deny: ["Shell(*)", "Read(*)", "Write(*)", "WebFetch(*)", "Computer(*)"],
+    } }), { mode: 0o600 });
+    const args = ["-p", "--model", "auto", "--approve-mcps", "--trust", "--output-format", "text", "--workspace", ws];
+    const task = `${brief}\n\n## This activation (JSON)\n\n${prompt}\nUse only the granted keir tools. ${tools.some(t => t.name === "submit_result") ? "Complete with submit_result and its required result; use finish only for waiting or a blocker." : "End with one accepted finish call."}`;
+    const r = await spawnBounded(spawnImpl, host.bin("cursor-agent"), args, { cwd: ws, env: { HOME: home, XDG_CONFIG_HOME: path.join(home, ".config"), PATH, LANG: "C.UTF-8" } }, timeoutMs, signal, task);
+    if (r.timedOut) return { subtype: "error_max_turns", is_error: true, timedOut: true };
+    if (r.code === null) return { subtype: "error_max_turns", is_error: true, interrupted: true };
+    if (r.code !== 0) failed(r.code, r.err || r.out, "cursor");
+    return { result: r.out.trim(), num_turns: null, is_error: false, subtype: "success", usage: {},
+      provenance: { billing: "subscription", accounting: "cursor-cli-usage-not-exported" } };
+  } finally { cleanup(); }
+}
+
 /** Muse (Meta) headless. Shell, writes and web are off; Keir's tools come over MCP. */
 async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, maxTurns, timeoutMs, signal }) {
   const { dir, cleanup } = scratch(stateDir, "muse-runs");
@@ -171,4 +202,10 @@ function ollamaKey() {
   if (process.env.OLLAMA_API_KEY) return process.env.OLLAMA_API_KEY;
   try { return JSON.parse(fs.readFileSync(host.credential(".config/lakeside/ollama-cloud.json"), "utf8")).api_key; } catch { return null; }
 }
-module.exports = { spawnBounded, invokeAgy, invokeMuse, invokeCodex, invokeRust, ollamaKey };
+// DeepSeek platform API credentials, resolved the same way (api.deepseek.com
+// bills per token, so the key never rides in an activation request).
+function deepseekKey() {
+  if (process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY;
+  try { return JSON.parse(fs.readFileSync(host.credential(".config/lakeside/deepseek.json"), "utf8")).api_key; } catch { return null; }
+}
+module.exports = { spawnBounded, invokeAgy, invokeCursor, invokeMuse, invokeCodex, invokeRust, ollamaKey, deepseekKey };

@@ -67,7 +67,7 @@ struct KeirVoiceMode: View {
                     Menu {
                         ForEach(keir.controls["options"]["voice"].array, id: \.["id"].string) { model in
                             Button { Task { requestedRoute = ""; await keir.control(["action": .string("configure"), "routes": .object(["voice": .string(model["id"].string)])], session) } } label: {
-                                Text(model["id"].string == "auto" ? "Auto · alternate Gemini / DeepSeek" : "\(model["label"].string) · \(model["provider"].string)")
+                                Text(model["id"].string == "auto" ? "Automatic · \(KeirProviderName.label(keir.controls["defaults"]["voice"].string, options: keir.controls["options"]["voice"].array))" : "\(model["label"].string) · \(model["provider"].string)")
                             }.disabled(model["available"] == .bool(false))
                         }
                     } label: { Label(routeLabel, systemImage: "cpu").font(.caption) }

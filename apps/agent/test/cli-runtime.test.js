@@ -143,11 +143,27 @@ test("Ollama delegates its loop to OpenCode while keeping provider, credential a
   const records = fs.readdirSync(path.join(request.stateDir, "cli-attempts"));
   assert.doesNotMatch(fs.readFileSync(path.join(request.stateDir, "cli-attempts", records[0]), "utf8"), /fixture-secret/);
 });
+test("DeepSeek API delegates its loop to OpenCode while keeping provider, credential and model explicit", async t => {
+  const request = { ...fixture(t), runner: "deepseek", model: "deepseek-flash" };
+  let seen;
+  const result = await executeActivation(request, { deepseekCredential: () => "fixture-secret", openCodeImpl: async options => {
+    seen = options;
+    return { subtype: "success", result: "fixture", usage: { input_tokens: 10, output_tokens: 2 } };
+  } });
+  assert.equal(seen.model, "keir-deepseek/deepseek-flash");
+  assert.equal(seen.providerConfig["keir-deepseek"].options.baseURL, "https://api.deepseek.com/v1");
+  assert.equal(seen.providerConfig["keir-deepseek"].options.apiKey, "{env:DEEPSEEK_API_KEY}");
+  assert.equal(seen.providerEnv.DEEPSEEK_API_KEY, "fixture-secret");
+  assert.equal(result.provenance.engine, "opencode");
+  assert.equal(result.provenance.billing, "api");
+  const records = fs.readdirSync(path.join(request.stateDir, "cli-attempts"));
+  assert.doesNotMatch(fs.readFileSync(path.join(request.stateDir, "cli-attempts", records[0]), "utf8"), /fixture-secret/);
+});
 test("headless API provider aliases select the same explicit engine routes as interactive mode", async t => {
-  for (const [provider, prefix] of [["codex-api", "openai"], ["claude-api", "anthropic"], ["opencode-go", "opencode-go"]]) {
+  for (const [provider, routed] of [["codex-api", "openai/fixture-model"], ["claude-api", "anthropic/fixture-model"], ["opencode-go", "opencode-go/fixture-model"], ["deepseek", "keir-deepseek/fixture-model"]]) {
     const request = { ...fixture(t), runner: undefined, provider, model: "fixture-model" };
-    const result = await executeActivation(request, { openCodeImpl: async options => {
-      assert.equal(options.model, `${prefix}/fixture-model`);
+    const result = await executeActivation(request, { deepseekCredential: () => "fixture-secret", openCodeImpl: async options => {
+      assert.equal(options.model, routed);
       return { subtype: "success", result: "fixture", usage: {} };
     } });
     assert.equal(result.provenance.engine, "opencode");

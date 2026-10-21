@@ -294,6 +294,67 @@ test("the status card posts once, edits in place, needs receipts and survives de
   assert.match(calls.at(-1).body.embeds[0].description, /Release checks for the main server are running/);
 });
 
+// Review 2026-10-19: a card edit sends no notification, so players heard a
+// fix was live 6 to 28 hours late. The first live stage sends one reply.
+test("a fix reaching the main server sends the player one live reply", async () => {
+  const f = fixture();
+  f.config.guildId = "444444444444444444";
+  const discord = async (method, route) => {
+    if (method === "GET" && route.includes("/messages")) return [];
+    if (method === "GET" && route.startsWith("/channels/")) return { id: "777777777777777777", guild_id: f.config.guildId, name: "ticket-bug-someone-1629" };
+    if (method === "GET" && route.includes("/guilds/")) return [{ id: "777777777777777777", name: "ticket-bug-someone-1629" }];
+    if (method === "GET") return [];
+    if (method === "POST") return { id: "900000000000000001" };
+    return {};
+  };
+  const updates = [];
+  const mcp = { servers: () => [], call: async (server, tool, args) => { if (tool === "support_public_update") updates.push(args); return { ok: true, delivery: { posted: true } }; } };
+  const broker = createBroker({ ledger: f.ledger, config: f.config, mcp, discord, sandbox: {}, now: () => Date.now() });
+  const t = f.ledger.createJob("ticket:1629", { kind: "ticket", role: "support", ticket: 1629, channelId: "777777777777777777", source: {}, deadline: 9e15 });
+  t.state = "running"; t.evidence = [];
+  t.releaseEvidence = { abc1234567: { development: true, staging: true, main: true } };
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "sandbox" }] });
+  assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 0, "no reply before live");
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "main" }] });
+  const live = updates.filter((u) => u.deliver && u.update_kind === "production");
+  assert.equal(live.length, 1);
+  assert.equal(live[0].delivery_mode, "reply"); assert.equal(live[0].update_kind, "production");
+  assert.match(live[0].message, /now live on the main server: Wages for staff a plant does not have\./);
+  // confirmed later, or the card re-sent, never repeats the reply
+  // "confirmed" needs a turn after the fix and a game read after that turn
+  await assert.rejects(broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "confirmed" }] }), /watch_turn/);
+  t.turnChecks = [Date.now() - 1000]; t.lastGameReadAt = Date.now();
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "confirmed" }] });
+  await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "main" }] });
+  assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 1);
+});
+
+// Owner, 2026-10-19 (incident 1628): "Add enigma here" got "I can't add
+// people to this channel myself".
+test("a developer can have Keir add a player to a ticket channel; a player cannot", async () => {
+  const f = fixture();
+  f.config.guildId = "444444444444444444";
+  const calls = [];
+  const discord = async (method, route, body) => {
+    calls.push({ method, route, body });
+    if (method === "GET" && route.startsWith("/channels/")) return { id: "777777777777777777", guild_id: f.config.guildId, name: "ticket-incident-starmerbot-1628" };
+    if (method === "GET" && route.includes("/members/search")) return [{ user: { id: "404326423352836126", username: "01enigma", global_name: "Enigma" } }, { user: { id: "500000000000000001", username: "enigmatic" } }];
+    if (method === "POST") return { id: "900000000000000002" };
+    return {};
+  };
+  const broker = createBroker({ ledger: f.ledger, config: f.config, mcp: { servers: () => [], call: async () => ({}) }, discord, sandbox: {}, now: () => Date.now() });
+  const owner = f.ledger.createJob("cmd:add", { kind: "command", role: "owner", actorId: f.config.ownerId, channelId: "777777777777777777", source: { authorId: f.config.ownerId, channelName: "ticket-incident-starmerbot-1628" }, deadline: 9e15 });
+  owner.state = "running";
+  const r = await broker.tool(owner, "add_to_ticket", { user: "enigma", ticket: 1628 });
+  assert.deepEqual(r, { added: "01enigma", ticket: 1628 });
+  const put = calls.find((c) => c.method === "PUT");
+  assert.equal(put.route, "/channels/777777777777777777/permissions/404326423352836126");
+  assert.equal(put.body.type, 1);
+  const player = f.ledger.createJob("conv:p", { kind: "conversation", role: "player", actorId: "888888888888888888", channelId: "777777777777777777", source: { authorId: "888888888888888888" }, deadline: 9e15 });
+  player.state = "running";
+  await assert.rejects(broker.tool(player, "add_to_ticket", { user: "enigma", ticket: 1628 }));
+});
+
 // Owner, 2026-10-14 (ticket 1539): a card buried under later messages is
 // bumped on a real update, and edited in place while it is still the latest.
 test("the status card is bumped below newer messages only when it has a real update", async () => {
@@ -405,6 +466,18 @@ test("an early investigation card does not claim a cause or a fix is already bei
   assert.match(text, /Checking cause and next step/);
 });
 
+test("a not-a-bug item can be marked answered: it needs the investigation, renders done and does not hold a waiting finish", async () => {
+  const card = require("../lib/operator/statuscard");
+  assert.equal(card.stageAllowed("answered", {}).ok, false);
+  assert.equal(card.stageAllowed("answered", { investigated: { done: true } }).ok, true);
+  const body = card.render({ ticket: 1558, items: [{ name: "Steelworks made nothing", stage: "answered", note: "The coal deal ended; sign a new one" }] });
+  const text = JSON.stringify(body.embeds);
+  assert.match(text, /Answered · no fix needed/);
+  assert.doesNotMatch(text, /Investigating|▱/);
+  assert.equal(body.embeds[0].color, 0x22c55e);
+  assert.equal(card.rowState({ stage: "answered" }), "done");
+});
+
 test("new handoff evidence invalidates an old closing grace without replaying that reset", () => {
   const f = fixture();
   const owner = createSupportOwner({ ledger: f.ledger, now: () => 5000 });
@@ -421,4 +494,23 @@ test("new handoff evidence invalidates an old closing grace without replaying th
   t.resolutionReadyAt = 7000;
   assert.equal(owner.receive(handoff, { ensureTicketJob: () => t }).duplicate, true);
   assert.equal(t.resolutionReadyAt, 7000, "retrying an old handoff cannot reset a later answer");
+});
+
+test("an admin handoff can retain a closure hold without stopping investigation", () => {
+  const f = fixture(), owner = createSupportOwner({ ledger: f.ledger });
+  const j = job("held", { ticket: 1615 });
+  owner.receive({ id: "hold-1615", from: "codex", scope: "Unmet player goal", asks: ["Investigate without closing"], tickets: [1615], holdClosure: true }, { ensureTicketJob: () => j });
+  assert.equal(j.ownerClosureHold.handoffId, "hold-1615");
+  assert.equal(j.state, "queued");
+  owner.receive({ id: "release-1615", from: "codex", scope: "Release closure hold", asks: ["Reassess after a verified answer"], tickets: [1615], holdClosure: false }, { ensureTicketJob: () => j });
+  assert.equal(j.ownerClosureHold, undefined);
+});
+
+test("withdrawing old questions in an explicit handoff clears their stale admission hold", () => {
+ const f = fixture(), owner = createSupportOwner({ ledger: f.ledger });
+ const j = job("decision-held", { ticket: 1615, ownerDecisionPending: true, state: "blocked" });
+ f.ledger.data.jobs[j.id] = j;
+ (f.ledger.data.decisions ||= {}).d = { id: "d", jobId: j.id, state: "pending" };
+ owner.receive({ id: "clarify-existing", from: "codex", scope: "Respect existing decision", asks: ["Continue within prior ruling"], tickets: [1615] }, { ensureTicketJob: () => j });
+ assert.equal(f.ledger.data.decisions.d.state, "withdrawn"); assert.ok(!j.ownerDecisionPending); assert.equal(j.state, "queued");
 });

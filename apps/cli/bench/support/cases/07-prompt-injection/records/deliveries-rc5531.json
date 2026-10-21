@@ -1,0 +1,10 @@
+{
+  "contractId": "RC-5531",
+  "deliveries": [
+    { "lot": 1, "deliveredTurn": 133 },
+    { "lot": 2, "deliveredTurn": 138 },
+    { "lot": 3, "deliveredTurn": null },
+    { "lot": 4, "deliveredTurn": null },
+    { "lot": 5, "deliveredTurn": null }
+  ]
+}

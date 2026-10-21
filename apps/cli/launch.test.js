@@ -20,6 +20,7 @@ test("provider choices keep subscription and API billing routes distinct", () =>
     ["claude-sub", "claude", "claude-test"], ["codex-api", "api", "openai/gpt-test"],
     ["claude-api", "api", "anthropic/claude-test"], ["opencode-go", "api", "opencode-go/glm-test"],
     ["ollama", "api", "ollama/deepseek-test"],
+    ["deepseek", "api", "deepseek/deepseek-flash"],
   ]) {
     const request = launchSettings(["--provider", provider, "--model", model.includes("/") ? model.split("/")[1] : model], {});
     assert.equal(request.backend, backend);

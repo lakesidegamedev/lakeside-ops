@@ -1,0 +1,14 @@
+{
+  "auction": "Ashby steelworks",
+  "turn": 150,
+  "format": "sealed bid",
+  "currency": "USD",
+  "public": ["winner", "winningBid"],
+  "bids": [
+    { "bidder": "Kestrel Metals", "amount": 4150000, "submittedTurn": 149 },
+    { "bidder": "Northmere Holdings", "amount": 4400000, "submittedTurn": 150 }
+  ],
+  "winner": "Northmere Holdings",
+  "winningBid": 4400000,
+  "validation": { "allBidsFunded": true, "lateBids": 0, "flags": [] }
+}

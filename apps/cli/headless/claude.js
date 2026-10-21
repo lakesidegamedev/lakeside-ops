@@ -31,8 +31,12 @@ async function invokeClaude(options) {
   return { subtype: "success", is_error: false, result: ended.completion.summary, usage, num_turns: messages.size,
     provenance: { completion: "broker-receipt", transcript, accounting: messages.size && finalUsage.size===messages.size ? "streamed-message-deltas" : messages.size ? "partial-streamed-assistant-messages" : "unavailable", messagesObserved:messages.size, messagesWithFinalUsage:finalUsage.size } };
 }
-async function invokeClaudeProcess({ spawnImpl, prompt, tools, url, maxTurns, timeoutMs, signal, model, effort, brief, stateDir, claudeBin, streamed, onFrame }) {
-  const cwd = path.join(stateDir, "claude-cwd"); fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
+// Hybrid (2026-10-18): the model's own trained tools work the workspace, which the
+// caller must already have confined (bwrap); the broker's MCP tools carry effects.
+const NATIVE = "Bash,Read,Edit,Write,Glob,Grep";
+async function invokeClaudeProcess({ spawnImpl, prompt, tools, url, maxTurns, timeoutMs, signal, model, effort, brief, stateDir, claudeBin, streamed, onFrame, toolsMode, worktree }) {
+  const hybrid = toolsMode === "hybrid";
+  const cwd = hybrid ? worktree : path.join(stateDir, "claude-cwd"); if (!hybrid) fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
   // The broker supplies policy and grants. Host memories, plugins and user
   // instructions must not silently become an activation's task context.
   const home = fs.mkdtempSync(path.join(stateDir, "claude-home-"));
@@ -40,8 +44,8 @@ async function invokeClaudeProcess({ spawnImpl, prompt, tools, url, maxTurns, ti
   const credentials = require("./host").credential(".claude/.credentials.json");
   if (fs.existsSync(credentials)) fs.symlinkSync(credentials, path.join(home, ".claude/.credentials.json"));
     const args = ["-p", "--system-prompt", brief, "--model", model, "--effort", effort,
-      "--setting-sources", "", "--tools", "", "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: { keir: { type: "http", url } } }),
-      "--allowedTools", tools.map((t) => `mcp__keir__${t.name}`).join(","), "--max-turns", String(maxTurns), "--no-session-persistence", "--output-format", "json"];
+      "--setting-sources", "", "--tools", hybrid ? NATIVE : "", "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: { keir: { type: "http", url } } }),
+      "--allowedTools", [...(hybrid ? [NATIVE] : []), ...tools.map((t) => `mcp__keir__${t.name}`)].join(","), ...(hybrid ? ["--permission-mode", "dontAsk"] : []), "--max-turns", String(maxTurns), "--no-session-persistence", "--output-format", "json"];
     if (streamed) { args[args.length - 1] = "stream-json"; args.push("--verbose", "--include-partial-messages"); }
     const env = { HOME: home, PATH: require("./host").searchPath(), LANG: "C.UTF-8", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
     return new Promise((resolve, reject) => {

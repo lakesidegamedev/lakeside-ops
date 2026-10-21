@@ -77,6 +77,6 @@ export async function loadStudio(env = process.env, { fetchImpl = fetch, timeout
     return out;
   } catch (/** @type {any} */ error) {
     const status = error?.status;
-    return { state: "error", detail: status === 401 || status === 403 ? "VPS session expired. Download a fresh token file and run lakeside code vps connect again." : controller.signal.aborted ? "VPS did not answer in time. Try /reconnect." : "VPS could not be reached." };
+    return { state: "error", detail: status === 401 || status === 403 ? "VPS session expired. Mint a 30-day device token (POST /api/auth/native-session with header x-lakeside-client: cli), save it to the token file and run lakeside code vps connect again." : controller.signal.aborted ? "VPS did not answer in time. Try /reconnect." : "VPS could not be reached." };
   } finally { clearTimeout(timer); }
 }

@@ -1,0 +1,8 @@
+{
+  "state": "Michigan",
+  "minimumWageHistory": [
+    { "fromTurn": 90, "hourly": 12.5 },
+    { "fromTurn": 112, "hourly": 14.2 }
+  ],
+  "rule": "A plant offering less than the state minimum wage cannot hire, and loses staff to other employers until it pays at least the minimum."
+}

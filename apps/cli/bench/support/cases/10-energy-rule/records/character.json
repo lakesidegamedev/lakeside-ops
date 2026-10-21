@@ -1,0 +1,14 @@
+{
+  "displayName": "redbrick_campaigns",
+  "character": "J. Ashworth",
+  "currentTurn": 212,
+  "energy": 1,
+  "maxEnergy": 10,
+  "cash": 2400000,
+  "currency": "GBP",
+  "lastActions": [
+    { "turn": 211, "action": "Hold rally", "energySpent": 4 },
+    { "turn": 211, "action": "Give speech", "energySpent": 3 },
+    { "turn": 212, "action": "Fundraiser", "energySpent": 4 }
+  ]
+}

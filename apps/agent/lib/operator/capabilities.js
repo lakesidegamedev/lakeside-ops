@@ -96,6 +96,7 @@ function createTurnWatch({ ledger, currentTurn, now = () => Date.now(), log = ()
       const text = turn >= w.turn ? `Turn ${w.turn} has been processed (now turn ${turn}). ${w.note ? `You wanted to: ${w.note}` : "Verify the outcome now."}` : `Turn ${w.turn} still had not processed after 8 hours (now turn ${turn}). Check the turn status.`;
       (job.inbox ||= []).push({ authorId: "turn-watch", role: "system", content: text, at: new Date(now()).toISOString() });
       delete job.turnWatch;
+      if (turn >= w.turn) job.turnChecks = [...(job.turnChecks || []), now()].slice(-10);
       if (["waiting", "blocked"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
       ledger.audit("turn_watch_done", { job: job.id, turn: w.turn, now: turn }); ledger.save();
     }

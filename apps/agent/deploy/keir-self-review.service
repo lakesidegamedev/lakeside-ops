@@ -1,0 +1,13 @@
+[Unit]
+Description=Keir nightly self-review: cluster the day's broker refusals and open one draft fix PR
+After=network-online.target keir-operator.service
+
+[Service]
+Type=oneshot
+# Needs the main checkout (worktrees), gh and the external agent launcher, so no home or system protection.
+Environment=HOME=/root KEIR_OPERATOR_STATE_DIR=/var/lib/keir-operator
+ExecStart=/usr/bin/node /opt/keir/current/bin/keir-self-review.js --hours 24 --min 5
+TimeoutStartSec=60min
+MemoryMax=4G
+CPUQuota=200%
+Nice=10
