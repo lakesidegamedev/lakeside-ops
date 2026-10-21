@@ -133,6 +133,7 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
         totalTools: out.reduce((n, d) => n + (d.toolCount || 0), 0),
         totalPrompts: out.reduce((n, d) => n + (d.promptCount || 0), 0),
         totalResources: out.reduce((n, d) => n + (d.resourceCount || 0), 0),
+        note: "Counts are what a read-scoped service token can see. A write-scoped tool is listed by every server and refused at call time, so it may be missing from a server's tool count here.",
         servers: out,
       });
     }
@@ -165,7 +166,7 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
           lane: r.lane,
           impact: r.impact,
           assigned_to: r.assigned_to || null,
-          detail: String(r.detail || "").slice(0, 600),
+          detail: String(r.detail || r.detail_excerpt || "").slice(0, 600),
           created_at: r.created_at,
           age_days: r.age_days ?? null,
           progress_summary: r.progress_summary || "",
