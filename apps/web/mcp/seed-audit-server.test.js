@@ -349,6 +349,20 @@ describe("auditEra", () => {
     const r = await auditCountry(db, "AT", "econ-only");
     assert.ok(r.countryGaps.includes("centralBanks"), "AT is forex-active in the game, so its central bank is expected");
   });
+
+  it("an unconfigured reference path stops the audit too", async () => {
+    const previous = process.env.SEED_AUDIT_REFERENCE_PATH;
+    delete process.env.SEED_AUDIT_REFERENCE_PATH;
+    resetSeedTruth();
+    try {
+      const r = await auditState(createMockDb({}), "BEL");
+      assert.ok(r.error);
+      assert.match(r.error, /not configured/);
+    } finally {
+      process.env.SEED_AUDIT_REFERENCE_PATH = previous;
+      resetSeedTruth();
+    }
+  });
 });
 
 describe("checkDuplicates", () => {
