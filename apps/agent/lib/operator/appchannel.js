@@ -18,7 +18,7 @@ const CLOSED = ["done", "dismissed", "cancelled"];
 // Short remarks in the owner's app are questions in disguise ("Railway still
 // down"). They belong in the quick lane, which answers now and hands off for the
 // deeper pass. Explicit work still routes to the work lane.
-const ACTION_WORD = /\b(?:deploy|fix|change|open|close|create|delete|remove|cancel|approve|reject|restart|merge|publish|install|update|set|run|build|implement|investigate|ship|promote|rollback|heal|grant|refund|ban|mute|write|add|move|rename|kill|stop|start|check|look|review|send|post|reply|file|raise)\b/i;
+const ACTION_WORD = /\b(?:deploy|fix|change|open|close|create|delete|remove|cancel|approve|reject|restart|merge|publish|install|update|set|run|build|implement|investigate|inspect|examine|audit|verify|confirm|trace|scan|search|find|compare|test|diagnose|debug|ship|promote|rollback|heal|grant|refund|ban|mute|write|add|move|rename|kill|stop|start|check|look|review|send|post|reply|file|raise)\b/i;
 const WORK_REFERENCE = /\bticket\s*#?\d+|#\d+|\bPR\b|pull request|\bissue\s*#?\d+/i;
 function conversationalRemark(text) {
   const t = String(text || "").trim();
