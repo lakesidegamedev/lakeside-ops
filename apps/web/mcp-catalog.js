@@ -36,7 +36,7 @@ function mcpUrl(suffix) {
 const MCP_DEFS = [
   { key: "ops-knowledge", icon: "📚", name: "Ops Knowledge", transport: "HTTP · public", health: 9725, connect: "http",
     path: "/mcp", desc: "Docs, skills & memory — semantic search + save. Scoped, token-gated.",
-    tools: ["worktree_fleet_status", "knowledge_query", "knowledge_get", "knowledge_list", "knowledge_related", "knowledge_history", "knowledge_review_queue", "knowledge_bootstrap", "knowledge_feedback", "knowledge_save*", "knowledge_delete*", "code_search", "code_exact", "code_read", "box_projects", "kanban_brief", "kanban_list", "kanban_get", "kanban_add", "kanban_update", "work_report", "kanban_github_sync", "mcp_fleet_status"] },
+    tools: ["worktree_fleet_status", "knowledge_query", "knowledge_get", "knowledge_list", "knowledge_related", "knowledge_history", "knowledge_review_queue", "knowledge_bootstrap", "knowledge_feedback", "knowledge_save*", "knowledge_delete*", "code_search", "code_exact", "code_read", "box_projects", "kanban_brief", "kanban_list", "kanban_get", "kanban_add", "kanban_update", "work_report", "kanban_github_sync", "mcp_fleet_status", "mcp_capability_requests"] },
   { key: "community", icon: "🧠", name: "Community Brain", transport: "HTTP · public", health: 9729, connect: "http",
     path: "/community/mcp", desc: "Semantic search + RAG over Discord message corpus.", tools: ["community_search", "community_ask"] },
   { key: "gamestate", icon: "🗺️", name: "Game State", transport: "HTTP · public", health: 9730, connect: "http",
