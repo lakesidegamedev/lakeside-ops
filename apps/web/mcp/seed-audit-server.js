@@ -12,27 +12,29 @@ const tokens = require("../agent-tokens");
 
 const PORT = parseInt(process.env.SEED_AUDIT_MCP_PORT || "9739", 10);
 
-// ─── Point-in-time mirrors of a-house-divided seed truth ─────────────────────
-// Source: /root/projects/a-house-divided/src/lib/constants/corporations.ts (CORPORATION_TYPES)
-// Mirrored 2026-07-22 — refresh manually if the game list changes.
-const CORPORATION_TYPES = [
-  "financial", "media", "manufacturing", "chemical_industries", "healthcare",
-  "retail", "automobiles", "technology", "energy", "agriculture", "real_estate",
-  "construction", "defense", "telecommunications", "entertainment", "logistics",
-  "extraction",
-];
+// ─── The game's seed truth, generated from the game repo ─────────────────────
+// Source: AHDGame/scripts/exportSeedAuditReference.ts, which reads
+// CORPORATION_TYPES, FOREX_ACTIVE_COUNTRIES and the era roster from the game
+// itself. This used to be a hand-typed copy "mirrored 2026-07-22", and it had
+// drifted: the game dropped two corporation types (so every state read as
+// incomplete) and gained six forex-active countries (so their central banks
+// were never checked). A check that cries wolf gets ignored, so the lists
+// come from the game now, and a missing artifact stops the audit instead of
+// silently falling back to a stale mirror.
+const { seedTruth, referencePath } = require("./seed-audit-reference");
 
-// Source: /root/projects/a-house-divided/src/lib/admin/seed/seedManifest.ts (REFERENCE)
-// Mirrored 2026-07-22 — only the per-state / per-country collections this MCP audits.
+// Reference collections the audit checks. This is a SELECTION from the game's
+// seed manifest, not a mirror of it: the manifest holds every collection the
+// game seeds, and the audit only answers "is this world's reference data
+// complete?" for the ones below.
 const REFERENCE_COLLECTIONS = [
   { name: "states", category: "reference", seededBy: "runCoreSeed" },
   { name: "macroMetrics", category: "reference", seededBy: "seedRegionMetrics" },
   { name: "politicalMetrics", category: "reference", seededBy: "seedPoliticalMetrics" },
   { name: "stateBaselines", category: "reference", seededBy: "runCoreSeed" },
   { name: "stateDemographics", category: "reference", seededBy: "runCoreSeed" },
-  { name: "stateBudgets", category: "reference", seededBy: "seedBudgets" },
   { name: "stateResourceCapacity", category: "reference", seededBy: "seedStateResourceCapacity" },
-  // NOT a real collection — seedStateSectorSpecializations writes
+  // Not a real collection - seedStateSectorSpecializations writes
   // states.sectorSpecializations.{primary,secondary} as an embedded field.
   // seedManifest.ts's entry name is misleading; audited via hasSectorSpecialization()
   // against the states doc, not a collection query. Confirmed 2026-07-22 after this
@@ -42,93 +44,12 @@ const REFERENCE_COLLECTIONS = [
   { name: "federalBudget", category: "reference", seededBy: "seedBudgets" },
   { name: "centralBanks", category: "reference", seededBy: "seedForex" },
   { name: "politicalParties", category: "reference", seededBy: "seedParties" },
-  // runtime but bootstrap-seeded — audited for player-enabled countries:
+  // runtime but bootstrap-seeded - audited for player-enabled countries:
   { name: "countryState", category: "runtime", seededBy: "seedAllCountryStates" },
   { name: "countryGameStates", category: "runtime", seededBy: "seedCountryGameStates" },
   { name: "electedOfficials", category: "runtime", notes: "bootstrap-seeded then election-driven" },
   { name: "enactedLaws", category: "runtime", notes: "bootstrap-seeded default laws" },
 ];
-
-// Source: /root/projects/a-house-divided/src/lib/constants/currencies.ts (FOREX_ACTIVE_COUNTRIES)
-// Mirrored 2026-07-22. centralBanks expected only for these.
-const FOREX_ACTIVE_COUNTRIES = new Set([
-  "US", "UK", "JP", "DE", "CN", "BR", "NG", "RU", "FR", "IT", "ES", "SE", "TR",
-]);
-
-// Source: /root/projects/a-house-divided/src/lib/admin/seed/seedCountryGameStates.ts
-// (PRESET_ENABLEMENT) + US (global GameState; omitted from that map by design).
-// Mirrored 2026-07-22. Profiles: PLAYER→player-enabled, ECON/NPP→econ-only.
-const PRESET_COUNTRIES = {
-  "1953-default": [
-    "US", "UK", "RU", "FR", "IT", "ES", "SE", "TR", "DE", "JP", "CN", "BR", "IE",
-    "NG", "DD", "PL", "RO", "YU", "HU", "CS", "BG",
-  ],
-  "1979-default": [
-    "US", "UK", "RU", "FR", "IT", "ES", "SE", "TR", "DE", "JP", "CN", "NG", "BR",
-    "IE", "DD", "PL", "RO", "YU", "HU", "CS", "BG",
-  ],
-  "1991-default": [
-    "US", "UK", "FR", "IT", "ES", "SE", "TR", "DE", "JP", "CN", "NG", "BR", "IE",
-  ],
-  "1999-default": [
-    "US", "UK", "FR", "IT", "ES", "SE", "TR", "DE", "JP", "CN", "NG", "BR", "IE",
-  ],
-  "2007-default": [
-    "US", "UK", "FR", "IT", "ES", "SE", "TR", "DE", "JP", "CN", "NG", "BR", "IE",
-  ],
-  // No enablement map in seedCountryGameStates — core COUNTRY_ORDER playable set.
-  "2019-default": ["US", "UK", "JP", "DE", "IE", "BR", "CN", "NG"],
-  "2023-default": ["US", "UK", "JP", "DE", "IE", "BR", "CN", "NG"],
-  "2019-no-parties": ["US", "UK", "JP", "DE", "IE", "BR", "CN", "NG"],
-  empty: [],
-};
-
-const PRESET_DEFAULT_PROFILES = {
-  "1953-default": {
-    US: "player-enabled", UK: "player-enabled", RU: "player-enabled",
-    FR: "econ-only", IT: "econ-only", ES: "econ-only", SE: "econ-only", TR: "econ-only",
-    DE: "econ-only", JP: "econ-only", CN: "econ-only", BR: "econ-only", IE: "econ-only",
-    NG: "econ-only", DD: "econ-only", PL: "econ-only", RO: "econ-only", YU: "econ-only",
-    HU: "econ-only", CS: "econ-only", BG: "econ-only",
-  },
-  "1979-default": {
-    US: "player-enabled", UK: "player-enabled", RU: "player-enabled",
-    FR: "econ-only", IT: "econ-only", ES: "econ-only", SE: "econ-only", TR: "econ-only",
-    DE: "econ-only", JP: "econ-only", CN: "econ-only", NG: "econ-only", BR: "econ-only",
-    IE: "econ-only", DD: "econ-only", PL: "econ-only", RO: "econ-only", YU: "econ-only",
-    HU: "econ-only", CS: "econ-only", BG: "econ-only",
-  },
-  "1991-default": {
-    US: "player-enabled", UK: "player-enabled",
-    FR: "econ-only", IT: "econ-only", ES: "econ-only", SE: "econ-only", TR: "econ-only",
-    DE: "econ-only", JP: "econ-only", CN: "econ-only", NG: "econ-only", BR: "econ-only",
-    IE: "econ-only",
-  },
-  "1999-default": {
-    US: "player-enabled", UK: "player-enabled",
-    FR: "econ-only", IT: "econ-only", ES: "econ-only", SE: "econ-only", TR: "econ-only",
-    DE: "econ-only", JP: "econ-only", CN: "econ-only", NG: "econ-only", BR: "econ-only",
-    IE: "econ-only",
-  },
-  "2007-default": {
-    US: "player-enabled", UK: "player-enabled",
-    FR: "econ-only", IT: "econ-only", ES: "econ-only", SE: "econ-only", TR: "econ-only",
-    DE: "econ-only", JP: "econ-only", CN: "econ-only", NG: "econ-only", BR: "econ-only",
-    IE: "econ-only",
-  },
-  "2019-default": {
-    US: "player-enabled", UK: "player-enabled", JP: "player-enabled", DE: "player-enabled",
-    IE: "player-enabled", BR: "player-enabled", CN: "player-enabled", NG: "econ-only",
-  },
-  "2023-default": {
-    US: "player-enabled", UK: "player-enabled", JP: "player-enabled", DE: "player-enabled",
-    IE: "player-enabled", BR: "player-enabled", CN: "player-enabled", NG: "econ-only",
-  },
-  "2019-no-parties": {
-    US: "player-enabled", UK: "player-enabled", JP: "player-enabled", DE: "player-enabled",
-    IE: "player-enabled", BR: "player-enabled", CN: "player-enabled", NG: "econ-only",
-  },
-};
 
 const PER_STATE_BY_ID = [
   "macroMetrics",
@@ -180,7 +101,7 @@ async function existsById(db, collection, id) {
 }
 
 /** Build one state's result from prefetched id-sets / sector maps. */
-function scoreState(state, idSets, resourceIds, sectorsByState) {
+function scoreState(state, idSets, resourceIds, sectorsByState, truth) {
   const stateId = state._id;
   const collections = { states: { present: true } };
   const gaps = [];
@@ -200,11 +121,11 @@ function scoreState(state, idSets, resourceIds, sectorsByState) {
   if (!sectorSpecPresent) gaps.push("sectorSpecializations");
 
   const presentTypes = sectorsByState.get(stateId) || new Set();
-  const missingSectorTypes = CORPORATION_TYPES.filter((t) => !presentTypes.has(t));
+  const missingSectorTypes = truth.corporationTypes.filter((t) => !presentTypes.has(t));
   collections.unownedSectors = {
     present: missingSectorTypes.length === 0,
     key: "{stateId, sectorType}",
-    expected: CORPORATION_TYPES.length,
+    expected: truth.corporationTypes.length,
     found: presentTypes.size,
     missingSectorTypes,
   };
@@ -244,6 +165,8 @@ async function prefetchStateCoverage(db, stateIds) {
 
 /** Per-state reference completeness. Read-only. */
 async function auditState(db, stateId, countryId) {
+  const truth = seedTruth();
+  if (truth.error) return { error: truth.error, referencePath: referencePath() };
   const stateFilter = countryId ? { _id: stateId, countryId } : { _id: stateId };
   const state = await db.collection("states").findOne(stateFilter, {
     projection: { _id: 1, countryId: 1, name: 1, sectorSpecializations: 1 },
@@ -258,11 +181,13 @@ async function auditState(db, stateId, countryId) {
     };
   }
   const pref = await prefetchStateCoverage(db, [stateId]);
-  return scoreState(state, pref.idSets, pref.resourceIds, pref.sectorsByState);
+  return scoreState(state, pref.idSets, pref.resourceIds, pref.sectorsByState, truth);
 }
 
 /** Per-country reference completeness for a given profile. Read-only. */
 async function auditCountry(db, countryId, profile) {
+  const truth = seedTruth();
+  if (truth.error) return { error: truth.error, referencePath: referencePath() };
   const countryGaps = [];
   const collections = {};
 
@@ -274,7 +199,7 @@ async function auditCountry(db, countryId, profile) {
   collections.federalBudget = { present: !!fb, key: "countryId|_id" };
   if (!fb) countryGaps.push("federalBudget");
 
-  if (FOREX_ACTIVE_COUNTRIES.has(countryId)) {
+  if (truth.forexActiveCountries.has(countryId)) {
     // Not always keyed by _id === countryId — a shared currency-union bank
     // (e.g. Germany's is _id: "ECB") is keyed by the countryId field instead.
     // Verified against real data 2026-07-22: every FOREX_ACTIVE_COUNTRIES entry
@@ -345,7 +270,7 @@ async function auditCountry(db, countryId, profile) {
   const stateResults = [];
   const incompleteStates = [];
   for (const s of states) {
-    const r = scoreState(s, pref.idSets, pref.resourceIds, pref.sectorsByState);
+    const r = scoreState(s, pref.idSets, pref.resourceIds, pref.sectorsByState, truth);
     stateResults.push({
       stateId: r.stateId, complete: r.complete, status: r.status, gaps: r.gaps || [],
     });
@@ -375,14 +300,16 @@ async function auditCountry(db, countryId, profile) {
 
 /** Era/preset rollup over PRESET_COUNTRIES. Read-only. */
 async function auditEra(db, preset, profiles) {
-  const roster = PRESET_COUNTRIES[preset];
+  const truth = seedTruth();
+  if (truth.error) return { error: truth.error, referencePath: referencePath() };
+  const roster = truth.presetCountries[preset];
   if (!roster) {
     return {
       error: `unknown preset '${preset}'`,
-      knownPresets: Object.keys(PRESET_COUNTRIES),
+      knownPresets: Object.keys(truth.presetCountries),
     };
   }
-  const defaults = PRESET_DEFAULT_PROFILES[preset] || {};
+  const defaults = truth.presetProfiles[preset] || {};
   const countries = [];
   for (const countryId of roster) {
     const profile = (profiles && profiles[countryId])
@@ -481,7 +408,7 @@ async function main() {
       },
       async ({ stateId, countryId, database }) => {
         const db = await getGameDb(opsDb, database);
-        return jsonResult(await auditState(db, stateId, countryId));
+        return auditResult(await auditState(db, stateId, countryId));
       });
 
     server.tool("audit_country",
@@ -489,16 +416,16 @@ async function main() {
       {
         countryId: z.string().describe("country code, e.g. RU, US, UK"),
         profile: z.enum(["player-enabled", "econ-only"])
-          .describe("player-enabled expects parties + electedOfficials + enactedLaws; econ-only does not"),
+          .describe("player-enabled expects parties + electedOfficials + enactedLaws; econ-only does not. This is the era roster's own distinction: a country the game lets a player sit in is player-enabled."),
         database: databaseParam,
       },
       async ({ countryId, profile, database }) => {
         const db = await getGameDb(opsDb, database);
-        return jsonResult(await auditCountry(db, countryId, profile));
+        return auditResult(await auditCountry(db, countryId, profile));
       });
 
     server.tool("audit_era",
-      "Audit every country in a preset's expected roster (hardcoded PRESET_COUNTRIES). Default per-country profiles come from seedCountryGameStates enablement; override with profiles map. Read-only.",
+      "Audit every country in a preset's expected roster, taken from the game's era roster (the same one the game seeds from). A country the game calls player-enabled expects parties, elected officials and enacted laws; every other profile does not. Override with profiles map. Read-only.",
       {
         preset: z.string().describe('preset id, e.g. "1953-default"'),
         profiles: z.record(z.enum(["player-enabled", "econ-only"])).optional()
@@ -507,7 +434,7 @@ async function main() {
       },
       async ({ preset, profiles, database }) => {
         const db = await getGameDb(opsDb, database);
-        return jsonResult(await auditEra(db, preset, profiles));
+        return auditResult(await auditEra(db, preset, profiles));
       });
 
     server.tool("check_duplicates",
@@ -536,6 +463,12 @@ async function main() {
 }
 
 function jsonResult(o) { return { content: [{ type: "text", text: JSON.stringify(o, null, 2) }] }; }
+// A missing reference artifact is a failure to answer, not an audit finding:
+// it must not read as "nothing is missing".
+function auditResult(result) {
+  if (result && result.error && result.referencePath) return errorResult(result.error);
+  return jsonResult(result);
+}
 function rpcErr(code, message) { return { jsonrpc: "2.0", error: { code, message }, id: null }; }
 
 if (require.main === module) {
@@ -543,10 +476,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  CORPORATION_TYPES,
-  PRESET_COUNTRIES,
-  PRESET_DEFAULT_PROFILES,
-  FOREX_ACTIVE_COUNTRIES,
   REFERENCE_COLLECTIONS,
   resolveGameDbName,
   baseDbName,
