@@ -63,6 +63,9 @@ const MCP_DEFS = [
   { key: "reports", icon: "📰", name: "Report Publish", transport: "HTTP · public", health: 9738, connect: "http",
     path: "/reports/mcp", desc: "Publish a finished report to the ops dashboard (write-scoped token).",
     tools: ["publish_report*", "list_published_reports", "unpublish_report*", "restart_dashboard*"] },
+  { key: "lore", icon: "📜", name: "Lore", transport: "HTTP · public", health: 9750, connect: "http",
+    path: "/lore/mcp", desc: "The world's authored lore: countries and eras, the wider world registry, blocs and charters, the history of the eras, the player wiki and the glossary. Also serves MCP resources (lore://wiki/<slug>, lore://country/<id>) and the world_brief prompt.",
+    tools: ["lore_overview", "lore_countries", "lore_country", "lore_world_entities", "lore_world_entity", "lore_organizations", "lore_historical_events", "lore_wiki_search", "lore_wiki_page", "lore_glossary", "lore_parties"] },
 ];
 
 function getMcpCatalog() {
