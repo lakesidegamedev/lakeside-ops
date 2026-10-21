@@ -34,6 +34,7 @@ test("the directory hands every server a URL an agent can use", () => {
   for (const entry of getMcpCatalog()) {
     if (entry.connect === "http") assert.match(entry.url, /^https?:\/\//, `${entry.key} has no public URL`);
     if (entry.connect === "local") assert.match(entry.localUrl, /^http:\/\/127\.0\.0\.1:/, `${entry.key} has no local URL`);
+    if (entry.connect === "stdio") assert.match(entry.url, /^[a-z@]/, `${entry.key} has no launch command`);
   }
 });
 

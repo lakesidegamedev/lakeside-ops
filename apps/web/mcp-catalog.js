@@ -120,7 +120,9 @@ function localMcpUrl(d) {
 function getMcpCatalog() {
   return MCP_DEFS.map((d) => ({
     ...d,
-    url: mcpUrl(d.path),
+    // A stdio server is launched by a command, not reached at a URL, so its
+    // own url is kept as it is.
+    url: d.path ? mcpUrl(d.path) : d.url,
     localUrl: d.connect === "local" ? localMcpUrl(d) : null,
   }));
 }
