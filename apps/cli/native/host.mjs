@@ -9,7 +9,7 @@ let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
-  try { runtime?.close(); } finally { await server?.close(); process.exit(0); }
+  try { await runtime?.close(); } finally { await server?.close(); process.exit(0); }
 }
 process.once("SIGTERM", close);
 process.once("SIGINT", close);

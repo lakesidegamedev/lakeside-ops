@@ -1,26 +1,20 @@
 // @ts-check
-// The Lakeside mark as a small animated scene: a mountain range with snow and
-// side lighting, a lake that reflects it with moving ripples, glints along the
-// waterline and a few stars. Pure: frame(t) returns rows of colored runs, so it
-// is testable and the renderer only maps color keys to the active theme.
+// The Lakeside mark as a scene: a static, gradient mountain range over a lake
+// whose surface is the only moving part. Pure: sceneCells(t) returns rows of
+// colored cells, so it is testable and the renderer only maps color keys to the
+// active theme.
 
-const LEVELS = " ▁▂▃▄▅▆▇█";
-
-/** Deterministic ridge height (in rows) for column x of width w. @param {number} x @param {number} w */
-function ridge(x, w) {
-  const peak = (/** @type {number} */ c, /** @type {number} */ h, /** @type {number} */ s) => {
-    const d = Math.abs(x - c) / s;
-    return d >= 1 ? 0 : h * Math.pow(1 - d, 1.15);
-  };
-  const base = Math.max(
-    peak(w * 0.30, 5.7, w * 0.19),
-    peak(w * 0.55, 4.6, w * 0.15),
-    peak(w * 0.80, 3.1, w * 0.13),
-    peak(w * 0.12, 2.2, w * 0.1),
-  );
-  // Small deterministic jaggedness so slopes read as rock, not a smooth curve.
-  const rough = 0.28 * Math.sin(x * 1.7) + 0.18 * Math.sin(x * 3.1 + 1.3);
-  return Math.max(0.35, base + (base > 0.8 ? rough : 0.1 * Math.sin(x * 0.9)));
+/** Deterministic integer ridge height for column x. Static: no time input.
+ * @param {number} x @param {number} w @param {number} m
+ * @param {[number, number, number][]} peaks [centre, half-width, height] as fractions of w and m
+ * @returns {number} rows above the base, 0..m */
+function ridgeAt(x, w, m, peaks) {
+  let h = 0;
+  for (const [centre, spread, rel] of peaks) {
+    const d = Math.abs(x - centre * w) / Math.max(1, spread * w);
+    if (d < 1) h = Math.max(h, rel * m * (1 - d));
+  }
+  return Math.max(0, Math.min(m, Math.ceil(h)));
 }
 
 /**
@@ -29,46 +23,54 @@ function ridge(x, w) {
  * @returns {{ ch: string, c: string }[][]} rows of cells; c is a palette key
  */
 export function sceneCells(t, size = {}) {
-  const w = size.width || 44, skyRows = size.sky ?? 1, mRows = size.mountain || 6, lakeRows = size.lake || 3;
-  const heights = Array.from({ length: w }, (_, x) => ridge(x, w));
+  const w = size.width || 44, skyRows = size.sky ?? 1, mRows = size.mountain ?? 6, lakeRows = size.lake ?? 3;
+
+  // Two ranges, distant behind near; both static.
+  const farPeaks = /** @type {[number, number, number][]} */ ([[0.50, 0.30, 0.55], [0.16, 0.16, 0.40]]);
+  const nearPeaks = /** @type {[number, number, number][]} */ ([[0.26, 0.20, 0.95], [0.74, 0.19, 0.80]]);
+  const far = [], near = [];
+  for (let x = 0; x < w; x++) {
+    far.push(ridgeAt(x, w, mRows, farPeaks));
+    near.push(ridgeAt(x, w, mRows, nearPeaks));
+  }
+  const maxNear = Math.max(1, ...near);
+
   const rows = [];
-  for (let r = 0; r < skyRows; r++) {
-    const row = [];
-    for (let x = 0; x < w; x++) {
-      const star = (x * 37 + r * 11) % 23 === 0;
-      const lit = star && Math.floor(t * 1.5 + x) % 4 !== 0;
-      row.push(lit ? { ch: (x + r) % 3 ? "·" : "✦", c: "muted" } : { ch: " ", c: "muted" });
-    }
-    rows.push(row);
-  }
+  for (let r = 0; r < skyRows; r++) rows.push(Array.from({ length: w }, () => ({ ch: " ", c: "muted" })));
+
   for (let r = 0; r < mRows; r++) {
-    const row = [], floor = mRows - 1 - r;
+    const h = mRows - r, row = [];
     for (let x = 0; x < w; x++) {
-      const h = heights[x], level = Math.max(0, Math.min(1, h - floor));
-      const ch = LEVELS[Math.round(level * 8)];
-      // Snow on the top cell of tall columns; the sunlit side faces left.
-      const top = h - floor > 0 && h - floor <= 1.05;
-      const sunlit = (heights[x + 1] ?? h) >= (heights[x - 1] ?? h);
-      const c = ch === " " ? "dim" : top && h > 4.2 ? "text" : sunlit ? "primary" : "blue";
-      row.push({ ch, c });
+      const nh = near[x], fh = far[x];
+      if (h <= nh) {
+        // Row-wise gradient, with text reserved for the tallest ridge tops.
+        const c = h === nh && nh === maxNear && maxNear >= 3 ? "text"
+          : h > mRows * 0.72 ? "primary" : h > mRows * 0.42 ? "blue" : "dim";
+        row.push({ ch: "█", c });
+      } else if (h <= fh) {
+        row.push({ ch: "█", c: h > mRows * 0.5 ? "blue" : "dim" });
+      } else {
+        row.push({ ch: " ", c: "muted" });
+      }
     }
     rows.push(row);
   }
+
+  // Waterline: a slow glint drifting along the shore.
   const shore = [];
   for (let x = 0; x < w; x++) {
-    const glint = Math.floor(x + t * 3) % 11 === 0 || Math.floor(x * 1.3 - t * 2) % 17 === 0;
-    shore.push(glint ? { ch: "━", c: "text" } : { ch: "━", c: "dim" });
+    const glint = (x + Math.floor(t * 3)) % 19 === 0 || (x * 5 + Math.floor(t * 2)) % 31 === 0;
+    shore.push({ ch: "━", c: glint ? "text" : "dim" });
   }
   rows.push(shore);
+
+  // Lake: line glyphs whose phase drifts with time. t = 0 is a valid still.
   for (let k = 0; k < lakeRows; k++) {
     const row = [];
     for (let x = 0; x < w; x++) {
-      // Reflection of the mountain row above the shore, shifted by a ripple.
-      const shift = k === 0 ? 0 : Math.round(Math.sin(t * 1.6 + k * 1.9 + x * 0.35));
-      const src = heights[Math.max(0, Math.min(w - 1, x + shift))];
-      const depth = src - k * 1.6;
-      const ch = depth > 1.1 ? "▓" : depth > 0.55 ? "▒" : depth > 0.15 ? "░" : Math.floor(x * 0.7 + t * 2 + k) % 9 === 0 ? "~" : " ";
-      row.push({ ch, c: ch === "~" ? "dim" : k === 0 ? "blue" : "dim" });
+      const v = Math.sin(x * 0.55 + t * (1.4 + k * 0.25) + k * 0.9);
+      const ch = v > 0.72 ? "‾" : v > 0.15 ? "─" : v > -0.5 ? "≈" : "~";
+      row.push({ ch, c: k === 0 ? "blue" : "dim" });
     }
     rows.push(row);
   }

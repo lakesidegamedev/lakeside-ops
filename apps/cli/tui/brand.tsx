@@ -33,9 +33,10 @@ export function Eyebrow(props: { children: any; color?: string }) {
   return <text fg={props.color || ink.muted}>{props.children}</text>;
 }
 
-export function Brand(props: { name: string; compact?: boolean }) {
-  return <box alignItems="center" gap={1} flexShrink={0} height={props.compact ? 3 : 13}>
-    <Show when={!props.compact} fallback={<text height={1} flexShrink={0} fg={ink.primary}><b> ▲  ▰ </b><span style={{ fg: ink.dim }}>━━━━━━</span></text>}><Scene /></Show>
+export function Brand(props: { name: string; compact?: boolean; width?: number; sky?: number; mountain?: number; lake?: number }) {
+  const size = () => ({ width: props.width || 44, sky: props.sky ?? 1, mountain: props.mountain ?? 6, lake: props.lake ?? 3 });
+  return <box alignItems="center" gap={1} flexShrink={0} height={props.compact ? 3 : size().sky + size().mountain + 1 + size().lake + 2}>
+    <Show when={!props.compact} fallback={<text height={1} flexShrink={0} fg={ink.primary}><b> ▲  ▰ </b><span style={{ fg: ink.dim }}>━━━━━━</span></text>}><Scene width={size().width} sky={size().sky} mountain={size().mountain} lake={size().lake} /></Show>
     <text fg={ink.text}><b>{props.name.toUpperCase().split("").join(" ")}</b></text>
   </box>;
 }

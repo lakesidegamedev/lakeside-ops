@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.1.4 preview 6 (2026-10-21, experimental)
+
+- The home screen opens on a full-width mountain range: sharp static ridges, a vertical gradient, and a lake whose line-work is the only moving part. It sizes itself to the terminal and keeps the prompt below it at every height. `/motion` or `LAKESIDE_CODE_REDUCE_MOTION=1` still freezes the water.
+- The session panel and status bar name the model in plain words with a small provider mark, e.g. `OpenCode Zen - Deepseek V4.1-Flash-Free` instead of the raw id.
+- `lakeside code vps --help` explains the command, unknown VPS subcommands print usage, and `/doctor` reports the VPS connection alongside the other checks.
+- Windows: the engine starts through the `.cmd` shims and shuts down without a file lock, so terminals no longer fail to launch or leave a busy binary behind. Transient VPS connection failures get one fresh retry.
+
 ## 0.1.4 preview 5 (2026-10-17, experimental)
 
 - Discord through a connected Keir VPS: sessions read channels and recent messages, and search or ask what players discussed, all with the VPS's own credentials. Posting to a channel (`vps_discord_send`) asks for confirmation every time and stays off unless the host enables it.

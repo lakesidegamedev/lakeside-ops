@@ -1,6 +1,6 @@
 {
   "name": "@lakesidegamedev/code",
-  "version": "0.1.4-preview.5",
+  "version": "0.1.4-preview.6",
   "private": true,
   "description": "Lakeside Code terminal and peer coordination for OpenCode",
   "bin": {

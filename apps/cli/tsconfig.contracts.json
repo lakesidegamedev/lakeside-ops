@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["tui/insights.mjs", "tui/scene.mjs", "native/*.mjs", "native/*.d.ts", "config.mjs", "workspace/*.mjs", "workflow/policy.mjs", "workflow/checkpoints.mjs", "integrations/mcp.mjs", "integrations/studio.mjs", "integrations/vps-client.mjs"]
+  "include": ["tui/insights.mjs", "tui/model-label.mjs", "tui/scene.mjs", "native/*.mjs", "native/*.d.ts", "config.mjs", "workspace/*.mjs", "workflow/policy.mjs", "workflow/checkpoints.mjs", "integrations/mcp.mjs", "integrations/studio.mjs", "integrations/vps-client.mjs"]
 }

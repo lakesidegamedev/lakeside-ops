@@ -1,7 +1,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { sync: spawnSync } = require("cross-spawn");
 const { locations } = require("./config.mjs");
 const { listSkills } = require("./skills");
 const { launch, engineBinary, supportedVersion } = require("./launch");
@@ -23,13 +23,14 @@ async function main(input = [], env = process.env) {
   if (input[0] === "activation") { require("./bin/activation.cjs"); return; }
   if (input[0] === "providers") { console.log(JSON.stringify(require("./provider-routes").PROVIDERS, null, 2)); return; }
   if (input.length === 1 && ["--version", "version"].includes(input[0])) { console.log(`Lakeside Code ${require("./package.json").version} (OpenCode ${supportedVersion})`); return; }
-  if (input.length === 1 && ["--help", "-h", "help"].includes(input[0])) { console.log("Lakeside Code\n\nlakeside code [project] [--continue] [--session ID] [--model provider/model]\nlakeside code providers\nlakeside code [project] --provider antigravity|ollama|codex-sub|codex-api|claude-sub|claude-api|opencode-go --model MODEL\nlakeside code activation  (JSON request on stdin)\nlakeside code update [--check] [--channel preview|stable]\nlakeside code doctor\nlakeside code skills [defaults NAME...|defaults none]\nlakeside code vps connect --url HTTPS_URL --token-file LOCAL_FILE [--kind keir|mcp] [--auth cookie|bearer]\nlakeside code [project] --backend api|claude|codex|gemini [--model ID] [--resume-run ID] [--carry ID]\nlakeside code backends [add --id NAME --command EXECUTABLE --args JSON_ARRAY]\nlakeside code runs [show ID]\nlakeside code projects [add NAME LOCAL_PATH]\nlakeside code workflow [enable|disable github|kanban|tickets]\nlakeside code mcp [add --id NAME --url URL --token-env VARIABLE]\nlakeside code peers [add --id NAME --kind keir|opencode --url ORIGIN --directory /remote/worktree --token-env VARIABLE --allow-submit]\nlakeside code handoffs [refresh|cancel ID] [--retry]\nlakeside code --preview\n\nInside the terminal: /connect, /projects, /agents, /handoffs, /workbench, /connections, /inspect-project, /review-changes\nOther OpenCode commands and options pass through to the engine."); return; }
+  if (input.length === 1 && ["--help", "-h", "help"].includes(input[0])) { console.log("Lakeside Code\n\nlakeside code [project] [--continue] [--session ID] [--model provider/model]\nlakeside code providers\nlakeside code [project] --provider antigravity|ollama|codex-sub|codex-api|claude-sub|claude-api|opencode-go --model MODEL\nlakeside code activation  (JSON request on stdin)\nlakeside code update [--check] [--channel preview|stable]\nlakeside code doctor\nlakeside code skills [defaults NAME...|defaults none]\nlakeside code vps [status]\nlakeside code vps connect --url HTTPS_URL --token-file LOCAL_FILE [--kind keir|mcp] [--auth cookie|bearer]\nlakeside code [project] --backend api|claude|codex|gemini [--model ID] [--resume-run ID] [--carry ID]\nlakeside code backends [add --id NAME --command EXECUTABLE --args JSON_ARRAY]\nlakeside code runs [show ID]\nlakeside code projects [add NAME LOCAL_PATH]\nlakeside code workflow [enable|disable github|kanban|tickets]\nlakeside code mcp [add --id NAME --url URL --token-env VARIABLE]\nlakeside code peers [add --id NAME --kind keir|opencode --url ORIGIN --directory /remote/worktree --token-env VARIABLE --allow-submit]\nlakeside code handoffs [refresh|cancel ID] [--retry]\nlakeside code --preview\n\nInside the terminal: /connect, /projects, /agents, /handoffs, /workbench, /connections, /inspect-project, /review-changes\nOther OpenCode commands and options pass through to the engine."); return; }
   if (input[0] === "vps") {
     const { connectVps } = await import("./vps-profile.mjs");
     const { discoverVps } = await import("./integrations/vps-discovery.mjs");
     if (input.length === 1 || input[1] === "status" && input.length === 2) { console.log(JSON.stringify(await discoverVps(env), null, 2)); return; }
+    if (input.length === 2 && ["help", "--help", "-h"].includes(input[1])) { console.log("lakeside code vps [status]\nlakeside code vps connect --url HTTPS_ORIGIN --token-file LOCAL_FILE [--kind keir|mcp] [--auth cookie|bearer]"); return; }
     const { words, values } = flags(input.slice(1));
-    if (words.length !== 1 || words[0] !== "connect" || !values.url || !values["token-file"] || Object.keys(values).some(key => !["url", "token-file", "kind", "auth", "name", "cookie-name", "id"].includes(key))) throw Error("Usage: lakeside code vps connect --url HTTPS_ORIGIN --token-file LOCAL_FILE");
+    if (words.length !== 1 || words[0] !== "connect" || !values.url || !values["token-file"] || Object.keys(values).some(key => !["url", "token-file", "kind", "auth", "name", "cookie-name", "id"].includes(key))) throw Error("Usage: lakeside code vps [status] | vps connect --url HTTPS_ORIGIN --token-file LOCAL_FILE [--kind keir|mcp] [--auth cookie|bearer]");
     const profile = connectVps(values.url, values["token-file"], env, { id: values.id, kind: values.kind, auth: values.auth, name: values.name, cookieName: values["cookie-name"] });
     const connection = await discoverVps(env);
     console.log(JSON.stringify({ configured: true, id: profile.id, connection, next: connection.state === "connected" ? "Connection ready. Terminals that are already open attach the remote tools within ten seconds; new ones load them at start, from any folder." : connection.next }, null, 2)); return;
@@ -87,7 +88,9 @@ async function main(input = [], env = process.env) {
     let pluginReady = true;
     try { await import("@opencode-ai/plugin"); } catch { pluginReady = false; }
     const skills = listSkills();
-    const result = { skills: skills.map(row => row.name), ready: probe.status === 0 && version === supportedVersion && pluginReady && (Number(process.versions.node.split(".")[0]) > 22 || Number(process.versions.node.split(".")[0]) === 22 && Number(process.versions.node.split(".")[1]) >= 12), engine: version || "unavailable", requiredEngine: supportedVersion, pluginReady, node: process.versions.node, platform: process.platform, binary, configuration: loc.config, peers: loadPeers(env).map(({ id, kind, url, directory, allowSubmit }) => ({ id, kind, url, directory, allowSubmit })) };
+    const { discoverVps } = await import("./integrations/vps-discovery.mjs");
+    const vps = await discoverVps(env, { timeoutMs: 3000 });
+    const result = { skills: skills.map(row => row.name), ready: probe.status === 0 && version === supportedVersion && pluginReady && (Number(process.versions.node.split(".")[0]) > 22 || Number(process.versions.node.split(".")[0]) === 22 && Number(process.versions.node.split(".")[1]) >= 12), engine: version || "unavailable", requiredEngine: supportedVersion, pluginReady, node: process.versions.node, platform: process.platform, binary, configuration: loc.config, vps, peers: loadPeers(env).map(({ id, kind, url, directory, allowSubmit }) => ({ id, kind, url, directory, allowSubmit })) };
     output(result); if (!result.ready) process.exitCode = 1; return;
   }
   if (input[0] === "peers") {

@@ -81,6 +81,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install CLI test dependencies
+        run: npm --prefix apps/cli ci --no-audit --no-fund
+      - name: Run CLI tests on native Windows
+        run: npm run test:cli
       - uses: actions/download-artifact@v4
         with:
           name: lakeside-code
