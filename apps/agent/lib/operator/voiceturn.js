@@ -9,7 +9,7 @@ function voiceRoot(data, job) {
 function finalReplyQueued(data, job) {
   const root = voiceRoot(data, job);
   if (!root) return false;
-  if ((data.appThread?.messages || []).some(m => m.role === "keir" && m.jobId === root.id && !m.voiceProgress && m.text)) return true;
+  if ((data.appThread?.messages || []).some(m => m.role === "keir" && m.jobId === root.id && !m.voiceProgress && !m.provisional && m.text)) return true;
   return Object.entries(data.outbox || {}).some(([key, entry]) => key.startsWith("channel-reply:") && entry.content && entry.destination?.startsWith("channel:") && voiceRoot(data, data.jobs[entry.destination.slice(8)])?.id === root.id);
 }
 function context(data, job) {

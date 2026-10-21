@@ -5,6 +5,18 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- In the Keir app, a conversation now gets a real answer quickly and the same message is revised in place as the investigation lands, instead of one acknowledgement followed by a long silence and a second reply. A short remark like "Railway still down" is answered in the conversation lane rather than quietly becoming a background task.
+- While Keir works, a specific line under the answer says what he is doing ("Still on it: checking deployments."), refreshed every 45 seconds and cleared by the final answer. Revised answers show an "edited" marker.
+
+### For developers
+
+- `appchannel`: `answers` slot per conversational turn, `revise()` in place with `rev`/`editedAt`, `handoffAnswer()` for the provisional first answer, and `revised` rows in the thread view so an edit reaches clients that already hold the message. The thread version hashes `rev`, so a revision wakes the long poll.
+- `handoff` accepts `answer` (the quick turn's best short answer) and marks an already-queued reply provisional instead; only a provisional row is revised, so ordinary follow-ups stay separate messages.
+- `progress_update` for an app job writes the line onto the answer bubble and skips the separate ack message; the activation keeps a 45 second liveness tick built from the tool log.
+- `voiceturn.finalReplyQueued` ignores provisional answers, so a voice turn still needs its own finished reply.
+
 ## 5.9.6 (2026-10-21)
 
 ### For developers

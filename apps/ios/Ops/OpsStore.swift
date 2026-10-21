@@ -148,12 +148,34 @@ import LakesideCore
         }
     }
 
-    private func apply(_ view: JSONValue) {
-        let fresh = view["messages"].array.filter { m in !messages.contains { $0["id"] == m["id"] } }
-        if !fresh.isEmpty {
-            messages.append(contentsOf: fresh)
-            if fresh.contains(where: { $0["role"].string == "keir" }) { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+    /// Takes the new rows and the revised ones, upserting by message id. Returns
+    /// true only when a genuinely new Keir message was appended.
+    private func merge(_ fresh: [JSONValue], _ revised: [JSONValue]) -> Bool {
+        guard !fresh.isEmpty || !revised.isEmpty else { return false }
+        var next = messages
+        var index: [String: Int] = [:]
+        for (i, row) in next.enumerated() { let id = row["id"].string; if !id.isEmpty { index[id] = i } }
+        var appendedKeir = false
+        for row in fresh {
+            let id = row["id"].string
+            guard !id.isEmpty, index[id] == nil else { continue }
+            index[id] = next.count
+            next.append(row)
+            if row["role"].string == "keir" { appendedKeir = true }
         }
+        for row in fresh + revised {
+            let id = row["id"].string
+            guard !id.isEmpty, let i = index[id] else { continue }
+            if next[i] != row { next[i] = row }
+        }
+        messages = next
+        return appendedKeir
+    }
+
+    private func apply(_ view: JSONValue) {
+        // A revised answer keeps its id and seq and arrives in `revised`: replace
+        // the row in place so the same message grows into the fuller answer.
+        if merge(view["messages"].array, view["revised"].array) { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
         if view["controls"] != .null { controls = view["controls"] }
         tasks = view["tasks"].array
         working = view["working"].bool

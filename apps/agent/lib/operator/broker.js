@@ -1312,11 +1312,18 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         inbox: [...(job.requestInbox || []), ...(job.inbox || [])], deadline: job.deadline });
       musePolicy.inherit(ledger, job, worker);
       worker.appThread = job.appThread;
-      if (job.voiceMode && appChannel && !require("./voiceturn").finalReplyQueued(d, job)) {
-        appChannel.deliver(`voice-handoff:${job.id}`, { content: "I need a closer look at that. I'll send the findings here when they're ready.", voiceProgress: true }, worker);
+      // App conversation: the owner gets an answer now and the same message is
+      // revised with the deeper findings, so the chat never goes quiet. A voice
+      // turn that already replied just has that reply marked provisional.
+      if (appChannel && isAppJob(job)) {
+        // The quick turn may already have queued its answer; that message becomes
+        // the provisional one when it lands. Otherwise open the slot now.
+        if (job.channelReplyQueued) job.provisionalAnswer = true;
+        else appChannel.handoffAnswer(job, input.answer, worker);
+        job.progressMessageId ||= `app-status-${job.id}`;
       }
       job.inbox = []; job.state = "done"; job.summary = "Continuing in the work queue.";
-      if (!job.channelReplyQueued && worker.replyChannel && !(job.voiceMode && appChannel)) worker.needsAck = true;
+      if (!job.channelReplyQueued && worker.replyChannel && !(appChannel && isAppJob(job))) worker.needsAck = true;
       ledger.save(); return { taskId: worker.id, state: worker.state };
     }
     if (name === "delegate_fix") return delegation.delegate(job, input.instructions, signal);
@@ -2086,6 +2093,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const claim = outcomeClaims(message).find((c) => c.kind === "money" ? !(c.future ? ev.money.agreed : ev.money.done) : !c.future && !ev[c.kind].done);
         if (claim) throw new Error(`Not posted: "${claim.sentence}" states an outcome Keir has no receipt for. ${NEED[claim.kind]}`);
       }
+      if (appChannel && isAppJob(job)) {
+        // The app thread shows this line under the answer being revised.
+        appChannel.updateStatus(job, message);
+        if (!job.progressMessageId) job.progressMessageId = `app-status-${job.id}`;
+        job.needsAck = false; job.progressAt = now(); ledger.save(); return { updated: true };
+      }
       if (!job.progressMessageId) {
         // First use is the acknowledgement: it becomes the single status message.
         if (d.outbox[`ack:${job.id}`]) return { queued: true };
@@ -2093,8 +2106,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         ledger.notify(`ack:${job.id}`, `channel:${job.id}`, message.slice(0, 1900)); job.needsAck = false; job.progressAt = now(); ledger.save();
         return { posted: true };
       }
-      if (appChannel && isAppJob(job)) appChannel.updateStatus(job, message);
-      else await discord("PATCH", `/channels/${job.replyChannel}/messages/${job.progressMessageId}`, { content: message.slice(0, 1900), allowed_mentions: { parse: [] } });
+      await discord("PATCH", `/channels/${job.replyChannel}/messages/${job.progressMessageId}`, { content: message.slice(0, 1900), allowed_mentions: { parse: [] } });
       job.progressAt = now(); ledger.save(); return { updated: true };
     }
     if (name === "discord_search") {

@@ -160,16 +160,24 @@ test("each voice turn needs its own final reply even when an earlier question ha
   await broker.tool(child, "finish", { state: "done", summary: "Replied to this request." });
   assert.equal(child.state, "done");
 });
-test("a voice handoff publishes correlated progress without pretending to be the final answer", async t => {
+test("a voice handoff leaves a provisional answer the worker revises, never a final one", async t => {
   const { ledger, app, broker } = fixture(t);
   const current = app.authenticatedPost("Explain the current investigation", "voice-progress", "main", { voice: true });
   const root = ledger.data.jobs[current.jobId]; root.state = "running";
-  const handoff = await broker.tool(root, "handoff", {});
-  const progress = app.view().messages.find(m => m.role === "keir" && m.jobId === root.id);
-  assert.ok(progress); assert.equal(progress.voice, true); assert.equal(progress.voiceProgress, true);
-  assert.equal(handoff.taskId, progress.taskId);
+  const handoff = await broker.tool(root, "handoff", { answer: "Short answer: nothing looks broken yet." });
+  const provisional = app.view().messages.find(m => m.role === "keir" && m.jobId === root.id);
+  assert.ok(provisional); assert.equal(provisional.voice, true); assert.equal(provisional.provisional, true);
+  assert.equal(provisional.taskId, handoff.taskId); assert.match(provisional.text, /nothing looks broken yet/);
+  assert.equal(provisional.voiceProgress, undefined);
   const child = ledger.data.jobs[handoff.taskId]; child.state = "running";
   await assert.rejects(broker.tool(child, "finish", { state: "done", summary: "Done." }), /this voice turn needs its own reply/i);
+  await broker.tool(child, "channel_reply", { message: "The investigation finished: one drifted account." });
+  // The outbox is the real delivery hop; the fixture drains it by hand.
+  for (const [key, entry] of Object.entries(ledger.data.outbox)) if (key.startsWith(`channel-reply:${child.id}`)) app.deliver(key, entry, child);
+  const revised = app.view().messages.filter(m => m.role === "keir" && m.jobId === root.id);
+  assert.equal(revised.length, 1, "the deeper answer edits the provisional message");
+  assert.equal(revised[0].id, provisional.id); assert.match(revised[0].text, /one drifted account/); assert.ok(revised[0].editedAt > 0);
+  assert.equal(revised[0].provisional, undefined);
 });
 
 test("coding children of a voice request report to their parent without needing an impossible spoken reply", async t => {

@@ -6,7 +6,8 @@ test("delegated voice context stops at its own source and identifies delivery by
   const data={jobs:{[root.id]:root,worker:child},appThread:{messages:[{id:"old",seq:1,role:"owner",text:"Same question",jobId:"voice-a"},{id:"new",seq:2,role:"owner",text:"Same question",jobId:root.id},{id:"other-answer",seq:3,role:"keir",text:"An answer",jobId:"voice-a"}]}};
   const c=context(data,child);assert.equal(c.turn.jobId,root.id);assert.equal(c.turn.replyRequired,true);assert.equal(c.conversation.messages.length,2);
   data.appThread.messages.push({seq:4,role:"keir",jobId:root.id,text:"Checking",voiceProgress:true});assert.equal(finalReplyQueued(data,child),false);
-  data.appThread.messages.push({seq:5,role:"keir",jobId:root.id,text:"Final answer"});assert.equal(finalReplyQueued(data,child),true);
+  data.appThread.messages.push({seq:5,role:"keir",jobId:root.id,text:"A quick answer",provisional:true});assert.equal(finalReplyQueued(data,child),false,"a provisional first answer is not the finished turn");
+  data.appThread.messages.push({seq:6,role:"keir",jobId:root.id,text:"Final answer"});assert.equal(finalReplyQueued(data,child),true);
 });
 test("prefetched voice schemas are bounded reviewed reads, never arbitrary server tools", async () => {
   const calls=[];
