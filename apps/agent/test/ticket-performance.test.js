@@ -115,6 +115,18 @@ test("multiple attempts in one conversation count all work and earliest pickup o
   assert.equal(r.tickets[0].pickupToResolutionMs, 9000);
 });
 
+test("resolving a reopened ticket includes the earlier conversation's work and costs", () => {
+  const f = fixture(); observeTicket(f.data, f.job, f.ticket);
+  const fresh = { ...f.job, id: "fresh", channelId: "new", at: 20000, reopenedFromJob: "support" };
+  f.data.jobs.fresh = fresh;
+  observeTicket(f.data, fresh, { ...f.ticket, conversation: { channelId: "new" },
+    resolution: { receiptId: "r2", resolvedAt: 30000 }, resolutionAttribution: { agent: "keir", jobId: "fresh" } });
+  const r = ticketPerformance(f.data, [f.row, { ...f.row, job: "fresh", at: new Date(31000).toISOString(), turns: 6 }], { until: 32000 });
+  assert.equal(r.resolved.tickets, 1); assert.equal(r.tickets[0].turns, 10);
+  assert.equal(r.tickets[0].pickupToResolutionMs, 29000);
+  assert.equal(r.tickets[0].activations, 2); assert.equal(r.reopenedTickets, 1);
+});
+
 test("reconciliation is bounded, backfills done jobs, rotates, and preserves evidence on failure", async () => {
   const f = fixture(); f.job.state = "done";
   f.data.jobs.second = { ...f.job, id: "second", ticket: 13 };

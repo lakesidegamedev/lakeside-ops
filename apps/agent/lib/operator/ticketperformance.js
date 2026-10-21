@@ -46,8 +46,7 @@ function ticketPerformance(data, usage = [], { since = 0, until = Date.now() } =
   const starts = new Map();
   for (const job of Object.values(jobs)) {
     const root = rootJob(job, jobs), number = ticketOf(job) || ticketOf(root), current = latest.get(number);
-    const channel = job.channelId || job.source?.channelId || root.channelId || root.source?.channelId;
-    if (current && channel === (current.channelId || current.source?.channelId) && count(job.at))
+    if (current && count(job.at))
       starts.set(number, Math.min(starts.get(number) ?? Infinity, job.at));
   }
   const rowsByTicket = new Map();
@@ -58,8 +57,6 @@ function ticketPerformance(data, usage = [], { since = 0, until = Date.now() } =
     const current = latest.get(number);
     const at = stamp(row.at);
     if (!current || !Number.isFinite(at) || at > until) continue;
-    const channel = job?.channelId || job?.source?.channelId || root?.channelId || root?.source?.channelId;
-    if (channel && channel !== (current.channelId || current.source?.channelId)) continue;
     if (at < (starts.get(number) || 0)) continue;
     (rowsByTicket.get(number) || rowsByTicket.set(number, []).get(number)).push(row);
   }
@@ -112,7 +109,7 @@ function ticketPerformance(data, usage = [], { since = 0, until = Date.now() } =
     const group = modelGroups.get(key) || { provider: model.provider, model: model.model, tickets: [] };
     group.tickets.push({ ...ticket, ...model }); modelGroups.set(key, group);
   }
-  return { since, until, basis: "Latest conversation per ticket; cohort by canonical resolution time; lifetime work through resolution. Turns are model turns, not game turns or player messages.",
+  return { since, until, basis: "Current outcome per ticket; cohort by canonical resolution time; lifetime work through resolution, including earlier conversations when reopened. Turns are model turns, not game turns or player messages.",
     attribution: "Keir credit requires an explicit resolver attribution or Keir resolution submission. Other canonical closures with Keir work are assisted, not credited resolutions. Model groups show contributing work, not sole authorship.",
     costs: "API-equivalent USD uses the usage report rate table, not subscription charges. Incomplete totals are null; known subtotals and missing counts remain visible. Usage logged after until is not yet included.",
     trackedTickets: latest.size, observedTickets, unobservedTickets: latest.size - observedTickets,

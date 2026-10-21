@@ -221,9 +221,10 @@ model contributions and individual ticket outcomes.
 The report includes mean, median, p90/p95, min/max and sample counts for elapsed
 resolution time, model turns, activations and cost per ticket, plus daily trends
 and provider/model contributions. Resolution time starts at canonical ticket
-creation; pickup time starts at Keir's first attempt in the current conversation.
+creation; pickup time starts at Keir's first attempt on the ticket.
 The selected window applies to resolution dates and includes all logged work
-through resolution, including coding children and the activation that closes it.
+through resolution, including earlier conversations after reopening, coding
+children and the activation that closes it. Reopening never resets work costs.
 Turns are model turns, not game turns or player messages. A mixed-model ticket
 appears in each contributing model's group, so those counts are not additive.
 
