@@ -35,6 +35,28 @@ test('auth failures and missing credentials give safe recovery without erasing c
  const result=await discoverVps(f.env,{fetchImpl:async()=>new Response(f.token,{status:401})});assert.equal(result.errorKind,'auth');assert.ok(!JSON.stringify(result).includes(f.token));
  fs.rmSync(f.file);assert.equal((await discoverVps(f.env)).state,'offline');assert.equal(fs.readFileSync(path.join(f.env.LAKESIDE_CODE_CONFIG_DIR,'vps.json'),'utf8'),before);
 });
+test('a transient transport failure retries once with a fresh client',async t=>{
+ const f=fixture(t);let calls=0,attempts=0;
+ const value=await discoverVps(f.env,{delayMs:0,fetchImpl:async(_url,options)=>{
+  calls++;const m=JSON.parse(options.body);
+  if(m.method==='initialize'&&++attempts===1)throw Error('socket hang up');
+  if(m.method==='initialize')return response(m.id,{protocolVersion:'2025-06-18'},{'mcp-session-id':`session${attempts}`});
+  assert.equal(options.headers['Mcp-Session-Id'],`session${attempts}`);
+  if(m.method==='notifications/initialized')return new Response(null,{status:202});
+  return response(m.id,{tools:[{name:'vps_read'}]});
+ }});
+ assert.equal(value.state,'connected');assert.deepEqual(value.tools,['vps_read']);assert.equal(attempts,2);assert.equal(calls,4);
+});
+test('auth failures are not retried',async t=>{
+ const f=fixture(t);let calls=0;
+ const result=await discoverVps(f.env,{delayMs:0,fetchImpl:async()=>{calls++;return new Response(f.token,{status:401});}});
+ assert.equal(result.errorKind,'auth');assert.equal(calls,1);assert.ok(!JSON.stringify(result).includes(f.token));
+});
+test('repeated transport failures report the last failure as offline',async t=>{
+ const f=fixture(t);let calls=0;
+ const result=await discoverVps(f.env,{delayMs:0,fetchImpl:async()=>{calls++;throw Error('ECONNRESET');}});
+ assert.equal(result.state,'offline');assert.equal(result.errorKind,'connection');assert.equal(calls,2);
+});
 test('SSE responses support pagination and stop after the matching event without waiting for stream closure',async t=>{
  const f=fixture(t,{kind:'mcp'});let lists=0;
  const result=await discoverVps(f.env,{fetchImpl:async(_url,options)=>{
@@ -45,6 +67,6 @@ test('SSE responses support pagination and stop after the matching event without
  }});assert.equal(result.state,'connected');assert.deepEqual(result.tools,['first','second']);assert.equal(result.discoveryComplete,true);
 });
 test('slow or cancelled probes terminate and unconfigured installs perform no network IO',async t=>{
- const f=fixture(t);const result=await discoverVps(f.env,{timeoutMs:10,fetchImpl:async(_url,{signal})=>new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('abort')),{once:true}))});assert.equal(result.errorKind,'timeout');
+ const f=fixture(t);let calls=0;const result=await discoverVps(f.env,{timeoutMs:10,fetchImpl:async(_url,{signal})=>{calls++;return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(Error('abort')),{once:true}))}});assert.equal(result.errorKind,'timeout');assert.equal(calls,1);
  const empty={LAKESIDE_CODE_CONFIG_DIR:path.join(f.env.LAKESIDE_CODE_CONFIG_DIR,'empty')};assert.equal((await discoverVps(empty,{fetchImpl:()=>{throw Error('must not call');}})).state,'unconfigured');
 });

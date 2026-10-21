@@ -21,8 +21,11 @@ export function connectAgent(backend, directory, handlers, env = process.env) {
     .onRequest("fs/read_text_file", context => readProjectFile(context.params, directory, [...(handlers.projectRoots?.() || []), skills.skillRoot(), fileURLToPath(new URL("../design-skills/", import.meta.url))]))
     .onRequest("fs/write_text_file", context => writeProjectFile(context.params, directory, handlers.projectRoots?.() || []))
     .connect(acp.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout)));
+  const exited = new Promise(resolve => { child.once("exit", resolve); child.once("error", resolve); });
   child.once("error", () => connection.close(new Error(`Cannot start ${backend.id}: ${backend.command}. Install or configure its ACP adapter first.`)));
   child.once("exit", () => connection.close(new Error(`Backend ${backend.id} exited. Check its installation/login; no automatic retry was attempted.`)));
+  /** @type {Promise<void> | undefined} */
+  let closing;
   return {
     connection,
     /** @param {acp.NewSessionRequest} params @returns {Promise<acp.NewSessionResponse>} */
@@ -30,6 +33,15 @@ export function connectAgent(backend, directory, handlers, env = process.env) {
     /** @param {acp.LoadSessionRequest} params @returns {Promise<acp.LoadSessionResponse>} */
     loadSession(params) { return connection.agent.request("session/load", params); },
     initialize: () => deadline(connection.agent.request("initialize", { protocolVersion: acp.PROTOCOL_VERSION, clientInfo: { name: "lakeside-code", version: PACKAGE_VERSION }, clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false } }), 20000, () => connection.close(new Error("ACP initialization timed out"))),
-    close() { connection.close(); child.stdin?.end(); child.kill("SIGTERM"); },
+    close() {
+      if (closing) return closing;
+      connection.close(); child.stdin?.end(); child.kill("SIGTERM");
+      // Windows keeps the directory busy until the process exits; bound the wait.
+      closing = new Promise(resolve => {
+        const timer = setTimeout(resolve, 2000);
+        exited.then(() => { clearTimeout(timer); resolve(); });
+      });
+      return closing;
+    },
   };
 }

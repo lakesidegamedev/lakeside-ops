@@ -3,6 +3,7 @@ import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import { ink, Rail } from "./brand";
 import { summarizeUsage, formatTokens, formatCost, projectStatuses, doctorChecks } from "./insights.mjs";
+import { describeModel } from "./model-label.mjs";
 import { loadProjects } from "../workspace/projects.mjs";
 
 const dot = (level: string) => level === "ok" || level === "connected" ? ink.green : level === "error" || level === "failed" ? ink.red : level === "warn" ? ink.amber : ink.muted;
@@ -10,10 +11,14 @@ const dot = (level: string) => level === "ok" || level === "connected" ? ink.gre
 /** Model, tokens and cost for the open session. */
 export function SessionStatus(props: { api: TuiPluginApi; sessionID?: string }) {
   const usage = createMemo(() => summarizeUsage(props.sessionID ? props.api.state.session.messages(props.sessionID) : []));
+  const info = createMemo(() => describeModel(usage().provider, usage().model));
   return <Show when={usage().turns > 0}>
     <box>
       <Rail title="Session" right={`${usage().turns} turns`} />
-      <text fg={ink.text}>{usage().model || "model pending"}<span style={{ fg: ink.muted }}>{usage().provider ? `  ${usage().provider}` : ""}</span></text>
+      <Show when={info().label} fallback={<text fg={ink.muted}>model pending</text>}>
+        <text fg={ink[info().color]}>{info().glyph} <span style={{ fg: ink.text }}>{info().provider || info().model}</span></text>
+        <Show when={info().provider && info().model}><text fg={ink.muted}>  {info().model}</text></Show>
+      </Show>
       <text fg={ink.muted}>{formatTokens(usage().input)} in · {formatTokens(usage().output)} out{usage().cacheRead ? ` · ${formatTokens(usage().cacheRead)} cached` : ""}</text>
       <text fg={usage().cost ? ink.amber : ink.muted}>{formatCost(usage().cost)}</text>
     </box>

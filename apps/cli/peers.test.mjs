@@ -15,8 +15,9 @@ function scratch(t) {
 const spec = { goal: "Review the patch", repository: "owner/repo", branch: "feat/search", base: "a91c2e4", scope: "Read only", deliverable: "Findings with paths and lines" };
 
 test("peer configuration is explicit, unique and does not embed credentials in URLs", t => {
-  assert.deepEqual(loadPeers({}), []);
-  const file = path.join(scratch(t), "peers.json");
+  const root = scratch(t);
+  assert.deepEqual(loadPeers({ LAKESIDE_CODE_CONFIG_DIR: path.join(root, "empty") }), []);
+  const file = path.join(root, "peers.json");
   const read = value => { fs.writeFileSync(file, JSON.stringify(value)); return loadPeers({ LAKESIDE_CODE_PEERS: file }); };
   assert.throws(() => read([{ id: "vps", kind: "keir", url: "http://remote.example" }]), /HTTPS/);
   assert.throws(() => read([{ id: "vps", kind: "keir", url: "https://secret@example.com" }]), /HTTPS/);

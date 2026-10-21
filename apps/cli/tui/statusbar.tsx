@@ -5,12 +5,14 @@ import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import path from "node:path";
 import { ink } from "./brand";
 import { summarizeUsage, formatTokens, formatCost } from "./insights.mjs";
+import { describeModel } from "./model-label.mjs";
 
 /** Full-width Lakeside status line on every screen: where you are, what is connected, what this session costs. */
 export function StatusBar(props: { api: TuiPluginApi; vps: () => string | undefined; peers: () => any[]; update: () => string | null | undefined; version: string }) {
   const dims = useTerminalDimensions();
   const sessionID = () => { const route = props.api.route.current; return route.name === "session" ? String(route.params?.sessionID || "") : ""; };
   const usage = createMemo(() => summarizeUsage(sessionID() ? props.api.state.session.messages(sessionID()) : []));
+  const info = createMemo(() => describeModel(usage().provider, usage().model));
   const mcp = createMemo(() => props.api.state.mcp());
   const mcpUp = () => mcp().filter(m => m.status === "connected").length;
   const vpsDown = () => props.peers().some(p => p.state !== "connected");
@@ -26,7 +28,10 @@ export function StatusBar(props: { api: TuiPluginApi; vps: () => string | undefi
     </text>
     <text height={1} wrapMode="none">
       <Show when={usage().turns > 0}>
-        <span style={{ fg: ink.muted }}>{wide() && usage().model ? `${usage().model}  ` : ""}</span>
+        <Show when={info().label}>
+          <span style={{ fg: ink[info().color] }}>{info().glyph}</span>
+          <span style={{ fg: ink.muted }}>{wide() ? ` ${info().label}  ` : "  "}</span>
+        </Show>
         <span style={{ fg: ink.text }}>{formatTokens(usage().input + usage().cacheRead)}↑ {formatTokens(usage().output)}↓</span>
         <span style={{ fg: usage().cost ? ink.amber : ink.muted }}>  {formatCost(usage().cost)}</span>
         <span style={{ fg: ink.dim }}>  │  </span>

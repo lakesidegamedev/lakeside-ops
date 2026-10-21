@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { launch, launchSettings, prepare, engineBinary } = require("./launch");
+const { writeEngineStub } = require("./test-support/engine-stub.cjs");
 
 test("coding flags preserve OpenCode project, resume and model arguments", () => {
   assert.deepEqual(launchSettings(["/work/project", "--name", "Lakeside Code", "--continue", "--model", "provider/model"], {}), {
@@ -35,8 +36,8 @@ test("provider choices keep subscription and API billing routes distinct", () =>
 test("launcher accepts the installed ESM plugin and starts the pinned engine", async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lakeside code startup "));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const binary = path.join(dir, "test-engine"), result = path.join(dir, "result.json");
-  fs.writeFileSync(binary, '#!/usr/bin/env node\nconst fs = require("node:fs");\nif (process.argv.includes("--version")) console.log(process.env.TEST_ENGINE_VERSION || "1.19.0");\nelse fs.writeFileSync(process.env.TEST_ENGINE_RESULT, process.env.OPENCODE_ROUTE);\n', { mode: 0o700 });
+  const result = path.join(dir, "result.json");
+  const binary = writeEngineStub(dir, "test-engine", 'const fs = require("node:fs");\nif (process.argv.includes("--version")) console.log(process.env.TEST_ENGINE_VERSION || "1.19.0");\nelse fs.writeFileSync(process.env.TEST_ENGINE_RESULT, process.env.OPENCODE_ROUTE);\n');
   const env = { ...process.env, LAKESIDE_CODE_CONFIG_DIR: dir, LAKESIDE_OPENCODE_BIN: binary, TEST_ENGINE_RESULT: result };
   await launch(["--preview"], env);
   assert.equal(JSON.parse(fs.readFileSync(result)).id, "lakeside.preview");
@@ -53,7 +54,7 @@ test("launch config adds the client without replacing user providers, plugins or
   assert.deepEqual(config.permission, { ...original.permission, agent_handoff: "ask", agent_cancel: "ask" });
   assert.equal(config.model, original.model);
   assert.equal(config.skills.paths[0], "/custom/skills");
-  assert.match(config.skills.paths[1], /skills[\/]vendor$/);
+  assert.match(config.skills.paths[1], /skills[\\/]vendor$/);
   assert.deepEqual(config.command.ponytail, original.command.ponytail);
   assert.equal(config.plugin[0], "user-plugin");
   assert.match(config.plugin[1], /coordination-plugin\.mjs$/);

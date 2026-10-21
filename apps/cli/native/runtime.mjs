@@ -23,6 +23,8 @@ export function createNativeRuntime(options, env = process.env) {
   const instructions = nativeInstructions(carryContext(options.carry, env), env);
   const permissions = new PermissionBroker();
   let closing = false, loading = Boolean(options.runId), busy = false, creating = false;
+  /** @type {Promise<void> | undefined} */
+  let closed;
   /** @type {import('@agentclientprotocol/sdk').NewSessionResponse['configOptions']} */
   let configOptions;
   /** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -141,11 +143,12 @@ export function createNativeRuntime(options, env = process.env) {
       return { requested: true, confirmed: false };
     },
     close() {
-      if (closing) return;
+      if (closed) return closed;
       closing = true;
       if (busy || run.state === "permission") { run.state = "uncertain"; run.error = "Client closed before a final response. No automatic replay."; }
       permissions.cancelAll();
-      try { persist(); } finally { agent.close(); release(); }
+      try { persist(); } finally { closed = agent.close(); release(); }
+      return closed;
     },
   };
 }

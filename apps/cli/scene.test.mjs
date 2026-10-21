@@ -8,13 +8,19 @@ test("the scene has a fixed shape and only known palette keys", () => {
   for (const row of rows) assert.equal(row.length, 44);
   const keys = new Set(rows.flat().map(cell => cell.c));
   for (const key of keys) assert.ok(["muted", "dim", "text", "primary", "blue"].includes(key), key);
-  assert.ok(rows.flat().some(cell => cell.c === "text" && cell.ch !== "━"), "snow on the tall peaks");
+  assert.ok(rows.slice(1, 7).flat().some(cell => cell.c === "text"), "text on the tallest peaks");
 });
 
 test("mountains stay still while the water moves", () => {
   const a = sceneCells(0), b = sceneCells(1.3);
   assert.deepEqual(a.slice(1, 7), b.slice(1, 7));
   assert.notDeepEqual(a.slice(7), b.slice(7));
+});
+
+test("large scenes keep exactly the requested width", () => {
+  const rows = sceneCells(0.7, { width: 120, mountain: 18, lake: 4, sky: 1 });
+  assert.equal(rows.length, 24);
+  for (const row of rows) assert.equal(row.length, 120);
 });
 
 test("runs merge neighbors without losing characters", () => {

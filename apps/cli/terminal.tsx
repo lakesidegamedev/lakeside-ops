@@ -130,7 +130,15 @@ export default {
       { title: "Lakeside Code: doctor", value: "lakeside.doctor", category: "Lakeside Code", slash: { name: "doctor" }, onSelect: () => showDoctor(api, { vps: loadVps(), peers: peers(), engine, version, update, refresh: () => { void refresh(); void checkUpdate(true); } }) },
     ]);
     api.slots.register({ order: -100, slots: {
-      home_logo() { const dimensions = useTerminalDimensions(); return <Brand name={name} compact={dimensions().height < 32} />; },
+      home_logo() {
+        const dimensions = useTerminalDimensions();
+        const height = dimensions().height, columns = dimensions().width;
+        const compact = height < 26 || columns < 60;
+        const lake = height >= 40 ? 4 : height >= 30 ? 3 : 2;
+        const mountain = Math.max(5, Math.min(16, height - 15 - lake));
+        const width = Math.max(24, Math.min(120, columns - 4));
+        return <Brand name={name} compact={compact} width={width} sky={1} mountain={mountain} lake={lake} />;
+      },
       session_prompt(_ctx, props) { return <box gap={1}><box flexDirection="row" justifyContent="space-between"><text fg={ink.primary}><b>▲ {name}</b></text><text fg={ink.muted} onMouseDown={() => showWorkbench(api)}>/workbench · changes, commands, connections</text></box><api.ui.Prompt sessionID={props.session_id} visible={props.visible} disabled={props.disabled} onSubmit={props.on_submit} ref={value => { prompt = value; props.ref?.(value); }} /></box>; },
       sidebar_title(_ctx, props) { return <box gap={1} flexShrink={0}><Scene width={34} sky={0} mountain={3} lake={1} /><text fg={ink.primary}><b>LAKESIDE CODE</b></text><text fg={ink.text}>{props.title}</text><text fg={ink.muted}>{path.basename(api.state.path.directory)}<span style={{ fg: ink.primary }}>{api.state.vcs?.branch ? `  ⎇ ${api.state.vcs.branch}` : ""}</span></text></box>; },
       app_bottom() { return <StatusBar api={api} vps={() => { peers(); try { return loadVps()?.origin; } catch { return undefined; } }} peers={peers} update={update} version={version} />; },
@@ -138,7 +146,7 @@ export default {
       home_prompt(_ctx, props) { return <api.ui.Prompt ref={value => { prompt = value; props.ref?.(value); }} placeholders={{ normal: ["What are we building?", "Inspect this project and find the next useful change", "Review my changes before I commit"] }} />; },
       home_bottom() {
         const dimensions = useTerminalDimensions();
-        return <box width="100%" maxWidth={90} paddingTop={1} gap={1}>
+        return <box width="auto" maxWidth={90} paddingTop={1} gap={1}>
           <text fg={ink.primary} onMouseDown={() => api.command?.trigger("lakeside.vps")}>{loadVps() ? "VPS configured · /connections · /agents" : "VPS not configured · /vps to connect"}</text>
           <Show when={dimensions().height >= 30}><box paddingTop={1}><ProjectsPanel limit={dimensions().height >= 42 ? 8 : 4} onPick={project => fillPrompt(`Load the ${project} project with project_load, then summarize its current branch, uncommitted changes and the next useful step.`)} /></box></Show>
           <Show when={studio()}>

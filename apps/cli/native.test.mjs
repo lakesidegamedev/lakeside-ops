@@ -14,7 +14,7 @@ function fixture(t) {
   const env = { ...process.env, LAKESIDE_CODE_STATE_DIR: path.join(directory, "state"), LAKESIDE_CODE_CONFIG_DIR: path.join(directory, "config"), LAKESIDE_FAKE_LOG: path.join(directory, "requests.log") };
   const backend = { id: "fixture", command: process.execPath, args: [fileURLToPath(new URL("./test-support/native-agent.mjs", import.meta.url))] };
   const runtimes = [];
-  t.after(() => { for (const runtime of runtimes) runtime.close(); fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
+  t.after(async () => { for (const runtime of runtimes) await runtime.close(); fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
   return { directory, env, backend, runtimes };
 }
 function open(options, overrides = {}) {
@@ -27,7 +27,7 @@ async function until(predicate, milliseconds = 5000) {
 }
 test("native process streams tools, asks permission, edits files and deduplicates durable prompt ids", async t => {
   const options = fixture(t), runtime = open(options, { model: "fixture-model" });
-  t.after(() => runtime.close());
+  t.after(async () => { await runtime.close(); });
   await runtime.ready;
   const id = crypto.randomUUID();
   await runtime.submit("edit fixture", id);
@@ -46,7 +46,7 @@ test("native process streams tools, asks permission, edits files and deduplicate
   await assert.rejects(runtime.submit("different task", id), /different request/);
   runtime.close();
   const resumed = open(options, { runId: snapshot.id });
-  t.after(() => resumed.close());
+  t.after(async () => { await resumed.close(); });
   await resumed.ready;
   assert.equal(resumed.snapshot().id, snapshot.id);
   await resumed.submit("edit fixture", id);
@@ -54,7 +54,7 @@ test("native process streams tools, asks permission, edits files and deduplicate
 });
 test("lost native final response stays uncertain and never automatically repeats a prompt", async t => {
   const options = fixture(t), runtime = open(options);
-  t.after(() => runtime.close());
+  t.after(async () => { await runtime.close(); });
   await runtime.ready;
   await runtime.submit("disconnect", crypto.randomUUID());
   await until(() => runtime.snapshot().state === "uncertain");
@@ -63,7 +63,7 @@ test("lost native final response stays uncertain and never automatically repeats
 });
 test("native cancellation waits for the actual final response", async t => {
   const options = fixture(t), runtime = open(options);
-  t.after(() => runtime.close());
+  t.after(async () => { await runtime.close(); });
   await runtime.ready;
   await runtime.submit("wait", crypto.randomUUID());
   await until(() => fs.readFileSync(options.env.LAKESIDE_FAKE_LOG, "utf8").includes("prompt"));
