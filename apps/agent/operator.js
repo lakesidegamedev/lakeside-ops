@@ -17,6 +17,7 @@ const { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure } = require(
 const humanInbox = (j) => (j.inbox || []).some((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup)$/.test(String(m.authorId || "")));
 const { LANES, emptyLanes, pickForLanes, laneTimeoutMs, laneClass } = require("./lib/operator/lanes");
 const { createSupportOwner } = require("./lib/operator/supportowner");
+const { settleSubmittedResolution } = require("./lib/operator/ticketclosure");
 const { createReopenedTickets } = require("./lib/operator/reopened");
 const { createEffectShadow } = require("./lib/operator/effectshadow");
 const { createEngineering } = require("./lib/operator/engineering");
@@ -691,11 +692,15 @@ function drain() {
       if (j.ownerDecisionPending && !(j.kind === "ticket" && !j.channelClosed && humanInbox(j))) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; continue; }
       if (j.ownerDecisionPending) j.state = "blocked";
     }
-    if (j.resolutionSubmitted && !j.resolved && !["done", "cancelled", "blocked"].includes(j.state)) {
-      if (now - j.resolutionSubmittedAt > 20 * 60000) {
-        j.state = "blocked"; j.summary = "Resolution is recorded, but the bot has not closed the ticket channel after 20 minutes. Inspect receipt delivery.";
+    // A task that is still running settles its own turn through finish; see
+    // lib/operator/ticketclosure.js for why it must not be flipped mid-turn.
+    const settled = settleSubmittedResolution(j, now);
+    if (settled) {
+      j.state = settled.state;
+      if (settled.summary) {
+        j.summary = settled.summary;
         ledger.notify(`close-stalled:${j.id}`, "owner", `Ticket ${j.ticket}: ${j.summary}`);
-      } else { j.state = "waiting"; }
+      }
       continue;
     }
     // Keir 4.0: Keir clears its own dead ends. A blocked probe or benchmark
