@@ -21,11 +21,15 @@
 
 const fs = require("fs");
 
-const DEFAULT_REFERENCE_PATH = "/root/misc/lore/seed-audit-reference.json";
-
-/** Where the artifact lives. Read at call time so a test can point it elsewhere. */
+/**
+ * Where the artifact lives.
+ *
+ * The path is configuration, not a constant: the repo's own semgrep rules
+ * forbid a hardcoded machine path, and the artifact is written by the daily
+ * reference refresh.
+ */
 function referencePath() {
-  return process.env.SEED_AUDIT_REFERENCE_PATH || DEFAULT_REFERENCE_PATH;
+  return process.env.SEED_AUDIT_REFERENCE_PATH || "";
 }
 
 /**
@@ -33,6 +37,14 @@ function referencePath() {
  * @returns {{reference: object|null, error: string|null}}
  */
 function loadReference(path = referencePath()) {
+  if (!path) {
+    return {
+      reference: null,
+      error:
+        "the seed audit reference path is not configured: set SEED_AUDIT_REFERENCE_PATH " +
+        "to the artifact the game repo generates (scripts/exportSeedAuditReference.ts --out <path>)",
+    };
+  }
   let raw;
   try {
     raw = fs.readFileSync(path, "utf8");
@@ -106,4 +118,4 @@ function resetSeedTruth() {
   cache.clear();
 }
 
-module.exports = { DEFAULT_REFERENCE_PATH, referencePath, loadReference, derive, seedTruth, resetSeedTruth };
+module.exports = { referencePath, loadReference, derive, seedTruth, resetSeedTruth };
