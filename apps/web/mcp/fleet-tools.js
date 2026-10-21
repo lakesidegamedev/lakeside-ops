@@ -159,7 +159,8 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
       return jsonResult({
         ok: down.length === 0,
         cataloguedServers: MCP_DEFS.length,
-        reachable: out.length - down.length,
+        reachable: out.filter((d) => d.reachable === true).length,
+        notHttp: out.filter((d) => d.reachable === null).length,
         unreachable: down.map((d) => ({ key: d.key, error: d.error })),
         totalTools: out.reduce((n, d) => n + (d.toolCount || 0), 0),
         totalPrompts: out.reduce((n, d) => n + (d.promptCount || 0), 0),
