@@ -111,6 +111,34 @@ test("Jev analytics count the last seven days only", () => {
   assert.equal(j.screened, 1); assert.equal(j.refused, 1); assert.deepEqual(j.labels, { leaksInternals: 1 });
 });
 
+test("performance proxy is admin-only, validates windows and never exposes the operator token", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-performance-proxy-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const envPath = path.join(dir, "env");
+  fs.writeFileSync(envPath, "KEIR_OPERATOR_ADMIN_TOKEN=fixture-private-credential\nKEIR_OPERATOR_PORT=9765\n");
+  let calls = 0;
+  const actions = { ticketPerformance: ({ days }) => require("./keir-hub-data").ticketPerformance({ days, envPath,
+    fetchImpl: async (url, options) => {
+      calls++; assert.equal(url, "http://127.0.0.1:9765/v5/performance?days=7");
+      assert.equal(options.headers.Authorization, "Bearer fixture-private-credential");
+      return { ok: true, json: async () => ({ resolved: { tickets: 2 } }) };
+    } }) };
+  const run = async (role, days = "7") => {
+    const res = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = body; } };
+    await handleKeirHubRoute({ method: "GET", url: `/api/keir/hub/performance?days=${days}` }, res, "/api/keir/hub/performance", {
+      resolveSession: async () => role ? { role } : null, addSecurityHeaders() {}, actions });
+    return res;
+  };
+  assert.equal((await run(null)).status, 401); assert.equal((await run("viewer")).status, 404);
+  assert.equal((await run("admin", "bad")).status, 400); assert.equal(calls, 0);
+  const res = await run("admin"); assert.equal(res.status, 200); assert.equal(res.headers["Cache-Control"], "no-store");
+  assert.doesNotMatch(res.body, /fixture-private-credential/);
+  assert.deepEqual(JSON.parse(res.body), { resolved: { tickets: 2 } });
+  const body = makeKeirHubBody().body;
+  assert.match(body, /Ticket resolution performance/); assert.match(body, /Model turns/);
+  for (const [, script] of body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)) new Function(script);
+});
+
 test("Keir's audit trail is told in plain sentences and activations become timeline spans", () => {
   const { narrate, buildStream } = require("./keir-hub-data");
   const NOW = Date.parse("2026-10-14T06:00:00Z");

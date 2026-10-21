@@ -223,6 +223,36 @@ test("successful public delivery is remembered; private or mention-bearing text 
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "@everyone hello" } }), /mentions/);
 });
 
+test("resolution submission sends Keir attribution and records canonical receipt, not failed responses", async () => {
+  const f = fixture(), channelId = "777777777777777777";
+  const j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId, resolutionReadyAt: 1 });
+  const broker = createBroker({ ...f, sandbox: {}, now: () => 4000000 });
+  f.mcp.list = async () => [{ name: "support_resolve", inputSchema: { type: "object", additionalProperties: true,
+    properties: { attribution: { type: "object", additionalProperties: true } } } }];
+  let ok = false, sent;
+  f.mcp.call = async (_server, _tool, args) => {
+    if (_tool === "support_resolve") sent = args;
+    return ok ? { ok: true, status: "resolved", receipt: { receiptId: "verified", resolvedAt: new Date(4000000).toISOString() } } : { ok: false, error: "tracker offline" };
+  };
+  await assert.rejects(broker.tool(j, "support_action", { tool: "support_resolve", args: { message: "The page works again." } }), /not confirmed/);
+  assert.equal(j.resolutionSubmitted, undefined);
+  assert.equal(f.ledger.data.ticketOutcomes, undefined);
+  // A distinct call avoids replaying the rejected remote result.
+  ok = true;
+  await broker.tool(j, "support_action", { tool: "support_resolve", args: { message: "The page works again. Verified." } });
+  assert.equal(sent.attribution.agent, "keir"); assert.equal(sent.attribution.jobId, j.id);
+  assert.equal(j.resolutionReceiptId, "verified");
+  assert.equal(f.ledger.data.ticketOutcomes[`123:${channelId}`].credit, "keir");
+});
+
+test("performance tool is owner-only and reads unknown usage without inventing costs", async () => {
+  const f = fixture(), j = running(f);
+  const r = await f.broker.tool(j, "ticket_performance", { days: 30 });
+  assert.equal(r.usageLogMissing, true); assert.equal(r.resolved.tickets, 0);
+  j.role = "support";
+  await assert.rejects(f.broker.tool(j, "ticket_performance", {}), /owner task/);
+});
+
 test("a network failure leaves a write uncertain and blocks blind retries", async () => {
   const f = fixture(), j = running(f), b = createBroker({ ...f, sandbox: {}, mcp: { call: async () => { throw new Error("connection lost after remote commit"); } }, now: () => 5000 });
   await assert.rejects(b.effect(j, "write", () => { throw new Error("lost receipt"); }), /lost receipt/);
