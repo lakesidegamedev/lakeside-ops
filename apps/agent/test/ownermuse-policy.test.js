@@ -51,7 +51,9 @@ function fixture(t) {
 test("authenticated owner app can read ticket performance without a write approval", async t => {
   const f = fixture(t), job = f.newJob();
   const report = await f.broker.tool(job, "ticket_performance", { days: 30 });
+  const efficiency = await f.broker.tool(job, "release_efficiency", { days: 30 });
   assert.equal(report.resolved.tickets, 0);
+  assert.equal(efficiency.versions.length, 0);
   assert.equal(report.usageLogMissing, true);
   assert.equal(f.writes().length, 0);
 });

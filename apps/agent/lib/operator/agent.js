@@ -16,6 +16,7 @@ const { roleGuard, roleOf } = require("./roles");
 function schema(properties, required = []) { return { type: "object", properties, required, additionalProperties: false }; }
 const str = { type: "string" }, obj = { type: "object" };
 const TOOLS = [
+  ["release_efficiency", "Owner-only efficiency by exact Keir release and significant milestone: distinct tickets worked, credited resolutions, full-lifetime ticket costs, work mix and matched model/task-kind comparisons. Zero-token activity and missing release/cost coverage remain separate. days selects a reporting window.", schema({ days: { type: "number", exclusiveMinimum: 0, maximum: 3650 } })],
   ["ticket_performance", "Owner-only ticket resolution performance: mean, median, p90/p95 latency, model turns, provider/model contribution and cost coverage. Includes Keir credit when another agent closes on its behalf. days selects resolutions in that window, with all work through resolution counted.", schema({ days: { type: "number", exclusiveMinimum: 0, maximum: 3650 } })],
   ["finish_patch", "Submit the completed local patch: apply up to8 exact unique replacements, run the trusted focused check and invoke all existing finish guards in one call. Supply edits:[] if already edited. Use only when the whole ticket is ready. Failed checks leave work open. The host ends the activation after accepted completion. Protected files and approval holds remain enforced; this never publishes or deploys.", schema({edits:{type:"array",minItems:0,maxItems:8,items:schema({path:str,oldText:str,newText:str},["path","oldText","newText"])},summary:str},["edits","summary"])],
   ["edit_verify", "Apply up to8 exact unique text replacements inside the trusted coding scope and run its configured focused check in one call. Paths are relative to the repository root. Every oldText must match exactly once; read source first. Pass an empty edits array to validate an existing patch. The host chooses permitted paths, protected inputs and check command. Passing checks mint a patch-bound validation receipt; any later edit makes it stale. When the trusted contract allows it, complete:true invokes the existing finish guards after a passing check, using summary, saving a separate model turn. This never publishes code or grants approval.", schema({complete:{type:"boolean"},summary:str,edits:{type:"array",minItems:0,maxItems:8,items:schema({path:str,oldText:str,newText:str},["path","oldText","newText"])}},["edits"])],
@@ -153,10 +154,13 @@ const TOOL_NOTE = "\n\n## Tool names\n\nYour tools appear as mcp__keir__<name>; 
 // (estimatedUsd null) with the CLI's notional figure kept separately; tokens,
 // turns and wall time are the measured budget (2026-10-12 postmortem: the
 // usage file stopped when Keir moved to the subscription).
-function usageRecord(job, result, durationMs, model, provider = "claude-cli-subscription") {
+function usageRecord(job, result, durationMs, model, provider = "claude-cli-subscription", { release = null, toolCalls = null, empty = null } = {}) {
   const u = result?.usage || {};
   return { event: "activation", at: new Date().toISOString(), job: job.id, kind: job.kind, ticket: job.ticket || null, provider, billing: result?.provenance?.billing || "subscription",
     model, durationMs, turns: result?.num_turns ?? null, outcome: result?.interrupted ? "interrupted" : result?.timedOut ? "timeout" : result?.is_error ? (result.subtype || "error") : "ok",
+    release: require("./releaseidentity").releaseIdentity(release),
+    toolCalls: Number.isInteger(toolCalls) && toolCalls >= 0 ? toolCalls : null,
+    emptyActivation: typeof empty === "boolean" ? empty : null,
     tokens: { input: u.input_tokens ?? null, output: u.output_tokens ?? null, cacheRead: u.cache_read_input_tokens ?? null, cacheWrite: u.cache_creation_input_tokens ?? null,
       cacheWrite5m: u.cache_creation?.ephemeral_5m_input_tokens ?? null, cacheWrite1h: u.cache_creation?.ephemeral_1h_input_tokens ?? null },
     usageVersion: 2, attempt: result?.provenance?.cliAttempt || result?.provenance?.attempt || null, runtime: result?.provenance?.runtime || null, engine: result?.provenance?.engine || null, taskState: job.state, parent: job.codingParent || null,
@@ -171,8 +175,16 @@ function emptyActivation(result, session) {
 }
 function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
   const usageFile = config.usageFile || path.join(config.stateDir, "usage.jsonl");
-  function recordUsage(job, result, durationMs, effort) {
-    try { fs.appendFileSync(usageFile, JSON.stringify({ ...usageRecord(job, result, durationMs, ...providerOf(job)), effort: effort?.effort || null, effortVia: effort?.via || null }) + "\n", { mode: 0o600 }); } catch {}
+  // Capture the running build once, never reread a mutable current symlink
+  // during an activation. Failure paths get the same process identity.
+  const release = require("./releaseidentity").releaseIdentity(config.release) || require("./releaseidentity").readRelease(config.releaseFile);
+  function recordUsage(job, result, durationMs, effort, session) {
+    const measured = Number.isFinite(result?.usage?.input_tokens) && Number.isFinite(result?.usage?.output_tokens);
+    const metadata = { release, toolCalls: session?.calls, empty: measured ? emptyActivation(result, session) : null };
+    try {
+      const [model, provider] = providerOf(job);
+      fs.appendFileSync(usageFile, JSON.stringify({ ...usageRecord(job, result, durationMs, model, provider, metadata), effort: effort?.effort || null, effortVia: effort?.via || null }) + "\n", { mode: 0o600 });
+    } catch {}
   }
   // Conversation (quick lane) and deep work (worker lanes) can run on different
   // subscription models: claude (default), agy (Gemini) or muse (Muse Wonder).
@@ -297,7 +309,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     context.operatorRole = roleOf(job, ledger.data.jobs);
     context.evidenceReceipts = (job.evidenceBatches || []).slice(-6);
     const permitted = (t) => { try { roleGuard(job, t.name, {}, ledger.data.jobs); return true; } catch { return ["read_tools", "read_tool", "github", "raise_to_developers"].includes(t.name) && roleOf(job, ledger.data.jobs) === "engineering" || ["read_tools", "read_tool"].includes(t.name) && roleOf(job, ledger.data.jobs) === "watchkeeper"; } };
-    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (!job.codingParent || childTools(job).includes(t.name)) && (!quick || QUICK_TOOLS.includes(t.name)) && (t.name !== "ticket_performance" || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer", "present_choices"].includes(t.name) || job.role === "owner" && job.replyChannel === "app") && permitted(t));
+    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (!job.codingParent || childTools(job).includes(t.name)) && (!quick || QUICK_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer", "present_choices"].includes(t.name) || job.role === "owner" && job.replyChannel === "app") && permitted(t));
     if (contextProfile === "focused") {
       const conversation = broker.context?.(job);
       context.sharedConversation = conversation ? { ...conversation, messages: (conversation.messages || []).slice(-6).map(m => ({ role: m.role, text: String(m.text || m.content || "").slice(0, 1000), at: m.at })) } : undefined;
@@ -363,10 +375,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
         ledger.audit("rust_activation", { job: job.id, ticket: job.ticket, lane, attempt: result.provenance.attempt, label: result.provenance.label, toolCalls: result.provenance.tool_calls, ms: result.provenance.duration_ms, subtype: result.subtype });
       }
     } catch (error) {
-      recordUsage(job, { is_error: true, subtype: signal.aborted ? "interrupted" : "runner-error", interrupted: signal.aborted }, Date.now() - startedAt, effortUsed);
+      recordUsage(job, { is_error: true, subtype: signal.aborted ? "interrupted" : "runner-error", interrupted: signal.aborted }, Date.now() - startedAt, effortUsed, session);
       throw error;
     } finally { close(); clearTimeout(nudge); }
-    recordUsage(job, result, Date.now() - startedAt, effortUsed);
+    recordUsage(job, result, Date.now() - startedAt, effortUsed, session);
     job.rounds += result.num_turns || session.calls || 1; job.updatedAt = Date.now(); ledger.save();
     if (result.is_error && result.subtype !== "error_max_turns") throw new Error("model request failed: " + redactSecrets(String(result.result || result.subtype || "unknown error")).slice(0, 600));
     // 2026-10-19 03:00-07:00 ET: Claude runs returned "success" in about a
@@ -421,7 +433,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
   // session is the same loopback endpoint a Claude activation gets, bound to
   // the job, a named tool subset and the caller's abort signal.
   function openToolSession(job, names, signal) {
-    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && names.includes(t.name) && (!job.codingParent || childTools(job).includes(t.name)) && (t.name !== "ticket_performance" || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer", "present_choices"].includes(t.name) || job.role === "owner" && job.replyChannel === "app"));
+    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && names.includes(t.name) && (!job.codingParent || childTools(job).includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer", "present_choices"].includes(t.name) || job.role === "owner" && job.replyChannel === "app"));
     return toolServer.open(job, tools, signal);
   }
   return { run, canRun: () => true, openToolSession };

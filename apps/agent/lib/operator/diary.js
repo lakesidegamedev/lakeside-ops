@@ -34,6 +34,7 @@ async function reflect(context, { invoke = invokeCli, stateDir = process.env.KEI
 // The operator is the single writer. Entries and scheduling receipts commit
 // together using the same atomic, fsynced store as its other durable state.
 function createDiary({ stateDir, ledger, generate = reflect, now = Date.now }) {
+  const release = require("./releaseidentity").readRelease();
   const diary = createLedger(path.join(stateDir, "private", "diary.json"));
   let running = false;
   async function tick() {
@@ -72,6 +73,7 @@ function createDiary({ stateDir, ledger, generate = reflect, now = Date.now }) {
         // Counts only. Private reflection text and context never enter usage.
         try { fs.appendFileSync(path.join(stateDir, "usage.jsonl"), JSON.stringify({
           event: "activation", at: new Date(now()).toISOString(), job: "private-reflection", kind: "reflection",
+          release,
           provider: "ollama-cloud-subscription", billing: "subscription", model: MODEL, usageVersion: 2,
           durationMs: Date.now() - started, outcome: succeeded ? "ok" : "error",
           tokens: { input: usage?.input ?? null, output: usage?.output ?? null, cacheRead: null, cacheWrite: null },

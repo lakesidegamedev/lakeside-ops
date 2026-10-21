@@ -248,3 +248,33 @@ separate. Subscription charges cannot be allocated from tokens. Unknown models,
 missing usage or missing turns remain unknown, with coverage counts and known
 cost subtotals exposed. Existing usage-log retention limits historical coverage;
 the tracker cannot reconstruct missing activations or unlogged external work.
+
+### Release efficiency
+
+Use the owner-only `release_efficiency` tool (`days`, default 30), authenticated
+`GET /v5/efficiency?days=30`, or the version comparison in the admin Keir hub.
+The read-only CLI is `node bin/keir-efficiency.js ledger.json usage.jsonl
+[releases.jsonl] [events.db] [releases-directory]`.
+
+Each new activation records the immutable running build's version and SHA,
+host tool-call count and measured empty-run evidence. The build is captured
+at process setup, so a later release symlink change cannot relabel an in-flight
+activation. Thrown and interrupted runs also retain that identity. Source
+checkouts without a `RELEASE` file stay unknown rather than using a package
+version as deployment evidence.
+
+Historical rows can join read-only event-sink activation receipts with the same
+job, compatible attempt and a timestamp within two seconds. Conflicting release
+identities stay unknown. A release flip timestamp alone is never enough.
+`KEIR_RELEASE_HISTORY_FILE` and `KEIR_RELEASE_DIRECTORY` override historical
+metadata locations; the conventional immutable release layout is detected by
+default. SQLite history reading requires Node 22 or newer.
+
+Exact versions report distinct tickets worked and Keir-credited resolutions
+completed under that version. Minor versions form automatic significant
+milestones, with additional named patch milestones in `versionefficiency.js`.
+The report separates matched task/provider/model work, pricing coverage,
+zero-token activity and complete single-milestone ticket samples. Lifetime
+ticket costs retain work from earlier versions. Observation spans differ and
+ticket difficulty remains uncontrolled; neither raw ticket counts nor normal
+activation returns prove a version is more efficient at resolving problems.
