@@ -8057,7 +8057,7 @@ loadDeadLetters();
   // revocation checks, are capped at 30 days and can be logged out normally.
   if (req.method === "POST" && pathname === "/api/auth/native-session") {
     const origin = req.headers.origin;
-    if (!origin || !OPS_SSO_HOSTS.some((host) => origin === `https://${host}`) || !["ios", "desktop"].includes(req.headers["x-lakeside-client"])) return json(res, 403, { error: "Forbidden" });
+    if (!origin || !OPS_SSO_HOSTS.some((host) => origin === `https://${host}`) || !["ios", "desktop", "cli"].includes(req.headers["x-lakeside-client"])) return json(res, 403, { error: "Forbidden" });
     const session = await resolveSession(req);
     if (req.opsAuthUnavailable) return json(res, 503, { error: "Sign-in verification is temporarily unavailable" });
     if (!session || session.role !== "admin") return json(res, 401, { error: "Unauthorized" });
