@@ -18,7 +18,7 @@
 const fs = require("node:fs");
 const path = require("path");
 const { MCP_DEFS } = require(path.join(__dirname, "..", "mcp-catalog.js"));
-const { describeServer } = require(path.join(__dirname, "..", "mcp", "fleet-tools.js"));
+const { describeServer, tokenFor } = require(path.join(__dirname, "..", "mcp", "fleet-tools.js"));
 
 const CATALOG_PATH = path.join(__dirname, "..", "mcp-catalog.js");
 
@@ -52,7 +52,8 @@ async function main() {
   let source = fs.readFileSync(CATALOG_PATH, "utf8");
   const changes = [];
   for (const def of MCP_DEFS) {
-    const described = await describeServer(def, token);
+    if (def.connect === "stdio" || !def.health) continue; // launched by the agent, nothing to ask over HTTP
+    const described = await describeServer(def, tokenFor(def) || token);
     if (!described.reachable) {
       changes.push({ server: def.key, error: described.error });
       continue;

@@ -105,10 +105,10 @@ ${m.key}:
   // on-box HTTP — already wired into hermes + cloud-code
   return `<pre><code># /root/.hermes/config.yaml → mcp_servers
 ${m.key}:
-  url: "${esc(m.url)}"
+  url: "${esc(m.localUrl || m.url)}"
   headers:
     Authorization: "Bearer &lt;TOKEN&gt;"</code></pre>
-<p style="font-size:.76rem;color:var(--text-3);margin:4px 0 0">✓ Already wired into hermes &amp; auto-loaded in cloud-code sessions.</p>`;
+<p style="font-size:.76rem;color:var(--text-3);margin:4px 0 0">✓ On-box only — not reachable from the public host. Already wired into hermes &amp; auto-loaded in cloud-code sessions.</p>`;
 }
 
 function renderMcps(status) {
