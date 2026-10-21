@@ -38,6 +38,8 @@ const { createApns, createAppPush } = require("./lib/operator/apppush");
 const env = process.env;
 const positive = (name, fallback) => { const n = Number(env[name] || fallback); if (!Number.isFinite(n) || n <= 0) throw new Error(`invalid ${name}`); return n; };
 const config = {
+  releaseHistoryFile: env.KEIR_RELEASE_HISTORY_FILE || path.resolve(__dirname, "../../releases.jsonl"),
+  releaseDirectory: env.KEIR_RELEASE_DIRECTORY || path.resolve(__dirname, ".."),
   stateDir: env.KEIR_OPERATOR_STATE_DIR || "/var/lib/keir-operator",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
@@ -773,6 +775,14 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (!authorized(req)) return reply(401, { error: "unauthorized" });
+  if (req.url?.split("?")[0] === "/v5/efficiency" && req.method === "GET") {
+    const days = Number(new URL(req.url, "http://localhost").searchParams.get("days") || 30), until = Date.now();
+    if (!Number.isFinite(days) || days <= 0 || days > 3650) return reply(400, { error: "Invalid days" });
+    try { return reply(200, await require("./lib/operator/versionefficiency").readVersionEfficiency(ledger.data,
+      config.usageFile || path.join(config.stateDir, "usage.jsonl"), { since: Math.max(0, until - days * 86400000), until,
+        historyFile: config.releaseHistoryFile, releasesDirectory: config.releaseDirectory, eventsFile: path.join(config.stateDir, "events.db") })); }
+    catch { return reply(503, { error: "Release efficiency data unavailable" }); }
+  }
   if (req.url?.split("?")[0] === "/v5/performance" && req.method === "GET") {
     try {
       const url = new URL(req.url, "http://localhost");

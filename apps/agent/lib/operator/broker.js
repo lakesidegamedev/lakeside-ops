@@ -111,7 +111,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
 const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"]);
-const QUICK_TOOLS = ["ticket_performance", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
+const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -983,6 +983,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   async function toolInner(job, name, input, signal) {
     active(job);
     musePolicy.guard(ledger, config, job, name, input);
+    if (name === "release_efficiency") {
+      if (job.role !== "owner") throw new Error("release efficiency requires an owner task");
+      const days = input.days ?? 30, until = now();
+      if (!Number.isFinite(days) || days <= 0 || days > 3650) throw new Error("Invalid days");
+      return require("./versionefficiency").readVersionEfficiency(d,
+        config.usageFile || path.join(config.stateDir, "usage.jsonl"), { since: Math.max(0, until - days * 86400000), until,
+          historyFile: config.releaseHistoryFile, releasesDirectory: config.releaseDirectory, eventsFile: path.join(config.stateDir, "events.db") });
+    }
     if (name === "ticket_performance") {
       if (job.role !== "owner") throw new Error("ticket performance requires an owner task");
       const days = input.days ?? 30, until = now();

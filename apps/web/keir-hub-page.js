@@ -677,9 +677,22 @@ async function loadPerformance(){
   }catch{host.textContent='Ticket performance unavailable. It will appear when the operator supports tracking.'}
   finally{performanceLoading=false}
 }
-$('#kh-performance-days').onchange=()=>{performanceAt=0;loadPerformance()};
+let efficiencyAt=0,efficiencyLoading=false;
+async function loadEfficiency(){
+  if(efficiencyLoading||paused||Date.now()-efficiencyAt<60000)return;
+  efficiencyLoading=true;efficiencyAt=Date.now();const host=$('#kh-release-efficiency');
+  try{
+    const response=await fetch('/api/keir/hub/efficiency?days='+$('#kh-performance-days').value,{cache:'no-store',signal:AbortSignal.timeout(20000)});
+    if(!response.ok)throw Error('Unavailable');const report=await response.json();
+    const versions=report.versions.slice().sort((a,b)=>b.ticketsWorkedOn-a.ticketsWorkedOn).slice(0,10);
+    const known=report.releaseAttribution.exactUsageRows+report.releaseAttribution.eventMatchedRows;
+    setHtml(host,'<p>'+known+' activations bound to a release; '+report.releaseAttribution.unknownRows+' unknown. Tickets worked overlap across contributors. Resolution costs include earlier versions.</p><div style="overflow-x:auto"><table style="width:100%;text-align:left"><thead><tr><th>Exact version</th><th>Tickets worked</th><th>Credited resolutions</th><th>Zero-token activations</th></tr></thead><tbody>'+versions.map(v=>'<tr><th scope="row">'+esc(v.version)+'</th><td>'+v.ticketsWorkedOn+'</td><td>'+v.completionCohort.resolvedTickets+'</td><td>'+v.zeroTokenActivations+' / '+v.activations+'</td></tr>').join('')+'</tbody></table></div><p class="kh-muted">Counts reflect different observation spans and ticket difficulty. Use release_efficiency for matched task/model cells and complete single-milestone ticket samples.</p>');
+  }catch{host.textContent='Release comparisons will appear when the operator supports version tracking.'}
+  finally{efficiencyLoading=false}
+}
+$('#kh-performance-days').onchange=()=>{performanceAt=0;efficiencyAt=0;loadPerformance();loadEfficiency()};
 function load(){if(paused)return Promise.resolve();if(inFlight)return inFlight;
-  loadPerformance();
+  loadPerformance();loadEfficiency();
   inFlight=(async()=>{try{const r=await fetch('/api/keir/hub',{cache:'no-store',signal:AbortSignal.timeout(30000)});if(r.status===401){location.href='/';return}if(!r.ok)throw Error('HTTP '+r.status);
     const next=await r.json();if(!next||!next.kpis||!next.stream||!Array.isArray(next.activity)||!Array.isArray(next.workers))throw Error('Incomplete dashboard response');
     const previous=S;try{S=next;render()}catch(e){S=previous;throw e}
@@ -715,6 +728,7 @@ function makeKeirHubBody() {
   <div class="kh-note" id="kh-src"></div>
   <section class="kt rise" id="kh-throughput" aria-label="Delivery throughput"></section>
   <section class="kh-panel rise" aria-label="Ticket resolution performance"><div class="kh-ph"><h2>Ticket resolution performance</h2><label>Window <select id="kh-performance-days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label></div><div class="kh-pb" id="kh-performance">Loading ticket outcomes.</div></section>
+  <details class="kh-panel rise"><summary class="kh-ph">Keir versions and tickets served</summary><div class="kh-pb" id="kh-release-efficiency">Loading release comparisons.</div></details>
   <section class="kh-panel kh-now rise" style="--i:1">
     <div class="kh-nowhead"><div class="kh-say"><div class="kh-say1" id="kh-say1">Reading Keir</div><div class="kh-say2" id="kh-say2"></div><div class="kh-say3" id="kh-say3"></div></div><div class="kh-orbs" id="kh-orbs"></div></div>
     <div class="kh-tailwrap" id="kh-tail" hidden></div>

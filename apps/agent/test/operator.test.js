@@ -1433,6 +1433,32 @@ test("each subscription activation is logged with tokens and time, cost unknown"
   assert.equal(usageRecord({ id: "j2", kind: "command" }, { is_error: true, subtype: "error_max_turns", interrupted: true }, 5, "m").outcome, "interrupted");
 });
 
+test("activation telemetry pins the build before a release flip and preserves unknown usage", async () => {
+  const f = fixture(), j = running(f), releaseFile = path.join(f.dir, "RELEASE");
+  const before = { version: "5.9.5", sha: "a".repeat(40) };
+  fs.writeFileSync(releaseFile, `${before.sha} ${before.version}`);
+  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+    config: { releaseFile, briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "done", summary: "Verified fixture result" }); return { usage: { input_tokens: 10, output_tokens: 20 } }; }) });
+  fs.writeFileSync(releaseFile, `${"b".repeat(40)} 5.10.0`);
+  await agent.run(j, new AbortController().signal);
+  const record = JSON.parse(fs.readFileSync(path.join(f.dir, "usage.jsonl"), "utf8").trim());
+  assert.deepEqual(record.release, before); assert.ok(record.toolCalls >= 1);
+  // Accepted completion ends the CLI before its final usage event arrives.
+  assert.equal(record.tokens.input, null); assert.equal(record.emptyActivation, null);
+});
+
+test("a provider throw still logs its running release without inventing token or empty-run measurements", async () => {
+  const f = fixture(), j = running(f), release = { version: "5.9.5", sha: "a".repeat(40) };
+  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+    config: { release, briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+    spawnImpl: () => { throw new Error("fixture provider unavailable"); } });
+  await assert.rejects(agent.run(j, new AbortController().signal), /fixture provider unavailable/);
+  const record = JSON.parse(fs.readFileSync(path.join(f.dir, "usage.jsonl"), "utf8").trim());
+  assert.deepEqual(record.release, release); assert.equal(record.emptyActivation, null);
+  assert.equal(record.tokens.input, null); assert.equal(record.outcome, "runner-error");
+});
+
 test("an owner's 'itch test' DM is left to the inbox; other owner DMs still reach Keir", () => {
   const f = fixture(), g = createGateway(f), dm = { ...f.ch, type: 1, name: "owner-dm" };
   g.ingest(dm, f.msg("itch test", "666666666666666951"));

@@ -4,6 +4,13 @@ const { emptyLanes, pickForLanes } = require("../lib/operator/lanes");
 const { estimate, usageReport } = require("../lib/operator/usage");
 const { usageRecord } = require("../lib/operator/agent");
 const job = (id, kind, extra = {}) => ({ id, kind, state: "queued", at: 1, ...extra });
+test("usage receipts keep exact version, host tool calls and empty-run evidence including interrupted runs", () => {
+  const release = { version: "5.9.5", sha: "a".repeat(40) };
+  const record = usageRecord(job("x", "ticket"), { interrupted: true }, 10, "claude-opus-5-5", "claude-cli-subscription", { release, toolCalls: 0, empty: true });
+  assert.deepEqual(record.release, release); assert.equal(record.toolCalls, 0); assert.equal(record.emptyActivation, true);
+  assert.equal(record.outcome, "interrupted");
+  assert.equal(usageRecord(job("x", "ticket"), {}, 1, "model").release, null);
+});
 test("three coders and three investigators run together, with chat available under full background load", () => {
   const jobs = [...Array.from({ length: 4 }, (_, i) => job(`c${i}`, "coding")),
     ...Array.from({ length: 4 }, (_, i) => job(`i${i}`, "ticket", { ticket: i + 1 })),

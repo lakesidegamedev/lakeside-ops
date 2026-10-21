@@ -119,7 +119,7 @@ function ticketPerformance(data, usage = [], { since = 0, until = Date.now() } =
     byModel: [...modelGroups.values()].map(g => ({ provider: g.provider, model: g.model, ...summarize(g.tickets) })), tickets };
 }
 
-async function readTicketPerformance(data, file, options) {
+async function readActivationRows(file) {
   const rows = [], stream = fs.createReadStream(file, { encoding: "utf8" });
   const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
   stream.on("error", () => lines.close());
@@ -130,8 +130,12 @@ async function readTicketPerformance(data, file, options) {
       }
     } catch (error) { if (error.code !== "ENOENT") throw error; }
     if (stream.errored && stream.errored.code !== "ENOENT") throw stream.errored;
-    return { ...ticketPerformance(data, rows, options), usageLogMissing: stream.errored?.code === "ENOENT" };
+    return { rows, usageLogMissing: stream.errored?.code === "ENOENT" };
   } finally { lines.close(); stream.destroy(); }
 }
+async function readTicketPerformance(data, file, options) {
+  const { rows, usageLogMissing } = await readActivationRows(file);
+  return { ...ticketPerformance(data, rows, options), usageLogMissing };
+}
 
-module.exports = { distribution, usageTotals, ticketPerformance, readTicketPerformance };
+module.exports = { distribution, usageTotals, ticketPerformance, readTicketPerformance, readActivationRows };

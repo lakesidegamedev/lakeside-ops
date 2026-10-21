@@ -139,6 +139,20 @@ test("performance proxy is admin-only, validates windows and never exposes the o
   for (const [, script] of body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)) new Function(script);
 });
 
+test("release efficiency is routed through the same admin boundary without browser credentials", async () => {
+  let calls = 0;
+  const ctx = { resolveSession: async () => ({ role: "admin" }), addSecurityHeaders() {},
+    actions: { releaseEfficiency: async ({ days }) => { calls++; assert.equal(days, 90); return { versions: [{ version: "5.9.5", ticketsWorkedOn: 18 }] }; } } };
+  const run = async session => {
+    const response = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = body; } };
+    await handleKeirHubRoute({ method: "GET", url: "/api/keir/hub/efficiency?days=90" }, response, "/api/keir/hub/efficiency", { ...ctx, resolveSession: async () => session });
+    return response;
+  };
+  assert.equal((await run(null)).status, 401); assert.equal((await run({ role: "viewer" })).status, 404); assert.equal(calls, 0);
+  const response = await run({ role: "admin" }); assert.equal(response.status, 200); assert.equal(calls, 1);
+  assert.equal(response.headers["Cache-Control"], "no-store"); assert.equal(JSON.parse(response.body).versions[0].ticketsWorkedOn, 18);
+});
+
 test("Keir's audit trail is told in plain sentences and activations become timeline spans", () => {
   const { narrate, buildStream } = require("./keir-hub-data");
   const NOW = Date.parse("2026-10-14T06:00:00Z");
