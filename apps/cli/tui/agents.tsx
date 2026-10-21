@@ -3,21 +3,23 @@ import { For, Show } from "solid-js";
 import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
 import { loadPeers, peerTask, listHandoffs, reconcileHandoff } from "../peers.mjs";
 import { ink, Rail } from "./brand";
-export function AgentRow(props: { name: string; machine: string; state: string; detail?: string; color?: string; onSelect?: () => void }) {
-  return <box paddingBottom={1} onMouseDown={props.onSelect}>
-    <box flexDirection="row" justifyContent="space-between"><text fg={ink.text}><span style={{ fg: props.color || ink.primary }}>● </span><b>{props.name}</b></text><text fg={props.color || ink.primary}>{props.state}</text></box>
-    <text fg={ink.muted}>{props.machine}</text>
-    <Show when={props.detail}><text fg={ink.muted}>{props.detail}</text></Show>
-  </box>;
+export function AgentRow(props: { name: string; machine: string; state: string; detail?: string; color?: string; compact?: boolean; onSelect?: () => void }) {
+  return <Show when={!props.compact} fallback={<box flexDirection="row" gap={2} onMouseDown={props.onSelect}><text fg={ink.text}><span style={{ fg: props.color || ink.primary }}>● </span><b>{props.name}</b></text><text fg={props.color || ink.primary}>{props.state}</text><Show when={props.detail}><text fg={ink.muted}>{props.detail}</text></Show></box>}>
+    <box paddingBottom={1} onMouseDown={props.onSelect}>
+      <box flexDirection="row" justifyContent="space-between"><text fg={ink.text}><span style={{ fg: props.color || ink.primary }}>● </span><b>{props.name}</b></text><text fg={props.color || ink.primary}>{props.state}</text></box>
+      <text fg={ink.muted}>{props.machine}</text>
+      <Show when={props.detail}><text fg={ink.muted}>{props.detail}</text></Show>
+    </box>
+  </Show>;
 }
 
-export function PeerPanel(props: { peers: () => any[]; error: () => string; refresh?: () => Promise<void>; api: TuiPluginApi }) {
+export function PeerPanel(props: { peers: () => any[]; error: () => string; refresh?: () => Promise<void>; compact?: boolean; api: TuiPluginApi }) {
   return <box gap={1}>
-    <Rail title="Agents" />
+    <Show when={!props.compact}><Rail title="Agents" /></Show>
     <Show when={props.refresh}><text fg={ink.primary} onMouseDown={() => { void props.refresh?.(); }}>Reconnect · /reconnect</text></Show>
     <Show when={props.error()}><text fg={ink.amber}>{props.error()}</text></Show>
     <Show when={!props.peers().length && !props.error()}><text fg={ink.muted}>No agents connected. Configure a peer to inspect or delegate work.</text></Show>
-    <For each={props.peers()}>{peer => <AgentRow name={peer.name} machine={peer.kind === "keir" ? "Remote" : "OpenCode"} state={peer.state} detail={peer.state === "connected" ? `${peer.tasks.length} ${peer.tasks.length === 1 ? "task" : "tasks"} · ${peer.latencyMs ?? "?"} ms · inspect` : peer.stale ? `${peer.tasks.length} cached tasks · last connected ${new Date(peer.lastSuccessAt).toLocaleTimeString()} · reconnect` : peer.error || "Connection unavailable · inspect"} color={peer.state === "connected" ? ink.green : ink.amber} onSelect={() => showPeer(props.api, peer)} />}</For>
+    <For each={props.peers()}>{peer => <AgentRow name={peer.name} machine={peer.kind === "keir" ? "Remote" : "OpenCode"} state={peer.state} compact={props.compact} detail={peer.state === "connected" ? `${peer.tasks.length} ${peer.tasks.length === 1 ? "task" : "tasks"} · ${peer.latencyMs ?? "?"} ms · inspect` : peer.stale ? `${peer.tasks.length} cached tasks · last connected ${new Date(peer.lastSuccessAt).toLocaleTimeString()} · reconnect` : peer.error || "Connection unavailable · inspect"} color={peer.state === "connected" ? ink.green : ink.amber} onSelect={() => showPeer(props.api, peer)} />}</For>
   </box>;
 }
 

@@ -135,7 +135,9 @@ export default {
         const height = dimensions().height, columns = dimensions().width;
         const compact = height < 26 || columns < 60;
         const lake = height >= 40 ? 4 : height >= 30 ? 3 : 2;
-        const mountain = Math.max(5, Math.min(16, height - 15 - lake));
+        // The peer panel joins the footer from 38 rows up; give it its rows back.
+        const reserved = height >= 38 && (peers().length > 0 || peerError()) ? 28 : 15;
+        const mountain = Math.max(5, Math.min(16, height - reserved - lake));
         const width = Math.max(24, Math.min(120, columns - 4));
         return <Brand name={name} compact={compact} width={width} sky={1} mountain={mountain} lake={lake} />;
       },
@@ -155,7 +157,7 @@ export default {
             </Show>
           </Show>
           <box flexDirection="row" gap={3} flexShrink={0}><text fg={ink.primary} onMouseDown={() => api.keymap.dispatchCommand("session.list")}>Resume session</text><text fg={ink.primary} onMouseDown={() => showWorkbench(api)}>Workbench</text><For each={shortcuts}>{action => <text fg={ink.primary} onMouseDown={() => fillPrompt(action.prompt)}>{action.label}</text>}</For></box>
-          <Show when={dimensions().height >= 38 && (peers().length > 0 || peerError())}><box paddingTop={2}><PeerPanel api={api} peers={peers} error={peerError} refresh={refresh} /></box></Show>
+          <Show when={dimensions().height >= 38 && (peers().length > 0 || peerError())}><box paddingTop={1}><PeerPanel api={api} peers={peers} error={peerError} refresh={refresh} compact /></box></Show>
         </box>;
       },
       home_footer() { return <box paddingLeft={2} paddingRight={2} paddingBottom={1} flexDirection="row" justifyContent="space-between"><text fg={ink.muted}>{path.basename(api.state.path.directory)}<span style={{ fg: ink.primary }}>{api.state.vcs?.branch ? `  ⎇ ${api.state.vcs.branch}` : ""}</span></text><Show when={peers().length > 0 || peerError()}><text fg={ink.primary} onMouseDown={() => api.command?.trigger("lakeside.agents")}>/agents</text></Show></box>; },
