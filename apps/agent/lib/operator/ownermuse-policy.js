@@ -67,7 +67,7 @@ function inherit(ledger, parent, child) {
   const payload = { jobId: child.id, parentId: parent.id, parentDigest: parentReceipt.digest, via: "derived-owner-app" };
   if (!ledger.data.ownerMuseOrigins?.[child.id]) (ledger.data.ownerMuseOrigins ||= {})[child.id] = { ...payload, digest: digest(payload) };
 }
-const READS = new Set(["discord_search", "evidence_batch", "read_servers", "read_tools", "read_tool", "recent_changes", "past_ticket", "similar_reports", "recall", "calculate", "ticket_history", "source_history", "view_attachment", "task_progress", "reporter_state", "support_tools"]);
+const READS = new Set(["ticket_performance", "discord_search", "evidence_batch", "read_servers", "read_tools", "read_tool", "recent_changes", "past_ticket", "similar_reports", "recall", "calculate", "ticket_history", "source_history", "view_attachment", "task_progress", "reporter_state", "support_tools"]);
 const PRIVATE = new Set(["owner_updates", "present_choices", "task_plan", "goal_update", "feed_post", "artifact_save", "idea_suggest", "checkpoint", "finish", "watch_turn", "handoff", "delegate_fix", "delegate_investigation", "review_fix", "repository_snapshot", "local_file"]);
 // A read token alone does not prove an arbitrary MCP method has no side effects.
 const MCP_READS = {

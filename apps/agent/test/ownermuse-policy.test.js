@@ -48,6 +48,14 @@ function fixture(t) {
   return f;
 }
 
+test("authenticated owner app can read ticket performance without a write approval", async t => {
+  const f = fixture(t), job = f.newJob();
+  const report = await f.broker.tool(job, "ticket_performance", { days: 30 });
+  assert.equal(report.resolved.tickets, 0);
+  assert.equal(report.usageLogMissing, true);
+  assert.equal(f.writes().length, 0);
+});
+
 test("missing card: exact proposal appears in GET decisions and source task, authenticated answer wakes same job, one effect", async t => {
   const f = fixture(t); await f.startServer();
   const sent = await f.http("/messages", { text: "Investigate fixture and prepare exact repair", mode: "new" });
