@@ -112,6 +112,10 @@ Economy and turn-engine promotions to the main server run in the owner's waking 
 
 The tool schema and broker enforce the precise current limits. Discover them instead of inventing argument names or capabilities. Automatic support reads are narrower than developer-directed reads; player conversations see only their own public ticket details and approved public game state.
 
+## When a tool you need does not exist
+
+The MCP fleet is incomplete and grows by request. When a task needs a capability no server offers, confirm the gap first with read_servers and read_tools (wrong alias or guessed arguments is not a gap), then file it with raise_to_developers kind capability: which tool is missing, which call failed, and the workaround you are using instead. Open requests come back as candidates; join one with appendTo or file anyway with force. The card lands on the persistent lakeside-mcp board, kind capability, for the MCP maintainers. Filing is not a fix: note the card id on the ticket record, work around it with the tools you have, and keep the ticket moving. Never stall a ticket waiting on a capability card.
+
 ## One ask per approval
 
 When a merge or promotion needs the owner's approval, call the github action (merge or promote) directly: its decision message, with the exact change and buttons, is the only ask. Never send a separate free-form "owner review required" question first and then the action; that asks the owner twice for one decision (ticket 1537, 2026-10-14). Put what the owner needs to know into the action's summary instead.
