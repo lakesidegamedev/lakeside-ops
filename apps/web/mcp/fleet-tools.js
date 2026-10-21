@@ -33,7 +33,16 @@ function rpc(url, method, params, token, timeoutMs = DEFAULT_TIMEOUT_MS) {
   })
     .then(async (res) => {
       const text = await res.text();
-      if (!res.ok) return { error: `HTTP ${res.status}` };
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const parsed = JSON.parse(text);
+          detail = (parsed.error && parsed.error.message) || "";
+        } catch {
+          detail = "";
+        }
+        return { error: `HTTP ${res.status}${detail ? `: ${detail}` : ""}` };
+      }
       const line = text.split("\n").find((l) => l.startsWith("data: "));
       let payload;
       try {
@@ -50,6 +59,21 @@ function rpc(url, method, params, token, timeoutMs = DEFAULT_TIMEOUT_MS) {
 
 function localUrl(def) {
   return `http://127.0.0.1:${def.health}/mcp`;
+}
+
+/** Call one tool on another server and parse its JSON result. */
+async function callTool(url, name, args, token, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const reply = await rpc(url, "tools/call", { name, arguments: args }, token, timeoutMs);
+  if (reply.error) return { error: reply.error };
+  const text = ((reply.result && reply.result.content) || [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text)
+    .join("\n");
+  try {
+    return { result: JSON.parse(text) };
+  } catch {
+    return { result: { text } };
+  }
 }
 
 async function describeServer(def, token) {
@@ -113,6 +137,42 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
       });
     }
   );
+
+  server.tool(
+    "mcp_capability_requests",
+    "List the open MCP capability requests on the lakeside-mcp board: what an agent or a member of staff has asked the MCP fleet for and does not have yet. Read this before building a tool, and check it before saying a capability does not exist.",
+    {
+      limit: z.number().int().min(1).max(200).optional().default(50),
+      include_closed: z.boolean().optional().default(false),
+    },
+    async ({ limit, include_closed }) => {
+      const token = process.env.OPS_KNOWLEDGE_MCP_TOKEN || process.env.MCP_FLEET_TOKEN;
+      if (!token) {
+        return errorResult("no fleet token configured: set OPS_KNOWLEDGE_MCP_TOKEN (a read-scoped agent token) so this server can read the capability board");
+      }
+      const knowledge = MCP_DEFS.find((d) => d.key === "ops-knowledge");
+      if (!knowledge) return errorResult("the ops-knowledge server is not in the catalogue");
+      const reply = await callTool(localUrl(knowledge), "kanban_list", { product: "lakeside-mcp", limit: Math.min(limit * 2, 200) }, token);
+      if (reply.error) return errorResult(`the capability board could not be read: ${reply.error}`);
+      const rows = (reply.result && reply.result.items) || [];
+      const cards = rows
+        .filter((r) => (r.kind || "") === "capability")
+        .filter((r) => include_closed || !r.closed_at)
+        .slice(0, limit)
+        .map((r) => ({
+          id: r.id,
+          title: r.title,
+          lane: r.lane,
+          impact: r.impact,
+          assigned_to: r.assigned_to || null,
+          detail: String(r.detail || "").slice(0, 600),
+          created_at: r.created_at,
+          age_days: r.age_days ?? null,
+          progress_summary: r.progress_summary || "",
+        }));
+      return jsonResult({ ok: true, count: cards.length, requests: cards });
+    }
+  );
 }
 
-module.exports = { registerFleetTools, describeServer };
+module.exports = { registerFleetTools, describeServer, callTool };

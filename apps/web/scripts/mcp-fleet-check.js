@@ -40,6 +40,7 @@ async function main() {
 
   const described = await Promise.all(MCP_DEFS.map((d) => describeServer(d, token)));
   const drift = [];
+  const scopes = [];
   for (const d of described) {
     const def = MCP_DEFS.find((x) => x.key === d.key);
     if (!d.reachable) {
@@ -53,6 +54,11 @@ async function main() {
     if (missing.length || stale.length) {
       drift.push({ kind: "tools", server: d.key, missingFromCatalogue: missing, notOnServer: stale });
     }
+    // Scope inventory: the catalogue's write-scoped tools per server. The
+    // servers list every tool in tools/list and refuse the write ones at call
+    // time, so "listed" is not "callable"; this is an inventory, not a finding.
+    const writeScoped = listed.filter((c) => c.writeScoped).map((c) => c.name);
+    if (writeScoped.length) scopes.push({ server: d.key, writeScopedTools: writeScoped });
   }
 
   const report = {
@@ -61,6 +67,7 @@ async function main() {
     reachable: described.filter((d) => d.reachable).length,
     liveTools: described.reduce((n, d) => n + (d.toolCount || 0), 0),
     drift,
+    scopeExposure: scopes,
   };
   if (asJson) {
     console.log(JSON.stringify(report, null, 2));
@@ -73,6 +80,9 @@ async function main() {
         if (d.missingFromCatalogue.length) console.log(`DRIFT ${d.server}: ${d.missingFromCatalogue.length} tool(s) on the server but not in the catalogue: ${d.missingFromCatalogue.join(", ")}`);
         if (d.notOnServer.length) console.log(`DRIFT ${d.server}: ${d.notOnServer.length} catalogue tool(s) the server does not expose: ${d.notOnServer.join(", ")}`);
       }
+    }
+    for (const s of scopes) {
+      console.log(`SCOPE ${s.server}: ${s.writeScopedTools.length} write-scoped tool(s), refused at call time without a write token: ${s.writeScopedTools.join(", ")}`);
     }
   }
   process.exit(drift.length ? 1 : 0);
