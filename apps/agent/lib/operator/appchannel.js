@@ -35,6 +35,11 @@ function threadOf(data) {
   return t;
 }
 
+// A client opts into answer revisions by asking for the thread with edits=1.
+// Older app builds only append by id, so once one has connected we keep posting
+// new messages for as long as the flag is set by the newest reader.
+function editsEnabled(data) { return threadOf(data).edits === true; }
+
 function append(data, row, now) {
   const t = threadOf(data);
   const message = { seq: ++t.seq, id: row.id || `app-${t.seq}-${crypto.randomBytes(3).toString("hex")}`, at: now, ...row };
@@ -208,11 +213,12 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     }
     const activity = require("./toolactivity").forReply(job);
     const root = rootOf(job) || job;
-    const slot = isAppJob(root) && !root.appWatch ? answerRow(d, root.id) : null;
+    const edits = editsEnabled(d);
+    const slot = edits && isAppJob(root) && !root.appWatch ? answerRow(d, root.id) : null;
     // A progress line from a running task belongs under the answer it will
     // revise, not in a second bubble. Without an answer yet it opens one, so the
     // owner sees the work start instead of a silent thread.
-    if (entry.voiceProgress === true) {
+    if (entry.voiceProgress === true && edits) {
       const line = text.slice(0, 400);
       if (slot) { revise(d, slot, { progress: line }, now()); return [slot.id]; }
       const row = append(d, { role: "keir", text: "", progress: line, provisional: true, ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), jobId: root.id, thread: appThread(job) }, now());
@@ -221,7 +227,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     }
     // The deeper pass edits the provisional answer in place: same row, same
     // place in the thread, marked as edited.
-    if (slot?.provisional && /^(channel-reply|finish|error-reply|chart):/.test(key)) {
+    if (edits && slot?.provisional && /^(channel-reply|finish|error-reply|chart):/.test(key)) {
       const revised = revise(d, slot, { text, progress: undefined, ...(activity.length ? { activity } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}) }, now());
       if (revised) {
         record(revised);
@@ -230,7 +236,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
         return [revised.id];
       }
     }
-    const message = append(d, { role: "keir", text, ...(activity.length ? { activity } : {}), ...(root.provisionalAnswer && /^(channel-reply|finish|error-reply):/.test(key) ? { provisional: true } : {}), jobId: voiceRoot?.id || job.id, ...(voiceRoot && voiceRoot.id !== job.id ? { taskId: job.id } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}), ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), thread: appThread(job), ...(job.appWatch ? { watch: job.appWatch } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}) }, now());
+    const message = append(d, { role: "keir", text, ...(activity.length ? { activity } : {}), ...(edits && root.provisionalAnswer && /^(channel-reply|finish|error-reply):/.test(key) ? { provisional: true } : {}), jobId: voiceRoot?.id || job.id, ...(voiceRoot && voiceRoot.id !== job.id ? { taskId: job.id } : {}), ...(job.appComputer ? { computer: { title: job.appComputer.title, file: job.appComputer.file } } : {}), ...(voiceRoot ? { voice: true, provider: job.provider || voiceRoot.provider || null } : {}), thread: appThread(job), ...(job.appWatch ? { watch: job.appWatch } : {}), ...(chart ? { chart } : {}), ...(cards.length ? { cards } : {}) }, now());
     if (message.provisional) { claimAnswer(d, root.id, message, now()); if (root.provisionalAnswer) root.provisionalAnswer = false; }
     record(message);
     if (/^(channel-reply|finish|error-reply):/.test(key)) { clearStatus(d, job.id); delete job.progressMessageId; }
@@ -242,7 +248,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
   // an honest line so the owner never waits on a silent thread.
   function handoffAnswer(job, answer, worker = null) {
     const root = rootOf(job) || job;
-    if (!isAppJob(root) || root.appWatch) return null;
+    if (!isAppJob(root) || root.appWatch || !editsEnabled(d)) return null;
     const text = String(answer || "").trim();
     const t = threadOf(d);
     const source = t.messages.find((m) => m.id === root.source?.messageId);
@@ -253,7 +259,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     if (posted && !slot) { claimAnswer(d, root.id, posted, now()); revise(d, posted, { provisional: true }, now()); return posted.id; }
     if (slot && text) { revise(d, slot, { text, provisional: true, progress: undefined }, now()); return slot.id; }
     if (slot) { if (slot.provisional) revise(d, slot, { provisional: true }, now()); return slot.id; }
-    const row = append(d, { role: "keir", text: text || "I'm checking this now. I'll update this same message with the answer.", progress: text ? "Still checking." : undefined, provisional: true, ...(root.voiceMode ? { voice: true, provider: root.provider || null } : {}), jobId: root.id, ...(worker?.id && worker.id !== root.id ? { taskId: worker.id } : {}), thread: appThread(job) }, now());
+    const row = append(d, { role: "keir", text: text || "I'm checking this now. I'll update this same message with the answer.", provisional: true, ...(root.voiceMode ? { voice: true, provider: root.provider || null } : {}), jobId: root.id, ...(worker?.id && worker.id !== root.id ? { taskId: worker.id } : {}), thread: appThread(job) }, now());
     claimAnswer(d, root.id, row, now()); record(row);
     ledger.audit("app_provisional_answer", { job: job.id, root: root.id, message: row.id, answeredNow: Boolean(text) });
     return row.id;
@@ -269,8 +275,11 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     if (slot) revise(d, slot, { progress: line.slice(0, 400) }, now());
   }
 
-  function view(after = 0, thread = null) {
+  function view(after = 0, thread = null, editsRequested = false) {
     const t = threadOf(d);
+    // Callers that render revisions ask for them; everyone else keeps the
+    // append-only behaviour of an older app build.
+    if (editsRequested) t.edits = true;
     for (const id of Object.keys(t.status)) if (!d.jobs[id] || CLOSED.includes(d.jobs[id].state)) delete t.status[id];
     // Keep a provisional answer's slot until it is revised, even though the quick
     // turn that opened it is already closed; drop the rest with their jobs.
@@ -289,7 +298,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     const queued = (thread ? jobs.filter((j) => inThread(appThread(j))) : jobs).reduce((n, j) => n + (j.state === "running" ? (j.inbox || []).length : 0), 0);
     // A revised message keeps its seq so it stays in place. Its new text rides in
     // `revised`, and `rev` in the version hash wakes the long poll.
-    const revised = after ? t.messages.filter((m) => m.rev && m.seq <= after && inThread(m.thread)).sort((a, b) => a.rev - b.rev).slice(-8) : [];
+    const revised = after && t.edits ? t.messages.filter((m) => m.rev && m.seq <= after && inThread(m.thread)).sort((a, b) => a.rev - b.rev).slice(-8) : [];
     return { activity: require("./appcontrols").activityState(d, now()), controls: controls.view(thread || "main"), cursor: t.seq, version, team, modelSelection: t.modelSelections?.[thread || "main"] || "auto", questions: Object.values(t.questions || {}).filter((q) => inThread(q.thread) && q.state === "pending" && d.jobs[q.jobId] && !CLOSED.includes(d.jobs[q.jobId].state)), messages: t.messages.filter((m) => m.seq > after && inThread(m.thread)), revised, tasks, queued, backgroundTasks: jobs.filter((j) => !inThread(appThread(j))).map((j) => ({ id: j.id, thread: appThread(j), title: String(j.codingParent ? `${j.investigation ? "Investigation" : "Coding"}: ${d.jobs[j.codingParent]?.source?.content || "Delegated work"}` : j.source?.content || "Task").slice(0, 100), state: j.state })), working: tasks.some((x) => x.state === "running") };
   }
 
@@ -390,7 +399,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     t.activities = [...(t.activities || []).filter(a => a.id !== activityId && a.token !== token && a.expiresAt > now()), { id: activityId, token, expiresAt: now() + 8 * 3600000 }].slice(-8);
     ledger.save(); return { registered: true };
   }
-  return { uploads, removeActivity, registerActivity, controls, authenticatedPost: (text, clientId, threadId, options) => post(text, clientId, threadId, options, true), authenticatedAnswer: (id, verdict, text) => answer(id, verdict, text, true), modelOptions, selectModel, post, deliver, handoffAnswer, updateStatus, view, cancel, history, pendingDecisions, answer, alerts, register };
+  return { uploads, removeActivity, registerActivity, controls, answerEdits: () => editsEnabled(d), authenticatedPost: (text, clientId, threadId, options) => post(text, clientId, threadId, options, true), authenticatedAnswer: (id, verdict, text) => answer(id, verdict, text, true), modelOptions, selectModel, post, deliver, handoffAnswer, updateStatus, view, cancel, history, pendingDecisions, answer, alerts, register };
 }
 
 function alertKind(key) {
@@ -497,12 +506,12 @@ function createAppServer({ app, authenticate, artifactsDir, agentRoutes = null, 
         const started = Date.now();
         const since = url.searchParams.get("since");
         const thread = url.searchParams.get("thread") || null;
-        let view = app.view(after, thread);
+        let view = app.view(after, thread, url.searchParams.get("edits") === "1");
         // Long poll: answer as soon as the thread or a task changes from the caller's version.
         while (wait && since && view.version === since && Date.now() - started < wait) {
           if (req.destroyed) return;
           await new Promise((r) => setTimeout(r, pollMs));
-          view = app.view(after, thread);
+          view = app.view(after, thread, true);
         }
         return reply(200, view);
       }

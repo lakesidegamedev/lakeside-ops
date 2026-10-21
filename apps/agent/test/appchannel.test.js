@@ -311,6 +311,7 @@ test("normal worker chat replies retain their own task identity", () => {
 
 test("a provisional answer is revised in place by the deeper pass", () => {
   const { ledger, app } = setup();
+  app.view(0, "main", true); // the app build asks for answer revisions
   const accepted = app.post("Was production up at 21:00?", "revise-1", "main", {}, true);
   const job = ledger.data.jobs[accepted.jobId]; job.state = "running";
   const worker = ledger.createJob(`handoff:${job.id}`, { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: job.source, museParent: job.id, appThread: "main" });
@@ -328,13 +329,14 @@ test("a provisional answer is revised in place by the deeper pass", () => {
   assert.match(rows[0].text, /Production was up/); assert.equal(rows[0].provisional, undefined);
   assert.ok(rows[0].editedAt > 0);
   // The edit reaches clients that already hold the row, and wakes the long poll.
-  const later = app.view(provisional.seq);
+  const later = app.view(provisional.seq, null, true);
   assert.equal(later.messages.length, 0);
   assert.equal(later.revised.find(m => m.id === provisional.id)?.text, rows[0].text);
 });
 
 test("work progress rides under the answer instead of a second bubble", () => {
   const { ledger, app } = setup();
+  app.view(0, "main", true);
   const accepted = app.post("Investigate the drift", "progress-1", "main", {}, true);
   const job = ledger.data.jobs[accepted.jobId]; job.state = "running";
   const worker = ledger.createJob(`handoff:${job.id}`, { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: job.source, museParent: job.id, appThread: "main" });
@@ -374,6 +376,7 @@ test("a short remark in the app gets a quick conversational answer, not a silent
 
 test("an answer already posted before the handoff is still the row the worker revises", () => {
   const { ledger, app } = setup();
+  app.view(0, "main", true);
   const a = app.post("Why are market prices frozen?", "pre-reply", "main", {}, true);
   const job = ledger.data.jobs[a.jobId]; job.state = "running";
   app.deliver(`channel-reply:${job.id}:q`, { content: "Prices froze when the turn paused." }, job);
@@ -386,4 +389,16 @@ test("an answer already posted before the handoff is still the row the worker re
   app.deliver(`channel-reply:${worker.id}:x`, { content: "Prices froze because the **turn paused**; the scheduler caught up at 22:00." }, worker);
   const rows = app.view().messages.filter(m => m.role === "keir" && m.jobId === job.id);
   assert.equal(rows.length, 1); assert.equal(rows[0].id, slot); assert.match(rows[0].text, /turn paused/);
+});
+
+test("an older app build that never asked for revisions keeps append-only answers", () => {
+  const { ledger, app } = setup();
+  const a = app.post("Was production up at 21:00?", "old-client", "main", {}, true);
+  const job = ledger.data.jobs[a.jobId]; job.state = "running";
+  const worker = ledger.createJob(`handoff:${job.id}`, { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: job.source, museParent: job.id, appThread: "main" });
+  assert.equal(app.handoffAnswer(job, "Short answer.", worker), null);
+  worker.state = "done";
+  app.deliver(`channel-reply:${worker.id}:x`, { content: "Full answer." }, worker);
+  const rows = app.view().messages.filter(m => m.role === "keir");
+  assert.equal(rows.length, 1); assert.equal(rows[0].text, "Full answer."); assert.equal(rows[0].provisional, undefined);
 });

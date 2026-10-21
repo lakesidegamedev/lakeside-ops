@@ -162,6 +162,7 @@ test("each voice turn needs its own final reply even when an earlier question ha
 });
 test("a voice handoff leaves a provisional answer the worker revises, never a final one", async t => {
   const { ledger, app, broker } = fixture(t);
+  app.view(0, "main", true); // the app build asks for answer revisions
   const current = app.authenticatedPost("Explain the current investigation", "voice-progress", "main", { voice: true });
   const root = ledger.data.jobs[current.jobId]; root.state = "running";
   const handoff = await broker.tool(root, "handoff", { answer: "Short answer: nothing looks broken yet." });

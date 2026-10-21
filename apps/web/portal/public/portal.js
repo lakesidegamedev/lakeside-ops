@@ -60,7 +60,7 @@ async function poll(run) {
   while (!stopped && run === generation) {
     const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 32000);
     try {
-      const q = new URLSearchParams({ thread: selected, after: String(cursor), since: version, wait: version ? "25" : "0" });
+      const q = new URLSearchParams({ thread: selected, after: String(cursor), since: version, wait: version ? "25" : "0", edits: "1" });
       const view = await api(`/api/keir/app/thread?${q}`, null, controller.signal);
       if (run !== generation) return;
       if (view.messages?.length) $("welcome")?.remove();

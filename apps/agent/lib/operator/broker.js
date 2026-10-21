@@ -1317,8 +1317,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // turn that already replied just has that reply marked provisional.
       if (appChannel && isAppJob(job)) {
         // The quick turn may already have queued its answer; that message becomes
-        // the provisional one when it lands. Otherwise open the slot now.
-        if (job.channelReplyQueued) job.provisionalAnswer = true;
+        // the provisional one when it lands. Otherwise open the slot now. Clients
+        // that cannot render a revision keep the append-only answer.
+        const editable = appChannel.answerEdits?.() === true;
+        if (job.channelReplyQueued) { if (editable) job.provisionalAnswer = true; }
         else appChannel.handoffAnswer(job, input.answer, worker);
         job.progressMessageId ||= `app-status-${job.id}`;
       }

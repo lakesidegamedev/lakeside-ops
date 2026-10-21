@@ -132,7 +132,8 @@ import LakesideCore
                 // The first read returns at once; after that the server holds the
                 // request until the thread or a task changes (25s at most).
                 let selected = thread
-                let view = try await session.get("/api/keir/app/thread", query: ["after": String(cursor), "wait": version.isEmpty ? "0" : "25", "since": version, "thread": selected])
+                // edits=1: this build renders a revised answer in place by id.
+                let view = try await session.get("/api/keir/app/thread", query: ["after": String(cursor), "wait": version.isEmpty ? "0" : "25", "since": version, "thread": selected, "edits": "1"])
                 guard generation == epoch else { return }
                 guard selected == thread else { continue }
                 let before = version
