@@ -22,6 +22,7 @@ const store = require("../knowledge-store");
 const tokens = require("../agent-tokens");
 const { buildGettingStarted } = require("../mcp-catalog");
 const { registerKanbanTools } = require("./kanban-tools");
+const { registerFleetTools } = require("./fleet-tools");
 const { summarizeEntry } = require("../ollama-summarize");
 const fs = require("fs");
 const path = require("path");
@@ -456,6 +457,9 @@ async function main() {
 
     // Product kanban (same store as the dashboard /kanban page).
     registerKanbanTools(server, { auth, jsonResult, errorResult });
+
+    // The fleet describing itself, read live from every hosted server.
+    registerFleetTools(server, { jsonResult, errorResult });
 
     return server;
   }
