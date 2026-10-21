@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.6 (2026-10-21)
+
+### For developers
+
+- Keir can now file an MCP capability request. `raise_to_developers` takes a new kind, `capability`: the request lands on the persistent `lakeside-mcp` board (kanban only, never a public GitHub issue) and never blocks the ticket it was raised from. Keir is told to confirm the gap with `read_servers` and `read_tools` first, file it, note the card id on the ticket, and keep working around it rather than stalling.
+
 ### For developers
 
 - Watcher-created findings no longer wake every minute while awaiting the next game turn. They can subscribe to that turn and resume when it is processed.
