@@ -1189,6 +1189,22 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const asked = input.kind === "decision" ? askOwner(Number(input.appendTo), title || `Item ${input.appendTo}`, String(input.question || detail).slice(0, 500)) : null;
         return { raised: true, id: Number(input.appendTo), appended: true, ...(asked ? { decision: asked } : {}), instruction: "Added to the existing item for the developers. You can now tell the player it is with them." };
       }
+      // Owner, 2026-10-21: MCP capability requests live on their own board.
+      // kind "capability" is kanban-only on product lakeside-mcp: no public
+      // GitHub issue (tooling is internal), and it never blocks the ticket.
+      // File it, note the card, and keep the ticket moving with a workaround.
+      if (input.kind === "capability") {
+        if (title.length < 8 || detail.length < 40) throw new Error("give a short title and the evidence: which tool or capability is missing, which call failed, and the workaround you are using instead");
+        if (!input.force) {
+          const open = await mcp.call("ops-knowledge", "kanban_list", { product: "lakeside-mcp", limit: 200 }, false, signal).catch(() => null);
+          const items = Array.isArray(open) ? open : open?.items || [];
+          const candidates = items.map((k) => ({ id: k.id, title: k.title, score: similarity(`${k.title} ${String(k.detail || "").slice(0, 600)}`, `${title} ${detail.slice(0, 600)}`) })).filter((k) => k.score >= 0.06).sort((a, b) => b.score - a.score).slice(0, 3);
+          if (candidates.length) return { raised: false, candidates: candidates.map(({ id, title }) => ({ id, title })), instruction: "These open capability requests may be the same gap. If one is, call raise_to_developers again with appendTo set to its id and your evidence as detail. If none is, call again with force: true." };
+        }
+        const r = await mcp.call("ops-knowledge", "kanban_add", { product: "lakeside-mcp", title, detail: `${detail}\n\nRaised by Keir${n ? ` from ticket ${n}` : ""}.`, kind: "capability", lane: "next", actor: "keir" }, true, signal);
+        record(r?.id || null);
+        return { raised: true, id: r?.id || null, instruction: "Filed on the MCP capability board (product lakeside-mcp, kind capability). Filing is not a fix: work around it with the tools you have, note the card id on the ticket record, and keep the ticket moving. Do not wait on the card." };
+      }
       if (title.length < 8 || detail.length < 40) throw new Error("give a short title and the evidence: what happens, where in the code or data, and the question for the developers");
       if (DECISION_WORDS.test(`${title} ${detail}`) && input.kind !== "decision" && input.kind !== "bug")
         throw new Error("This asks for an owner decision (compensation, refund, approval or a ruling). Call again with kind: \"decision\" and question: one line with two or three concrete options, your recommendation first. The owner gets it as a decision DM.");

@@ -7,7 +7,7 @@
 const { z } = require("zod");
 const { sharedKanban, OPEN_LANES, LANES, REPORT_EVENTS } = require("../kanban-store");
 
-const PRODUCT_HELP = 'Product slug or alias, e.g. "a-house-divided" (aliases: ahd, AHDGame, adhd-bot), "margin-of-victory" (mov), "metroforge" (mf), "grand-century" (gc), "foreshore", "verdigris".';
+const PRODUCT_HELP = 'Product slug or alias, e.g. "a-house-divided" (aliases: ahd, AHDGame, adhd-bot), "margin-of-victory" (mov), "metroforge" (mf), "grand-century" (gc), "foreshore", "verdigris", "lakeside-mcp" (mcp: MCP/tool capability requests, kind capability).';
 
 function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sharedKanban }) {
   const canWrite = auth && auth.scopes && auth.scopes.write === true;
@@ -64,7 +64,7 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       detail: z.string().max(20000).optional(),
       lane: z.enum(OPEN_LANES).optional().default("backlog"),
       impact: z.enum(["high", "medium", "low"]).optional().default("medium"),
-      kind: z.string().max(40).optional().describe("feature | bug | ops | audit | task ..."),
+      kind: z.string().max(40).optional().describe("feature | bug | ops | audit | task | capability (capability: an MCP/tool capability request on product lakeside-mcp) ..."),
       github: z.string().optional().describe("Link a GitHub issue: owner/repo#N or the issue URL"),
       evidence_url: z.string().url().optional(),
       assigned_to: z.string().optional(),

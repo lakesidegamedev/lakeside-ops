@@ -235,6 +235,23 @@ test("raise_to_developers offers a matching open item first, appends to it on re
   assert.equal(calls.find((c) => c[0] === "kanban_add")[1].title, "Spin-off countdown missing (ticket 1522)");
 });
 
+test("raise_to_developers kind capability files on the lakeside-mcp board, never a GitHub issue", async () => {
+  const f = fixture();
+  const calls = [];
+  f.mcp.call = async (server, tool, args) => {
+    calls.push([tool, args]);
+    if (tool === "kanban_list") return { items: [] };
+    if (tool === "kanban_add") return { id: 902 };
+    return { ok: true };
+  };
+  const r = await f.broker.tool(f.job, "raise_to_developers", { title: "Heal-ops needs a bulk sector recount", detail: "No heal-ops tool recounts sector ledgers in bulk; heal_query reads one scope per call, so this repair needs forty calls. Workaround is batching single-scope queries.", kind: "capability", force: true });
+  assert.equal(r.raised, true); assert.equal(r.id, 902);
+  const add = calls.find((c) => c[0] === "kanban_add");
+  assert.equal(add[1].product, "lakeside-mcp"); assert.equal(add[1].kind, "capability"); assert.equal(add[1].lane, "next");
+  assert.ok(!("github" in add[1]), "no public issue for internal tooling");
+  assert.equal(f.job.raisedToDevelopers.find((x) => x.id === 902).blocking, false, "a capability request never blocks the ticket");
+});
+
 test("support_action accepts loose tool names and says exactly what is allowed", async () => {
   const f = fixture();
   // A loose name passes the tool check (it then meets the channel check, which this fixture cannot satisfy).
