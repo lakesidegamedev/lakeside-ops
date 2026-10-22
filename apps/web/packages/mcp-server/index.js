@@ -101,6 +101,9 @@ function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", build
   for (const [alias, build] of Object.entries(aliases)) {
     if (!/^[a-z0-9-]+$/.test(alias) || typeof build !== "function") throw new Error(`invalid alias ${alias}`);
     app.post(`/mcp/${alias}`, handle(build));
+    // The same endpoint where Keir's Rust MCP client looks: it strips a trailing
+    // "/mcp" from the registered URL and appends "/mcp" again (2026-10-22).
+    app.post(`/mcp/${alias}/mcp`, handle(build));
   }
   const listener = listen ? app.listen(port, bind, () => {
     logger.log(`[${name}] on ${bind}:${port}`);

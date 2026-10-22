@@ -101,6 +101,10 @@ test("an alias answers at /mcp/<name> with its own server and the same auth", as
     assert.equal((await post("/mcp", true)).status, 200);
     assert.equal((await post("/mcp/unknown", true)).status, 404);
     assert.deepEqual(built, ["old", "merged"]);
+    // Keir's Rust client: strip a trailing "/mcp" from the registered URL, then post to base + "/mcp".
+    const registered = "/mcp/old";
+    assert.equal((await post(`${registered.replace(/\/mcp$/, "")}/mcp`, true)).status, 200);
+    assert.deepEqual(built, ["old", "merged", "old"]);
   } finally {
     delete process.env.TEST_ALIAS_TOKEN;
     await new Promise(resolve => listener.close(resolve));
