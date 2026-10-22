@@ -67,8 +67,6 @@ const MCP_DEFS = [
     tools: ["sim_economy_whatif", "sim_snapshot", "sim_list", "sim_compare", "sim_run_world", "sim_run_status", "sim_balance_report", "sim_compare_runs", "sim_experiment_report", "sim_run_election", "sim_election_status", "sim_election_report", "sim_experiment_telemetry"] },
   { key: "security", icon: "🛡️", name: "Security (Semgrep)", transport: "HTTP · public", health: 9733, connect: "http",
     path: "/security/mcp", desc: "On-demand Semgrep security scans of the primary project codebase (path or diff).", tools: ["security_scan", "security_scan_changes", "security_audit_latest"] },
-  { key: "railway", icon: "🚂", name: "Railway", transport: "HTTP · public", health: 9734, connect: "http",
-    path: "/railway/mcp", desc: "Railway deploy status / history / logs.", tools: ["railway_status", "railway_deployments", "railway_logs"] },
   { key: "support", icon: "🎫", name: "Support", transport: "HTTP · public", health: 9735, connect: "http",
     path: "/support/mcp", desc: "Tickets & suggestions with screenshots + AI triage — for agents.", tools: ["support_list", "support_get", "support_search", "support_with_images", "support_stats", "support_set_status*", "support_resolve*", "support_update*", "support_tracker_sync*", "support_tracker_note*", "support_notify_ops_findings*", "support_notify_ops_heal*", "support_public_update", "support_audit_accounts", "support_create_investigation", "support_create_suggestion", "support_create_ticket", "support_reopen", "support_merge"] },
   { key: "discord", icon: "💬", name: "Discord", transport: "HTTP · public", health: 9727, connect: "http",
@@ -148,7 +146,7 @@ exploring, and save runbooks/decisions after multi-step work.
 Primary repo on this box: ${repoHint}
 
 When diagnosing production issues, prefer the hosted MCP tools (gamestate,
-engine, turndiag, support, railway, security) over shelling into infra.`;
+engine, turndiag, support, security) over shelling into infra.`;
 }
 
 module.exports = {
