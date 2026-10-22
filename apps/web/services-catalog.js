@@ -21,6 +21,7 @@ const BASE_PAGES = [
   { id: "ideas", name: "Ideas", desc: "Semantic search over community messages", url: "/ideas", icon: "lightbulb", group: "Tools", feature: "ideas", keywords: ["ideas", "discord", "community", "search", "rag"] },
   { id: "community-voice", name: "Community Voice", desc: "Markov mimicry and word clouds", url: "/community-voice", icon: "message-circle", group: "Tools", feature: "discordInsights", keywords: ["markov", "word cloud", "discord", "community", "voice"] },
   { id: "scheduler", name: "Work Scheduler", desc: "Heavy checks, builds, and world simulations", url: "/scheduler", icon: "activity", group: "Tools", keywords: ["scheduler", "queue", "test", "typecheck", "build", "worldsim"] },
+  { id: "security", name: "Security", desc: "Host hardening, firewall, fail2ban and audit posture for both VPS hosts", url: "/security", icon: "shield", group: "Monitor", keywords: ["security", "hardening", "fail2ban", "firewall", "ufw", "auditd", "ssh", "posture", "vps"] },
 ];
 
 function buildCatalog() {

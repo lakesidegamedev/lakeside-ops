@@ -2985,6 +2985,7 @@ const { handleKanbanRoute } = require("./kanban-routes");
 const { handleSuggestionSwipeRoute } = require("./suggestion-swipe-routes");
 const { handleKeirInboxRoute } = require("./keir-inbox-routes");
 const { handleKeirHubRoute } = require("./keir-hub-routes");
+const { handleSecurityRoute } = require("./security-routes");
 async function loadTrackerSnapshot() {
   let board = null;
   let error = null;
@@ -4420,6 +4421,13 @@ const server = http.createServer(async (req, res) => {
   // ─── KEIR HUB ────────────────────────────────────────────────────
   // Live view of Keir: workers, tickets, PRs, issues, kanban (/keir, /api/keir/hub).
   if (await handleKeirHubRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell })) return;
+
+  // ─── SECURITY ────────────────────────────────────────────────────
+  // Two-host security posture (/security, /api/security[/reprobe]). Facts come
+  // from lakeside-security-probe on each VPS; findings are judged here.
+  // NOTE: /security/* belongs to the Semgrep MCP via Caddy — only the exact
+  // paths above reach this app.
+  if (await handleSecurityRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell })) return;
 
   // ─── TRACKER ─────────────────────────────────────────────────────
   // Long-running projects, goals and checklists.
@@ -9681,6 +9689,25 @@ setInterval(() => {
   }
   if (changed) saveSessions();
 }, 3600000);
+
+// ── Security alerting ───────────────────────────────────────────────
+// Push new critical/high host-security findings to Discord. The pull surface
+// is /security; this is the half that speaks up when nobody is looking.
+// De-duplicated on disk, so restarts and deploys do not re-alert an open issue.
+{
+  const securityService = require("./security-service");
+  const { runAlertCheck } = require("./security-alert");
+  const securityAlertTick = () =>
+    runAlertCheck({ snapshot: () => securityService.snapshot(), notify: notifyOpsDiscord })
+      .then((r) => {
+        if (r && (r.fresh || r.resolved)) {
+          console.log(`[security] alerts: ${r.fresh} new, ${r.resolved} cleared`);
+        }
+      })
+      .catch((e) => console.error("[security] alert check failed:", e && e.message));
+  setTimeout(securityAlertTick, 90_000).unref?.();
+  setInterval(securityAlertTick, 5 * 60_000).unref?.();
+}
 
 // ── Code Agent (Session-based, Python bridge) ───────────────────
 const { createSessionManager } = require('./code-session-manager');

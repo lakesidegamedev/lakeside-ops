@@ -1,0 +1,18 @@
+[Unit]
+Description=Lakeside host security posture probe (facts -> /var/lib/lakeside-security)
+Documentation=https://github.com/lakesidegames/lakeside-ops
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/lakeside-security-probe --write --compact
+# Facts only; must never mutate the host. Keep it cheap and out of the way.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=300
+StateDirectory=lakeside-security
+StateDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target
