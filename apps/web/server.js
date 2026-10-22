@@ -4691,7 +4691,9 @@ const server = http.createServer(async (req, res) => {
       const usagePromise = within(getCostBreakdownAsync("today"), 4000).catch(() => null);
       const paseoPromise = within(paseoLauncher.daemonReady(), 4000).catch(() => null);
       // live status of each hosted MCP (for the directory's health dots)
-      const _mcpPorts = { "ops-knowledge": 9725, discord: 9727, community: 9729, gamestate: 9730, engine: 9731, worldsim: 9732, security: 9733, railway: 9734, support: 9735 };
+      // Ports come from the catalogue, so a consolidated or retired server is
+      // never probed on a port nobody listens on any more.
+      const _mcpPorts = Object.fromEntries(require("./mcp-catalog").MCP_DEFS.filter((d) => d.health && d.connect !== "stdio").map((d) => [d.key, d.health]));
       const status = {};
       await Promise.all(Object.entries(_mcpPorts).map(async ([k, port]) => {
         try { status[k] = (await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(1500) })).ok; }

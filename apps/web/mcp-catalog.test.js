@@ -41,7 +41,7 @@ test("the directory hands every server a URL an agent can use", () => {
 test("the catalogue names every hosted server", () => {
   // The fleet the box runs. A server that is not in the catalogue is a server
   // the drift check never looks at.
-  const hosted = ["ops-knowledge", "community", "gamestate", "engine", "turndiag", "seed-audit", "worldsim", "security", "railway", "support", "discord", "reports", "lore", "tracker", "lean-lab", "heal-ops", "masscomm", "company-knowledge", "lakeside-hub", "metroforge", "grand-century", "paseo", "glitchtip"];
+  const hosted = ["ops-knowledge", "community", "gamestate", "engine", "turndiag", "seed-audit", "worldsim", "security", "support", "discord", "reports", "lore", "tracker", "lean-lab", "heal-ops", "masscomm", "company-knowledge", "lakeside-hub", "metroforge", "grand-century", "paseo", "glitchtip"];
   const keys = new Set(MCP_DEFS.map((d) => d.key));
   for (const key of hosted) assert.ok(keys.has(key), `${key} is hosted but not in the catalogue`);
 });

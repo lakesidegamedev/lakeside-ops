@@ -295,7 +295,6 @@ def main():
             "seed-audit": "https://mcp.lakesidegames.net/seed-audit/mcp",
             "worldsim": "https://mcp.lakesidegames.net/worldsim/mcp",
             "security": "https://mcp.lakesidegames.net/security/mcp",
-            "railway": "https://mcp.lakesidegames.net/railway/mcp",
             "support": "https://mcp.lakesidegames.net/support/mcp",
             "discord": "https://mcp.lakesidegames.net/discord/mcp",
         }

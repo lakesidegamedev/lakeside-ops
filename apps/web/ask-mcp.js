@@ -39,7 +39,7 @@ const MCP_TOKEN = process.env.ASK_MCP_TOKEN || process.env.OPS_KNOWLEDGE_MCP_TOK
  * runbook can be out of date in a way a database query cannot.
  */
 // The player-and-world facing half of the fleet. Deliberately excludes the
-// developer-oriented servers (security/Semgrep, railway, seed-audit, worldsim,
+// developer-oriented servers (security/Semgrep, seed-audit, worldsim,
 // reports): Ask answers questions about the game, the players and what has been
 // written down, not about builds and deploys.
 const ASK_SERVERS = {

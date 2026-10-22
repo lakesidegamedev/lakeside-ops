@@ -47,7 +47,7 @@ function renderSearchBox(catalog) {
       field=document.querySelector('#osearch .osearch-field');
   var curList=[], curAnswer=null, sel=-1, timer=null, esc=function(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
   function setHtml(el,html){if(!el)return;if(window.OpsDom&&OpsDom.setTrustedHtml)OpsDom.setTrustedHtml(el,html);}
-  var SUGG=["where do I see errors","server cpu and memory","player retention","recent railway deploys","open tickets","today's report","game engine health","session replays","database explorer","community ideas","uptime status","web traffic analytics","launch a code agent","swap / memory pressure","ask about the codebase","failed turns","economy and inflation","agent MCP tokens","database backups","what is down right now"];
+  var SUGG=["where do I see errors","server cpu and memory","player retention","recent deploys","open tickets","today's report","game engine health","session replays","database explorer","community ideas","uptime status","web traffic analytics","launch a code agent","swap / memory pressure","ask about the codebase","failed turns","economy and inflation","agent MCP tokens","database backups","what is down right now"];
   function showSuggestions(){
     var picks=SUGG.slice().sort(function(){return Math.random()-0.5;}).slice(0,3);
     ansBox.hidden=true;

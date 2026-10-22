@@ -217,7 +217,7 @@ function makeAgentsBody({ tokens = [], tokensUnavailable = false, mcpUrl = "http
     <h2>How agents connect</h2>
     <ul class="ag-wire">
       <li><strong>Generate one token</strong> above (read-only is the safe default) — this single token is what every MCP below checks; there's no separate credential per MCP.</li>
-      <li><strong>On-box MCPs</strong> (support, gamestate, engine, worldsim, security, railway, discord, community) are HTTP servers on <code>127.0.0.1</code>. For hermes, paste a block per MCP into <code>/root/.hermes/config.yaml → mcp_servers</code> (see each card's <em>connect</em> snippet), then <code>systemctl --user restart hermes-gateway</code>.</li>
+      <li><strong>On-box MCPs</strong> (support, gamestate, engine, worldsim, security, discord, community) are HTTP servers on <code>127.0.0.1</code>. For hermes, paste a block per MCP into <code>/root/.hermes/config.yaml → mcp_servers</code> (see each card's <em>connect</em> snippet), then <code>systemctl --user restart hermes-gateway</code>.</li>
       <li><strong>Claude Code / cloud-code</strong>: <code>claude mcp add --transport http &lt;name&gt; http://127.0.0.1:&lt;port&gt;/mcp --header "Authorization: Bearer &lt;TOKEN&gt;"</code> for each on-box MCP (user scope, so it's available in every session). Run <code>claude mcp list</code> to confirm all are Connected.</li>
       <li><strong>Public MCP</strong> (Ops Knowledge) works from anywhere with the token — <code>https://mcp.lakesidegames.net/mcp</code> — see its connect snippet.</li>
       <li><strong>Any other agent / raw HTTP</strong>: it's just Streamable HTTP MCP — <code>POST http://127.0.0.1:&lt;port&gt;/mcp</code> with header <code>Authorization: Bearer &lt;TOKEN&gt;</code>. No SDK-specific glue required.</li>
