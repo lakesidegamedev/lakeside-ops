@@ -10,25 +10,28 @@ const { createBroker } = require("../lib/operator/broker");
 function fixture(t, { live = true, refuse = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-sentry-test-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const saved = Object.fromEntries(["SENTRY_API_TOKEN", "SENTRY_ORG", "SENTRY_API_URL"].map((k) => [k, process.env[k]]));
-  Object.assign(process.env, { SENTRY_API_TOKEN: "test-token", SENTRY_ORG: "test-org", SENTRY_API_URL: "https://sentry.example" });
+  const saved = Object.fromEntries(["SENTRY_API_TOKEN", "SENTRY_ORG", "SENTRY_API_URL", "KEIR_DEPLOYED_SHA_CMD", "KEIR_AHD_HEALTH_URL"].map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { SENTRY_API_TOKEN: "test-token", SENTRY_ORG: "test-org", SENTRY_API_URL: "https://sentry.example", KEIR_DEPLOYED_SHA_CMD: "/fixture/ahd-deployed-sha.sh", KEIR_AHD_HEALTH_URL: "https://game.example/api/health" });
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
   const writes = [];
   t.mock.method(globalThis, "fetch", async (url, init) => {
+    if (url === "https://game.example/api/health") return new Response(JSON.stringify({ status: "ok" }), { status: 200 });
     writes.push({ url, method: init.method, body: JSON.parse(init.body) });
     return new Response(JSON.stringify({ ok: true }), { status: refuse ? 403 : 200 });
   });
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "owner", staffIds: ["delegate"], stateDir: dir, repositories: {}, scanChannels: [], supportDeferred: () => false };
-  const exec = async (_, args) => {
+  const exec = async (cmd, args) => {
+    // The running web commit; an undeployed fix leaves it on an older commit.
+    if (cmd === "/fixture/ahd-deployed-sha.sh") return "d".repeat(40);
     const route = args[1];
     if (/pulls\/7$/.test(route)) return JSON.stringify({ merged: true, merge_commit_sha: "abc1234", body: "Refs #41" });
     if (/\/files\?/.test(route)) return JSON.stringify([{ filename: "src/components/Panel.tsx" }]);
-    if (/\/status$/.test(route)) return JSON.stringify({ sha: "def1234", statuses: [{ context: "A House Divided - AHD Production", state: live ? "success" : "pending" }] });
-    if (/compare\//.test(route)) return JSON.stringify({ status: "behind" });
+    if (/\/deployments\?/.test(route)) return JSON.stringify([]);
+    if (/compare\//.test(route)) return JSON.stringify({ status: live ? "behind" : "ahead" });
     throw new Error(`unexpected ${route}`);
   };
-  const mcp = { call: async () => ({ services: [{ service: "AHD Production", status: "SUCCESS" }] }) };
+  const mcp = { call: async () => { throw new Error("no MCP needed"); } };
   const broker = createBroker({ ledger, config, mcp, exec, discord: async () => { throw new Error("no Discord"); }, sandbox: {}, now: () => 5000 });
   const job = ledger.createJob("finding", { kind: "finding", role: "support", repository: "AHDGame", deadline: 9e15, source: {} }); job.state = "running";
   return { writes, ledger, job, call: (input) => broker.tool(job, "sentry", input) };

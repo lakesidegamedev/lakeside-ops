@@ -23,7 +23,7 @@ const authority = require("./authority");
 const musePolicy = require("./ownermuse-policy");
 const chain = require("./chain");
 const issues = require("./issues");
-const { verifyLiveFix } = require("./livefix");
+const { verifyLiveFix: verifyLiveFixWith, liveDeployment: liveDeploymentWith, probeWith } = require("./livefix");
 const { createSurge } = require("./surge");
 const { pendingHandoffs, parkedOnHandoffs } = require("./developerwatch");
 const { isAppJob } = require("./appchannel");
@@ -48,7 +48,6 @@ const SUPPORT_READS = {
   // hours. Guarded below: prod only, game collections only, no secret fields.
   "heal-ops": ["heal_query", "heal_count", "heal_collections"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  railway: ["railway_status", "railway_deployments"],
   turndiag: ["turn_phase_timings", "phase_history", "lock_status"],
   // Corporation and sector traces are the same public game data the corp pages
   // show; without them ticket tasks asked players for screenshots of their own
@@ -99,13 +98,12 @@ const FINDING_READS = {
   "heal-ops": ["heal_list", "heal_detect", ...SUPPORT_READS["heal-ops"]],
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
   gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"].includes(n)), "invariant_check"],
-  engine: SUPPORT_READS.engine, railway: SUPPORT_READS.railway,
+  engine: SUPPORT_READS.engine,
   "ops-knowledge": SUPPORT_READS["ops-knowledge"],
 };
 const QUICK_OWNER_READS = { ...SUPPORT_READS,
   "ops-knowledge": musePolicy.MCP_READS["ops-knowledge"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  railway: ["railway_status", "railway_deployments", "railway_logs"],
   turndiag: ["turn_phase_timings", "phase_history", "phase_regressions", "turn_anomalies", "lock_status"],
 };
 const gameKnowledge = knowledge.gameKnowledge;
@@ -252,6 +250,10 @@ function similarity(a, b) {
 }
 function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
   const d = ledger.data;
+  // Deployed-commit probes run through the broker's own exec, like gh.
+  const probe = probeWith(exec);
+  const verifyLiveFix = (args) => verifyLiveFixWith({ probe, ...args });
+  const liveDeployment = (args) => liveDeploymentWith({ probe, ...args });
   const supportDirectives = createSupportDirectives({ledger, config, mcp, discord, now});
   const delegation = createDelegation({ ledger, sandbox, config, now });
   const surge = createSurge({ ledger, mcp, discord, config, now, ...(config.jevAsk ? { ask: config.jevAsk } : {}) });
@@ -1540,7 +1542,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const fix = Number(input.fix);
         if (!fix) throw new Error("give fix: the merged AHDGame PR that fixed it");
         const gh = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000 }) || "null");
-        const verified = await verifyLiveFix({ api: gh, mcp, number: fix, signal });
+        const verified = await verifyLiveFix({ api: gh, number: fix, signal });
         if (!verified.live) return { resolved: false, reason: verified.reason || "the fix is not live for players yet" };
         const links = d.sentryLinks?.[input.id] || [];
         if (!links.includes(fix) && !links.some((n) => new RegExp(`\\b(?:refs?|fix(?:e[sd])?|close[sd]?|resolve[sd]?)\\s+#${n}\\b`, "i").test(verified.pr.body || "")) && !new RegExp(`https://[^\\s]*sentry[^\\s]*/issues/${input.id}(?:/|\\b)`, "i").test(verified.pr.body || "")) return { resolved: false, reason: "link this Sentry issue to its GitHub fix with sentry note before resolving" };
@@ -1552,7 +1554,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       throw new Error("action must be issues, issue, note or resolve");
     }
     if (name === "github") {
-      const readOnly = ["status", "where", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue"].includes(input.action);
+      const readOnly = ["status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue"].includes(input.action);
       // A ticket can span the game and the desktop client (1514 does); an
       // explicit repository wins over the task's default.
       if (input.repository && !["AHDGame", "AHDClient"].includes(input.repository)) throw new Error("repository must be AHDGame or AHDClient");
@@ -1845,7 +1847,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // body, or Keir's own issues for the ticket that opened it) once the fix
       // is live for players. Turn code needs turn-worker/production too.
       async function closeFixedIssues(prNumber, only = null) {
-        const verified = await verifyLiveFix({ api, mcp, number: prNumber, signal });
+        const verified = await verifyLiveFix({ api, number: prNumber, signal });
         if (!verified.live) return { closed: [], live: false };
         const { pr, files } = verified;
         const turn = files.some((f) => ECONOMY_PATHS.test(f) || blast.WORKER_PATHS.test(f));
@@ -1885,6 +1887,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const { closed } = await closeFixedIssues(fix, number);
         return closed.length ? { closed: true, issue: number, fix } : { closed: false, issue: number, fix, where, reason: "the fix is not live for players yet, the issue is already closed, or it is marked partial. Check again with where after the promotion." };
       }
+      if (input.action === "deployed") {
+        // The commits production actually runs, from the US box, plus site health.
+        if (desktop) throw new Error("Desktop fixes ship as client releases; deployed covers the game servers only.");
+        const live = await liveDeployment({ api, signal });
+        return { ...live, meaning: "web = commit the main server serves; worker = commit the turn worker runs. A fix is live when its merge commit is an ancestor of the running commit (github where on the PR closes its issues once it is). A null sha means unknown: do not claim anything is live." };
+      }
       if (input.action === "where") {
         // Where a change actually is. Turn code reaches players only when
         // turn-worker/production moves, which lags main by up to an hour.
@@ -1895,7 +1903,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         for (const b of branches) {
           try { const c = await api([`repos/${repo}/compare/${encodeURIComponent(b)}...${sha}`]); out[b] = ["behind", "identical"].includes(c.status); } catch { out[b] = null; }
         }
-        out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = web live after its Railway deploy finishes; turn-worker/production = turn processing live. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. turn-worker/sandbox containing it means the sandbox turn worker has been released it (the staging deploy follows within minutes).";
+        out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = merged for web; it is live once github deployed shows the main server running a commit that contains it. turn-worker/production = turn processing source; it is live once github deployed shows the turn worker running it. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. turn-worker/sandbox containing it means the sandbox turn worker has been released it (the staging deploy follows within minutes).";
         // Release claims in ticket copy are checked against these receipts.
         (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, sandboxWorker: out["turn-worker/sandbox"] === true };
         ledger.save();
@@ -1983,7 +1991,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         let pr = (await api([`repos/${repo}/pulls?state=open&base=${to}&head=${GITHUB_OWNER}:${from}`]))[0];
         if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => api(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}`]));
         const result = await mergeWhenGreen(pr.number, "merge", to);
-        return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Check the staging Railway deploy, then promote to main." : "Check the production Railway deploy is live and tell the requester.") : result.nextMove };
+        return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Promote to main once staging looks right." : "Check with github deployed that the main server (and the turn worker for turn code) runs the new commit, then tell the requester.") : result.nextMove };
       }
       throw new Error("action must be status, merge or promote");
     }

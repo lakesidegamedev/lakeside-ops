@@ -129,7 +129,7 @@ async fn run(o: &HashMap<String, Vec<String>>) -> anyhow::Result<()> {
                 } else { None };
                 Arc::new(Workspace::new(cwd.clone(), resolved.grant, mcp).with_read_tools(c.mcp_read_tools.clone()))
             } else {
-            let mcp = if opt(o, "no-network").is_none() { McpClient::token_from_env_file(std::path::Path::new("/etc/keir-agent.env")).map(|t| { let c = McpClient::new("http://127.0.0.1:9735", &t).with_servers_from(std::path::Path::new("/root/.claude.json")); let servers: Vec<String> = c.servers().into_iter().filter(|s| ["gamestate", "engine", "turndiag", "support", "ops-knowledge", "railway", "worldsim", "community"].contains(&s.as_str())).collect(); (c, servers) }) } else { None };
+            let mcp = if opt(o, "no-network").is_none() { McpClient::token_from_env_file(std::path::Path::new("/etc/keir-agent.env")).map(|t| { let c = McpClient::new("http://127.0.0.1:9735", &t).with_servers_from(std::path::Path::new("/root/.claude.json")); let servers: Vec<String> = c.servers().into_iter().filter(|s| ["gamestate", "engine", "turndiag", "support", "ops-knowledge", "worldsim", "community"].contains(&s.as_str())).collect(); (c, servers) }) } else { None };
             Arc::new(Workspace::new(cwd.clone(), resolved.grant, mcp))
             }
         }
