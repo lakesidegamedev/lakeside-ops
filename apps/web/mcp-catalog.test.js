@@ -45,3 +45,14 @@ test("the catalogue names every hosted server", () => {
   const keys = new Set(MCP_DEFS.map((d) => d.key));
   for (const key of hosted) assert.ok(keys.has(key), `${key} is hosted but not in the catalogue`);
 });
+
+test("an alias is answered by the server it names, on that server's port", () => {
+  const byKey = new Map(MCP_DEFS.map((d) => [d.key, d]));
+  for (const def of MCP_DEFS.filter((d) => d.aliasOf)) {
+    const target = byKey.get(def.aliasOf);
+    assert.ok(target, `${def.key} is an alias of ${def.aliasOf}, which is not catalogued`);
+    assert.strictEqual(def.health, target.health, `${def.key} must be reached on ${def.aliasOf}'s port`);
+    assert.strictEqual(localMcpUrl(def), `http://127.0.0.1:${target.health}/mcp/${def.key === "reports" ? "report-publish" : def.key}`);
+    for (const tool of def.tools) assert.ok(target.tools.includes(tool), `${def.aliasOf} does not list ${def.key}'s tool ${tool}`);
+  }
+});

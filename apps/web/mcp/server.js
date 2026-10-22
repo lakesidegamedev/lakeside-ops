@@ -23,6 +23,11 @@ const tokens = require("../agent-tokens");
 const { buildGettingStarted } = require("../mcp-catalog");
 const { registerKanbanTools } = require("./kanban-tools");
 const { registerFleetTools } = require("./fleet-tools");
+// Absorbed in the MCP fleet consolidation (2026-10-22). Each also answers under
+// its old name at /mcp/<old-name>, with its old server name and only its tools.
+const { registerReportTools, buildReportServer } = require("./report-publish-server");
+const { createCompanyStore, registerCompanyTools } = require("./company-tools");
+const { createTrackerStore, registerTrackerTools } = require("./tracker-tools");
 const { summarizeEntry } = require("../ollama-summarize");
 const fs = require("fs");
 const path = require("path");
@@ -86,6 +91,9 @@ async function main() {
   const db = await store.getDb(MONGODB_URI);
   await store.ensureIndexes(db);
   await tokens.ensureIndexes(db);
+  const companyStore = createCompanyStore(db);
+  await companyStore.ensureIndexes();
+  const trackerStore = createTrackerStore(db);
 
 
   // Build a per-request MCP server bound to the authenticated token's scopes.
@@ -461,14 +469,33 @@ async function main() {
     // The fleet describing itself, read live from every hosted server.
     registerFleetTools(server, { jsonResult, errorResult });
 
+    // Reports, company knowledge and the tracker (MCP fleet consolidation).
+    registerReportTools(server, auth);
+    registerCompanyTools(server, { auth, store: companyStore });
+    registerTrackerTools(server, { auth, store: trackerStore });
+
     return server;
   }
+
+  const aliases = {
+    "report-publish": buildReportServer,
+    "company-knowledge": (auth) => {
+      const server = new McpServer({ name: "company-knowledge", version: "1.0.0" });
+      registerCompanyTools(server, { auth, store: companyStore });
+      return server;
+    },
+    tracker: (auth) => {
+      const server = new McpServer({ name: "lakeside-tracker", version: "0.1.0" });
+      registerTrackerTools(server, { auth, store: trackerStore });
+      return server;
+    },
+  };
 
   // Stateless Streamable HTTP: authenticate, then spin a fresh server+transport
   // per request and dispose on close.
   createServer({
     name: "ops-knowledge-mcp", version: "1.0.0", port: PORT, bind: process.env.MCP_BIND || "127.0.0.1",
-    authorize: req => tokens.validate(db, req.headers.authorization), buildServer,
+    authorize: req => tokens.validate(db, req.headers.authorization), buildServer, aliases,
   });
 }
 

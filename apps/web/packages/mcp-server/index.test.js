@@ -80,3 +80,33 @@ test("duplicate JSON content types from the Rust proxy are normalized by default
     await new Promise(resolve => listener.close(resolve));
   }
 });
+
+test("an alias answers at /mcp/<name> with its own server and the same auth", async () => {
+  const built = [];
+  const { app } = createServer({
+    name: "merged", listen: false,
+    auth: { tokenEnv: "TEST_ALIAS_TOKEN" },
+    buildServer: () => { built.push("merged"); return { connect: async () => {}, close: () => {} }; },
+    aliases: { old: () => { built.push("old"); return { connect: async () => {}, close: () => {} }; } },
+    transportFactory: () => ({ close: () => {}, handleRequest: async (_req, res) => res.json({ ok: true }) }),
+  });
+  const listener = app.listen(0, "127.0.0.1");
+  await new Promise(resolve => listener.once("listening", resolve));
+  const base = `http://127.0.0.1:${listener.address().port}`;
+  process.env.TEST_ALIAS_TOKEN = "alias-token";
+  try {
+    const post = (path, auth) => fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json", ...(auth ? { Authorization: "Bearer alias-token" } : {}) }, body: "{}" });
+    assert.equal((await post("/mcp/old", false)).status, 401);
+    assert.equal((await post("/mcp/old", true)).status, 200);
+    assert.equal((await post("/mcp", true)).status, 200);
+    assert.equal((await post("/mcp/unknown", true)).status, 404);
+    assert.deepEqual(built, ["old", "merged"]);
+  } finally {
+    delete process.env.TEST_ALIAS_TOKEN;
+    await new Promise(resolve => listener.close(resolve));
+  }
+});
+
+test("an alias name must be a plain path segment", () => {
+  assert.throws(() => createServer({ name: "x", listen: false, authorize: async () => true, buildServer: () => ({}), aliases: { "../x": () => ({}) } }), /invalid alias/);
+});

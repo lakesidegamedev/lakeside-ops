@@ -34,6 +34,10 @@ function mcpUrl(suffix) {
 //   /community/mcp        community
 //   /gamestate/mcp        …
 //
+// `aliasOf` marks a server name that a consolidated server now answers for: the
+// old name keeps working at /mcp/<key> on the consolidated server's port, with
+// the old server's own tools, until its registrations are retired.
+//
 // `connect` says how an agent reaches the server:
 //   "http"   public route on the MCP host, reachable from anywhere with a token
 //   "local"  on this box only (127.0.0.1), for the internal fleet
@@ -44,8 +48,8 @@ function mcpUrl(suffix) {
 // server that is missing from it is a server nobody is watching.
 const MCP_DEFS = [
   { key: "ops-knowledge", icon: "📚", name: "Ops Knowledge", transport: "HTTP · public", health: 9725, connect: "http",
-    path: "/mcp", desc: "Docs, skills & memory — semantic search + save. Scoped, token-gated.",
-    tools: ["worktree_fleet_status", "knowledge_query", "knowledge_get", "knowledge_list", "knowledge_related", "knowledge_history", "knowledge_review_queue", "knowledge_bootstrap", "knowledge_feedback", "knowledge_save*", "knowledge_delete*", "code_search", "code_exact", "code_read", "box_projects", "kanban_brief", "kanban_list", "kanban_get", "kanban_add", "kanban_update", "work_report", "kanban_github_sync", "mcp_fleet_status", "mcp_capability_requests"] },
+    path: "/mcp", desc: "Docs, skills & memory (semantic search + save), the product kanban, code search, the fleet status, report publishing, company knowledge and the tracker. Scoped, token-gated. Since the MCP fleet consolidation it also answers as report-publish, company-knowledge and tracker at /mcp/<name>.",
+    tools: ["worktree_fleet_status", "knowledge_query", "knowledge_get", "knowledge_list", "knowledge_related", "knowledge_history", "knowledge_review_queue", "knowledge_bootstrap", "knowledge_feedback", "knowledge_save*", "knowledge_delete*", "code_search", "code_exact", "code_read", "box_projects", "kanban_brief", "kanban_list", "kanban_get", "kanban_add", "kanban_update", "work_report", "kanban_github_sync", "mcp_fleet_status", "mcp_capability_requests", "publish_report*", "list_published_reports", "unpublish_report*", "restart_dashboard*", "edit_report", "upload_report_image", "set_report_visibility", "company_context", "company_search", "company_get", "company_list", "company_save", "company_history", "company_archive", "track_upsert", "track_list", "track_get", "track_note", "track_summary"] },
   { key: "community", icon: "🧠", name: "Community Brain", transport: "HTTP · public", health: 9729, connect: "http",
     path: "/community/mcp", desc: "Semantic search + RAG over Discord message corpus.", tools: ["community_search", "community_ask"] },
   { key: "gamestate", icon: "🗺️", name: "Game State", transport: "HTTP · public", health: 9730, connect: "http",
@@ -69,13 +73,13 @@ const MCP_DEFS = [
     path: "/support/mcp", desc: "Tickets & suggestions with screenshots + AI triage — for agents.", tools: ["support_list", "support_get", "support_search", "support_with_images", "support_stats", "support_set_status*", "support_resolve*", "support_update*", "support_tracker_sync*", "support_tracker_note*", "support_notify_ops_findings*", "support_notify_ops_heal*", "support_public_update", "support_audit_accounts", "support_create_investigation", "support_create_suggestion", "support_create_ticket", "support_reopen", "support_merge"] },
   { key: "discord", icon: "💬", name: "Discord", transport: "HTTP · public", health: 9727, connect: "http",
     path: "/discord/mcp", desc: "Read / list Discord channels (send disabled — use support_notify_ops_findings for ops).", tools: ["discord_channels", "discord_read", "discord_send* (disabled)"] },
-  { key: "reports", icon: "📰", name: "Report Publish", transport: "HTTP · public", health: 9738, connect: "http",
-    path: "/reports/mcp", desc: "Publish a finished report to the ops dashboard (write-scoped token).",
+  { key: "reports", icon: "📰", name: "Report Publish", transport: "HTTP · public", health: 9725, localPath: "/mcp/report-publish", aliasOf: "ops-knowledge", connect: "http",
+    path: "/report-publish/mcp", desc: "Publish a finished report to the ops dashboard (write-scoped token).",
     tools: ["publish_report*", "list_published_reports", "unpublish_report*", "restart_dashboard*", "edit_report", "upload_report_image", "set_report_visibility"] },
   { key: "lore", icon: "📜", name: "Lore", transport: "HTTP · public", health: 9750, connect: "http",
     path: "/lore/mcp", desc: "The world's authored lore: countries and eras, the wider world registry, blocs and charters, the history of the eras, the player wiki and the glossary. Also serves MCP resources (lore://wiki/<slug>, lore://country/<id>) and the world_brief prompt.",
     tools: ["lore_overview", "lore_countries", "lore_country", "lore_world_entities", "lore_world_entity", "lore_organizations", "lore_historical_events", "lore_wiki_search", "lore_wiki_page", "lore_glossary", "lore_parties"] },
-  { key: "tracker", icon: "🧭", name: "Tracker", transport: "HTTP · public", health: 9741, connect: "http",
+  { key: "tracker", icon: "🧭", name: "Tracker", transport: "HTTP · public", health: 9725, localPath: "/mcp/tracker", aliasOf: "ops-knowledge", connect: "http",
     path: "/tracker/mcp", desc: "The long-running tracker: projects, goals, tasks, checks and notes, keyed so work outlives the session that started it.",
     tools: ["track_upsert", "track_list", "track_get", "track_note", "track_summary"] },
   { key: "lean-lab", icon: "📐", name: "Lean Lab", transport: "HTTP · public", health: 9746, connect: "http",
@@ -89,7 +93,7 @@ const MCP_DEFS = [
   { key: "masscomm", icon: "📣", name: "Mass Communications", transport: "HTTP · on-box", health: 9748, connect: "local",
     desc: "Player announcements: resolve the audience from prod users, dry run it, and send.",
     tools: ["comm_audience", "comm_preview", "comm_send", "comm_status"] },
-  { key: "company-knowledge", icon: "🏢", name: "Company Knowledge", transport: "HTTP · on-box", health: 9761, connect: "local",
+  { key: "company-knowledge", icon: "🏢", name: "Company Knowledge", transport: "HTTP · on-box", health: 9725, localPath: "/mcp/company-knowledge", aliasOf: "ops-knowledge", connect: "local",
     desc: "The Lakeside company knowledge scope: what the company knows about itself and where that knowledge lives.",
     tools: ["company_context", "company_search", "company_get", "company_list", "company_save", "company_history", "company_archive"] },
   { key: "lakeside-hub", icon: "🗄️", name: "Lakeside Hub", transport: "HTTP · on-box", health: 9745, connect: "local",
