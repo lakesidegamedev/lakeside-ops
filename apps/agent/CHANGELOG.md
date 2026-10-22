@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.7 (2026-10-22)
+
 ### For developers
 
 - Keir no longer depends on Railway. Live-fix checks (issue closure and Sentry resolve) now read the commits production actually runs on the US box: a successful `box/ahd-us-web` or `box/ahd-us-worker` GitHub deployment when one exists, otherwise `ahd-deployed-sha.sh web|worker` (override with `KEIR_DEPLOYED_SHA_CMD`). The fix must be an ancestor of the running web commit, and of the worker commit for turn and economy code, and the site health check (`KEIR_AHD_HEALTH_URL`) must return ok. Unknown evidence fails closed. Railway "production" deployments and commit statuses are ignored.
