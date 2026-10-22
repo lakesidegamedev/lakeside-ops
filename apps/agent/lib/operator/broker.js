@@ -164,6 +164,25 @@ function validateArguments(value, schema, path = "args") {
 function validationRejected(result) {
   return result?.code === -32602 || (result?.isError === true && result.content?.some(c => c.type === "text" && /^MCP error -32602: Input validation error:/.test(c.text || "")));
 }
+// A read service can fail on its own account (an upstream credential that no
+// longer covers the project answers "Not Authorized"), and that text reads
+// like the arguments were wrong. Keir repeated one such read 47 times across
+// 16 tasks (2026-10-22), so say which read failed, that the arguments are not
+// the fault, and that repeating it cannot help.
+function readServiceRefusal(name, input, error) {
+  if (error?.code !== "MCP_SERVICE_REFUSED") return error;
+  const server = String(input?.server || "the read service");
+  const target = name === "read_tools" ? `${server} tools` : `${server}/${String(input?.tool || "read")}`;
+  const reason = String(error.message || "").trim().slice(0, 400) || "no reason given";
+  const refusal = new Error(`${target} could not be read: ${reason}. The ${server} service refused the read, so the arguments are not the problem and repeating this read will fail the same way. Do not retry it. Continue with the evidence you already have and state this gap plainly, or hand off if the answer depends on it.`);
+  refusal.code = "MCP_SERVICE_REFUSED";
+  return refusal;
+}
+// The service's own words are the actionable part of a refusal; the JSON-RPC
+// envelope around them is not.
+function resultText(result) {
+  return (result?.content || []).filter(c => c?.type === "text" && typeof c.text === "string").map(c => c.text).join("\n").trim();
+}
 function localMcpUrl(value) {
   let url; try { url = new URL(value); } catch { return null; }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || url.username || url.password) return null;
@@ -180,8 +199,11 @@ function createMcp(configFile, readToken) {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
     const j = parseRpc(await res.text());
     if (!res.ok || j.error || j.result?.isError) {
-      const error = new Error(redactSecrets(JSON.stringify(j.error || j.result || {}).slice(0, 2000)));
-      if (res.ok && validationRejected(j.error || j.result)) error.code = "MCP_ARGUMENT_REJECTED";
+      const failed = j.error || j.result || {};
+      const serviceText = !write && res.ok && j.result?.isError && !validationRejected(j.result) ? resultText(j.result) : "";
+      const error = new Error(redactSecrets((serviceText || JSON.stringify(failed)).slice(0, 2000)));
+      if (res.ok && validationRejected(failed)) error.code = "MCP_ARGUMENT_REJECTED";
+      else if (serviceText) error.code = "MCP_SERVICE_REFUSED";
       throw error;
     }
     return j.result;
@@ -968,9 +990,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started, callId); }
     catch (e) {
       appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
+      // A read service's own refusal names the service and says not to repeat
+      // it; an argument rejection keeps its schema message.
+      const refusal = ["read_tool", "read_tools"].includes(name) ? readServiceRefusal(name, input, e) : e;
       // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
-      try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
-      throw e;
+      try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(refusal.message)).slice(0, 240) }); } catch {}
+      throw refusal;
     }
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.

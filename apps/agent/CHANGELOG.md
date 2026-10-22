@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- A read service that refuses on its own account now names the read, says the arguments are not the problem and says not to repeat it. Keir had retried one opaque "Not Authorized" read 47 times across 16 tasks.
+
 ## 5.9.6 (2026-10-21)
 
 ### For developers
