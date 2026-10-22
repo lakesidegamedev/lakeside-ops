@@ -289,6 +289,7 @@ function buildSidebar() {
     { href: "/observatory", label: "Observatory", icon: "eye" },
     { href: "/grafana/", label: "Grafana", icon: "bar-chart" },
     { href: "/events", label: "Event Recovery", icon: "activity" },
+    { href: "/security", label: "Security", icon: "shield" },
   ] },
   { label: "Product", items: [
     { href: "/games", label: "Games", icon: "globe" },

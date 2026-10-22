@@ -19,6 +19,7 @@ const KIND_ENV = {
   glitchtip: "DISCORD_GLITCHTIP_WEBHOOK_URL",
   status: "DISCORD_STATUS_WEBHOOK_URL",
   backup: "DISCORD_BACKUP_WEBHOOK_URL",
+  security: "DISCORD_SECURITY_WEBHOOK_URL",
 };
 
 // Discord embed colors (decimal).
