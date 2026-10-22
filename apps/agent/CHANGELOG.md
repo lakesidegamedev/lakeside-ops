@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- The Rust MCP client (harness-store) uses each registered server URL verbatim instead of stripping and re-appending `/mcp`, so servers registered at an alias path such as `/mcp/gamestate` are reachable.
+
 ## 5.9.7 (2026-10-22)
 
 ### For developers
