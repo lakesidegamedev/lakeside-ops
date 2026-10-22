@@ -10,6 +10,15 @@ const issues = require("../lib/operator/issues");
 
 const dirs = [];
 test.after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+// Production truth: the box probe reports the running commits, the site health
+// endpoint reports ok. Deployed shas map back to branch names for compare.
+const PROBE = "/fixture/ahd-deployed-sha.sh";
+const DEPLOYED = { web: "a".repeat(40), worker: "b".repeat(40) };
+const BRANCH_OF = { [DEPLOYED.web]: "main", [DEPLOYED.worker]: "turn-worker/production" };
+process.env.KEIR_DEPLOYED_SHA_CMD = PROBE;
+const realFetch = globalThis.fetch;
+globalThis.fetch = async () => ({ status: 200, json: async () => ({ status: "ok" }) });
+test.after(() => { globalThis.fetch = realFetch; });
 
 const good = {
   title: "Factory output panel shows zero after a retool",
@@ -55,13 +64,13 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
   const calls = [], gh = [];
   const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => [], call: async (server, toolName, args) => {
     calls.push([server, toolName, args]);
-    if (toolName === "railway_status") return { services: [{ service: "AHD Production", status: "SUCCESS" }, { service: "AHD Turn Worker", status: "SUCCESS" }] };
     if (toolName === "support_get") return { number: 9, reporter: { characterName: "Lord Fixture" } };
     if (toolName === "kanban_list") return { items: [] };
     if (toolName === "kanban_add") return { id: 77 };
     return { ok: true };
   } };
   const exec = async (cmd, args) => {
+    if (cmd === PROBE) return `${DEPLOYED[args[0]]}\n`;
     const a = args.slice(1);
     gh.push(a);
     const method = a[0] === "-X" ? a[1] : "GET";
@@ -70,11 +79,8 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
     if (method === "POST" && route === "repos/lakesidegamedev/AHDGame/issues") return JSON.stringify({ number: 501, html_url: "https://github.com/lakesidegamedev/AHDGame/issues/501" });
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+\/files/.test(route)) { if (unreadableFiles) throw new Error("fixture unavailable files"); return JSON.stringify((pr?.files || []).map((filename) => ({ filename }))); }
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+$/.test(route)) return JSON.stringify(pr);
-    if (/^repos\/lakesidegamedev\/AHDGame\/commits\/.+\/status$/.test(route)) {
-      const branch = decodeURIComponent(route.split("/commits/")[1].split("/status")[0]);
-      return JSON.stringify({ sha: branch, statuses: [{ context: "A House Divided - AHD Production", state: "success" }, { context: "A House Divided - AHD Turn Worker", state: "success" }] });
-    }
-    if (/^repos\/lakesidegamedev\/AHDGame\/compare\//.test(route)) { const b = decodeURIComponent(route.split("/compare/")[1].split("...")[0]); return JSON.stringify({ status: compare[b] || "diverged" }); }
+    if (/^repos\/lakesidegamedev\/AHDGame\/deployments\?/.test(route)) return JSON.stringify([]);
+    if (/^repos\/lakesidegamedev\/AHDGame\/compare\//.test(route)) { const base = decodeURIComponent(route.split("/compare/")[1].split("...")[0]), b = BRANCH_OF[base] || base; return JSON.stringify({ status: compare[b] || "diverged" }); }
     if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: [] });
     return JSON.stringify({ ok: true });
   };
@@ -183,4 +189,13 @@ test("concurrent tasks share one public issue and developer card", async () => {
   assert.equal(a.issue, b.issue);
   assert.equal(a.id, b.id);
   assert.equal(f.gh.filter((a) => a[1] === "POST" && a[2] === "repos/lakesidegamedev/AHDGame/issues").length, 1);
+});
+
+test("github deployed reports the running web and worker commits and site health", async () => {
+  const f = fixture();
+  const out = await f.broker.tool(f.job, "github", { action: "deployed" });
+  assert.deepEqual(out.web, { sha: DEPLOYED.web, source: "live-probe" });
+  assert.deepEqual(out.worker, { sha: DEPLOYED.worker, source: "live-probe" });
+  assert.equal(out.health.ok, true);
+  assert.ok(f.gh.some((a) => a[0].includes("environment=box%2Fahd-us-web")));
 });

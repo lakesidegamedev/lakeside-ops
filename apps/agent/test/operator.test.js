@@ -837,10 +837,10 @@ test("configured localhost MCP services are discoverable without permitting remo
   for(const url of ['http://localhost.evil:9747/mcp','http://127.0.0.1.evil:9747/mcp','http://user:secret@localhost:9747/mcp','https://external.example/mcp'])assert.equal(localMcpUrl(url),null);
 });
 
-test("Ariane commands can inspect original merged reports and live deployment, automatic tickets cannot", async () => {
+test("Ariane commands can inspect original merged reports and engine health, automatic tickets cannot", async () => {
   const f=fixture(),actor=f.config.staffIds[0],j=running(f,{role:'support',actorId:actor,source:{authorId:actor},kind:'command',ticket:123});
   await f.broker.tool(j,'read_tool',{server:'support',tool:'support_get',args:{kind:'ticket',number:124}});
-  await f.broker.tool(j,'read_tool',{server:'railway',tool:'railway_status',args:{}});
+  await f.broker.tool(j,'read_tool',{server:'engine',tool:'engine_health',args:{}});
   assert.equal(f.calls.length,2);
   j.kind='ticket';await assert.rejects(f.broker.tool(j,'read_tool',{server:'support',tool:'support_get',args:{kind:'ticket',number:124}}),/assigned ticket/);
 });

@@ -14,11 +14,10 @@ const READS = {
   turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_anomalies"],
   gamestate: ["entity_search", "legislation_catalog", "elections", "game_overview", "countries", "analytics_catalog", "analytics_query", "fx_quote", "player_wealth_statistics", "trace_corp", "trace_sector", "corporation_rankings", "extraction_market", "trace_approval", "invariant_check"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  railway: ["railway_status", "railway_deployments"],
   "ops-knowledge": ["code_search", "code_read", "code_exact", "knowledge_query", "knowledge_get", "kanban_get"],
 };
 const TOOLS = new Set(["finish_patch", "edit_verify", "evidence_batch", "read_servers", "read_tools", "read_tool", "watch_turn", "repository_snapshot", "shell", "calculate", "recall", "recent_changes", "past_ticket", "similar_reports", "delegate_fix", "delegate_investigation", "review_fix", "publish_patch", "github", "raise_to_developers", "checkpoint", "finish"]);
-const GITHUB_READS = new Set(["where", "status", "ci_failures", "ci_runs", "issues", "history", "watch"]);
+const GITHUB_READS = new Set(["where", "deployed", "status", "ci_failures", "ci_runs", "issues", "history", "watch"]);
 function isEngineering(job, jobs = {}) { return job?.operatorRole === "engineering" || rootJob(job, jobs)?.operatorRole === "engineering"; }
 // This is an additional restriction, not an authorization grant. The broker's
 // normal permissions, snapshot sandbox and publication gates still apply.
