@@ -312,6 +312,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/decisions/abcdefabcdef": value = Self.keir.answer("abcdefabcdef")
         case "/api/keir/app/alerts": value = ["alerts": [["key": "error:watch-recurring:turn", "kind": "incident", "text": "Turn warning repeated after the fix: index fund settlement for one corporation.", "at": 1792019000000]]]
         case "/api/keir/app/devices": value = ["registered": true]
+        case "/api/keir/app/ideas/301": value = KeirAgentFixtures.dismiss("301")
         case "/api/keir/app/work", "/api/keir/app/threads", "/api/keir/app/tasks", "/api/keir/app/tasks/abcdef012345", "/api/keir/app/ideas", "/api/keir/app/watches", "/api/keir/app/memory":
             value = KeirAgentFixtures.value(url.path, method: request.httpMethod ?? "GET", body: bodyObject() ?? [:])
         case "/api/keir/app/cancel": value = ["state": "cancelled"]
@@ -523,6 +524,15 @@ enum KeirAgentFixtures {
     private final class State: @unchecked Sendable {
         let lock = NSLock()
         var watches: [[String: Any]] = [["id": "aaaaaaaaaaaa", "condition": "PR 201 is merged", "every": "hourly", "once": true, "active": true, "runs": 2, "hits": 0, "lastResult": "no change", "running": false]]
+        var dismissedIdeas = Set<String>()
+        func dismissIdea(_ id: String) {
+            lock.lock(); defer { lock.unlock() }
+            dismissedIdeas.insert(id)
+        }
+        func listIdeas(_ ideas: [[String: Any]]) -> [[String: Any]] {
+            lock.lock(); defer { lock.unlock() }
+            return ideas.filter { !dismissedIdeas.contains($0["id"] as? String ?? "") }
+        }
         func addWatch(_ body: [String: Any]) -> [String: Any] {
             lock.lock(); defer { lock.unlock() }
             let w: [String: Any] = ["id": "bbbbbbbbbbbb", "condition": body["condition"] as? String ?? "", "every": body["every"] as? String ?? "hourly", "once": true, "active": true, "runs": 0, "hits": 0, "running": false]
@@ -531,6 +541,7 @@ enum KeirAgentFixtures {
         func list() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return watches }
     }
     private static let state = State()
+    static func dismiss(_ id: String) -> [String: Any] { state.dismissIdea(id); return ["ok": true] }
     static func value(_ path: String, method: String, body: [String: Any]) -> [String: Any] {
         switch path {
         case "/api/keir/app/threads":
@@ -558,15 +569,20 @@ enum KeirAgentFixtures {
                 "at": 1792019000000.0, "status": "Waiting for the main deploy", "steps": [step], "receipts": [receipt], "decisions": empty, "cards": [card], "canRetry": false, "canStop": true,
                 "plan": plan, "live": live]
         case "/api/keir/app/ideas":
-            let idea: [String: Any] = ["id": "301", "title": "CI runs the full matrix for verified empty back-merges", "url": "https://github.com/Egg3901/AHDGame/issues/301", "evidence": "Every back-merge with no content change re-ran the 24 minute verify job.", "accepted": false]
+            let idea: [String: Any] = ["id": "301", "kind": "issue", "title": "CI runs the full matrix for verified empty back-merges", "url": "https://github.com/Egg3901/AHDGame/issues/301", "reason": "Every back-merge with no content change re-ran the 24 minute verify job.", "evidence": "Every back-merge with no content change re-ran the 24 minute verify job. The verify lane is the slowest in the matrix.", "accepted": false]
             if ProcessInfo.processInfo.arguments.contains("--uitest-goal-suggestions") {
                 return ["ideas": [["id": "s-123456abcdef", "kind": "suggestion", "title": "Keep replies under five seconds", "evidence": "Recent response times are too high.", "prompt": "Measure end-to-end reply latency and keep the median below five seconds.", "accepted": false]]]
             }
-            return ["ideas": [idea]]
+            let visible = state.listIdeas([idea])
+            return ["ideas": visible]
         case "/api/keir/app/watches":
             if method == "POST" { return state.addWatch(body) }
             return ["watches": state.list(), "intervals": ["15m", "hourly", "6h", "daily"]]
         default:
+            if path.hasPrefix("/api/keir/app/ideas/") {
+                state.dismissIdea(path.split(separator: "/").last.map(String.init) ?? "")
+                return ["ok": true]
+            }
             let lesson: [String: Any] = ["id": "n1", "kind": "lesson", "text": "Never promote economy changes while a turn is running.", "owner": true, "at": 1792010000000.0]
             let mechanic: [String: Any] = ["id": "n2", "kind": "mechanic", "text": "A department's funding is the yearly cost of the enacted laws in its policy areas.", "owner": false, "at": 1792000000000.0]
             return ["total": 2, "notes": [lesson, mechanic]]

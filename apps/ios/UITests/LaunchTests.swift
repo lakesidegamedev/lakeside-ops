@@ -15,7 +15,7 @@ final class LaunchTests: XCTestCase {
         let match = NSPredicate(format: "label CONTAINS %@", text)
         let deadline = Date().addingTimeInterval(timeout)
         repeat {
-            for query in [app.staticTexts, app.buttons, app.cells, app.links] {
+            for query in [app.staticTexts, app.buttons, app.cells, app.links, app.otherElements] {
                 let element = query.matching(match).firstMatch
                 if element.exists { return element }
             }
@@ -35,8 +35,42 @@ final class LaunchTests: XCTestCase {
         }
         XCTFail("Keir tools menu did not offer \(name)")
     }
+    /// Opens a row in the Ops list by the start of its combined label, scrolling
+    /// the list until the row is actually hittable.
+    private func openRow(_ app: XCUIApplication, _ title: String, timeout: TimeInterval = 12) {
+        let matches = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title))
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            let row = matches.firstMatch
+            if row.exists && row.isHittable { row.tap(); return }
+            app.swipeUp()
+        } while Date() < deadline
+        let fallback = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
+        if fallback.exists { fallback.tap(); return }
+        XCTFail("Ops row \(title) is missing")
+    }
+    private func digits(_ text: String) -> String {
+        text.filter(\.isNumber)
+    }
     private func capture(_ app: XCUIApplication, _ name: String) {
         let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+    }
+
+    func testIdeasSwipeTriage() {
+        let app = launch()
+        app.tabBars.buttons["Ops"].tap()
+        openRow(app, "Ideas")
+        let cell = app.cells.matching(NSPredicate(format: "label CONTAINS %@", "CI runs the full matrix")).firstMatch
+        XCTAssertTrue(cell.waitForExistence(timeout: 10))
+        XCTAssertTrue(find(app, "Every back-merge with no content change").exists, "the reason line is visible without opening evidence")
+        capture(app, "Ideas with a reason line")
+        cell.swipeLeft()
+        let dismiss = app.buttons["Dismiss"]
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 5))
+        dismiss.tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: cell)
+        waitForExpectations(timeout: 8)
+        capture(app, "Idea dismissed by swipe")
     }
 
     func testKeirComposerOffersPhotosAndFiles() {
@@ -148,30 +182,100 @@ final class LaunchTests: XCTestCase {
     func testOpsHubScreens() {
         let app = launch()
         app.tabBars.buttons["Ops"].tap()
-        app.buttons["hub-pulse"].tap()
-        // Needs you lists only decisions; a degraded service stays in the Services panel.
+        // Needs you lists only decisions and owner work; a degraded service is a
+        // health fact, not an owner decision, and never appears as a separate list.
         XCTAssertTrue(find(app, "Merge #201 to development").waitForExistence(timeout: 10))
         XCTAssertFalse(find(app, "Lakeside Ask is degraded").exists)
-        capture(app, "Pulse")
+        capture(app, "Ops briefing")
+        openRow(app, "Health detail")
+        XCTAssertTrue(app.navigationBars["Health"].waitForExistence(timeout: 10))
+        capture(app, "Health detail")
         app.navigationBars.buttons.firstMatch.tap()
-        app.buttons["hub-desk"].tap()
+        openRow(app, "Support desk")
         XCTAssertTrue(find(app, "Budget screen shows zero funding").waitForExistence(timeout: 10))
         capture(app, "Desk")
         app.navigationBars.buttons.firstMatch.tap()
-        app.buttons["hub-work"].tap()
+        openRow(app, "Work in progress")
         XCTAssertTrue(find(app, "Keir chat in Lakeside Ops").waitForExistence(timeout: 10))
         capture(app, "Work")
         app.navigationBars.buttons.firstMatch.tap()
-        app.buttons["hub-files"].tap()
+        openRow(app, "Files")
         let report = find(app, "Turn time breakdown")
         XCTAssertTrue(report.waitForExistence(timeout: 10)); report.tap()
         XCTAssertTrue(find(app, "Settlement took 15.6s").waitForExistence(timeout: 10))
         capture(app, "File")
     }
 
+    func testOpsSystemsDrillDowns() {
+        let app = launch()
+        app.tabBars.buttons["Ops"].tap()
+        for (row, title, evidence) in [
+            ("Scheduler", "Scheduler", "ios-simulator"),
+            ("Security", "Security", "fail2ban recidive jail"),
+            ("Pull requests", "Pull requests", "Pull requests"),
+            ("Worktrees and agents", "Worktrees", "Keir mobile briefing"),
+            ("World simulations", "World sims", "seed-1991"),
+            ("Backups and database", "Backups", "2026-10-15"),
+            ("Event recovery", "Event recovery", "Receipt store timed out")
+        ] {
+            openRow(app, row)
+            XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10), "\(row) did not open")
+            if row != "Pull requests" { XCTAssertTrue(find(app, evidence).waitForExistence(timeout: 10), "\(row) is missing \(evidence)") }
+            capture(app, row)
+            app.navigationBars.buttons.firstMatch.tap()
+            XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 5))
+        }
+    }
+
+    func testAttentionCountsMatchAcrossScreens() {
+        let app = launch()
+        app.tabBars.buttons["Feed"].tap()
+        let feedButton = app.buttons["feed-review-attention"]
+        XCTAssertTrue(feedButton.waitForExistence(timeout: 10))
+        let feedCount = digits(feedButton.label)
+        XCTAssertFalse(feedCount.isEmpty)
+        XCTAssertEqual(app.staticTexts["feed-attention-count"].label, feedCount)
+        app.tabBars.buttons["Ops"].tap()
+        let opsButton = app.buttons["ops-review-attention"]
+        XCTAssertTrue(opsButton.waitForExistence(timeout: 10))
+        XCTAssertEqual(digits(opsButton.label), feedCount, "Feed and Ops disagree on the count")
+        XCTAssertEqual(app.staticTexts["ops-attention-count"].label, feedCount)
+        app.tabBars.buttons["Keir"].tap()
+        XCTAssertTrue(app.staticTexts["keir-attention-count"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["keir-attention-count"].label, feedCount, "Keir and Feed disagree on the count")
+        capture(app, "Keir attention count matches")
+    }
+
+    func testKeirToolsMenuDoesNotDuplicateOps() {
+        let app = launch()
+        app.buttons["keir-tools"].tap()
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Controls, providers")).firstMatch.waitForExistence(timeout: 5))
+        for duplicated in ["Ideas", "Watches", "Memory"] {
+            XCTAssertFalse(app.buttons[duplicated].exists, "\(duplicated) must live only in Ops")
+        }
+        capture(app, "Keir tools menu")
+        app.tabBars.buttons["Ops"].tap()
+        for destination in ["Ideas", "Watches", "Memory"] {
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", destination)).firstMatch.waitForExistence(timeout: 5), "\(destination) is missing from Ops")
+        }
+        capture(app, "Ops destinations")
+    }
+
+    func testBrokenStatusTextNeverBecomesAStatus() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-broken-status"]; app.launch()
+        XCTAssertTrue(app.buttons["keir-working-now"].waitForExistence(timeout: 15))
+        XCTAssertFalse(find(app, "It me or turn been stuck", timeout: 2).exists)
+        XCTAssertFalse(find(app, "Was:", timeout: 1).exists)
+        XCTAssertTrue(find(app, "Work started").waitForExistence(timeout: 10))
+        XCTAssertTrue(find(app, "#1651").exists)
+        capture(app, "Clean status from broken prose")
+    }
+
+
     func testWatchesMemoryAndThreads() {
         let app = launch()
-        openTool(app, "Watches")
+        app.tabBars.buttons["Ops"].tap()
+        openRow(app, "Watches")
         XCTAssertTrue(find(app, "PR 201 is merged").waitForExistence(timeout: 10))
         app.buttons["watch-add"].tap()
         let example = app.buttons["Turn time goes above 90 seconds"]
@@ -179,11 +283,12 @@ final class LaunchTests: XCTestCase {
         app.buttons["watch-save"].tap()
         XCTAssertTrue(find(app, "Turn time goes above 90 seconds").waitForExistence(timeout: 10))
         capture(app, "Watches")
-        app.buttons["Done"].firstMatch.tap()
-        openTool(app, "Memory")
+        app.navigationBars.buttons.firstMatch.tap()
+        openRow(app, "Memory")
         XCTAssertTrue(find(app, "Never promote economy changes").waitForExistence(timeout: 10))
         capture(app, "Memory")
-        app.buttons["Done"].firstMatch.tap()
+        app.navigationBars.buttons.firstMatch.tap()
+        app.tabBars.buttons["Keir"].tap()
         let threads = app.buttons["keir-threads"]
         XCTAssertTrue(threads.waitForExistence(timeout: 5))
         for _ in 0..<3 { if threads.isHittable { break }; sleep(1) }
@@ -214,8 +319,14 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Keir controls"].waitForExistence(timeout: 5)); capture(app, "Keir controls")
         app.buttons["Done"].firstMatch.tap()
         XCTAssertTrue(app.buttons["keir-yolo-banner"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["keir-model"].label.contains("Fixture model"))
+        XCTAssertTrue(app.buttons["keir-yolo-banner"].label.contains("Autonomy"), "the banner spells out what it allows")
         capture(app, "Keir native presence")
+        app.buttons["keir-yolo-banner"].tap()
+        XCTAssertTrue(app.buttons["Turn off autonomy"].waitForExistence(timeout: 5))
+        app.buttons["Turn off autonomy"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["keir-yolo-banner"])
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(app.buttons["keir-model"].label.contains("Fixture model"))
         app.buttons["keir-microphone"].tap()
         XCTAssertTrue(app.staticTexts["Keir voice"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Microsoft Ava · online voice"].exists)
@@ -237,15 +348,14 @@ final class LaunchTests: XCTestCase {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-dev-partner"]; app.launch()
         let bar = app.buttons["keir-working-now"]
         XCTAssertTrue(bar.waitForExistence(timeout: 15))
-        XCTAssertTrue(bar.label.contains("4 items"))
-        XCTAssertTrue(find(app, "needs your decision").waitForExistence(timeout: 10))
-        XCTAssertTrue(find(app, "now tested on development").exists)
+        XCTAssertTrue(bar.label.contains("Factory demand refund"), "the bar names the ticket Keir is on")
+        XCTAssertTrue(find(app, "now tested on development").waitForExistence(timeout: 10))
         capture(app, "Keir progress update and working-now bar")
         bar.tap()
         XCTAssertTrue(find(app, "Audit CI back-merges").waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["keir-working-all"].exists)
-        capture(app, "Working-now list expanded")
-        app.buttons["keir-working-row-ticketjob001"].tap()
+        capture(app, "Working-now threads expanded")
+        app.buttons["keir-working-open-ticketjob001"].tap()
         XCTAssertTrue(find(app, "Choose payroll behavior").waitForExistence(timeout: 8), "a ticket row opens its ticket")
         capture(app, "Ticket opened from the working-now bar")
         app.navigationBars.buttons.element(boundBy: 0).tap()
@@ -306,7 +416,7 @@ final class LaunchTests: XCTestCase {
 
     func testTicketExplainsBlockersAndCompletedWork() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap(); app.buttons["hub-desk"].tap()
+        app.tabBars.buttons["Ops"].tap(); openRow(app, "Support desk")
         let ticket = find(app, "Budget screen shows zero funding")
         XCTAssertTrue(ticket.waitForExistence(timeout: 10)); ticket.tap()
         XCTAssertTrue(find(app, "Choose payroll behavior").waitForExistence(timeout: 10))
@@ -364,7 +474,7 @@ final class LaunchTests: XCTestCase {
 
     func testKeirDashboardMetricsAndMonitoring() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap(); app.buttons["hub-dashboard"].tap()
+        app.tabBars.buttons["Ops"].tap(); openRow(app, "Dashboard")
         XCTAssertTrue(app.navigationBars["Keir dashboard"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Activations, 46"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Median activation, 12s"].exists)
@@ -383,7 +493,7 @@ final class LaunchTests: XCTestCase {
     func testKeirDashboardDoesNotInventMissingMetrics() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-metrics-partial"]; app.launch()
         XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 15))
-        app.tabBars.buttons["Ops"].tap(); app.buttons["hub-dashboard"].tap()
+        app.tabBars.buttons["Ops"].tap(); openRow(app, "Dashboard")
         XCTAssertTrue(app.staticTexts["Median activation, Not recorded"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Successful activations, No sample"].waitForExistence(timeout: 5))
         for _ in 0..<10 {
