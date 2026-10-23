@@ -16,6 +16,7 @@ enum OpsText {
 
         let artifacts = [
             "(?i)^ticket\\s*#?\\s*[0-9]+\\s*:\\s*ticket\\s*#?\\s*[0-9]+\\s*",
+            "(?i)\\b(it me or )?turn been stuck in processing\\s*:\\s*started\\.?",
             "(?i)\\bstuck in processing\\s*:\\s*started\\.?",
             "(?i)\\bwas\\s*:\\s*\\.?\\s*$",
             "(?i)\\bwas\\s*:\\s*.*$",

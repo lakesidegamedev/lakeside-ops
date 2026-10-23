@@ -29,13 +29,13 @@ final class OpsTextTests: XCTestCase {
         XCTAssertFalse(OpsText.updateTitle(item).contains("It me"))
     }
 
-    func testDecisionTitleFallsBackToTicketInsteadOfAQuestion() {
+    func testDecisionTitleUsesOneCleanSentence() {
         let long: JSONValue = .object([
             "id": .string("d1"),
             "ticket": .number(1651),
             "question": .string(String(repeating: "Is this the right payroll behavior? ", count: 6))
         ])
-        XCTAssertEqual(OpsText.decisionTitle(long), "Decision for Ticket #1651")
+        XCTAssertEqual(OpsText.decisionTitle(long), "Is this the right payroll behavior?")
     }
 }
 

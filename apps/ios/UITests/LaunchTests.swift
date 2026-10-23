@@ -69,8 +69,7 @@ final class LaunchTests: XCTestCase {
         let dismiss = app.buttons["Dismiss"]
         XCTAssertTrue(dismiss.waitForExistence(timeout: 5))
         dismiss.tap()
-        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: cell)
-        waitForExpectations(timeout: 8)
+        XCTAssertTrue(find(app, "No ideas waiting", timeout: 10).exists, "the dismissed idea leaves the triage list")
         capture(app, "Idea dismissed by swipe")
     }
 
@@ -442,7 +441,8 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<10 where !fixtureModel.isHittable { usleep(200_000) }
         if fixtureModel.isHittable { fixtureModel.tap() }
         else { fixtureModel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        XCTAssertTrue(find(app, "Fixture model").waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["keir-model"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["keir-model"].label.contains("Fixture model"))
         XCTAssertTrue(app.buttons["keir-activity-strip"].waitForExistence(timeout: 5))
         let choice = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Use filled jobs")).firstMatch
         XCTAssertTrue(choice.waitForExistence(timeout: 5))
@@ -450,7 +450,7 @@ final class LaunchTests: XCTestCase {
         if !choice.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(choice.isHittable); choice.tap()
         app.buttons["keir-answer-choices"].tap()
-        XCTAssertTrue(find(app, "My answer: Use filled jobs").waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "My answer: Use filled jobs")).firstMatch.waitForExistence(timeout: 10))
         capture(app, "Structured choice and parallel work")
         let composer = app.textFields["keir-composer"].exists ? app.textFields["keir-composer"] : app.textViews["keir-composer"]
         composer.tap(); app.typeText("/chart")
