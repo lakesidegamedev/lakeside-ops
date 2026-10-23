@@ -663,7 +663,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (said) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
     const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
-      + "\n\nChanges to the game's numbers apply from the next turn. If you still see the problem after that, reply here.";
+      + "\n\nIf you still see the problem, reply here.";
     try {
       guardPlayerRegister(effectJob, ticketNo, message);
       const key = `live-notice:${ticketNo}:${crypto.createHash("sha1").update(names.join("|")).digest("hex").slice(0, 10)}`;

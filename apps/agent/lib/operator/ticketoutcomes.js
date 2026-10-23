@@ -42,7 +42,35 @@ function observeTicket(data, job, ticket, now = Date.now()) {
   return true;
 }
 
-// Bounded read-only reconciliation also finds resolutions closed by somebody
+// A closed canonical receipt also ends obsolete automatic work, including a
+// handoff-created job that never acquired a Discord channel. Do not invent a
+// new receipt, success credit, or the result of an unsettled external action.
+function retireClosedTicketJobs(ledger, ticket, now) {
+  const receipt = ticket?.resolution;
+  if (!["resolved", "closed"].includes(ticket?.status) || !receipt?.receiptId
+      || !Number.isFinite(stamp(receipt.resolvedAt)) || receipt.channelDelivery?.status !== "posted") return;
+  const data = ledger.data;
+  for (const job of Object.values(data.jobs || {})) {
+    if (job.kind !== "ticket" || job.ticket !== ticket.number || ["done", "dismissed", "cancelled", "running"].includes(job.state)) continue;
+    const channel = job.channelId || job.source?.channelId;
+    if (channel && channel !== ticket.conversation?.channelId) continue;
+    if (Object.values(job.effects || {}).some(e => ["started", "executing", "uncertain"].includes(e.state))
+        || Object.values(data.actions || {}).some(a => a.jobId === job.id && ["executing", "uncertain"].includes(a.state))) continue;
+    job.state = "done"; job.resolved = true; job.updatedAt = now;
+    job.canonicalClosure = { status: ticket.status, receiptId: receipt.receiptId, verifiedAt: now };
+    job.summary = "Canonical ticket resolution verified; obsolete automatic work stopped.";
+    delete job.ownerDecisionPending; delete job.wakeAt; delete job.unknownWait; delete job.heldSince;
+    for (const decision of Object.values(data.decisions || {})) if (decision.jobId === job.id && decision.state === "pending") {
+      decision.state = "withdrawn"; decision.withdrawnReason = "canonical ticket closure";
+    }
+    for (const action of Object.values(data.actions || {})) if (action.jobId === job.id && ["pending", "approved"].includes(action.state)) {
+      action.state = "withdrawn"; action.withdrawnReason = "canonical ticket closure";
+    }
+    ledger.audit("canonical_closed_ticket_job_retired", { job: job.id, ticket: job.ticket, receiptId: receipt.receiptId });
+  }
+}
+
+// Bounded canonical reconciliation also finds resolutions closed by somebody
 // else. Old terminal jobs participate so historical successes can be backfilled.
 async function reconcileTickets({ ledger, readTicket, now = Date.now(), limit = 3 }) {
   const latest = new Map();
@@ -55,7 +83,11 @@ async function reconcileTickets({ ledger, readTicket, now = Date.now(), limit = 
     .sort((a, b) => (a.performanceCheckedAt || 0) - (b.performanceCheckedAt || 0) || (b.at || 0) - (a.at || 0)).slice(0, limit);
   for (const job of due) {
     job.performanceCheckedAt = now;
-    try { observeTicket(ledger.data, job, await readTicket(job.ticket), now); }
+    try {
+      const ticket = await readTicket(job.ticket);
+      if (ticket?.number === job.ticket) retireClosedTicketJobs(ledger, ticket, now);
+      observeTicket(ledger.data, job, ticket, now);
+    }
     catch { /* Preserve prior evidence on a sensor failure. Retry next interval. */ }
   }
   if (due.length) ledger.save();

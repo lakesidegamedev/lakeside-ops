@@ -36,11 +36,12 @@ function workStatus(data, job, { now = Date.now(), config = {} } = {}) {
   const checkAt = live.filter(j => j.state === "waiting").map(j => timestamp(j.wakeAt)).filter(Boolean).sort((a,b) => a-b)[0] || null;
   const since = timestamp(job.waitReview?.since) || timestamp(job.updatedAt) || timestamp(job.at);
   const reviewAt = timestamp(job.waitReview?.reviewAt);
-  const forecast = !CLOSED.has(job.state) && job.completionForecast?.kind === "worker-estimate" && timestamp(job.completionForecast.at) && timestamp(job.completionForecast.expectedAt) ? job.completionForecast : null;
+  const externalWait = hold || (state === "waiting" && ["player_reply", "player"].includes(String(waiting.waitingFor?.kind || "")));
+  const forecast = !externalWait && !CLOSED.has(job.state) && job.completionForecast?.kind === "worker-estimate" && timestamp(job.completionForecast.at) && timestamp(job.completionForecast.expectedAt) ? job.completionForecast : null;
   // Overdue is shown to the owner, so it must mean Keir is late, not that a
   // player has not answered yet. Keir's own review timer still nudges Keir.
   const onPlayer = state === "waiting" && ["player_reply", "player"].includes(String(waiting.waitingFor?.kind || ""));
-  const overdue = !CLOSED.has(job.state) && !onPlayer && (Boolean(reviewAt && now >= reviewAt) || Boolean(forecast && now > forecast.expectedAt) || state === "stuck" || (state === "waiting" && (!checkAt || now > checkAt + 120000)));
+  const overdue = !CLOSED.has(job.state) && !hold && !onPlayer && (Boolean(reviewAt && now >= reviewAt) || Boolean(forecast && now > forecast.expectedAt) || state === "stuck" || (state === "waiting" && (!checkAt || now > checkAt + 120000)));
   const step = (job.plan || []).find(p => p.status === "running") || (job.plan || []).find(p => p.status !== "done");
   return { state, reason, next, milestone: clip(step?.title || data.statusCards?.[ticketOf(job)]?.status || reason),
     owner: hold ? "Current ticket owner" : "Keir", since, ageMs: since ? Math.max(0, now - since) : null,
@@ -106,7 +107,8 @@ function createWorkQueue({ ledger, config = {}, mcp, now = () => Date.now() }) {
     const tasks = jobs.filter(j => j.role === "owner").filter(j => !CLOSED.has(j.state) || now() - (j.updatedAt || j.at || 0) < 86400000).map(j => ({ id: j.id, title: clip(j.source?.content || j.summary,120), ticket: ticketOf(j), updatedAt: j.updatedAt || j.at, timing: workStatus(d,j,{ now: now(), config }) }));
     const tickets = (snapshot || []).map(t => {
       const candidates = jobs.filter(j => Number(ticketOf(j)) === Number(t.number));
-      const job = candidates.filter(j => !CLOSED.has(j.state)).sort((a,b) => (b.updatedAt || b.at || 0) - (a.updatedAt || a.at || 0)).find(j => j.kind !== "ticket") || candidates.find(j => !CLOSED.has(j.state)) || candidates.sort((a,b) => (b.updatedAt || b.at || 0) - (a.updatedAt || a.at || 0))[0];
+      const canonical = d.jobs?.[d.seen?.[`ticket:${t.number}`]];
+      const job = (canonical && Number(ticketOf(canonical)) === Number(t.number) ? canonical : null) || candidates.filter(j => !CLOSED.has(j.state)).sort((a,b) => (b.updatedAt || b.at || 0) - (a.updatedAt || a.at || 0)).find(j => j.kind !== "ticket") || candidates.find(j => !CLOSED.has(j.state)) || candidates.sort((a,b) => (b.updatedAt || b.at || 0) - (a.updatedAt || a.at || 0))[0];
       return { number: t.number, title: t.title, status: t.status, category: t.category, createdAt: Date.parse(t.createdAt) || null, task: job?.id || null,
         // There is no assign action in the app, so an untaken open ticket is queued
         // for Keir's intake rather than shown as stuck work that needs the owner.
