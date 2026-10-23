@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.17 (2026-10-23)
+
 - Answer voice turns on the small conversation brief with reads preloaded and direct, instead of the full operating brief (66,320 to about 1,600 characters per round), and allow one more round so a read, the reply and finish fit.
 - Keep the app conversation for conversation: background work posts only decisions needed, stuck tasks and fixes live on the main server; starts, PRs, merges, pauses and finishes stay on the working-now board. At most 30 work digests are retained, so they never evict the owner's messages, and digests are left out of the conversation history models read.
 - A waiting app task no longer reposts a near-repeat of its last five replies on each timer wake unless the owner has asked again; each skipped repeat doubles its next wait.
