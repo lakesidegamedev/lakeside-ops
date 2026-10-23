@@ -351,4 +351,21 @@ async function daemonReady() {
   }
 }
 
-module.exports = { launchAgent, sendPrompt, killAgent, agentStatus, daemonReady, paseo, modeFromInvalidModeError };
+// `paseo daemon status` costs ~3s per spawn, so the Agents page reads a cached
+// answer. Control paths (ticket repair fallback) keep calling the fresh
+// daemonReady() above.
+let daemonStatusCache = { at: 0, value: null };
+let daemonStatusInFlight = null;
+async function daemonReadyCached({ maxAgeMs = 5 * 60_000 } = {}) {
+  if (daemonStatusCache.value !== null && Date.now() - daemonStatusCache.at < maxAgeMs) {
+    return daemonStatusCache.value;
+  }
+  if (daemonStatusInFlight) return daemonStatusInFlight;
+  daemonStatusInFlight = daemonReady().then((value) => {
+    daemonStatusCache = { at: Date.now(), value };
+    return value;
+  }).finally(() => { daemonStatusInFlight = null; });
+  return daemonStatusInFlight;
+}
+
+module.exports = { launchAgent, sendPrompt, killAgent, agentStatus, daemonReady, daemonReadyCached, paseo, modeFromInvalidModeError };

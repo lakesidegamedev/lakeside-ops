@@ -17,10 +17,18 @@ function hashToken(raw) {
   return crypto.createHash("sha256").update(raw).digest("hex");
 }
 
+// Index creation is idempotent but still a round trip: do it once per
+// connection instead of on every page request.
+// MongoClient.db() returns a fresh Db object on every call, so key caches on the
+// client (which is stable for the life of the connection).
+const indexedClients = new WeakSet();
+
 async function ensureIndexes(db) {
+  if (indexedClients.has(db.client)) return;
   const col = db.collection(COLLECTION);
   await col.createIndex({ tokenHash: 1 }, { unique: true });
   await col.createIndex({ revokedAt: 1 });
+  indexedClients.add(db.client);
 }
 
 // Issue a new token. `collections` limits which knowledge kinds it can touch;
@@ -41,6 +49,7 @@ async function issue(db, { name, collections, write = false, actor = "admin" }) 
     revokedAt: null,
   };
   const res = await db.collection(COLLECTION).insertOne(record);
+  invalidateListCache();
   return { raw, id: res.insertedId, record };
 }
 
@@ -69,12 +78,27 @@ function canWrite(rec, kind) {
   return canRead(rec, kind) && rec.scopes.write === true;
 }
 
+// The token list is read on every Agents page render but changes only when a
+// token is issued or revoked. Cache it briefly: the game Mongo is reached over
+// an SSH tunnel, so an uncached find() can take seconds.
+const LIST_TTL_MS = 60_000;
+let listCache = null;
+
+function invalidateListCache() {
+  listCache = null;
+}
+
 async function list(db) {
-  return db
+  if (listCache && listCache.client === db.client && Date.now() - listCache.at < LIST_TTL_MS) {
+    return listCache.value;
+  }
+  const value = await db
     .collection(COLLECTION)
     .find({}, { projection: { tokenHash: 0 } })
     .sort({ createdAt: -1 })
     .toArray();
+  listCache = { client: db.client, at: Date.now(), value };
+  return value;
 }
 
 async function revoke(db, id, { ObjectId }) {
@@ -82,6 +106,7 @@ async function revoke(db, id, { ObjectId }) {
   const res = await db
     .collection(COLLECTION)
     .updateOne({ _id, revokedAt: null }, { $set: { revokedAt: new Date() } });
+  if (res.modifiedCount > 0) invalidateListCache();
   return res.modifiedCount > 0;
 }
 
@@ -94,6 +119,7 @@ module.exports = {
   canWrite,
   list,
   revoke,
+  invalidateListCache,
   COLLECTION,
   PREFIX,
   KINDS,
