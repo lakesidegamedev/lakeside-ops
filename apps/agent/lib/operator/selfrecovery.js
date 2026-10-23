@@ -16,6 +16,15 @@
 // Recoveries are recorded on the ledger (d.recoveries) and audited; nothing
 // pages the owner. Effects in flight are never interrupted.
 const SPIN_ROUNDS = 40;
+// Hot-loop guard (2026-10-23): ticket 1658 was activated 104 times in two and a
+// half hours, roughly one a minute, on a dependency no available tool could
+// resolve. Each activation was short, so the round-based spin guard never
+// tripped. Any task activated HOT_LIMIT times inside HOT_WINDOW_MS without a
+// newer human message is backed off instead of re-run. It only delays work:
+// nothing is cancelled, and a player message still wakes the task at once.
+const HOT_WINDOW_MS = 10 * 60000;
+const HOT_LIMIT = 5;
+const HOT_STEPS_MS = [5 * 60000, 30 * 60000, 6 * 3600000];
 const STARVE_MS = 15 * 60000;
 const HOLD_MS = 20 * 60000;
 const PREEMPT_EVERY_MS = 10 * 60000;
@@ -67,10 +76,35 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
     log(`self-recovery: ${j.id} ${action}: ${reason}`);
   }
 
+  // Hot-loop guard: a task that keeps activating without new input is slowed
+  // down rather than re-run. Delays only; nothing is cancelled or completed.
+  function hotLoop(j, slot) {
+    // Conversation answers are driven by each human message. A live slot, a
+    // player message or another task's delivery is real new input, so those
+    // run at full speed; self-recovery's own nudges are not progress.
+    const fresh = (j.inbox || []).some((m) => m && m.authorId !== "self-recovery");
+    if (j.kind === "conversation" || slot || fresh) return;
+    // Escalation belongs to one incident: after six quiet hours the ladder
+    // starts again, so a burst days later is not punished by an old record.
+    if (j.hotAt && now() - j.hotAt > 6 * 3600000) { delete j.hotStrikes; delete j.hotAt; }
+    const times = (j.activationAt || []).filter((t) => t >= now() - HOT_WINDOW_MS);
+    if (times.length < HOT_LIMIT) return;
+    const humanAt = Math.max(j.lastPlayerAt || 0, j.observedPlayerAt || 0);
+    if (humanAt >= times[0]) { delete j.hotStrikes; return; }
+    const step = HOT_STEPS_MS[Math.min(j.hotStrikes || 0, HOT_STEPS_MS.length - 1)];
+    j.hotStrikes = (j.hotStrikes || 0) + 1;
+    j.hotAt = now();
+    j.activationAt = [];
+    if (["queued", "waiting"].includes(j.state)) { j.state = "waiting"; j.wakeAt = Math.max(j.wakeAt || 0, now() + step); }
+    record(d, ledger, { at: now(), job: j.id, ticket: j.ticket || null, action: "backed-off", reason: `${times.length} activations in ${Math.round(HOT_WINDOW_MS / 60000)} minutes without new input; waiting ${Math.round(step / 60000)} minutes` });
+    log(`self-recovery: ${j.id} backed off ${Math.round(step / 60000)}m: repeated activation`);
+  }
+
   function spin(active) {
     const slots = new Map(Object.values(active).filter(Boolean).map((s) => [s.job.id, s]));
     for (const j of Object.values(d.jobs)) {
       if (TERMINAL.includes(j.state) || j.internalProbe || j.codingParent) continue;
+      hotLoop(j, slots.get(j.id));
       const r = (j.recovery ||= { rounds: j.rounds || 0, fp: fingerprint(j), strikes: 0 });
       const fp = fingerprint(j);
       if (fp !== r.fp) { j.recovery = { rounds: j.rounds || 0, fp, strikes: 0 }; continue; }

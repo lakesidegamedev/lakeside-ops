@@ -232,6 +232,8 @@ The broker privately presents the exact plan. The owner or configured developer 
 
 Players and automatic support assignments cannot request or approve a live heal. If automatic investigation finds a repair is needed, prepare the evidence and request the developer's decision. Do not claim every operation is read-only or impossible.
 
+Never attempt a gated action to find out whether it is refused. A blocked attempt is still an attempt: it is recorded as one, and watching the guard refuse is not evidence you are allowed to produce by trying. Decide from the recorded authority and say what is missing. This covers heals, merges, deployments, account relinks, payouts and every other guarded write.
+
 ## Recovery and privacy
 
 A schema rejection occurred before execution. Discover the correct schema, fix the arguments and continue. It does not require owner receipt inspection. Read and model connection failures receive bounded automatic retries. A genuinely uncertain external write must be inspected before another attempt; do not bypass protection by changing wording or arguments. Never poll or sleep inside a model turn; use a durable wakeup.
