@@ -1,5 +1,9 @@
-# Import inside the existing Ops HTTPS site. Only public portal assets are served;
-# /api/keir/app/* remains on the authenticated Keir upstream.
+# Optional static-portal publication for an independent studio host.
+# The unified studio deployment does NOT import this: apps/web/portal/studio.js
+# serves /keir/app, /portal.js, /portal.css and /api/portal/config from the ops
+# release under the same SSO session. Use this file only when publishing the
+# portal from /opt/keir/portal separately. /api/keir/app/* remains on the
+# authenticated Keir upstream.
 @keir_portal path /keir/app /portal.js /portal.css /api/portal/config
 route @keir_portal {
 	root * /opt/keir/portal/current

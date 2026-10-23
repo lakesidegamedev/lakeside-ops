@@ -72,6 +72,8 @@ $("compose").onsubmit = async e => { e.preventDefault(); const text = $("message
 };
 api("/api/portal/config").then(config => {
   if (config.mode === "lakeside") {
+    $("back-to-ops").hidden = false;
+    $("login").querySelector("p").textContent = "Sign in with your studio account to open Keir.";
     $("email-label").hidden = config.auth !== "password";
     $("sso").href = "/auth/game?next=" + encodeURIComponent(new URL("/keir/app", location.origin).href);
     $("signin").hidden = config.auth === "sso"; $("sso").hidden = config.auth !== "sso";
