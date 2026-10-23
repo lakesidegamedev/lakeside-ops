@@ -287,7 +287,6 @@ function buildSidebar() {
     { href: "/status", label: "Uptime", icon: "activity", mod: true, feature: "statusPage" },
     { href: "/engine", label: "Engine", icon: "cpu" },
     { href: "/observatory", label: "Observatory", icon: "eye" },
-    { href: "/grafana/", label: "Grafana", icon: "bar-chart" },
     { href: "/events", label: "Event Recovery", icon: "activity" },
     { href: "/security", label: "Security", icon: "shield" },
   ] },
