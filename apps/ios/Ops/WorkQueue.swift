@@ -26,11 +26,16 @@ enum WorkQueuePresentation {
     }
     static func label(_ item: JSONValue) -> String {
         let s = state(item)
-        if item["timing"]["overdue"].bool && !["stuck", "unassigned", "needs-you"].contains(s) { return "Review overdue" }
-        return ["working": "Working", "waiting": "Waiting", "queued": "Queued", "held": "Held by owner", "stuck": "Stuck", "unassigned": "Unassigned", "needs-you": "Needs your decision", "finished": "Finished"][s] ?? s.capitalized
+        if item["timing"]["overdue"].bool && !["stuck", "unassigned", "needs-you"].contains(s) { return "Overdue" }
+        return ["working": "Running", "waiting": "Queued", "queued": "Queued", "held": "Held", "stuck": "Blocked", "unassigned": "Unassigned", "needs-you": "Needs you", "finished": "Done"][s] ?? OpsStatus.from(s).title
+    }
+    static func status(_ item: JSONValue) -> OpsStatus {
+        if item["timing"]["overdue"].bool { return .blocked }
+        return OpsStatus.from(state(item))
     }
     static func color(_ item: JSONValue) -> Color {
-        rank(item) < 2 ? OpsTheme.warn : state(item) == "working" ? OpsTheme.mint : OpsTheme.muted
+        if state(item) == "unassigned" { return OpsTheme.muted }
+        return status(item).color
     }
 }
 

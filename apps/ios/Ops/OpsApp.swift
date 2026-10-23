@@ -33,7 +33,7 @@ struct OpsRoot: View {
             }
             NavigationStack { ActivityView().toolbar { settingsButton } }
                 .tabItem { Label("Activity", systemImage: "list.bullet.rectangle") }.tag(OpsTab.activity)
-                .badge(ops.decisions.count)
+                .badge(ops.attention)
             if session.profile["mode"].string != "standalone" {
             NavigationStack { OpsHub().toolbar { settingsButton } }
                 .tabItem { Label("Ops", systemImage: "square.grid.2x2") }.tag(OpsTab.ops)
@@ -41,7 +41,7 @@ struct OpsRoot: View {
             }
         }
         .tint(OpsTheme.sky)
-        .toolbarBackground(OpsTheme.background, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
         .onOpenURL { url in
             guard url.scheme == "lakesideops", url.host == "keir" else { return }
             let view = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value

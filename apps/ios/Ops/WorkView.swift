@@ -5,13 +5,17 @@ import LakesideCore
 struct WorkView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
-    @State private var lane: Lane = .now
+    @State private var lane: Lane
     @State private var product = "all"
+
+    init(lane: Lane = .now) {
+        _lane = State(initialValue: lane)
+    }
 
     enum Lane: String, CaseIterable, Identifiable {
         case needs = "needs_owner", now, blocked, next
         var id: String { rawValue }
-        var title: String { self == .needs ? "Needs you" : self == .now ? "In progress" : self == .blocked ? "Blocked" : "Next" }
+        var title: String { self == .needs ? "Owner work" : self == .now ? "In progress" : self == .blocked ? "Blocked" : "Next" }
     }
 
     private var products: [String] { Array(Set(Lane.allCases.flatMap { ops.kanban[$0.rawValue].array.map { $0["product"].string } })).filter { !$0.isEmpty }.sorted() }

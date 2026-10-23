@@ -98,16 +98,14 @@ struct OpsAttentionView: View {
     @EnvironmentObject private var session: AppSession
     var body: some View {
         List {
-            if !ops.servicesDown.isEmpty {
-                Section("Degraded services") { ForEach(ops.servicesDown, id: \.["id"].string) { service in
-                    VStack(alignment: .leading) { Text(service["name"].string); Text(service["current"].string).foregroundStyle(OpsTheme.warn) }
-                }; NavigationLink("Service status and history") { PulseView() } }
+            if AttentionCenter.shared.count > 0 {
+                Section(AttentionCenter.label) { AttentionStack() }.listRowBackground(Color.clear)
             }
             if ops.redPRs > 0 { Section("Failed checks") { NavigationLink("\(ops.redPRs) PRs need attention") { FailedPRsView() } } }
-            if !ops.alerts.isEmpty { Section("Recent alerts") { ForEach(ops.alerts, id: \.["key"].string) { alert in
-                VStack(alignment: .leading, spacing: 5) { Text(alert["text"].string); Text(OpsFormat.ago(alert["at"])).font(.caption).foregroundStyle(OpsTheme.muted) }
+            if !ops.alerts.isEmpty { Section("Recent alerts") { ForEach(ops.alerts, id: \["key"].string) { alert in
+                VStack(alignment: .leading, spacing: 5) { Text(OpsText.scrub(alert["text"].string)); Text(OpsFormat.ago(alert["at"])).font(.caption).foregroundStyle(OpsTheme.muted) }
             } } }
-            if ops.servicesDown.isEmpty && ops.redPRs == 0 && ops.alerts.isEmpty { Text("No current alerts.") }
+            if AttentionCenter.shared.count == 0 && ops.redPRs == 0 && ops.alerts.isEmpty { Text("No current alerts.") }
             if let error = ops.error { Text(error).foregroundStyle(OpsTheme.warn) }
         }.opsScreen().navigationTitle("Needs attention").refreshable { await ops.refresh(session) }
     }

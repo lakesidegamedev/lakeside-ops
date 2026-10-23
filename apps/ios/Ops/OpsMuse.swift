@@ -5,154 +5,6 @@ import LakesideCore
 // Lakeside Ops 2.1: Keir as a personal agent at parity with Meta's Muse.
 // Feed (home), Goals, Files, Upcoming and the Ops hub.
 
-// MARK: Feed
-
-struct FeedView: View {
-    @EnvironmentObject private var session: AppSession
-    @EnvironmentObject private var ops: OpsStore
-    @EnvironmentObject private var router: OpsRouter
-    @State private var feed: [JSONValue] = []
-    @State private var ideas: [JSONValue] = []
-    @State private var upcoming: [JSONValue] = []
-    @State private var briefing = false
-    @State private var error: String?
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(greeting).font(.system(size: 30, weight: .bold, design: .rounded)).tracking(-0.8)
-                    Text(subtitle).font(.callout).foregroundStyle(OpsTheme.muted)
-                    if let error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn) }
-                }
-                FeedActivityChart(hub: ops.hub)
-                if !ops.decisions.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionLabel(text: "Needs you", count: ops.decisions.count)
-                        ForEach(ops.decisions.prefix(2), id: \.["id"].string) { DecisionCard(decision: $0) }
-                        if ops.decisions.count > 2 { Button("All approvals") { router.tab = .activity }.font(.callout.weight(.semibold)) }
-                    }
-                }
-                if !ideas.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) {
-                        SectionLabel(text: "Ideas for you", count: ideas.count)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(alignment: .top, spacing: 12) { ForEach(ideas.prefix(8), id: \.["id"].string) { IdeaCard(idea: $0) { await load() } } }
-                        }
-                    }
-                }
-                if !upcoming.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack { SectionLabel(text: "Coming up"); NavigationLink("All") { UpcomingView() }.font(.caption.weight(.semibold)) }
-                        ForEach(Array(upcoming.prefix(3).enumerated()), id: \.offset) { _, u in UpcomingRow(item: u); Hairline() }
-                    }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    SectionLabel(text: "Feed")
-                    if feed.isEmpty { Text("Keir writes here: the morning brief, wins, warnings and progress on your goals.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.vertical, 8) }
-                    ForEach(feed, id: \.["id"].string) { FeedEntry(entry: $0); Hairline() }
-                }
-            }.padding(16)
-        }
-        .refreshable { await load(); await ops.refresh(session) }
-        .opsScreen().navigationTitle("Feed").navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button { brief() } label: { Label("Brief me", systemImage: "sun.max").labelStyle(.titleAndIcon) }
-                    .disabled(briefing).accessibilityIdentifier("brief-now")
-            }
-        }
-        .task { while !Task.isCancelled { await load(); try? await Task.sleep(for: .seconds(45)) } }
-    }
-
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
-        return hour < 12 ? "Good morning." : hour < 18 ? "Good afternoon." : "Good evening."
-    }
-    private var subtitle: String {
-        let running = Int(ops.kpis["running"].number ?? 0)
-        var parts: [String] = []
-        if !ops.decisions.isEmpty { parts.append("\(ops.decisions.count) decision\(ops.decisions.count == 1 ? "" : "s") waiting") }
-        parts.append(running > 0 ? "Keir is working on \(running) task\(running == 1 ? "" : "s")" : "Keir is idle")
-        if !ops.servicesDown.isEmpty { parts.append("\(ops.servicesDown.count) service\(ops.servicesDown.count == 1 ? "" : "s") degraded") }
-        return parts.joined(separator: ". ") + "."
-    }
-    private func load() async {
-        async let f = try? session.get("/api/keir/app/feed")
-        async let i = try? session.get("/api/keir/app/ideas")
-        async let u = try? session.get("/api/keir/app/upcoming")
-        let (fv, iv, uv) = await (f, i, u)
-        if let fv { feed = fv["feed"].array }
-        if let iv { ideas = iv["ideas"].array.filter { !$0["accepted"].bool } }
-        if let uv { upcoming = uv["upcoming"].array }
-        error = fv == nil ? "The feed could not refresh." : nil
-    }
-    private func brief() {
-        briefing = true
-        Task {
-            do {
-                _ = try await session.post("/api/keir/app/feed/brief", [:])
-                error = "Keir is checking trends and preparing your next steps. The brief will appear here."
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
-            } catch { self.error = error.displayMessage }
-            briefing = false
-        }
-    }
-}
-
-private struct FeedEntry: View {
-    let entry: JSONValue
-    private var icon: (String, Color) {
-        switch entry["kind"].string {
-        case "brief": return ("sun.max.fill", OpsTheme.sky)
-        case "win": return ("checkmark.seal.fill", OpsTheme.mint)
-        case "warning": return ("exclamationmark.triangle.fill", OpsTheme.warn)
-        case "goal": return ("flag.fill", OpsTheme.sky)
-        case "insight": return ("lightbulb.fill", OpsTheme.sky)
-        default: return ("circle.fill", OpsTheme.muted)
-        }
-    }
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon.0).font(.callout).foregroundStyle(icon.1).frame(width: 22).padding(.top, 2)
-            VStack(alignment: .leading, spacing: 6) {
-                Text(entry["title"].string).font(.callout.weight(.semibold))
-                if !entry["body"].string.isEmpty { NativeMarkdown(text: entry["body"].string).font(.callout).foregroundStyle(entry["kind"].string == "brief" ? OpsTheme.ink : OpsTheme.muted) }
-                ForEach(Array(entry["links"].array.enumerated()), id: \.offset) { _, link in
-                    if let url = URL(string: link["url"].string) { Link(link["title"].string.nonempty ?? link["url"].string, destination: url).font(.caption.weight(.semibold)) }
-                }
-                Text(OpsFormat.ago(entry["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
-            }
-        }.padding(.vertical, 10).accessibilityElement(children: .combine)
-    }
-}
-
-private struct IdeaCard: View {
-    @EnvironmentObject private var session: AppSession
-    let idea: JSONValue
-    let changed: () async -> Void
-    @State private var busy = false
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Image(systemName: idea["kind"].string == "issue" ? "exclamationmark.circle" : "lightbulb").foregroundStyle(OpsTheme.sky)
-            Text(idea["title"].string).font(.callout.weight(.semibold)).lineLimit(3)
-            if !idea["evidence"].string.isEmpty { Text(idea["evidence"].string).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(4) }
-            Spacer(minLength: 0)
-            HStack {
-                Button("Start") { decide("accept") }.fontWeight(.semibold).foregroundStyle(OpsTheme.sky)
-                Spacer()
-                Button { decide("dismiss") } label: { Image(systemName: "xmark") }.foregroundStyle(OpsTheme.muted).accessibilityLabel("Dismiss idea")
-            }.buttonStyle(.plain).disabled(busy)
-        }
-        .padding(14).frame(width: 240, height: 200, alignment: .topLeading)
-        .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(OpsTheme.hairline))
-    }
-    private func decide(_ verdict: String) {
-        busy = true
-        Task { _ = try? await session.post("/api/keir/app/ideas/\(idea["id"].string)", ["verdict": .string(verdict)]); UIImpactFeedbackGenerator(style: .light).impactOccurred(); await changed(); busy = false }
-    }
-}
 
 // MARK: Goals
 
@@ -231,7 +83,7 @@ private struct GoalRow: View {
                 else if !goal["nextStep"].string.isEmpty { Text("Next: \(goal["nextStep"].string)").font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2) }
             }
             Spacer()
-            if goal["working"].bool { StateWord(text: "Working", color: OpsTheme.mint) }
+            if goal["working"].bool { OpsStatusBadge(status: .running, compact: true) }
         }.padding(.vertical, 8)
     }
     private var meta: String {
@@ -270,7 +122,7 @@ private struct GoalDetail: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(goal["title"].string).font(.title3.weight(.semibold)).tracking(-0.3)
                             Text("\(goal["category"].string) · advances \(goal["cadence"].string == "6h" ? "every 6 hours" : goal["cadence"].string == "3d" ? "every 3 days" : goal["cadence"].string)").font(.caption).foregroundStyle(OpsTheme.muted)
-                            if goal["working"].bool { StateWord(text: "Keir is working on it", color: OpsTheme.mint) }
+                            if goal["working"].bool { OpsStatusBadge(status: .running) }
                         }
                     }
                     if !goal["nextStep"].string.isEmpty {
@@ -461,44 +313,6 @@ struct UpcomingRow: View {
         guard let date = OpsFormat.date(item["at"]) else { return item["kind"].string == "turn" ? "After the turn" : "Soon" }
         if date.timeIntervalSinceNow < 60 { return "Now" }
         return date.formatted(.relative(presentation: .named)) + " · " + date.formatted(date: .omitted, time: .shortened)
-    }
-}
-
-// MARK: Ops hub
-
-struct OpsHub: View {
-    @EnvironmentObject private var ops: OpsStore
-    @EnvironmentObject private var router: OpsRouter
-    var body: some View {
-        List {
-            if ops.servicesDown.count + ops.redPRs > 0 {
-                Section {
-                    NavigationLink { OpsAttentionView() } label: { Label("\(ops.servicesDown.count + ops.redPRs) need attention", systemImage: "exclamationmark.circle.fill").foregroundStyle(OpsTheme.warn) }
-                }
-            }
-            Section {
-                link("Pulse", "waveform.path.ecg", ops.servicesDown.isEmpty ? "All services up" : "\(ops.servicesDown.count) degraded") { PulseView() }
-                link("Desk", "tray.full", "\(Int(ops.kpis["openTickets"].number ?? 0)) open tickets") { DeskView() }
-                link("Work", "rectangle.split.3x1", "\(ops.needsOwner.count) need you · \(ops.blocked.count) blocked") { WorkView() }
-            } header: { SectionLabel(text: "Studio") }
-            Section {
-                link("Dashboard", "chart.bar.xaxis", "Keir metrics, delivery and monitoring") { KeirMetricsView() }
-                link("Files", "doc.richtext", "Reports and charts") { FilesView() }
-                link("Upcoming", "calendar", "What Keir does next") { UpcomingView() }
-                link("Watches", "binoculars", "Tell me when…") { WatchesView() }
-                link("Ideas", "lightbulb", "What Keir found") { IdeasView() }
-                link("Memory", "brain", "What Keir knows") { MemoryView() }
-            } header: { SectionLabel(text: "Keir") }
-        }
-        .listStyle(.plain).opsScreen().navigationTitle("Ops").navigationBarTitleDisplayMode(.inline)
-    }
-    private func link<D: View>(_ title: String, _ icon: String, _ detail: String, @ViewBuilder destination: @escaping () -> D) -> some View {
-        NavigationLink { destination() } label: {
-            HStack(spacing: 14) {
-                Image(systemName: icon).font(.body).foregroundStyle(OpsTheme.sky).frame(width: 26)
-                VStack(alignment: .leading, spacing: 2) { Text(title).font(.callout.weight(.semibold)); Text(detail).font(.caption).foregroundStyle(OpsTheme.muted) }
-            }.padding(.vertical, 6)
-        }.listRowBackground(Color.clear).accessibilityIdentifier("hub-\(title.lowercased())")
     }
 }
 

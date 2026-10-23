@@ -25,16 +25,17 @@ extension View {
     }
 }
 
-/// 11pt semibold muted caps: the only section label style.
+/// 11pt-equivalent semibold muted caps: the only section label style. It
+/// scales with Dynamic Type instead of pinning a point size.
 struct SectionLabel: View {
     let text: String
     var count: Int? = nil
     var body: some View {
         HStack(spacing: 6) {
-            Text(text.uppercased()).font(.system(size: 11, weight: .semibold)).tracking(0.6)
-            if let count { Text("\(count)").font(.system(size: 11, weight: .semibold)).monospacedDigit() }
+            Text(text).opsSectionHeader()
+            if let count { Text("\(count)").font(.opsSection).monospacedDigit().foregroundStyle(OpsTheme.muted) }
             Spacer()
-        }.foregroundStyle(OpsTheme.muted).accessibilityAddTraits(.isHeader)
+        }.accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -78,8 +79,8 @@ struct Figure: View {
     var tone: Color = OpsTheme.ink
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value).font(.system(size: 28, weight: .semibold, design: .rounded)).monospacedDigit().foregroundStyle(tone).contentTransition(.numericText())
-            Text(label).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(1)
+            Text(value).font(.system(.title, design: .rounded).weight(.semibold)).monospacedDigit().foregroundStyle(tone).contentTransition(.numericText())
+            Text(label).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
         }.frame(maxWidth: .infinity, alignment: .leading).accessibilityElement(children: .combine)
     }
 }
@@ -114,24 +115,11 @@ enum OpsFormat {
     static func percent(_ value: Double?) -> String { value.map { "\(Int(($0 * 100).rounded()))%" } ?? "-" }
 }
 
-/// Keir's job and ticket states as one vocabulary.
+/// Keir's job and ticket states as one vocabulary, backed by `OpsStatus` so an
+/// icon or colour never says something different from its word.
 enum OpsState {
-    static func color(_ state: String) -> Color {
-        switch state {
-        case "running", "executing": return OpsTheme.mint
-        case "blocked", "needs_owner", "failed", "red": return OpsTheme.warn
-        case "queued", "waiting": return OpsTheme.sky
-        default: return OpsTheme.muted
-        }
-    }
-    static func word(_ state: String) -> String {
-        switch state {
-        case "running": return "Running"
-        case "waiting": return "Waiting"
-        case "queued": return "Queued"
-        case "blocked": return "Blocked"
-        case "done": return "Done"
-        default: return state.capitalized
-        }
-    }
+    static func status(_ state: String) -> OpsStatus { OpsStatus.from(state) }
+    static func color(_ state: String) -> Color { status(state).color }
+    static func icon(_ state: String) -> String { status(state).icon }
+    static func word(_ state: String) -> String { OpsText.stateWord(state) }
 }

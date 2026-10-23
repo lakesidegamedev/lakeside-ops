@@ -74,7 +74,7 @@ struct KeirThreads: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 HStack(spacing: 6) {
                                     Text(thread["title"].string).font(.callout.weight(.semibold))
-                                    if thread["working"].bool { StateWord(text: "Working", color: OpsTheme.mint) }
+                                    if thread["working"].bool { OpsStatusBadge(status: .running, compact: true) }
                                 }
                                 Text(thread["preview"].string.nonempty ?? (thread["system"].bool ? "Results from your watches" : "No messages yet"))
                                     .font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
@@ -127,7 +127,7 @@ struct ActivityView: View {
     private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
     private var entries: [JSONValue] { showTickets ? tickets : tasks }
     private var visible: [JSONValue] { entries.filter { WorkQueuePresentation.matches($0, filter: filter, search: search, ticket: showTickets) }.sorted { WorkQueuePresentation.rank($0) < WorkQueuePresentation.rank($1) } }
-    private let filters = [("all", "All"), ("working", "Working"), ("waiting", "Waiting"), ("stuck", "Stuck"), ("needs-you", "Needs you")]
+    private let filters = [("all", "All"), ("working", "Running"), ("waiting", "Queued"), ("stuck", "Blocked"), ("needs-you", "Decisions")]
     var body: some View {
         List {
             DecisionAnswerReceipt().listRowBackground(Color.clear)
@@ -254,7 +254,7 @@ struct TaskDetail: View {
                     if task["canStop"].bool && task["surface"].string == "app" {
                         Button { providerSettings = true } label: { Label("Providers for this task", systemImage: "cpu") }
                     }
-                    if !task["status"].string.isEmpty && task["blocker"] == .null { Label(task["status"].string, systemImage: "ellipsis.bubble").font(.callout).foregroundStyle(OpsTheme.mint) }
+                    if !task["status"].string.isEmpty && task["blocker"] == .null { Label(OpsText.scrub(task["status"].string), systemImage: "ellipsis.bubble").font(.callout).foregroundStyle(OpsTheme.mint) }
                     if !task["summary"].string.isEmpty && task["blocker"] == .null {
                         VStack(alignment: .leading, spacing: 8) { SectionLabel(text: "Where it stands"); Text(task["summary"].string).font(.body).textSelection(.enabled) }
                     }
@@ -262,16 +262,13 @@ struct TaskDetail: View {
                         VStack(alignment: .leading, spacing: 6) {
                             SectionLabel(text: "Plan", count: task["plan"].array.count)
                             ForEach(Array(task["plan"].array.enumerated()), id: \.offset) { _, step in
+                                let status = OpsStatus.from(step["status"].string)
                                 HStack(alignment: .top, spacing: 10) {
-                                    Group {
-                                        switch step["status"].string {
-                                        case "done": Image(systemName: "checkmark.circle.fill").foregroundStyle(OpsTheme.mint)
-                                        case "running": Image(systemName: "circle.fill").font(.caption2).foregroundStyle(OpsTheme.mint)
-                                        case "failed": Image(systemName: "xmark.circle.fill").foregroundStyle(OpsTheme.warn)
-                                        case "waiting": Image(systemName: "pause.circle").foregroundStyle(OpsTheme.sky)
-                                        default: Image(systemName: "circle").foregroundStyle(OpsTheme.muted)
-                                        }
-                                    }.frame(width: 18)
+                                    Image(systemName: status.icon)
+                                        .font(.callout)
+                                        .foregroundStyle(status.color)
+                                        .frame(width: 18)
+                                        .accessibilityLabel("Status: \(status.title)")
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(step["title"].string).font(.callout).foregroundStyle(step["status"].string == "done" ? OpsTheme.muted : OpsTheme.ink)
                                         if !step["detail"].string.isEmpty { Text(step["detail"].string).font(.caption).foregroundStyle(OpsTheme.muted) }
@@ -380,34 +377,88 @@ struct IdeasView: View {
     @EnvironmentObject private var router: OpsRouter
     @State private var ideas: [JSONValue] = []
     @State private var loaded = false
+    @State private var busy: String?
+
     var body: some View {
         List {
-            if loaded && ideas.isEmpty { Text("No ideas waiting. Keir files them as it finds problems on its own.").foregroundStyle(OpsTheme.muted).listRowBackground(Color.clear) }
+            if loaded && ideas.isEmpty {
+                Text("No ideas waiting. Keir files them as it finds problems on its own.")
+                    .foregroundStyle(OpsTheme.muted).listRowBackground(Color.clear)
+            }
             ForEach(ideas, id: \.["id"].string) { idea in
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(idea["title"].string).font(.callout.weight(.semibold))
-                    if !idea["evidence"].string.isEmpty { Text(idea["evidence"].string).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(5) }
-                    HStack(spacing: 14) {
+                    HStack(spacing: 6) {
+                        Image(systemName: idea["kind"].string == "issue" ? "exclamationmark.circle" : "lightbulb")
+                            .foregroundStyle(OpsTheme.sky).accessibilityHidden(true)
+                        Text(idea["kind"].string == "issue" ? "Problem" : "Idea")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted)
+                        Spacer()
                         if idea["accepted"].bool { StateWord(text: "Keir is on it", color: OpsTheme.mint) }
-                        else {
-                            Button("Fix it") { decide(idea, "accept") }.fontWeight(.semibold).foregroundStyle(OpsTheme.sky)
-                            Button("Dismiss") { decide(idea, "dismiss") }.foregroundStyle(OpsTheme.muted)
+                    }
+                    Text(OpsText.scrub(idea["title"].string))
+                        .font(.callout.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                    let reason = OpsText.firstSentence(idea["reason"].string.nonempty ?? idea["evidence"].string)
+                    if !reason.isEmpty {
+                        Label(reason, systemImage: "info.circle")
+                            .font(.caption).foregroundStyle(OpsTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !idea["evidence"].string.isEmpty {
+                        DisclosureGroup("Evidence") {
+                            Text(OpsText.scrub(idea["evidence"].string))
+                                .font(.caption).foregroundStyle(OpsTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
+                        .font(.caption.weight(.semibold))
+                    }
+                    HStack(spacing: 14) {
+                        if !idea["accepted"].bool {
+                            Button {
+                                decide(idea, "accept")
+                            } label: {
+                                Label("Fix it", systemImage: "play.fill").font(.callout.weight(.semibold))
+                            }
+                            .buttonStyle(.borderedProminent).tint(OpsTheme.sky)
+                            .disabled(busy != nil)
+                            .accessibilityIdentifier("idea-start-\(idea["id"].string)")
+                        }
+                        if let url = URL(string: idea["url"].string) {
+                            Link("Issue #\(idea["id"].string)", destination: url).font(.caption)
                         }
                         Spacer()
-                        if let url = URL(string: idea["url"].string) { Link("Issue #\(idea["id"].string)", destination: url).font(.caption) }
-                    }.buttonStyle(.plain).font(.callout)
-                }.padding(.vertical, 6)
-            }.listRowBackground(Color.clear)
+                    }
+                }
+                .padding(.vertical, 8)
+                .listRowBackground(Color.clear)
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    if !idea["accepted"].bool {
+                        Button { decide(idea, "accept") } label: { Label("Start", systemImage: "play.fill") }.tint(OpsTheme.sky)
+                    }
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) { decide(idea, "dismiss") } label: { Label("Dismiss", systemImage: "xmark") }
+                }
+            }
         }
         .listStyle(.plain).opsScreen().navigationTitle("Ideas").navigationBarTitleDisplayMode(.inline)
         .refreshable { await load() }.task { await load() }
     }
-    private func load() async { if let r = try? await session.get("/api/keir/app/ideas") { ideas = r["ideas"].array }; loaded = true }
+
+    private func load() async {
+        if let r = try? await session.get("/api/keir/app/ideas") { ideas = r["ideas"].array }
+        loaded = true
+    }
+
     private func decide(_ idea: JSONValue, _ verdict: String) {
+        let id = idea["id"].string
+        busy = id
         Task {
-            _ = try? await session.post("/api/keir/app/ideas/\(idea["id"].string)", ["verdict": .string(verdict)])
+            _ = try? await session.post("/api/keir/app/ideas/\(id)", ["verdict": .string(verdict)])
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             await load()
+            busy = nil
         }
     }
 }

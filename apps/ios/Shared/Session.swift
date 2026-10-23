@@ -180,7 +180,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
     private func request(_ path: String, query: [String: String] = [:], body: [String: JSONValue]? = nil) throws -> URLRequest {
         var r = URLRequest(url: try Endpoint.url(base: surface.base, path: path, query: query))
         r.setValue("application/json", forHTTPHeaderField: "Accept")
-        if path.hasPrefix("/api/kanban/") { r.setValue("ops-dashboard", forHTTPHeaderField: "X-Requested-With") }
+        if path.hasPrefix("/api/kanban/") || path.hasPrefix("/api/events/dead-letters/") { r.setValue("ops-dashboard", forHTTPHeaderField: "X-Requested-With") }
         if surface == .ops { r.setValue("ios", forHTTPHeaderField: "X-Lakeside-Client") }
         r.setValue(surface.base.absoluteString, forHTTPHeaderField: "Origin")
         r.setValue(surface.base.absoluteString + "/", forHTTPHeaderField: "Referer")

@@ -2,63 +2,71 @@ import SwiftUI
 import Charts
 import LakesideCore
 
-struct PulseView: View {
+/// Health detail behind the Ops headline: host resources, Keir throughput,
+/// recent alerts and one aggregate uptime line. The per-service catalogue is
+/// deliberately gone; a degraded surface is called out once, not listed.
+struct HealthView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
+            LazyVStack(alignment: .leading, spacing: 26) {
                 headline
-                if !attention.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        SectionLabel(text: "Needs you", count: attention.count)
-                        ForEach(attention) { item in
-                            if let decision = item.decision {
-                                Button { router.openDecision(decision) } label: { WorkRow(title: item.title, meta: item.meta, bar: OpsTheme.warn) }.buttonStyle(.plain)
-                            } else if let work = item.work {
-                                NavigationLink { WorkItemDetail(item: work) } label: { WorkRow(title: work["title"].string, meta: item.meta, bar: OpsTheme.warn) }
-                            } else if item.id == "prs" {
-                                NavigationLink { FailedPRsView() } label: { WorkRow(title: item.title, meta: item.meta, bar: OpsTheme.warn) }
-                            } else {
-                                WorkRow(title: item.title, meta: item.meta, bar: OpsTheme.warn)
-                            }
-                            Hairline()
-                        }
-                    }
-                }
+                aggregate
                 keirSummary
-                NavigationLink { KeirMetricsView() } label: { Label("Keir dashboard", systemImage: "chart.bar.xaxis").font(.callout.weight(.semibold)) }
-                ServicesPanel(services: ops.services)
-                KeirActivityChart(buckets: ops.hub["activity"].array)
+                NavigationLink { KeirMetricsView() } label: {
+                    OpsQueueRow(title: "Keir dashboard", detail: "Execution metrics and monitoring", status: .queued, icon: "chart.bar.xaxis")
+                }
                 HostPanel(host: ops.host)
+                KeirActivityChart(buckets: ops.hub["activity"].array)
                 if !ops.alerts.isEmpty { AlertsPanel(alerts: Array(ops.alerts.prefix(6))) }
                 if let updated = ops.updated {
-                    Text("Updated \(updated.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(OpsTheme.muted).frame(maxWidth: .infinity)
+                    Text("Updated \(updated.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption).foregroundStyle(OpsTheme.muted).frame(maxWidth: .infinity)
                 }
             }.padding(16)
         }
+        .opsScrollable()
         .refreshable { await ops.refresh(session) }
         .opsScreen()
-        .navigationTitle("Pulse").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("Health").navigationBarTitleDisplayMode(.inline)
     }
 
     private var headline: some View {
         VStack(alignment: .leading, spacing: 6) {
             let down = ops.servicesDown.count
-            Text(attention.isEmpty ? "All quiet." : attention.count == 1 ? "One thing needs you." : "\(attention.count) things need you.")
-                .font(.system(size: 30, weight: .bold, design: .rounded)).tracking(-0.8)
-            Text(down > 0 ? "\(down) service\(down == 1 ? "" : "s") degraded. Keir is \(keirLine)." : "Every service is up. Keir is \(keirLine).")
-                .font(.callout).foregroundStyle(OpsTheme.muted)
+            Text(down == 0 ? "Everything is up." : down == 1 ? "One surface is degraded." : "\(down) surfaces are degraded.")
+                .font(.opsHero).fixedSize(horizontal: false, vertical: true)
+            Text(keirLine).font(.callout).foregroundStyle(OpsTheme.muted)
             if let error = ops.error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn) }
         }
     }
 
     private var keirLine: String {
-        if ops.hub["paused"].bool { return "paused" }
+        if ops.hub["paused"].bool { return "Keir is paused." }
         let running = Int(ops.kpis["running"].number ?? 0)
-        return running > 0 ? "running \(running) task\(running == 1 ? "" : "s")" : "idle"
+        return running > 0 ? "Keir is running \(running) task\(running == 1 ? "" : "s")." : "Keir is idle."
+    }
+
+    /// One line for the whole estate: how many are up and the worst 7-day
+    /// uptime. No per-service rows.
+    private var aggregate: some View {
+        let total = ops.services.count
+        let up = total - ops.servicesDown.count
+        let worst = ops.services.compactMap { $0["uptime7d"].number }.min()
+        return OpsCard {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(up) of \(total) up").font(.opsCardTitle)
+                    Text("Worst 7-day uptime \(OpsFormat.percent(worst))")
+                        .font(.caption).foregroundStyle(OpsTheme.muted).monospacedDigit()
+                }
+                Spacer()
+                OpsStatusBadge(status: ops.servicesDown.isEmpty ? .done : .failed)
+            }
+        }
     }
 
     private var keirSummary: some View {
@@ -72,48 +80,38 @@ struct PulseView: View {
             }
         }
     }
-
-    struct Attention: Identifiable { let id: String; let title: String; let meta: String; var decision: String? = nil; var work: JSONValue? = nil }
-    private var attention: [Attention] {
-        let rows: [Attention] = ops.decisions.map { Attention(id: "d" + $0["id"].string, title: $0["tldr"].string.nonempty ?? $0["question"].string, meta: "Keir decision · \(OpsFormat.ago($0["at"]))", decision: $0["id"].string) }
-        // Only decisions the owner can answer here. Services, red PRs and blocked
-        // cards have their own panels and are agent work, not owner work.
-        return rows
-    }
 }
 
-private struct ServicesPanel: View {
-    let services: [JSONValue]
+/// Host load, memory, disk and the shared check scheduler.
+struct HostPanel: View {
+    let host: JSONValue
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            SectionLabel(text: "Services", count: services.count)
-            ForEach(services, id: \.["id"].string) { service in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Circle().fill(service["current"].string == "operational" ? OpsTheme.mint : OpsTheme.warn).frame(width: 7, height: 7)
-                        Text(service["name"].string).font(.callout.weight(.semibold)).lineLimit(1)
-                        Spacer()
-                        if let ms = service["latencyMs"].number { Text("\(Int(ms)) ms").font(.caption).foregroundStyle(OpsTheme.muted).monospacedDigit() }
-                        Text(String(format: "%.2f%%", service["uptime7d"].number ?? 0)).font(.caption.weight(.medium)).monospacedDigit()
-                    }
-                    UptimeStrip(days: Array(service["history"].array.suffix(30)))
-                }.padding(.vertical, 4).accessibilityElement(children: .combine)
+        if host != .null {
+            VStack(alignment: .leading, spacing: 10) {
+                SectionLabel(text: "Box")
+                Gauge(label: "CPU", value: (host["cpuUsedPct"].number ?? 0) / 100)
+                Gauge(label: "Memory", value: (host["memory"]["usedPct"].number ?? 0) / 100)
+                Gauge(label: "Disk", value: (host["disk"]["usedPct"].number ?? 0) / 100)
+                Text("Load \(host["load"].array.prefix(3).map { String(format: "%.1f", $0.number ?? 0) }.joined(separator: " · ")) · checks \(Int(host["checks"]["running"].number ?? 0)) running, \(Int(host["checks"]["queued"].number ?? 0)) queued")
+                    .font(.caption).foregroundStyle(OpsTheme.muted).monospacedDigit()
             }
         }
     }
-}
-
-/// One bar per day: full mint at 100%, warn below 99%, danger below 95%.
-private struct UptimeStrip: View {
-    let days: [JSONValue]
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(Array(days.enumerated()), id: \.offset) { _, day in
-                let pct = day["pct"].number ?? 100
-                RoundedRectangle(cornerRadius: 1.5).fill(pct >= 99.5 ? OpsTheme.mint.opacity(0.75) : pct >= 95 ? OpsTheme.warn : OpsTheme.danger)
-                    .frame(maxWidth: .infinity).frame(height: 14)
-            }
-        }.accessibilityHidden(true)
+    private struct Gauge: View {
+        let label: String
+        let value: Double
+        var body: some View {
+            HStack(spacing: 10) {
+                Text(label).font(.caption).foregroundStyle(OpsTheme.muted).frame(minWidth: 56, alignment: .leading)
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(OpsTheme.raised)
+                        Capsule().fill(value > 0.85 ? OpsTheme.warn : OpsTheme.sky).frame(width: max(4, g.size.width * min(1, value)))
+                    }
+                }.frame(height: 6)
+                Text(OpsFormat.percent(value)).font(.caption.weight(.medium)).monospacedDigit().frame(minWidth: 40, alignment: .trailing)
+            }.accessibilityElement(children: .combine)
+        }
     }
 }
 
@@ -138,52 +136,20 @@ struct KeirActivityChart: View {
                 }
                 .chartForegroundStyleScale(["Claude": OpsTheme.sky, "Codex": OpsTheme.mint, "Muse": OpsTheme.warn, "Gemini": OpsTheme.muted, "Other": OpsTheme.hairline])
                 .chartLegend(position: .bottom, alignment: .leading)
-                .chartXAxis { AxisMarks(values: .stride(by: .hour, count: 6)) { AxisValueLabel(format: .dateTime.hour()) } }
+                .chartXAxis { AxisMarks(values: .stride(by: .hour, count: 6)) { _ in AxisValueLabel(format: .dateTime.hour()) } }
                 .frame(height: 150)
             }
         }
     }
 }
 
-private struct HostPanel: View {
-    let host: JSONValue
-    var body: some View {
-        if host != .null {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel(text: "Box")
-                Gauge(label: "CPU", value: (host["cpuUsedPct"].number ?? 0) / 100)
-                Gauge(label: "Memory", value: (host["memory"]["usedPct"].number ?? 0) / 100)
-                Gauge(label: "Disk", value: (host["disk"]["usedPct"].number ?? 0) / 100)
-                Text("Load \(host["load"].array.prefix(3).map { String(format: "%.1f", $0.number ?? 0) }.joined(separator: " · ")) · checks \(Int(host["checks"]["running"].number ?? 0)) running, \(Int(host["checks"]["queued"].number ?? 0)) queued")
-                    .font(.caption).foregroundStyle(OpsTheme.muted).monospacedDigit()
-            }
-        }
-    }
-    private struct Gauge: View {
-        let label: String
-        let value: Double
-        var body: some View {
-            HStack(spacing: 10) {
-                Text(label).font(.caption).foregroundStyle(OpsTheme.muted).frame(width: 56, alignment: .leading)
-                GeometryReader { g in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(OpsTheme.raised)
-                        Capsule().fill(value > 0.85 ? OpsTheme.warn : OpsTheme.sky).frame(width: max(4, g.size.width * min(1, value)))
-                    }
-                }.frame(height: 6)
-                Text(OpsFormat.percent(value)).font(.caption.weight(.medium)).monospacedDigit().frame(width: 40, alignment: .trailing)
-            }.accessibilityElement(children: .combine)
-        }
-    }
-}
-
-private struct AlertsPanel: View {
+struct AlertsPanel: View {
     let alerts: [JSONValue]
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: "Recent alerts")
-            ForEach(alerts, id: \.["key"].string) { alert in
-                WorkRow(title: alert["text"].string, meta: "\(alert["kind"].string.capitalized) · \(OpsFormat.ago(alert["at"]))", bar: alert["kind"].string == "incident" ? OpsTheme.warn : nil)
+            ForEach(alerts, id: \["key"].string) { alert in
+                WorkRow(title: OpsText.scrub(alert["text"].string), meta: "\(alert["kind"].string.capitalized) · \(OpsFormat.ago(alert["at"]))", bar: alert["kind"].string == "incident" ? OpsTheme.warn : nil)
                 Hairline()
             }
         }
