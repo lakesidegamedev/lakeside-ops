@@ -1,5 +1,8 @@
 "use strict";
 const { GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
+// Minutes between checks for a task waiting with nothing subscribed and no
+// reply owed: the first is a normal look, then it settles into a slow recheck.
+const QUIET_WAITS = [15, 30, 60, 120];
 const { createDelegation, childTools } = require("./delegation");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
@@ -2694,16 +2697,31 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (state === "waiting" && input.waitFor === "developer_reply" && openCards.length && openCards.every((r) => r.selfOwned))
         throw new Error("No developer owns an open item for this task: your filed questions are your own work items. Keep investigating with your read tools, or wait for the player instead.");
       const replyWait = state === "waiting" && ["player_reply", "developer_reply"].includes(input.waitFor) && !subscription;
+      const playerAt = (t) => (typeof t === "number" ? t : Date.parse(t) || 0);
+      const owedAt = Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt));
       delete job.waitingFor;
       if (state === "waiting") {
         const requested = input.wakeAfterMinutes;
-        const minutes = Number.isFinite(requested) ? requested : replyWait ? 360 : 15;
+        // A wait with nothing subscribed and no reply owed has nothing to
+        // check. Tickets 1651 and 1663 re-read the same deployment every
+        // fifteen minutes for hours (2026-10-23), so the interval escalates
+        // and resets as soon as the player writes, the task posts or an
+        // effect lands.
+        const acted = Object.values(job.effects || {}).some((e) => (e.at || 0) >= (job.startedAt || 0));
+        const stamp = `${owedAt}:${job.lastPublishedAt || 0}:${acted ? job.startedAt : 0}`;
+        if (job.quietStamp !== stamp) { job.quietStamp = stamp; job.quietWaits = 0; }
+        const quiet = !subscription && !replyWait;
+        if (quiet) job.quietWaits = (job.quietWaits || 0) + 1;
+        const minutes = Number.isFinite(requested) ? requested : replyWait ? 360 : quiet ? QUIET_WAITS[Math.min(job.quietWaits - 1, QUIET_WAITS.length - 1)] : 15;
         job.wakeAt = now() + Math.max(1, Math.min(minutes, replyWait ? 360 : 1440)) * 60000;
       }
       // A reply wait, long requested wait or vision run leaving the player unanswered hands back to
       // the driver instead of sleeping (ticket 1542 waited fifteen minutes).
-      const playerAt = (t) => (typeof t === "number" ? t : Date.parse(t) || 0);
-      if (state === "waiting" && ["ticket", "command", "conversation"].includes(job.kind) && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15) && Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt)) > (job.lastPublishedAt || 0)) job.wakeAt = now() + 60000;
+      // Once per player message. Ticket 1643 (2026-10-23) re-ran every 89
+      // seconds for hours: the model had decided the message needed no reply,
+      // and this hand-back fired again on every wait.
+      const owedOnce = state === "waiting" && ["ticket", "command", "conversation"].includes(job.kind) && owedAt > (job.lastPublishedAt || 0) && job.replyOx !== owedAt;
+      if (owedOnce && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15)) { job.wakeAt = now() + 60000; job.replyOx = owedAt; }
       // A promotion held for the owner's waking hours wakes when the window opens, not every quarter hour.
       if (state === "waiting" && job.promotionHoldUntil > now()) job.wakeAt = Math.max(job.wakeAt || 0, job.promotionHoldUntil);
       // Turn and CI watches wake their task; no timer polling meanwhile.
