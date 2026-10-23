@@ -13,23 +13,32 @@ final class AttentionCenter: ObservableObject {
     @Published private var decisions: [JSONValue] = []
     @Published private var questions: [JSONValue] = []
     @Published private var ownerWork: [JSONValue] = []
+    /// Rebuilt only when an input changes. Views read this instead of
+    /// re-scrubbing every ticket on each body evaluation.
+    @Published private(set) var items: [AttentionItem] = []
 
     private init() {}
 
     func setWork(decisions: [JSONValue], ownerWork: [JSONValue]) {
         self.decisions = decisions
         self.ownerWork = ownerWork
+        rebuild()
     }
 
     func setQuestions(_ items: [JSONValue]) {
         questions = items.filter { $0["state"].string == "pending" }
+        rebuild()
     }
 
     func reset() {
-        decisions = []; questions = []; ownerWork = []
+        decisions = []; questions = []; ownerWork = []; items = []
     }
 
-    var items: [AttentionItem] {
+    private func rebuild() {
+        items = buildItems()
+    }
+
+    private func buildItems() -> [AttentionItem] {
         var seen = Set<String>()
         var tickets = Set<Int>()
         var rows: [AttentionItem] = []

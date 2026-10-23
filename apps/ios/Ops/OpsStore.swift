@@ -167,6 +167,7 @@ import LakesideCore
         AttentionCenter.shared.setQuestions(questions)
         backgroundTasks = view["backgroundTasks"].array
         team = view["team"]
+        for item in team["items"].array { _ = firstSeen(item["id"].string) }
         if !view["modelSelection"].string.isEmpty { modelSelection = view["modelSelection"].string }
         if let target = steeringTask, !live.contains(where: { $0["id"].string == target }) { steeringTask = nil; sendMode = "new" }
         cursor = Int(view["cursor"].number ?? Double(cursor))
