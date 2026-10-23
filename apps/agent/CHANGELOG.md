@@ -5,10 +5,20 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.8 (2026-10-23)
+
+### For users
+
+- Support reviews assess design, units, scale and usable player workflows, including reports whose calculations match the code. Failed suggestion filings and unresolved defects remain owned.
+- Account recovery follows up failed delivery with investigation and a concrete recovery handoff, instead of repeating answered reset questions.
+
 ### For developers
 
-- The Rust MCP client (harness-store) uses each registered server URL verbatim instead of stripping and re-appending `/mcp`, so servers registered at an alias path such as `/mcp/gamestate` are reachable.
-- The Keir Rust shadow pass reads the support MCP address from the `support` registration instead of a hardcoded port, so it follows the support server when it moves.
+- Fix ticket suggestion filing passing an abort signal as the authorization helper's allowed states. A broker integration regression covers ticket filing, author attribution and inactive-task refusal.
+- Carry a fresh explicit owner closure hold onto the newly adopted job when a resolved ticket is reopened. Historical unrelated holds are not inherited.
+- The Rust MCP client uses registered server URLs verbatim, preserving alias paths used by consolidated MCP services.
+- The Keir Rust shadow pass reads the support MCP address from the support registration instead of a hardcoded port.
+
 
 ## 5.9.7 (2026-10-22)
 
