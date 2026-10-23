@@ -65,10 +65,13 @@ function rateFactor(n, evidence) {
     }
   }
 }
+const UNIT_CONSTANTS=new Set([1000,3600,86400,60000,3600000,86400000,1000000,1000000000]);
 function arithmetic(expression,evidence,bindings,derivations=[]) {
   return require('./arithmetic').evaluateArithmetic(expression,{
     literal:n=>{
       if(Math.abs(n.value)<1000&&n.decimals===0)return;
+      // Unit conversions (ms to s, s to hours, units to millions) are not facts.
+      if(UNIT_CONSTANTS.has(Math.abs(n.value))&&n.decimals===0)return;
       if(!supported(n,evidence)&&!supported({...n,value:-n.value},evidence)) {
         // A prior successful step is available inside this atomic batch just as
         // it would be after separate calculate calls. Require exact equality;
