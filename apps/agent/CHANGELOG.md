@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Voice requests get an immediate spoken acknowledgment when accepted, before model startup or tool discovery. The full answer remains separate, and a retried send does not duplicate the acknowledgment.
+
 ## 5.9.17 (2026-10-23)
 
 - Answer voice turns on the small conversation brief with reads preloaded and direct, instead of the full operating brief (66,320 to about 1,600 characters per round), and allow one more round so a read, the reply and finish fit.
