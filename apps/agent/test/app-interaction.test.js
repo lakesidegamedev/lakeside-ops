@@ -165,7 +165,7 @@ test("a voice handoff publishes correlated progress without pretending to be the
   const current = app.authenticatedPost("Explain the current investigation", "voice-progress", "main", { voice: true });
   const root = ledger.data.jobs[current.jobId]; root.state = "running";
   const handoff = await broker.tool(root, "handoff", {});
-  const progress = app.view().messages.find(m => m.role === "keir" && m.jobId === root.id);
+  const progress = app.view().messages.find(m => m.role === "keir" && m.jobId === root.id && m.taskId === handoff.taskId);
   assert.ok(progress); assert.equal(progress.voice, true); assert.equal(progress.voiceProgress, true);
   assert.equal(handoff.taskId, progress.taskId);
   const child = ledger.data.jobs[handoff.taskId]; child.state = "running";
