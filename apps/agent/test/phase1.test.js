@@ -367,3 +367,20 @@ test("unchanged deployment notices remain suppressed after the short post histor
  f.job.lastPlayerAt=18000001;
  await say(f,"The correction is still not live.");
 });
+
+test("gameplay advice redirects to Ask instead of giving portfolio advice", async () => {
+  const f = fixture(); f.ledger.data.channels[f.ch].category = "gameplay";
+  f.job.tags = { kind: "gameplay_advice" };
+  await assert.rejects(say(f, "Try building energy plants in another state."), /Ask/);
+  const { REPLY } = require("../lib/operator/advicerouting");
+  await say(f, REPLY);
+  assert.ok(f.job.adviceRedirectedAt);
+});
+
+
+test("a concrete bug in a gameplay ticket can still receive a support finding", async () => {
+  const f = fixture(); f.ledger.data.channels[f.ch].category = "gameplay";
+  f.job.tags = { kind: "bug_report" };
+  await say(f, "The share form shows only the selected holding. I am correcting that label.");
+  assert.ok(f.job.lastAskAt);
+});
