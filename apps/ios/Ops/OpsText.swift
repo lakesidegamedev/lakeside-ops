@@ -91,9 +91,23 @@ enum OpsText {
         let kind = item["kind"].string
         let number = item["ticket"].number
         let known = scrub(item["title"].string.nonempty ?? "")
-        let subject = !known.isEmpty ? known : stateHeadline(kind)
-        if let number { return "#\(Int(number)) · \(deTicket(subject, number: Int(number)))" }
+        let parsed = number.flatMap { textSubject(item["text"].string, number: Int($0)) } ?? ""
+        let subject = [known, scrub(parsed)].first { !$0.isEmpty } ?? stateHeadline(kind)
+        if let number { return "#\(Int(number)) \(deTicket(subject, number: Int(number)))" }
         return subject
+    }
+
+    /// The server writes updates as "Ticket 1575, Factory demand refund: …".
+    /// The words before the colon are the ticket's own title, so they are safe
+    /// to promote into a headline.
+    private static func textSubject(_ text: String, number: Int) -> String? {
+        let pattern = "(?i)^ticket\\s*#?\\s*\(number)\\s*,\\s*([^:]{3,80}):"
+        guard let range = text.range(of: pattern, options: .regularExpression) else { return nil }
+        let matched = String(text[range])
+        guard let comma = matched.firstIndex(of: ",") else { return nil }
+        let subject = String(matched[matched.index(after: comma)...])
+            .trimmingCharacters(in: CharacterSet(charactersIn: " :"))
+        return subject.isEmpty ? nil : subject
     }
 
     /// The supporting line for an update item, with the ticket prefix removed

@@ -64,7 +64,6 @@ struct KeirView: View {
                         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: keir.messages.count)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .defaultScrollAnchor(.bottom)
                 .onChange(of: keir.messages.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
                 .onChange(of: keir.live.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
             }
@@ -102,7 +101,7 @@ struct KeirView: View {
                     Button {
                         voice.stop()
                         Task { await keir.control(["action": .string(keir.stopped ? "start" : "stop")], session) }
-                    } label: { Image(systemName: keir.stopped ? "play.fill" : "stop.fill") }
+                    } label: { Image(systemName: keir.stopped ? "play.circle.fill" : "stop.circle.fill") }
                         .tint(keir.stopped ? OpsTheme.mint : OpsTheme.ink)
                         .accessibilityLabel(keir.stopped ? "Start Keir" : "Stop Keir")
                         .disabled(keir.controlling).accessibilityIdentifier("keir-kill-switch")

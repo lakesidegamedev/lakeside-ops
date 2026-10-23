@@ -179,7 +179,7 @@ extension View {
     /// Lazy stacks and lists extend under the tab bar by default. A matching
     /// content margin keeps the last row clear of the bar and its blur at every
     /// Dynamic Type size.
-    func opsScrollable(bottom: CGFloat = 32) -> some View {
+    func opsScrollable(bottom: CGFloat = 88) -> some View {
         contentMargins(.bottom, bottom, for: .scrollContent)
     }
 

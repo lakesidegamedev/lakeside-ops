@@ -83,11 +83,15 @@ final class LaunchTests: XCTestCase {
         app.buttons["keir-tools"].tap()
         sleep(1)
         capture(app, "After Keir menu")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.6)).tap()
+        sleep(1)
         app.tabBars.buttons["Feed"].tap()
-        sleep(2)
+        XCTAssertTrue(app.navigationBars["Feed"].waitForExistence(timeout: 10))
+        sleep(1)
         capture(app, "After Feed")
         app.tabBars.buttons["Ops"].tap()
-        sleep(2)
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 10))
+        sleep(1)
         capture(app, "After Ops")
     }
 

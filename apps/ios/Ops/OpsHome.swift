@@ -78,9 +78,8 @@ struct OpsHub: View {
     }
 
     private var workingStatus: OpsStatus {
-        if broken > 0 { return .failed }
-        if blockedWork > 0 { return .blocked }
         if running > 0 { return .running }
+        if blockedWork > 0 { return .blocked }
         return .done
     }
 

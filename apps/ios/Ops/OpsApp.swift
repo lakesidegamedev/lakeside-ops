@@ -40,7 +40,7 @@ struct OpsRoot: View {
             }
         }
         .tint(OpsTheme.sky)
-        .toolbarBackground(.ultraThinMaterial, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(.bar, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
         .onOpenURL { url in
             guard url.scheme == "lakesideops", url.host == "keir" else { return }
             let view = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value

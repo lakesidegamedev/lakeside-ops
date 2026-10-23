@@ -25,8 +25,15 @@ final class OpsTextTests: XCTestCase {
             "ticket": .number(1651),
             "text": .string("It me or turn been stuck in processing: started.")
         ])
-        XCTAssertEqual(OpsText.updateTitle(item), "#1651 · Work started")
+        XCTAssertEqual(OpsText.updateTitle(item), "#1651 Work started")
         XCTAssertFalse(OpsText.updateTitle(item).contains("It me"))
+
+        let update: JSONValue = .object([
+            "kind": .string("needs-you"), "ticket": .number(1575),
+            "text": .string("Ticket 1575, Factory demand refund: needs your decision.")
+        ])
+        XCTAssertEqual(OpsText.updateTitle(update), "#1575 Factory demand refund")
+        XCTAssertEqual(OpsText.updateDetail(update), "needs your decision.")
     }
 
     func testDecisionTitleUsesOneCleanSentence() {
