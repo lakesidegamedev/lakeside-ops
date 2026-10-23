@@ -174,8 +174,8 @@ function makeAgentsBody({ tokens = [], tokensUnavailable = false, mcpUrl = "http
     <h2>Agent operations</h2>
     <div class="ag-operations">
       <div class="ag-operation ${operations.paseo === true ? "status-good" : operations.paseo === false ? "status-bad" : ""}"><strong>${operations.paseo === true ? "Running" : operations.paseo === false ? "Unavailable" : "Unknown"}</strong><span>Paseo daemon</span></div>
-      <div class="ag-operation"><strong>${esc(operations.todayCost || "Loading…")}</strong><span>Agent usage today · <a href="/code">sessions</a></span></div>
-      <div class="ag-operation"><strong>${operations.todayTokens == null ? "Loading…" : esc(Number(operations.todayTokens).toLocaleString("en-US"))}</strong><span>Tokens today</span></div>
+      <div class="ag-operation"><strong id="ag-usage-cost">${esc(operations.todayCost || "Loading…")}</strong><span>Agent usage today · <a href="/code">sessions</a></span></div>
+      <div class="ag-operation"><strong id="ag-usage-tokens">${operations.todayTokens == null ? "Loading…" : esc(Number(operations.todayTokens).toLocaleString("en-US"))}</strong><span>Tokens today</span></div>
       <div class="ag-operation"><strong>${operations.worktrees == null ? "No report" : esc(operations.worktrees)}</strong><span>Worktrees needing attention · <a href="/worktrees">fleet</a></span></div>
     </div>
   </div>
@@ -277,6 +277,31 @@ function makeAgentsBody({ tokens = [], tokensUnavailable = false, mcpUrl = "http
 (function(){
   var MCP_URL = ${JSON.stringify(mcpUrl)};
   function $(s){return document.querySelector(s);}
+  // Today's usage is computed by the background cost refresher. If the page
+  // rendered before the first snapshot was ready, poll until it arrives instead
+  // of leaving "Loading…" on screen.
+  (function pollUsage(){
+    var costEl = document.getElementById('ag-usage-cost');
+    var tokenEl = document.getElementById('ag-usage-tokens');
+    if (!costEl || !tokenEl) return;
+    if (costEl.textContent.trim() !== 'Loading…' && tokenEl.textContent.trim() !== 'Loading…') return;
+    var tries = 0;
+    function tick(){
+      if (++tries > 20) return;
+      fetch('/api/agents/usage', { cache: 'no-store' })
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if (d && !d.pending) {
+            costEl.textContent = d.cost || '$0';
+            tokenEl.textContent = d.tokens == null ? '—' : Number(d.tokens).toLocaleString('en-US');
+            return;
+          }
+          setTimeout(tick, 5000);
+        })
+        .catch(function(){ setTimeout(tick, 5000); });
+    }
+    setTimeout(tick, 2000);
+  })();
   // tabs
   document.querySelectorAll('.ag-tab').forEach(function(t){
     t.onclick=function(){

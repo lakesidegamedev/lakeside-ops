@@ -1,10 +1,21 @@
 "use strict";
 
-// Thin cached wrapper around CodeBurn (https://github.com/getagentseal/codeburn)
+// Cached wrapper around CodeBurn (https://github.com/getagentseal/codeburn)
 // for API-equivalent cost totals shown on the Code Agent screens.
+//
+// CodeBurn re-parses every agent transcript on each call. On this box that is
+// ~20-90s and 1-2 GB of RSS per invocation, so it must never run inside a page
+// request. Instead:
+//   • a single serialized background refresher keeps today/week/month fresh,
+//   • requests read the last good snapshot from memory and never block,
+//   • snapshots survive restarts in a small JSON file next to the sessions file,
+//   • refreshes only run while someone is actually using the console.
+// The synchronous helpers below stay for tests and one-off tooling.
 
-const { spawn, spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { spawn, spawnSync } = require("node:child_process");
 const { resolveBinary } = require("./src/core/paths");
 
 // Resolve the codeburn binary lazily on first use instead of blocking server
@@ -24,8 +35,18 @@ function codeburnBin() {
 
 const cache = new Map();
 const CACHE_MS = 60_000;
-let overviewWarmInFlight = null;
-const asyncInFlight = new Map();
+
+// How long a computed number stays "current" before the refresher recomputes.
+const OVERVIEW_TTL = 180_000;
+const BREAKDOWN_TTL = { today: 180_000, week: 900_000, month: 1_800_000 };
+const SESSIONS_TTL = { today: 180_000, week: 900_000, month: 1_800_000 };
+const MODELS_TTL = { today: 300_000, week: 1_800_000, month: 3_600_000 };
+
+// Serve numbers from disk rather than showing nothing while a refresh runs.
+const MAX_STALE_MS = 24 * 60 * 60_000;
+// Stop refreshing when nobody has looked at a cost number for this long.
+const DEMAND_WINDOW_MS = 15 * 60_000;
+const TICK_MS = 30_000;
 
 function runCodeburn(args, timeoutMs = 90_000) {
   const result = spawnSync(codeburnBin(), args, {
@@ -76,6 +97,201 @@ function runCodeburnAsync(args, timeoutMs = 90_000) {
   });
 }
 
+// ─── Last-known-good snapshots ──────────────────────────────────────────────
+// overview: { at, value }            value = buildCostOverview(...)
+// breakdowns: Map<period, {at,value}> value = buildCostBreakdown(...)
+const state = { overview: null, breakdowns: new Map() };
+const rawSessions = new Map();
+const rawModels = new Map();
+
+const demand = { at: 0, periods: new Map() };
+
+function noteDemand(period) {
+  demand.at = Date.now();
+  if (period) demand.periods.set(period, demand.at);
+}
+
+function periodDemandedLately(period) {
+  const at = demand.periods.get(period) || 0;
+  return Date.now() - at < DEMAND_WINDOW_MS;
+}
+
+let lastRefreshErrorAt = 0;
+function reportRefreshError(error) {
+  if (Date.now() - lastRefreshErrorAt < 60_000) return;
+  lastRefreshErrorAt = Date.now();
+  console.warn("[agent-cost] background refresh failed:", error && error.message ? error.message : error);
+}
+
+function kick(promise) {
+  promise.catch(reportRefreshError);
+  return promise;
+}
+
+function isStale(entry, ttlMs) {
+  return !entry || !Number.isFinite(entry.at) || Date.now() - entry.at >= ttlMs;
+}
+
+function usableValue(entry) {
+  if (!entry) return null;
+  if (Date.now() - entry.at > MAX_STALE_MS) return null;
+  return entry.value;
+}
+
+function costCacheFile() {
+  if (process.env.OPS_COST_CACHE) return path.resolve(process.env.OPS_COST_CACHE);
+  if (process.env.OPS_SESSIONS_FILE) {
+    return path.join(path.dirname(path.resolve(process.env.OPS_SESSIONS_FILE)), "cost-cache.json");
+  }
+  return path.join(os.tmpdir(), "lakeside-ops-cost-cache.json");
+}
+
+function loadPersisted() {
+  try {
+    const doc = JSON.parse(fs.readFileSync(costCacheFile(), "utf8"));
+    if (!doc || doc.version !== 1) return;
+    if (doc.overview && doc.overview.value) {
+      state.overview = { at: Number(doc.overview.at) || 0, value: doc.overview.value };
+    }
+    for (const [period, entry] of Object.entries(doc.breakdowns || {})) {
+      if (entry && entry.value) state.breakdowns.set(period, { at: Number(entry.at) || 0, value: entry.value });
+    }
+  } catch { /* no cache yet */ }
+}
+
+let persistTimer = null;
+function persistSoon() {
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => { persistTimer = null; persistNow(); }, 5000);
+  persistTimer.unref?.();
+}
+
+function persistNow() {
+  try {
+    const file = costCacheFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const doc = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      overview: state.overview,
+      breakdowns: Object.fromEntries(state.breakdowns),
+    };
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(doc), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } catch { /* persistence is best-effort */ }
+}
+
+// One CodeBurn process at a time: parallel invocations contend for CodeBurn's
+// own 140 MB refresh lock and each still parse the full transcript history.
+let queueTail = Promise.resolve();
+function enqueue(task) {
+  const run = queueTail.then(task, task);
+  queueTail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+const inFlight = new Map();
+function refreshOnce(key, task) {
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+  const pending = enqueue(task)
+    .then((value) => value)
+    .finally(() => inFlight.delete(key));
+  inFlight.set(key, pending);
+  return pending;
+}
+
+async function sessionsFor(period) {
+  const hit = rawSessions.get(period);
+  const ttl = SESSIONS_TTL[period] || SESSIONS_TTL.today;
+  if (hit && Date.now() - hit.at < ttl) return hit.value;
+  const value = parseJsonRows(await runCodeburnAsync([
+    "sessions", "--format", "json", "-p", String(period), "--provider", "all",
+  ]));
+  rawSessions.set(period, { at: Date.now(), value });
+  return value;
+}
+
+async function modelsFor(period) {
+  const hit = rawModels.get(period);
+  const ttl = MODELS_TTL[period] || MODELS_TTL.today;
+  if (hit && Date.now() - hit.at < ttl) return hit.value;
+  const value = parseJsonRows(await runCodeburnAsync([
+    "models", "--format", "json", "-p", String(period), "--provider", "all",
+  ]));
+  rawModels.set(period, { at: Date.now(), value });
+  return value;
+}
+
+function refreshOverview() {
+  return refreshOnce("overview", async () => {
+    const todaySessions = await sessionsFor("today");
+    const monthSessions = await sessionsFor("month");
+    const value = buildCostOverview(todaySessions, monthSessions);
+    state.overview = { at: Date.now(), value };
+    persistSoon();
+    return value;
+  });
+}
+
+function refreshBreakdown(period) {
+  const normalized = normalizeBreakdownPeriod(period) || "today";
+  return refreshOnce(`breakdown:${normalized}`, async () => {
+    const sessions = await sessionsFor(normalized);
+    const models = await modelsFor(normalized);
+    const value = buildCostBreakdown(normalized, sessions, models);
+    state.breakdowns.set(normalized, { at: Date.now(), value });
+    persistSoon();
+    return value;
+  });
+}
+
+function ensureOverview(maxAgeMs = OVERVIEW_TTL) {
+  if (!isStale(state.overview, maxAgeMs)) return Promise.resolve(usableValue(state.overview));
+  return refreshOverview().catch((error) => { reportRefreshError(error); return null; });
+}
+
+function ensureBreakdown(period, maxAgeMs) {
+  const normalized = normalizeBreakdownPeriod(period) || "today";
+  const ttl = maxAgeMs ?? BREAKDOWN_TTL[normalized];
+  const entry = state.breakdowns.get(normalized);
+  if (!isStale(entry, ttl)) return Promise.resolve(usableValue(entry));
+  return refreshBreakdown(normalized).catch((error) => { reportRefreshError(error); return null; });
+}
+
+// Boot + idle tick: keep the numbers the console actually shows warm, and stop
+// when nobody is looking so an unused dashboard costs nothing.
+let refresherStarted = false;
+function startCostRefresher() {
+  if (refresherStarted) return;
+  refresherStarted = true;
+  // Only warm at boot when this install already has a snapshot (the normal
+  // case). A pristine checkout should not spend a minute running CodeBurn
+  // before anyone has opened a cost page.
+  const hasSnapshot = state.overview !== null || state.breakdowns.size > 0;
+  if (hasSnapshot) {
+    // Let the page-critical warm-ups (paseo, token list, engine) go first: the
+    // snapshot is already being served, so a few seconds of extra staleness
+    // costs nothing and avoids competing with them for CPU and the DB tunnel.
+    const warm = () => {
+      ensureOverview().catch(() => {});
+      ensureBreakdown("today").catch(() => {});
+    };
+    const timer = setTimeout(warm, 8_000);
+    timer.unref?.();
+  }
+  const timer = setInterval(() => {
+    if (Date.now() - demand.at >= DEMAND_WINDOW_MS) return;
+    ensureOverview().catch(() => {});
+    ensureBreakdown("today").catch(() => {});
+    for (const period of ["week", "month"]) {
+      if (periodDemandedLately(period)) ensureBreakdown(period).catch(() => {});
+    }
+  }, TICK_MS);
+  timer.unref?.();
+}
+
 function cached(key, fn) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
@@ -84,34 +300,8 @@ function cached(key, fn) {
   return value;
 }
 
-function cachedAsync(key, fn) {
-  const hit = peekCached(key);
-  if (hit) return Promise.resolve(hit);
-  if (asyncInFlight.has(key)) return asyncInFlight.get(key);
-  const pending = Promise.resolve()
-    .then(fn)
-    .then((value) => {
-      cache.set(key, { at: Date.now(), value });
-      return value;
-    })
-    .finally(() => asyncInFlight.delete(key));
-  asyncInFlight.set(key, pending);
-  return pending;
-}
-
-function peekCached(key) {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.value;
-  return null;
-}
-
 function warmCostOverviewAsync() {
-  if (peekCached("overview")) return Promise.resolve(peekCached("overview"));
-  if (overviewWarmInFlight) return overviewWarmInFlight;
-  overviewWarmInFlight = getCostOverviewAsync()
-    .catch(() => null)
-    .finally(() => { overviewWarmInFlight = null; });
-  return overviewWarmInFlight;
+  return refreshOverview().catch(() => null);
 }
 
 const BREAKDOWN_PERIODS = new Set(["today", "week", "month"]);
@@ -125,9 +315,7 @@ function parseSessions(period = "today", provider = "all") {
   const key = `sessions:${period}:${provider}`;
   return cached(key, () => {
     const raw = runCodeburn(["sessions", "--format", "json", "-p", String(period), "--provider", String(provider)]);
-    const trimmed = raw.trim();
-    if (!trimmed) return [];
-    try { return JSON.parse(trimmed); } catch { return []; }
+    return parseJsonRows(raw);
   });
 }
 
@@ -137,32 +325,12 @@ function parseJsonRows(raw) {
   try { return JSON.parse(trimmed); } catch { return []; }
 }
 
-function parseSessionsAsync(period = "today", provider = "all") {
-  const key = `sessions:${period}:${provider}`;
-  return cachedAsync(key, async () =>
-    parseJsonRows(await runCodeburnAsync([
-      "sessions", "--format", "json", "-p", String(period), "--provider", String(provider),
-    ]))
-  );
-}
-
 function parseModels(period = "today", provider = "all") {
   const key = `models:${period}:${provider}`;
   return cached(key, () => {
     const raw = runCodeburn(["models", "--format", "json", "-p", String(period), "--provider", String(provider)]);
-    const trimmed = raw.trim();
-    if (!trimmed) return [];
-    try { return JSON.parse(trimmed); } catch { return []; }
+    return parseJsonRows(raw);
   });
-}
-
-function parseModelsAsync(period = "today", provider = "all") {
-  const key = `models:${period}:${provider}`;
-  return cachedAsync(key, async () =>
-    parseJsonRows(await runCodeburnAsync([
-      "models", "--format", "json", "-p", String(period), "--provider", String(provider),
-    ]))
-  );
 }
 
 function summarizeByProject(sessions) {
@@ -248,15 +416,24 @@ function getCostBreakdown(period = "today") {
   });
 }
 
-function getCostBreakdownAsync(period = "today") {
+// Never blocks: returns the last good breakdown, or null while the background
+// refresher builds the first one.
+async function getCostBreakdownAsync(period = "today") {
   const normalized = normalizeBreakdownPeriod(period) || "today";
-  return cachedAsync(`breakdown:${normalized}`, async () => {
-    const [sessions, models] = await Promise.all([
-      parseSessionsAsync(normalized, "all"),
-      parseModelsAsync(normalized, "all"),
-    ]);
-    return buildCostBreakdown(normalized, sessions, models);
-  });
+  noteDemand(normalized);
+  const entry = state.breakdowns.get(normalized);
+  const value = usableValue(entry);
+  if (value) {
+    if (isStale(entry, BREAKDOWN_TTL[normalized])) kick(refreshBreakdown(normalized));
+    return value;
+  }
+  kick(refreshBreakdown(normalized));
+  return null;
+}
+
+function peekCostBreakdown(period = "today") {
+  const normalized = normalizeBreakdownPeriod(period) || "today";
+  return usableValue(state.breakdowns.get(normalized));
 }
 
 function money(n) {
@@ -335,12 +512,15 @@ function getCostOverview() {
   });
 }
 
-function getCostOverviewAsync() {
-  return cachedAsync("overview", async () => {
-    const todaySessions = await parseSessionsAsync("today", "all");
-    const monthSessions = await parseSessionsAsync("month", "all");
-    return buildCostOverview(todaySessions, monthSessions);
-  });
+async function getCostOverviewAsync() {
+  noteDemand();
+  const value = usableValue(state.overview);
+  if (value) {
+    if (isStale(state.overview, OVERVIEW_TTL)) kick(refreshOverview());
+    return value;
+  }
+  kick(refreshOverview());
+  return null;
 }
 
 function getProviderCost(provider, period = "today") {
@@ -359,16 +539,17 @@ function codeburnProviderForKind(kind) {
   return KIND_TO_CODEBURN[kind] || kind || "all";
 }
 
+function providerRow(breakdown, provider) {
+  return (breakdown?.byProvider || []).find((row) => row.provider === provider) || null;
+}
+
 function getCostForKind(kind, period = "today") {
   const provider = codeburnProviderForKind(kind);
-  if (period === "today" || period === "month") {
-    const overview = peekCached("overview") || null;
-    if (!overview) {
-      warmCostOverviewAsync();
-      return { provider, kind, cost: 0, calls: 0, sessions: 0, turns: 0, label: "…", byProvider: [], pending: true };
-    }
-    const bucket = period === "month" ? overview.month : overview.today;
-    const hit = (bucket.byProvider || []).find((p) => p.provider === provider);
+  const normalized = normalizeBreakdownPeriod(period) || "today";
+  noteDemand(normalized);
+  const breakdown = usableValue(state.breakdowns.get(normalized));
+  if (breakdown) {
+    const hit = providerRow(breakdown, provider);
     return {
       provider,
       kind,
@@ -380,15 +561,34 @@ function getCostForKind(kind, period = "today") {
       byProvider: hit ? [hit] : [],
     };
   }
-  const summary = getProviderCost(provider, period);
-  return { ...summary, provider, kind };
+  if (normalized === "today" || normalized === "month") {
+    const overview = usableValue(state.overview);
+    if (!overview) {
+      kick(refreshOverview());
+      return { provider, kind, cost: 0, calls: 0, sessions: 0, turns: 0, label: "…", byProvider: [], pending: true };
+    }
+    const bucket = normalized === "month" ? overview.month : overview.today;
+    const hit = providerRow(bucket, provider);
+    return {
+      provider,
+      kind,
+      cost: hit?.cost || 0,
+      calls: hit?.calls || 0,
+      sessions: hit?.sessions || 0,
+      turns: 0,
+      label: money(hit?.cost || 0),
+      byProvider: hit ? [hit] : [],
+    };
+  }
+  kick(refreshBreakdown(normalized));
+  return { provider, kind, cost: 0, calls: 0, sessions: 0, turns: 0, label: "…", byProvider: [], pending: true };
 }
 
 function latestSessionForKind(kind) {
   const provider = codeburnProviderForKind(kind);
-  const overview = peekCached("overview");
+  const overview = usableValue(state.overview);
   if (!overview) {
-    warmCostOverviewAsync();
+    kick(refreshOverview());
     return null;
   }
   const hit = (overview.recent || []).find((s) => s.provider === provider);
@@ -396,8 +596,9 @@ function latestSessionForKind(kind) {
 }
 
 function peekCostOverview() {
-  const value = peekCached("overview");
-  if (!value) warmCostOverviewAsync();
+  noteDemand();
+  const value = usableValue(state.overview);
+  if (isStale(state.overview, OVERVIEW_TTL)) kick(refreshOverview());
   return value;
 }
 
@@ -424,14 +625,22 @@ function findSessionCost(sessionId) {
 
 function clearCostCache() {
   cache.clear();
-  asyncInFlight.clear();
-  overviewWarmInFlight = null;
+  rawSessions.clear();
+  rawModels.clear();
+  inFlight.clear();
+  state.overview = null;
+  state.breakdowns.clear();
+  demand.at = 0;
+  demand.periods.clear();
 }
+
+loadPersisted();
 
 module.exports = {
   BREAKDOWN_PERIODS,
   clearCostCache,
   codeburnProviderForKind,
+  costCacheFile,
   findSessionCost,
   getCostBreakdown,
   getCostBreakdownAsync,
@@ -444,6 +653,11 @@ module.exports = {
   normalizeBreakdownPeriod,
   parseModels,
   parseSessions,
+  peekCostBreakdown,
   peekCostOverview,
+  refreshBreakdown,
+  refreshOverview,
+  persistCostCacheNow: persistNow,
+  startCostRefresher,
   warmCostOverviewAsync,
 };
