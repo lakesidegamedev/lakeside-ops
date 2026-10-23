@@ -137,6 +137,15 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 if after < 3 { view["messages"] = (view["messages"] as? [[String: Any]] ?? []) + [update] }
                 view["cursor"] = max(messages.count, 3)
             }
+            if ProcessInfo.processInfo.arguments.contains("--uitest-broken-status") {
+                view["team"] = ["open": 1, "working": 1, "needsYou": 0, "stuck": 0, "waiting": 0, "held": 0, "items": [
+                    ["id": "brokenjob001", "ticket": 1651, "link": "ticket", "title": "", "state": "working", "reason": "It me or turn been stuck in processing: started."]]]
+                let broken: [String: Any] = ["seq": 900, "id": "broken-update", "role": "keir", "update": true, "thread": "main", "at": 1792020090000,
+                    "text": "It me or turn been stuck in processing: started.",
+                    "items": [["kind": "started", "ticket": 1651, "link": "ticket", "text": "It me or turn been stuck in processing: started. Was:."]]]
+                view["messages"] = [broken]
+                view["cursor"] = 900
+            }
             view["controls"] = controlValue
             return view
         }
@@ -292,7 +301,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             }
         case "/api/auth/native-session": value = ["token": String(repeating: "a", count: 64), "expiresAt": Date().addingTimeInterval(30 * 86400).timeIntervalSince1970 * 1000]
         case "/api/keir/app/questions/123456abcdef": value = Self.keir.answerChoices()
-        case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Waiting for the owner decision"], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
+        case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
         case "/api/keir/app/controls": value = Self.keir.controls(bodyObject())
         case "/api/keir/app/models": value = Self.keir.models(bodyObject()?["selection"] as? String)
         case "/api/keir/app/computer": value = ["computers": [] as [Any]]
@@ -306,6 +315,14 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/work", "/api/keir/app/threads", "/api/keir/app/tasks", "/api/keir/app/tasks/abcdef012345", "/api/keir/app/ideas", "/api/keir/app/watches", "/api/keir/app/memory":
             value = KeirAgentFixtures.value(url.path, method: request.httpMethod ?? "GET", body: bodyObject() ?? [:])
         case "/api/keir/app/cancel": value = ["state": "cancelled"]
+        case "/api/security": value = OpsFixtures.security()
+        case "/api/backups": value = ["backups": [["date": "2026-10-15", "collections": 42, "totalBytes": 73400320], ["date": "2026-10-14", "collections": 42, "totalBytes": 73390000]], "total": 2]
+        case "/api/db/stats": value = ["collections": 42, "totalDocuments": 128400, "dataSize": 52428800, "indexSize": 8388608]
+        case "/api/events/dead-letters": value = ["events": [["streamId": "1-0", "type": "turn:failed", "source": "worker", "occurredAt": "2026-10-15T02:00:00Z", "error": "Receipt store timed out."]]]
+        case "/api/code/sessions": value = ["sessions": [
+            ["id": "s1", "title": "Keir mobile briefing", "kind": "codex", "activity": "working", "needsInput": false, "statusLine": "Running the iOS simulator suite", "worktreePath": "/root/projects/lakeside-ops/worktrees/keir-mobile-briefing"],
+            ["id": "s2", "title": "Audit CI back-merges", "kind": "claude", "activity": "ready", "needsInput": true, "statusLine": "Waiting for review", "worktreePath": "/root/projects/lakeside-ops/worktrees/keir-ci-audit"]
+        ]]
         case "/api/status", "/api/keir/hub", "/api/kanban/brief", "/api/scheduler": value = OpsFixtures.value(url.path)
         case "/api/ops/bootstrap": value = ["cursor": 0, "conversation": ["id": 1], "conversations": [["id": 1, "title": "Build the studio hub"]], "staff": [["id": "staff-1", "name": "Release engineer", "role": "Maintain release quality", "provider": "auto"]], "workers": [["id": "worker-1", "name": "Export repair", "brief": "Repair and verify the export flow.", "job_status": "completed", "runtime_provider": "codex", "permissions": [], "result": "Export fixed. All checks passed."]]]
         case "/api/chat/turns": value = ["turns": [["id": 1, "role": "owner", "body": "Help me build the studio hub.", "status": "done"], ["id": 2, "role": "assistant", "body": "The export worker has finished. I am checking the changes before accepting them.", "status": "done", "route": ["label": "Muse"], "actions": [["name": "bash", "label": "Run export checks", "command": "npm test", "output": "All 12 checks passed", "state": "completed", "exitCode": 0]]]]]
@@ -564,6 +581,7 @@ enum OpsFixtures {
         case "/api/status": return ["updated": "2026-10-15T02:43:31Z", "services": [service("production", "A House Divided", "operational", 167, 99.85, dip: 21), service("ask", "Lakeside Ask", "degraded", 912, 98.1, dip: 28)]]
         case "/api/keir/hub": return hub()
         case "/api/kanban/brief": return kanban()
+        case "/api/scheduler": return scheduler()
         default: return ["host": host()]
         }
     }
@@ -606,6 +624,31 @@ enum OpsFixtures {
     static func host() -> [String: Any] {
         let memory: [String: Any] = ["usedPct": 32], disk: [String: Any] = ["usedPct": 36], checks: [String: Any] = ["running": 0, "queued": 1]
         return ["cpuUsedPct": 21, "load": [4.7, 5.4, 3.7], "memory": memory, "disk": disk, "checks": checks]
+    }
+    static func scheduler() -> [String: Any] {
+        let checks: [[String: Any]] = [
+            ["id": "check-1", "state": "running", "label": "ios-simulator", "preset": "verify", "workdir": "/root/projects/lakeside-ops/worktrees/keir-mobile-briefing/apps/ios", "priority": "normal", "requested_at": 1792019000000.0],
+            ["id": "check-2", "state": "queued", "label": "web-verify", "preset": "verify", "workdir": "/root/projects/lakeside-ops/apps/web", "priority": "low", "requested_at": 1792018000000.0]
+        ]
+        let sims: [[String: Any]] = [
+            ["runId": "sim-1", "preset": "singleplayer", "turns": 64, "seed": "seed-1991", "status": "running", "currentTurn": 18, "autonomyLevel": "v4", "marketSystemMode": "clearing", "createdAt": 1792010000000.0, "updatedAt": 1792020000000.0],
+            ["runId": "sim-2", "preset": "multiplayer", "turns": 32, "seed": "seed-1992", "status": "queued", "currentTurn": 0, "autonomyLevel": "v3", "marketSystemMode": "off", "createdAt": 1792015000000.0, "updatedAt": 1792015000000.0]
+        ]
+        return ["host": host(), "checks": checks, "worldSims": sims, "presets": ["verify", "test", "build"]]
+    }
+    static func security() -> [String: Any] {
+        let hosts: [[String: Any]] = [
+            ["id": "contabo-vps18", "label": "EU console", "name": "contabo-vps18", "ok": true, "collectedAt": "2026-10-15T02:30:00Z", "ageMs": 600000, "stale": false],
+            ["id": "contabo-vps12-us", "label": "US host", "name": "contabo-vps12-us", "ok": true, "collectedAt": "2026-10-15T02:31:00Z", "ageMs": 540000, "stale": false]
+        ]
+        let findings: [[String: Any]] = [
+            ["id": "us:ssh-agent", "rule": "ssh-agent-forwarding", "host": "contabo-vps12-us", "hostLabel": "US host", "severity": "medium", "title": "SSH agent forwarding is enabled", "detail": "The forwarded agent could be used by a process on the host.", "remedy": "Set AllowAgentForwarding no and reload sshd."],
+            ["id": "eu:fail2ban", "rule": "fail2ban-recividive", "host": "contabo-vps18", "hostLabel": "EU console", "severity": "high", "title": "fail2ban recidive jail is not active", "detail": "Repeat offenders are not being banned.", "remedy": "Enable the recidive jail and restart fail2ban."]
+        ]
+        return ["generatedAt": "2026-10-15T02:43:31Z", "schema": 1,
+                "summary": ["score": 82, "posture": "degraded", "counts": ["critical": 0, "high": 1, "medium": 1, "low": 2, "info": 0], "hostsReachable": 2, "hostsTotal": 2],
+                "hosts": hosts, "findings": findings,
+                "monitoring": ["expectedIntervalMinutes": 15, "staleAfterMinutes": 45, "hostsReporting": 2, "hostsTotal": 2]]
     }
 }
 #endif

@@ -102,7 +102,7 @@ struct OpsHub: View {
     private var needsYou: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                SectionLabel(text: AttentionCenter.label, count: attention.count)
+                SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "ops-attention-count")
                 if attention.count > 0 {
                     Button("See all") { router.activityFilter = "all"; router.tab = .activity }
                         .font(.caption.weight(.semibold))

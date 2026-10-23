@@ -37,10 +37,10 @@ import LakesideCore
         async let status = try? session.get("/api/status")
         async let keir = try? session.get("/api/keir/hub")
         async let board = try? session.get("/api/kanban/brief")
-        async let scheduler = try? session.get("/api/scheduler")
+        async let schedule = try? session.get("/api/scheduler")
         async let open = try? session.get("/api/keir/app/decisions")
         async let feed = try? session.get("/api/keir/app/alerts")
-        let (s, k, b, h, d, a) = await (status, keir, board, scheduler, open, feed)
+        let (s, k, b, h, d, a) = await (status, keir, board, schedule, open, feed)
         guard generation == epoch else { return }
         if let s { services = s["services"].array }
         if let k { hub = k }

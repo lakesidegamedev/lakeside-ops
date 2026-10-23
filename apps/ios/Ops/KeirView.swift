@@ -34,7 +34,7 @@ struct KeirView: View {
                         DecisionAnswerReceipt()
                         if AttentionCenter.shared.count > 0 {
                             VStack(alignment: .leading, spacing: 10) {
-                                SectionLabel(text: AttentionCenter.label, count: AttentionCenter.shared.count)
+                                SectionLabel(text: AttentionCenter.label, count: AttentionCenter.shared.count, identifier: "keir-attention-count")
                                 AttentionStack(limit: 2, panels: keir.questions)
                                 if AttentionCenter.shared.count > 2 {
                                     Button("See all \(AttentionCenter.shared.count)") { router.activityFilter = "all"; router.tab = .activity }

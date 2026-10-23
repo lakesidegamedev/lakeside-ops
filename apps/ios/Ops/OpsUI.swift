@@ -30,10 +30,14 @@ extension View {
 struct SectionLabel: View {
     let text: String
     var count: Int? = nil
+    var identifier: String? = nil
     var body: some View {
         HStack(spacing: 6) {
             Text(text).opsSectionHeader()
-            if let count { Text("\(count)").font(.opsSection).monospacedDigit().foregroundStyle(OpsTheme.muted) }
+            if let count {
+                Text("\(count)").font(.opsSection).monospacedDigit().foregroundStyle(OpsTheme.muted)
+                    .accessibilityIdentifier(identifier ?? "section-count")
+            }
             Spacer()
         }.accessibilityAddTraits(.isHeader)
     }

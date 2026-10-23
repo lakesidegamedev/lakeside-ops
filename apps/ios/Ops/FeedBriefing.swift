@@ -86,7 +86,7 @@ struct FeedView: View {
     @ViewBuilder private var needsYou: some View {
         if attention.count > 0 {
             VStack(alignment: .leading, spacing: 10) {
-                SectionLabel(text: AttentionCenter.label, count: attention.count)
+                SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "feed-attention-count")
                 AttentionStack(limit: 3)
                 if attention.count > 3 {
                     Button("See all \(attention.count)") { router.activityFilter = "all"; router.tab = .activity }

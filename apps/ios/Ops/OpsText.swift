@@ -15,6 +15,8 @@ enum OpsText {
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
 
         let artifacts = [
+            "(?i)^ticket\\s*#?\\s*[0-9]+\\s*:\\s*ticket\\s*#?\\s*[0-9]+\\s*",
+            "(?i)\\bstuck in processing\\s*:\\s*started\\.?",
             "(?i)\\bwas\\s*:\\s*\\.?\\s*$",
             "(?i)\\bwas\\s*:\\s*.*$",
             "(?i)\\bticket\\s*:\\s*(started|open|processing|in\\s+progress)?\\s*\\.?",
@@ -27,6 +29,7 @@ enum OpsText {
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         text = text.trimmingCharacters(in: CharacterSet(charactersIn: " .:–—-"))
+        if text.range(of: "^(started|open|processing|in progress)\\.*$", options: [.regularExpression, .caseInsensitive]) != nil { return "" }
         return text
     }
 
@@ -101,7 +104,9 @@ enum OpsText {
             )
         }
         text = text.replacingOccurrences(of: "(?i)^ticket\\s*#?\\s*[0-9]+\\s*:\\s*", with: "", options: .regularExpression)
-        return scrub(text)
+        text = scrub(text)
+        if ["remains open", "started", "open"].contains(text.lowercased()) { return "" }
+        return text
     }
 
     /// A decision's title: its explicit summary, else a clean first line of the

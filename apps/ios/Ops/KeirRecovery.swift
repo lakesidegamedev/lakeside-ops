@@ -102,7 +102,7 @@ struct OpsAttentionView: View {
                 Section(AttentionCenter.label) { AttentionStack() }.listRowBackground(Color.clear)
             }
             if ops.redPRs > 0 { Section("Failed checks") { NavigationLink("\(ops.redPRs) PRs need attention") { FailedPRsView() } } }
-            if !ops.alerts.isEmpty { Section("Recent alerts") { ForEach(ops.alerts, id: \["key"].string) { alert in
+            if !ops.alerts.isEmpty { Section("Recent alerts") { ForEach(Array(ops.alerts.enumerated()), id: \.offset) { _, alert in
                 VStack(alignment: .leading, spacing: 5) { Text(OpsText.scrub(alert["text"].string)); Text(OpsFormat.ago(alert["at"])).font(.caption).foregroundStyle(OpsTheme.muted) }
             } } }
             if AttentionCenter.shared.count == 0 && ops.redPRs == 0 && ops.alerts.isEmpty { Text("No current alerts.") }

@@ -148,7 +148,7 @@ struct AlertsPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: "Recent alerts")
-            ForEach(alerts, id: \["key"].string) { alert in
+            ForEach(Array(alerts.enumerated()), id: \.offset) { _, alert in
                 WorkRow(title: OpsText.scrub(alert["text"].string), meta: "\(alert["kind"].string.capitalized) · \(OpsFormat.ago(alert["at"]))", bar: alert["kind"].string == "incident" ? OpsTheme.warn : nil)
                 Hairline()
             }
