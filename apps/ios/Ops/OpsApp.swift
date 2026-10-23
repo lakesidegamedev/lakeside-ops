@@ -37,7 +37,6 @@ struct OpsRoot: View {
             if session.profile["mode"].string != "standalone" {
             NavigationStack { OpsHub().toolbar { settingsButton } }
                 .tabItem { Label("Ops", systemImage: "square.grid.2x2") }.tag(OpsTab.ops)
-                .badge(ops.servicesDown.count + ops.redPRs)
             }
         }
         .tint(OpsTheme.sky)

@@ -28,7 +28,11 @@ enum OpsText {
         }
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        text = text.trimmingCharacters(in: CharacterSet(charactersIn: " .:–—-"))
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: " :–—-"))
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while text.hasPrefix(".") { text.removeFirst() }
+        while text.hasSuffix("..") { text.removeLast() }
+        if text == "." { text = "" }
         if text.range(of: "^(started|open|processing|in progress)\\.*$", options: [.regularExpression, .caseInsensitive]) != nil { return "" }
         return text
     }

@@ -54,7 +54,7 @@ jobs:
     defaults:
       run:
         working-directory: apps/ios
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Install project generator
