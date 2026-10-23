@@ -98,6 +98,30 @@ test("annotating an idle fix as the prompt asks does not re-arm it; a newly idle
   await assert.rejects(finish(), /Coal price display/);
 });
 
+test("working through a card asks once for the fixes not moving, not again as the list shrinks", async (t) => {
+  const f = fixture(t);
+  f.ledger.data.statusCards = { 1577: { items: [
+    { name: "Mill output rounding", stage: "found", blocked: true, note: "Waiting on your target rate." },
+    { name: "Warehouse labels", stage: "written", blocked: true, note: "Waiting for the live turn." },
+    { name: "Port fee wording", stage: "found", blocked: true, note: "Waiting on the disputed fee." },
+  ] } };
+  const finish = () => f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Waiting on the mill rate." });
+  await assert.rejects(finish(), /Mill output rounding[\s\S]*Warehouse labels[\s\S]*Port fee wording/);
+  // The refusal asks for one fix to advance now. Advancing it must not bring
+  // the same prompt back for the two fixes the model has not reached yet.
+  f.job.state = "running";
+  f.ledger.data.statusCards[1577].items = [
+    { name: "Mill output rounding", stage: "main", blocked: false, note: "" },
+    { name: "Warehouse labels", stage: "written", blocked: true, note: "Waiting for the live turn." },
+    { name: "Port fee wording", stage: "found", blocked: true, note: "Waiting on the disputed fee." },
+  ];
+  assert.equal((await finish()).state, "waiting");
+  // A fix that stalls for the first time still asks, once.
+  f.job.state = "running";
+  f.ledger.data.statusCards[1577].items.push({ name: "Dock queue timer", stage: "found", blocked: true, note: "" });
+  await assert.rejects(finish(), /Dock queue timer/);
+});
+
 test("an answered item does not count as an idle fix", async (t) => {
   const f = fixture(t);
   f.ledger.data.statusCards = { 1577: { items: [{ name: "Steelworks made nothing", stage: "answered", blocked: false, note: "" }] } };

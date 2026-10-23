@@ -2648,17 +2648,23 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
-      // check asks once per set of idle fixes, so a genuine wait still finishes.
+      // check asks once per idle fix, so a genuine wait still finishes.
       // Keyed on names only: re-noting or re-staging an item, as the refusal
       // asks, re-armed it (replay 2026-10-19: 49 runs, median 3 refusals).
+      // Keir 5.9.9: the names already raised stay raised for the task. Keying
+      // each prompt on the whole current set made every card edit re-arm it:
+      // the refusal asks for one fix to advance, so a card of three paused
+      // fixes was refused again at two and again at one (2026-10-22, one
+      // ticket's card refused six times in an hour as its list shrank).
       if (state === "waiting" && job.kind === "ticket" && !job.codingParent && job.ticket) {
         const items = d.statusCards?.[job.ticket]?.items || [];
         const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !["done", "dismissed", "cancelled"].includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
         const idle = items.filter((i) => !["main", "confirmed", "answered"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
-        const key = hash(idle.map((i) => i.name).sort());
-        if (idle.length && job.idleItemsReview !== key) {
-          job.idleItemsReview = key; ledger.save();
-          throw new Error(`Not finished: your progress card has ${idle.length} fix${idle.length > 1 ? "es" : ""} not moving: ${idle.map((i) => `"${i.name}" (${i.blocked ? "paused" : i.stage})`).join("; ")}. A wait on one answer does not pause the others. For each one, either advance it now (investigate it, delegate_fix it, or carry its PR forward; display-only fixes need no developer), or, if it genuinely waits on something, make its card note name exactly what. Then finish again.`);
+        const raised = job.idleFixesRaised || [];
+        const fresh = idle.filter((i) => !raised.includes(i.name));
+        if (fresh.length) {
+          job.idleFixesRaised = [...new Set([...raised, ...fresh.map((i) => i.name)])].slice(-40); ledger.save();
+          throw new Error(`Not finished: your progress card has ${fresh.length} fix${fresh.length > 1 ? "es" : ""} not moving: ${fresh.map((i) => `"${i.name}" (${i.blocked ? "paused" : i.stage})`).join("; ")}. A wait on one answer does not pause the others. For each one, either advance it now (investigate it, delegate_fix it, or carry its PR forward; display-only fixes need no developer), or, if it genuinely waits on something, make its card note name exactly what. Then finish again.`);
         }
       }
       if (state === "done" && job.kind === "command" && !job.ticket) {
