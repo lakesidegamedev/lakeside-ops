@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Route support filing failures to private ops alerts once, block their repetition in player replies and cards, and suppress unchanged deployment notices across later checks.
+- File suggestions from authenticated archived ticket reports after their original Discord channel is deleted, preserving the reporter and native retry receipt.
+
 ## 5.9.9 (2026-10-23)
 
 ### For developers

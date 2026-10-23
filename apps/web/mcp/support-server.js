@@ -512,7 +512,7 @@ async function main() {
 
     registerInvestigations(server, { auth, db, z, jsonResult, errorResult });
 
-    registerCreateSuggestion(server, { auth, Intake: db.collection("agentSuggestionIntake"), z, jsonResult, errorResult });
+    registerCreateSuggestion(server, { auth, Tickets, Intake: db.collection("agentSuggestionIntake"), z, jsonResult, errorResult });
     registerCreateTicket(server, { auth, Tickets, z, jsonResult, errorResult, ticketPublicUrl });
     registerReopen(server, { auth, Tickets, TrackerItems, z, jsonResult, errorResult, ticketPublicUrl });
 
