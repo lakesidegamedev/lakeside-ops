@@ -350,3 +350,20 @@ test("tool-discovery narration is runtime talk; ordinary tool words are not", ()
   assert.equal(runtimeTalk("Check the tools menu on your corporation page."), null);
   assert.equal(runtimeTalk("I'll start by checking your mine's sales."), null);
 });
+
+test("internal filing failures are refused in player drafts and flagged privately once across paraphrases", async () => {
+ const f=fixture();
+ const drafts=["Suggestion intake still rejects your proposal, so it remains unfiled.","The original post cannot yet be linked to this reopened ticket.","Your proposal remains unfiled because the original post cannot be used."];
+ for(const text of drafts)await assert.rejects(f.broker.tool(f.job,"channel_reply",{message:text}),/internal support failure/);
+ assert.equal(f.calls.length,0);
+ assert.equal(f.ledger.data.alerts.filter(a=>a.key.startsWith("error:internal-support:")).length,1);
+ assert.equal(Object.keys(f.ledger.data.outbox).length,0,"no owner DM or player message");
+});
+
+test("unchanged deployment notices remain suppressed after the short post history expires", async () => {
+ const f=fixture();
+ await say(f,"The correction is still not live."); f.tick(5*3600000);
+ await assert.rejects(say(f,"The live game has not picked up the correction."),/already has this waiting state/);
+ f.job.lastPlayerAt=18000001;
+ await say(f,"The correction is still not live.");
+});

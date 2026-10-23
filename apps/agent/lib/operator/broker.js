@@ -467,6 +467,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     return null;
   };
   function guardPlayerRegister(job, ticketNo, text) {
+    require("./supportblockers").guard(ledger, ticketNo, text, now());
     const leak = playerLeak(text);
     if (leak) throw new Error(`Not posted: "${leak.match}" is a ${leak.kind}. Players never see paths, repositories, hosts, model or provider names or internal tools. Say what it means for them instead.`);
     const jg = JARGON.exec(String(text || ""));
@@ -480,6 +481,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   // The newest thing a human said in this ticket, across every task on it.
   const humanAt = (ticketNo) => Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => Math.max(j.observedPlayerAt || 0, j.lastPlayerAt || 0)));
   const MONOLOGUE_CAP = 3;
+  const waitingStage = ticketNo => JSON.stringify({ evidence: Object.fromEntries(Object.entries(ticketEvidence(ticketNo)).map(([k,v])=>[k,v.done])), suggestions: Object.values(d.jobs).filter(j=>ticketOf(j)===ticketNo).flatMap(j=>Object.values(j.filedSuggestions||{}).map(s=>s.number)).sort((a,b)=>a-b) });
   function guardTicketPostRules(job, ticketNo, message) {
     guardPlayerRegister(job, ticketNo, message);
     // Blocked on the owner means one notice, then silence (ticket 1514 posted
@@ -487,6 +489,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // question to the player, or a new player message, is not silence.
     const question = /\?/.test(message);
     const playerSpokeAfter = (at) => humanAt(ticketNo) > at;
+    if (!question && require("./supportblockers").unchangedWait(message)) {
+      const old = d.supportWaitingNotices?.[ticketNo];
+      if (old?.stage === waitingStage(ticketNo) && humanAt(ticketNo) <= old.humanAt)
+        throw new Error("Not posted: the player already has this waiting state. Keep working privately; post a new finding or verified milestone, not another unchanged deployment notice.");
+    }
     const pending = Object.values(d.decisions || {}).find((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo);
     if (pending) {
       const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
@@ -741,6 +748,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     return most;
   }
   function recordTicketPost(job, ticketNo, message) {
+    if (require("./supportblockers").unchangedWait(message)) {
+      (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
+    }
     if (!/^\[status card\]/.test(message)) {
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
@@ -2166,7 +2176,16 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (bytes.length > 4 * 1024 * 1024) throw new Error("image is oversized");
       return { image: { type: "base64", media_type: a.content_type, data: bytes.toString("base64") } };
     }
-    if (name === "open_suggestion") return require("./suggestionintake").openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal });
+    if (name === "open_suggestion") {
+      try { return await require("./suggestionintake").openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal }); }
+      catch (error) {
+        if (job.kind === "ticket" && !/authority is inactive|staff owns|existing support owner|coordinator owns/.test(error.message)) {
+          require("./supportblockers").report(ledger, job.ticket, error.message, now());
+          throw new Error(`${error.message}. This support failure was flagged privately to the owner. Repair the cause or raise an internal repair task; do not repeat the failure to the player.`);
+        }
+        throw error;
+      }
+    }
     // Proactive support (owner, 2026-10-19): a confirmed finding that hit a
     // specific player opens a normal bug ticket for them, so no player is the
     // first to notice and they can reply. The Discord account is resolved here
