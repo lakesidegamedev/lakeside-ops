@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- The stalled-fix refusal on finish now asks once per fix rather than once per card state. Advancing one fix, or renoting it, no longer brings the whole prompt back for the fixes not reached yet; a fix that stalls for the first time still asks once.
+
 ## 5.9.8 (2026-10-23)
 
 ### For users
