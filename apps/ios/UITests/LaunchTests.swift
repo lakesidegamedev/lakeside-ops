@@ -448,12 +448,18 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["keir-model"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["keir-model"].label.contains("Fixture model"))
         XCTAssertTrue(app.buttons["keir-activity-strip"].waitForExistence(timeout: 5))
+        // The question now lives in the needs-you stack at the top of chat, so
+        // scroll toward the top rather than relying on the old bottom placement.
+        app.swipeDown(); app.swipeDown()
         let choice = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Use filled jobs")).firstMatch
-        XCTAssertTrue(choice.waitForExistence(timeout: 5))
-        for _ in 0..<20 { if choice.isHittable { break }; usleep(250_000) }
-        if !choice.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        XCTAssertTrue(choice.isHittable); choice.tap()
-        app.buttons["keir-answer-choices"].tap()
+        XCTAssertTrue(choice.waitForExistence(timeout: 8))
+        for _ in 0..<6 where !choice.isHittable { app.swipeDown() }
+        guard choice.isHittable else { XCTFail("the structured choice is not reachable"); return }
+        choice.tap()
+        let answer = app.buttons["keir-answer-choices"]
+        for _ in 0..<6 where !answer.isHittable { app.swipeUp() }
+        guard answer.isHittable else { XCTFail("send answers is not reachable"); return }
+        answer.tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "My answer: Use filled jobs")).firstMatch.waitForExistence(timeout: 10))
         capture(app, "Structured choice and parallel work")
         let composer = app.textFields["keir-composer"].exists ? app.textFields["keir-composer"] : app.textViews["keir-composer"]
