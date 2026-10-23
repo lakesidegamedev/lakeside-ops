@@ -18,7 +18,9 @@ function fixture(t, text = "Please file a suggestion to show mine construction p
     calls.push({ server, tool, args, write }); return { filed: true, number: 42, url: "https://game.test/feedback/42", reporterId: args.discord_user_id };
   } };
   const messages = { [request]: { id: request, author: { id: developer }, content: text }, [report]: { id: report, author: { id: player }, content: "Could we show the remaining construction turns?" } };
-  const discord = async (_method, url) => url.includes("/messages/") ? messages[url.split("/").at(-1)] : { id: channel, guild_id: "guild" };
+  const discord = async (_method, url) => url.includes("/guilds/") ? [{ id: channel, name: "ticket-42" }]
+    : url.includes("/messages?") ? [messages[report]]
+    : url.includes("/messages/") ? messages[url.split("/").at(-1)] : { id: channel, guild_id: "guild" };
   const broker = createBroker({ ledger, config, appChannel: app, mcp, discord, sandbox: {} });
   return { ledger, config, app, job, calls, mcp, discord, messages, broker };
 }
@@ -73,4 +75,19 @@ test("uncertain writes are not replayed and incomplete receipts are never called
   assert.equal(attempts, 1);
   const g = fixture(t); g.mcp.call = async () => ({ filed: true, number: 42, reporterId: player });
   await assert.rejects(g.broker.tool(g.job, "open_suggestion", input), /verified native receipt/);
+});
+
+test("ticket filing through the broker accepts an abort signal without losing lifecycle checks", async t => {
+  const f = fixture(t);
+  const job = f.ledger.createJob("support-ticket", { kind: "ticket", role: "support", ticket: 42,
+    channelId: channel, source: {}, deadline: Date.now() + 60000 });
+  job.state = "running";
+  const signal = new AbortController().signal;
+  const result = await f.broker.tool(job, "open_suggestion", { ...input, reportMessageId: report }, signal);
+  assert.equal(result.reporterId, player);
+  assert.equal(f.calls[0].args.source_channel_id, channel);
+  assert.equal(f.calls[0].args.source_message_id, report);
+  job.state = "waiting";
+  await assert.rejects(f.broker.tool(job, "open_suggestion", { ...input, reportMessageId: report }, signal), /inactive/);
+  assert.equal(f.calls.length, 1);
 });
