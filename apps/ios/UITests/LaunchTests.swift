@@ -265,6 +265,29 @@ final class LaunchTests: XCTestCase {
         capture(app, "File")
     }
 
+    func testStarmerWidgetFlipsToWork() {
+        let app = launch()
+        app.tabBars.buttons["Ops"].tap()
+        XCTAssertTrue(app.staticTexts["ops-starmer-line"].waitForExistence(timeout: 15))
+        XCTAssertTrue(find(app, "Two turns ran clean").exists)
+        capture(app, "Ops widget line")
+        app.buttons["ops-starmer-flip"].tap()
+        let working = app.staticTexts["ops-starmer-working"]
+        XCTAssertTrue(working.waitForExistence(timeout: 5))
+        XCTAssertTrue(find(app, "Choose payroll behavior").waitForExistence(timeout: 5))
+        capture(app, "Ops widget working")
+    }
+
+    func testAwayRecapShowsAndDismisses() {
+        let app = launch()
+        app.tabBars.buttons["Feed"].tap()
+        XCTAssertTrue(app.buttons["recap-dismiss"].waitForExistence(timeout: 15))
+        XCTAssertTrue(find(app, "Merged PR #210").exists)
+        capture(app, "While you were away")
+        app.buttons["recap-dismiss"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "WHILE YOU WERE AWAY")).firstMatch.waitForNonExistence(timeout: 5))
+    }
+
     func testOpsSystemsDrillDowns() {
         let app = launch()
         app.tabBars.buttons["Ops"].tap()

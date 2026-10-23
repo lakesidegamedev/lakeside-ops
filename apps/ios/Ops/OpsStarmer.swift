@@ -147,10 +147,10 @@ struct StarmerWidget: View {
                 }
                 if !items.isEmpty {
                     VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { _, item in
+                        ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { pair in
                             HStack(spacing: 6) {
-                                Circle().fill(OpsStatus.from(item["state"].string).color).frame(width: 5, height: 5)
-                                Text(OpsText.workTitle(item)).font(.caption2).foregroundStyle(OpsTheme.muted).lineLimit(1)
+                                Circle().fill(OpsStatus.from(pair.element["state"].string).color).frame(width: 5, height: 5)
+                                Text(OpsText.workTitle(pair.element)).font(.caption2).foregroundStyle(OpsTheme.muted).lineLimit(1)
                             }
                         }
                     }

@@ -34,9 +34,9 @@ struct AwayRecap: View {
                 .accessibilityIdentifier("recap-dismiss")
             }
             VStack(spacing: 0) {
-                ForEach(Array(items.prefix(4).enumerated()), id: \.offset) { index, item in
-                    if index > 0 { Hairline() }
-                    row(item)
+                ForEach(Array(items.prefix(4).enumerated()), id: \.offset) { pair in
+                    if pair.offset > 0 { Hairline() }
+                    row(pair.element)
                 }
             }
             .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))

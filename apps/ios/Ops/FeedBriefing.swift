@@ -22,6 +22,7 @@ struct FeedView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26) {
                 hero
+                AwayRecap()
                 needsYou
                 whatKeirDid
                 whatsNext
