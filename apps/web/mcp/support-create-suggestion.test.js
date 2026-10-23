@@ -44,7 +44,7 @@ test("app origins require the configured owner and cannot include a Discord sour
 });
 
 test("a persisted opening report survives deleted channels and retains its reporter and retry receipt", async () => {
-  const f=fixture(), args={source_channel_id:undefined,source_message_id:undefined,source_ticket_number:42,source_ticket_message:"Please show remaining construction turns"};
+  const f=fixture(), args={source_channel_id:undefined,source_message_id:undefined,source_ticket_number:42,source_ticket_message:"Please show remaining construction turns",discord_user_id:undefined};
   const a=await f.run(args), b=await f.run(args);
   assert.equal(a.value.reporterId,user);assert.equal(b.value.duplicate,true);
   assert.equal(f.calls.filter(c=>c.url.includes("discord.com")).length,0);

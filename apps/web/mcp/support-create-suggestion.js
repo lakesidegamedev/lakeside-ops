@@ -12,7 +12,7 @@ function registerCreateSuggestion(server, { auth, Intake, Tickets, z, jsonResult
     title: z.string().trim().min(1).max(200), description: z.string().trim().min(1).max(4000),
     category: z.enum(CATEGORIES), gameSystem: z.enum(SYSTEMS),
     impact: z.string().max(500).optional(), priority: z.number().int().min(1).max(5).optional(),
-    discord_user_id: z.string().regex(snowflake),
+    discord_user_id: z.string().regex(snowflake).optional(),
     source_channel_id: z.string().regex(snowflake).optional(), source_message_id: z.string().regex(snowflake).optional(),
     source_ticket_number: z.number().int().positive().optional(), source_ticket_message: z.string().trim().min(1).max(5000).optional(),
     app_request_id: z.string().min(1).max(200).optional(),
@@ -31,7 +31,7 @@ function registerCreateSuggestion(server, { auth, Intake, Tickets, z, jsonResult
       if (input.source_ticket_number) {
         if (input.app_request_id || input.source_channel_id || input.source_message_id || !input.source_ticket_message) throw new Error("Archived ticket sources cannot be mixed with another origin");
         const ticket = await Tickets?.findOne({ ticketNumber: input.source_ticket_number });
-        if (!ticket || ticket.discordUserId !== input.discord_user_id) throw new Error("Archived ticket submitter does not match the reporter");
+        if (!ticket || !snowflake.test(ticket.discordUserId || "") || (input.discord_user_id && ticket.discordUserId !== input.discord_user_id)) throw new Error("Archived ticket submitter does not match the reporter");
         // Legacy message strings have no author witness. Only the authenticated
         // opening report and messages with an explicit matching author qualify.
         const messages = [ticket.description, ...(ticket.messages || []).filter(m => m && typeof m === "object" && m.authorId === ticket.discordUserId).map(m => m.content)].filter(x => typeof x === "string");

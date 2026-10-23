@@ -29,9 +29,9 @@ async function openSuggestion({ ledger, config, mcp, discord, effect, supportAut
     const ticket = await mcp.call("support", "support_get", { kind: "ticket", number: job.ticket }, false, signal);
     const previous = ticket.conversation?.previousChannelId;
     if (ticket.number !== job.ticket || ticket.conversation?.channelId !== job.channelId || !previous) throw new Error("Archived filing needs this ticket's verified reopen lineage");
-    const original = Object.values(ledger.data.jobs).find(j => j.kind === "ticket" && j.ticket === job.ticket && j.source?.channelId === previous && (input.archivedMessage === ticket.description || j.source?.content === input.archivedMessage) && snowflake(j.source?.authorId));
-    if (!original) throw new Error("Archived source has no preserved authenticated author");
-    args.discord_user_id = original.source.authorId;
+    if (input.archivedMessage !== ticket.description) throw new Error("Archived filing uses the authenticated original ticket description");
+    // The native intake derives and verifies the reporter from the game ticket.
+    // It must not depend on an old Keir task surviving retention or another reopen.
     args.source_ticket_number = job.ticket; args.source_ticket_message = input.archivedMessage;
     key = `suggestion:ticket:${job.ticket}:${crypto.createHash("sha256").update(input.archivedMessage).digest("hex")}`;
   } else {
@@ -55,7 +55,7 @@ async function openSuggestion({ ledger, config, mcp, discord, effect, supportAut
     key = `suggestion:discord:${channelId}:${reportId}`;
   }
   const result = await effect(job, key, () => mcp.call("support", "support_create_suggestion", args, true, signal));
-  if (result.filed !== true || !Number.isSafeInteger(result.number) || result.number <= 0 || result.reporterId !== args.discord_user_id || !result.url) throw new Error("Suggestion filing needs a verified native receipt; inspect before retrying");
+  if (result.filed !== true || !Number.isSafeInteger(result.number) || result.number <= 0 || (!args.source_ticket_number && result.reporterId !== args.discord_user_id) || !result.url || (args.source_ticket_number && (!snowflake(result.reporterId) || result.source !== key.slice("suggestion:".length)))) throw new Error("Suggestion filing needs a verified native receipt; inspect before retrying");
   (job.filedSuggestions ||= {})[key] = result; ledger.save();
   if (job.ticket) require("./supportblockers").clear(ledger, job.ticket);
   return { ...result, instruction: "Native suggestion filed for the source author. Share its feedback link. This is a proposal, not an accepted design or a shipped fix. Do not create another GitHub enhancement for the same suggestion; its native intake owns optional GitHub mirroring." };
