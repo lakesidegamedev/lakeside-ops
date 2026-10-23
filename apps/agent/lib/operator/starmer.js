@@ -20,6 +20,7 @@ const DEFAULT_ROUTE = "ollama:deepseek-v4.1-flash@low";
 
 const BRIEF = `You write one short line as Keir, the private studio operator for A House Divided.
 It appears on the owner's phone under an animated 8-bit portrait of Keir Starmer.
+Answer with the line only. Never mention tools, repositories, handoffs, steps or coding.
 Write one or two sentences, at most 240 characters, in a dry, warm, concrete voice.
 It can be about the game, a confident general fact, something pressing in the
 studio, or what you are working on. Use only the supplied facts for anything
@@ -38,13 +39,15 @@ function eastern(ms) {
 function clean(text) {
   const value = String(text == null ? "" : text)
     .replace(/[\r\n]+/g, " ")
+    // The studio voice has no em or en dashes. Convert them rather than throw
+    // away an otherwise good line the model wrote.
+    .replace(/\s*[—–]\s*/g, ", ")
     .replace(/\s+/g, " ")
     .replace(/^["'“”]+|["'“”]+$/g, "")
     .replace(/^(keir|starmer)\s*:\s*/i, "")
     .trim();
   if (!value || value.length < 20 || value.length > MAX) return null;
   if (/https?:|www\.|@everyone|@here|```/i.test(value)) return null;
-  if (/[—–]/.test(value)) return null;
   return value;
 }
 
@@ -131,11 +134,14 @@ function createStarmer({ ledger, config, app, now = () => Date.now(), generate, 
     const invoke = require("./cli-runner").invokeCli;
     const dir = path.join(stateDir || process.env.KEIR_OPERATOR_STATE_DIR || "/tmp/keir", "starmer");
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // The provider runs through an agent harness, so the instruction has to be
+    // in the prompt itself, not only in the brief file.
+    const prompt = `Write the Ops widget line now. Output only one or two sentences, at most 240 characters. Do not use any tools. Do not describe a coding task, a repository or a handoff. Use only these facts for anything about the studio: ${JSON.stringify(input)}. You may instead offer one confident general fact. No preamble, no quotation marks, no label.`;
     const result = await invoke({
       kind: "generation", runner: spec.runner, model: spec.model, effort: spec.effort, brief: BRIEF,
-      prompt: JSON.stringify(input), tools: [], url: "http://127.0.0.1:1", maxTurns: 1, maxOutputTokens: 220,
+      prompt, tools: [], url: "http://127.0.0.1:1", maxTurns: 1, maxOutputTokens: 900,
       timeoutMs: 90000, stateDir: dir,
-      job: { id: "starmer-line" }, lane: "reflection", signal: (input.signal || new AbortController().signal),
+      job: { id: "starmer-line" }, lane: "reflection", signal: new AbortController().signal,
     });
     if (result.is_error) throw new Error("starmer generation incomplete");
     const text = clean(result.result);

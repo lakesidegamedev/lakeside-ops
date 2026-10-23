@@ -68,7 +68,7 @@ test("clean rejects templates, URLs, line breaks and em dashes", () => {
   assert.equal(clean("Short."), null);
   assert.equal(clean("A quiet turn leaves room for the next question.\nAnd another line."), "A quiet turn leaves room for the next question. And another line.");
   assert.equal(clean("A quiet turn, see https://example.com for the rest of it."), null);
-  assert.equal(clean("A quiet turn leaves room — and a pause — for the next question."), null);
+  assert.equal(clean("A quiet turn leaves room — and a pause — for the next question."), "A quiet turn leaves room, and a pause, for the next question.");
   assert.equal(clean("x".repeat(241)), null);
   assert.deepEqual(route("deepseek:deepseek-flash@low"), { runner: "deepseek", model: "deepseek-flash", effort: "low" });
   assert.deepEqual(route("ollama:deepseek-v4.1-flash"), { runner: "ollama", model: "deepseek-v4.1-flash", effort: "low" });
