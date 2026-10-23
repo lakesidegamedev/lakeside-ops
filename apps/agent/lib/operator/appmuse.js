@@ -171,6 +171,43 @@ function createAppMuse({ ledger, config, app, now = () => Date.now(), drain = ()
     ledger.save();
   }
 
+  // Continuity: what happened since the owner last opened the app, so a
+  // session starts on the work that moved while they were away instead of a
+  // cold feed. The app fetches this before acknowledging, then acknowledges,
+  // so the same recap is not shown twice. It reads existing records only.
+  function recap() {
+    const t = museState(d);
+    const since = t.marks.recapAt || now() - 12 * 3600000;
+    const items = [];
+    for (const f of t.feed) {
+      if (f.at <= since) continue;
+      items.push({ id: f.id, kind: f.kind, title: f.title, detail: clip(f.body, 240), at: f.at, goal: f.goal || null, task: f.task || null, source: f.source || "keir" });
+    }
+    // Quiet owner work that never reached the feed is still a result.
+    for (const j of Object.values(d.jobs)) {
+      const at = j.updatedAt || 0;
+      if (at <= since || j.state !== "done" || j.role !== "owner" || j.appBrief) continue;
+      if (items.some((i) => i.task === j.id)) continue;
+      items.push({ id: `task:${j.id}`, kind: "task", title: clip(j.summary || j.source?.content, 140) || "Finished a task", detail: clip(j.summary, 240), at, task: j.id, source: "task" });
+    }
+    // Decisions the owner answered while away, named with their verdict.
+    for (const x of Object.values(d.decisions || {})) {
+      const at = x.answeredAt || 0;
+      if (at <= since || x.state === "pending") continue;
+      items.push({ id: `decision:${x.id}`, kind: "decision", title: clip(x.tldr || x.question, 140), detail: `${x.state} by the owner`, at, task: x.jobId || null, source: "owner" });
+    }
+    items.sort((a, b) => b.at - a.at);
+    return { since, total: items.length, items: items.slice(0, 20) };
+  }
+  // Acknowledging marks the visit; it changes no work, goal, decision or feed.
+  function ackRecap() {
+    const t = museState(d);
+    const acknowledgedAt = now();
+    t.marks.recapAt = acknowledgedAt;
+    ledger.audit("app_recap_ack", { at: acknowledgedAt }); ledger.save();
+    return { acknowledgedAt };
+  }
+
   // Approvals: everything waiting on the owner, with what it would do.
   function approvals() {
     return Object.values(d.decisions || {}).filter((x) => { const origin = require("./ownermuse-policy").origin(d, d.jobs[x.jobId]); return x.state === "pending" && (!origin.scoped || origin.valid); }).sort((a, b) => b.at - a.at).map((x) => {
@@ -323,6 +360,8 @@ function createAppMuse({ ledger, config, app, now = () => Date.now(), drain = ()
   async function route(path, method, body) {
     if (path === "/feed" && method === "GET") return { feed: feed() };
     if (path === "/feed/brief" && method === "POST") return brief("on demand");
+    if (path === "/recap" && method === "GET") return recap();
+    if (path === "/recap/ack" && method === "POST") return ackRecap();
     if (path === "/goals" && method === "GET") return { goals: goals(), cadences: Object.keys(CADENCE) };
     if (path === "/goals" && method === "POST") return addGoal(body);
     let m = /^\/goals\/([a-f0-9]{12})(?:\/(advance))?$/.exec(path);
@@ -341,7 +380,7 @@ function createAppMuse({ ledger, config, app, now = () => Date.now(), drain = ()
     return undefined;
   }
 
-  return { route, tick, toolCall, startTool, noteTool, context, feed, addFeed, goals, addGoal, updateGoal, advance, brief, approvals, upcoming, artifacts, identity, suggestedIdeas, decideSuggestion };
+  return { route, tick, toolCall, startTool, noteTool, context, feed, addFeed, goals, addGoal, updateGoal, advance, brief, recap, ackRecap, approvals, upcoming, artifacts, identity, suggestedIdeas, decideSuggestion };
 }
 
 module.exports = { createAppMuse, MUSE_TOOLS, museState, eastern };
