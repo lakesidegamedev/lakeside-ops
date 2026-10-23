@@ -268,7 +268,9 @@ final class LaunchTests: XCTestCase {
     func testStarmerWidgetFlipsToWork() {
         let app = launch()
         app.tabBars.buttons["Ops"].tap()
-        XCTAssertTrue(app.staticTexts["ops-starmer-line"].waitForExistence(timeout: 15))
+        let line = app.staticTexts["ops-starmer-line"]
+        for _ in 0..<4 where !line.exists { app.swipeUp() }
+        XCTAssertTrue(line.waitForExistence(timeout: 15))
         XCTAssertTrue(find(app, "Two turns ran clean").exists)
         capture(app, "Ops widget line")
         app.buttons["ops-starmer-flip"].tap()
@@ -281,10 +283,12 @@ final class LaunchTests: XCTestCase {
     func testAwayRecapShowsAndDismisses() {
         let app = launch()
         app.tabBars.buttons["Feed"].tap()
-        XCTAssertTrue(app.buttons["recap-dismiss"].waitForExistence(timeout: 15))
+        let dismiss = app.buttons["recap-dismiss"]
+        for _ in 0..<4 where !dismiss.exists { app.swipeUp() }
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 15))
         XCTAssertTrue(find(app, "Merged PR #210").exists)
         capture(app, "While you were away")
-        app.buttons["recap-dismiss"].tap()
+        dismiss.tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "WHILE YOU WERE AWAY")).firstMatch.waitForNonExistence(timeout: 5))
     }
 

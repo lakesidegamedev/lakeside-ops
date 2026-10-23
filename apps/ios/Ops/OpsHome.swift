@@ -19,8 +19,8 @@ struct OpsHub: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
-                StarmerWidget()
                 briefing
+                StarmerWidget()
                 needsYou
                 queues
                 systems
