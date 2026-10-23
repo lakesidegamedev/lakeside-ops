@@ -70,7 +70,7 @@ struct TicketDetail: View {
                         SectionLabel(text: "Blocking progress", count: detail["blockers"].array.count)
                         ForEach(Array(detail["blockers"].array.enumerated()), id: \.offset) { _, blocker in
                             VStack(alignment: .leading, spacing: 4) {
-                                Label(blocker["title"].string, systemImage: blocker["kind"].string == "decision" ? "person.crop.circle.badge.questionmark" : "pause.circle").font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.warn)
+                                Label(OpsText.scrub(blocker["title"].string), systemImage: blocker["kind"].string == "decision" ? "person.crop.circle.badge.questionmark" : OpsStatus.blocked.icon).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.warn)
                                 if !blocker["detail"].string.isEmpty && blocker["detail"] != blocker["title"] { Text(blocker["detail"].string).font(.callout).textSelection(.enabled) }
                             }
                         }

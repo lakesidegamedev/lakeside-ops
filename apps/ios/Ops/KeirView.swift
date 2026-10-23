@@ -313,7 +313,7 @@ struct KeirView: View {
             Spacer(minLength: 4)
             if !keir.live.isEmpty || !keir.backgroundTasks.isEmpty {
                 Button { router.tab = .activity } label: {
-                    Label(AttentionCenter.shared.count > 0 ? "\(AttentionCenter.shared.count) need you" : "\(keir.live.count + keir.backgroundTasks.count) tasks", systemImage: AttentionCenter.shared.count > 0 ? "hand.raised" : "list.bullet")
+                    Label(AttentionCenter.shared.count > 0 ? AttentionCenter.shared.shortSummary : "\(keir.live.count + keir.backgroundTasks.count) tasks", systemImage: AttentionCenter.shared.count > 0 ? "hand.raised" : "list.bullet")
                 }.accessibilityIdentifier("keir-activity-strip")
             }
             Menu {
@@ -368,7 +368,7 @@ private struct KeirEmpty: View {
     private let prompts = ["What needs my attention right now?", "How did the last turn go?", "Which PRs are waiting on me?", "Promote development to production"]
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Keir").font(.system(size: 34, weight: .bold, design: .rounded)).tracking(-1)
+            Text("Keir").font(.opsHero).tracking(-1)
             Text("Owner channel. Anything you ask here carries your authority, the same as a DM.").font(.callout).foregroundStyle(OpsTheme.muted)
             VStack(spacing: 0) {
                 ForEach(prompts, id: \.self) { prompt in

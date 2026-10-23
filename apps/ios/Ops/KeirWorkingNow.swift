@@ -57,7 +57,7 @@ struct KeirWorkingNow: View {
 
             if expanded.count > 0 {
                 VStack(spacing: 0) {
-                    ForEach(items, id: \.id) { item in
+                    ForEach(items, id: \.["id"].string) { item in
                         Hairline()
                         thread(item)
                     }

@@ -102,7 +102,7 @@ struct ProgressRing: View {
         ZStack {
             Circle().stroke(OpsTheme.raised, lineWidth: 4)
             Circle().trim(from: 0, to: max(0.001, min(1, value))).stroke(tone, style: StrokeStyle(lineWidth: 4, lineCap: .round)).rotationEffect(.degrees(-90))
-            Text("\(Int((value * 100).rounded()))").font(.system(size: 11, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text("\(Int((value * 100).rounded()))").font(.caption2.weight(.semibold).monospacedDigit())
         }.frame(width: size, height: size).accessibilityLabel("\(Int((value * 100).rounded())) percent")
     }
 }

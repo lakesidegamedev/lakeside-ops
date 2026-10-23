@@ -51,13 +51,13 @@ struct WorkTimingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 5 : 10) {
             if !value["reason"].string.isEmpty {
-                Text(value["reason"].string).font(compact ? .caption : .callout).lineLimit(compact ? 2 : nil)
+                Text(OpsText.scrub(value["reason"].string)).font(compact ? .caption : .callout).lineLimit(compact ? 2 : nil)
             }
             if !compact && !value["milestone"].string.isEmpty && value["milestone"] != value["reason"] {
-                Label(value["milestone"].string, systemImage: "flag").font(.callout)
+                Label(OpsText.scrub(value["milestone"].string), systemImage: "flag").font(.callout)
             }
             if !value["next"].string.isEmpty {
-                Text("Next: \(value["next"].string)").font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(compact ? 2 : nil)
+                Text("Next: \(OpsText.scrub(value["next"].string))").font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(compact ? 2 : nil)
             }
             HStack(spacing: 12) {
                 if value["since"] != .null { Label("Since \(OpsFormat.ago(value["since"]))", systemImage: "clock").font(.caption2) }

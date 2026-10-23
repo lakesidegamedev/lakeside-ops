@@ -53,12 +53,13 @@ struct SchedulerView: View {
             if checks.isEmpty { Text("No checks in the queue.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.vertical, 8) }
             ForEach(checks, id: \.["id"].string) { job in
                 let status = OpsStatus.from(job["state"].string)
+                let priority = job["priority"].string.isEmpty ? "" : " · \(job["priority"].string)"
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: status.icon).foregroundStyle(status.color).font(.callout).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(OpsText.scrub(job["label"].string.nonempty ?? job["preset"].string.nonempty ?? "Check"))
                             .font(.callout.weight(.semibold)).lineLimit(2)
-                        Text("\(status.title) · \(folder(job["workdir"].string))\(job["priority"].string.isEmpty ? "" : " · \(job["priority"].string)") · \(OpsFormat.ago(job["requested_at"]))")
+                        Text("\(status.title) · \(folder(job["workdir"].string))\(priority) · \(OpsFormat.ago(job["requested_at"]))")
                             .font(.caption).foregroundStyle(OpsTheme.muted)
                     }
                     Spacer(minLength: 0)

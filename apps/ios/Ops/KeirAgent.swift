@@ -230,7 +230,7 @@ struct TaskDetail: View {
                     if task["timing"] != .null { WorkTimingView(value: task["timing"]) }
                     if task["attention"] != .null {
                         VStack(alignment: .leading, spacing: 10) {
-                            Label(task["attention"]["title"].string, systemImage: "arrow.turn.down.right").font(.headline)
+                            Label(OpsText.scrub(task["attention"]["title"].string), systemImage: OpsStatus.waiting.icon).font(.headline)
                             Text(task["attention"]["detail"].string).font(.callout).foregroundStyle(OpsTheme.muted)
                             if task["attention"]["action"].string == "retry", task["canRetry"].bool {
                                 Button("Retry with current Keir") { act("retry") }.buttonStyle(.borderedProminent).disabled(busy).accessibilityIdentifier("task-unblock")
