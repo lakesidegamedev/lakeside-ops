@@ -16,6 +16,27 @@ The app talks only to `ops.lakesidegames.net` with the signed-in staff session.
 Credentials stay in the device Keychain, requests are pinned to HTTPS and never
 follow redirects. Access is restricted server-side.
 
+## 2.4.0
+
+- The app answers three questions at a glance: what needs you, what Keir is
+  doing now, and what is broken. One attention model supplies the count and the
+  "Needs you" label on every screen.
+- Feed is a live briefing: one hero answer, a needs-you stack with inline
+  approve, reject and reply, then what Keir did and what is next.
+- Keir's queue names the current ticket, its elapsed time and the queue depth,
+  and expands into one collapsible thread per ticket instead of a flat log.
+- Ops is one health and queue surface with drill-downs for the scheduler,
+  security posture, pull requests, worktrees and agents, world simulations,
+  backups and database health, and event recovery. The per-service uptime
+  catalogue is gone.
+- A single status vocabulary (running, waiting on you, blocked, done, failed)
+  replaces the mixed play, pause and arrow icons.
+- Status headlines are composed from structured ticket data; template prose and
+  empty fields can no longer appear as a status line.
+- Ideas support swipe to start or dismiss and show a one-line reason.
+- Autonomy mode is a visible banner that spells out what it allows and turns
+  off in one tap.
+
 ## 2.3.1 beta patch
 
 - Compact chat with Ask-style working shimmer and a persistent toolbar stop/start.

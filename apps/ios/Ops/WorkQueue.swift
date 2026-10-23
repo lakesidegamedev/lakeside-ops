@@ -26,11 +26,16 @@ enum WorkQueuePresentation {
     }
     static func label(_ item: JSONValue) -> String {
         let s = state(item)
-        if item["timing"]["overdue"].bool && !["stuck", "unassigned", "needs-you"].contains(s) { return "Review overdue" }
-        return ["working": "Working", "waiting": "Waiting", "queued": "Queued", "held": "Held by owner", "stuck": "Stuck", "unassigned": "Unassigned", "needs-you": "Needs your decision", "finished": "Finished"][s] ?? s.capitalized
+        if item["timing"]["overdue"].bool && !["stuck", "unassigned", "needs-you"].contains(s) { return "Overdue" }
+        return ["working": "Running", "waiting": "Queued", "queued": "Queued", "held": "Held", "stuck": "Blocked", "unassigned": "Unassigned", "needs-you": "Needs you", "finished": "Done"][s] ?? OpsStatus.from(s).title
+    }
+    static func status(_ item: JSONValue) -> OpsStatus {
+        if item["timing"]["overdue"].bool { return .blocked }
+        return OpsStatus.from(state(item))
     }
     static func color(_ item: JSONValue) -> Color {
-        rank(item) < 2 ? OpsTheme.warn : state(item) == "working" ? OpsTheme.mint : OpsTheme.muted
+        if state(item) == "unassigned" { return OpsTheme.muted }
+        return status(item).color
     }
 }
 
@@ -46,13 +51,13 @@ struct WorkTimingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 5 : 10) {
             if !value["reason"].string.isEmpty {
-                Text(value["reason"].string).font(compact ? .caption : .callout).lineLimit(compact ? 2 : nil)
+                Text(OpsText.scrub(value["reason"].string)).font(compact ? .caption : .callout).lineLimit(compact ? 2 : nil)
             }
             if !compact && !value["milestone"].string.isEmpty && value["milestone"] != value["reason"] {
-                Label(value["milestone"].string, systemImage: "flag").font(.callout)
+                Label(OpsText.scrub(value["milestone"].string), systemImage: "flag").font(.callout)
             }
             if !value["next"].string.isEmpty {
-                Text("Next: \(value["next"].string)").font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(compact ? 2 : nil)
+                Text("Next: \(OpsText.scrub(value["next"].string))").font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(compact ? 2 : nil)
             }
             HStack(spacing: 12) {
                 if value["since"] != .null { Label("Since \(OpsFormat.ago(value["since"]))", systemImage: "clock").font(.caption2) }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct KeirPresence: View {
-    enum State: String { case ready = "Ready", listening = "Listening", thinking = "Thinking", working = "Working", approval = "Needs you", speaking = "Speaking", stopped = "Stopped", offline = "Reconnecting" }
+    enum State: String { case ready = "Ready", listening = "Listening", thinking = "Thinking", working = "Working", approval = "Your turn", speaking = "Speaking", stopped = "Stopped", offline = "Reconnecting" }
     let state: State
     let level: Double
     @Environment(\.accessibilityReduceMotion) private var reduced
