@@ -75,7 +75,6 @@ const MCP_READS = {
   support: ["support_get", "support_list", "support_search"],
   "ops-knowledge": ["knowledge_get", "knowledge_query", "code_search", "code_read", "code_exact", "kanban_brief", "kanban_list", "kanban_get"],
   engine: ["engine_health", "economy_pulse", "recent_turns"],
-  railway: ["railway_status", "railway_deployments", "railway_logs"],
   turndiag: ["turn_phase_timings", "phase_history", "phase_regressions", "turn_anomalies", "lock_status"],
   "heal-ops": ["heal_list", "heal_detect", "heal_history", "heal_verify", "heal_query", "heal_count", "heal_status"],
   community: ["community_search"],
@@ -103,7 +102,7 @@ function guard(ledger, config, job, name, input) {
     return p;
   }
   if (name === "ticket_record" && input.op === "read") return p;
-  if (name === "github" && ["status", "where", "ci_failures", "ci_runs", "issues", "watch", "history"].includes(input.action)) return p;
+  if (name === "github" && ["status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history"].includes(input.action)) return p;
   if (name === "computer" && input.action === "look" && job.appBrowserId && !input.url && !input.html) return p;
   if (name === "sentry" && ["issues", "issue"].includes(input.action)) return p;
   // Retain conversation and inspection for legacy jobs without promoting them.

@@ -1,16 +1,47 @@
 // Unit tests for seed-audit-server.js — mock Db only, never touches MONGODB_URI.
 // Run: node --test mcp/seed-audit-server.test.js
-const { describe, it } = require("node:test");
+const { describe, it, before, after } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+// The audit's lists come from the game repo, not from a hand-typed copy, so
+// the tests point the server at a fixture artifact.
+const FIXTURE = {
+  schemaVersion: 1,
+  generatedAt: "2026-01-01T00:00:00.000Z",
+  source: { repo: "AHDGame", commit: "fixture", branch: "fixture" },
+  corporationTypes: ["financial", "media", "manufacturing", "energy", "extraction"],
+  forexActiveCountries: ["US", "UK", "DE", "AT"],
+  presets: {
+    "1953-default": {
+      player: ["US", "UK", "RU"],
+      econ: ["DE", "AT", "FR"],
+      npp: ["ES"],
+      latent: ["UKR"],
+    },
+  },
+};
+
+const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "seed-audit-ref-"));
+const fixturePath = path.join(fixtureDir, "seed-audit-reference.json");
+fs.writeFileSync(fixturePath, JSON.stringify(FIXTURE), "utf8");
+process.env.SEED_AUDIT_REFERENCE_PATH = fixturePath;
+
+const { seedTruth, resetSeedTruth } = require("./seed-audit-reference");
 const {
-  CORPORATION_TYPES,
-  PRESET_COUNTRIES,
   resolveGameDbName,
   auditState,
   auditCountry,
   auditEra,
   checkDuplicates,
 } = require("./seed-audit-server");
+
+const { corporationTypes: CORPORATION_TYPES, presetCountries: PRESET_COUNTRIES } = seedTruth();
+
+before(() => resetSeedTruth());
+after(() => fs.rmSync(fixtureDir, { recursive: true, force: true }));
 
 function makeCursor(docs) {
   return {
@@ -276,6 +307,61 @@ describe("auditEra", () => {
   it("1953-default roster includes RU and US", () => {
     assert.ok(PRESET_COUNTRIES["1953-default"].includes("RU"));
     assert.ok(PRESET_COUNTRIES["1953-default"].includes("US"));
+  });
+
+  it("the roster comes from the game artifact, not a hand-typed copy", () => {
+    // AT is economy-only in the fixture; the game added AT to the 1953 roster
+    // after the old hand-typed mirror was taken.
+    assert.ok(PRESET_COUNTRIES["1953-default"].includes("AT"));
+    assert.ok(!PRESET_COUNTRIES["1953-default"].includes("UKR"), "latent countries are not in the audited roster");
+  });
+
+  it("a missing reference artifact stops the audit instead of passing it", async () => {
+    const missing = path.join(fixtureDir, "not-here.json");
+    const previous = process.env.SEED_AUDIT_REFERENCE_PATH;
+    process.env.SEED_AUDIT_REFERENCE_PATH = missing;
+    resetSeedTruth();
+    try {
+      const r = await auditState(createMockDb({}), "BEL");
+      assert.ok(r.error, "the audit must refuse rather than report nothing missing");
+      assert.match(r.error, /not readable/);
+      const era = await auditEra(createMockDb({}), "1953-default");
+      assert.ok(era.error);
+    } finally {
+      process.env.SEED_AUDIT_REFERENCE_PATH = previous;
+      resetSeedTruth();
+    }
+  });
+
+  it("a country the game added to its forex list has its central bank checked", async () => {
+    // The old mirror listed 13 forex-active countries and the game has 18, so
+    // AT's central bank was never checked at all.
+    const db = createMockDb({
+      federalBudget: [{ _id: "AT", countryId: "AT" }],
+      centralBanks: [],
+      countryState: [{ _id: "AT" }],
+      countryGameStates: [{ _id: "AT" }],
+      politicalParties: [],
+      electedOfficials: [],
+      enactedLaws: [],
+      states: [],
+    });
+    const r = await auditCountry(db, "AT", "econ-only");
+    assert.ok(r.countryGaps.includes("centralBanks"), "AT is forex-active in the game, so its central bank is expected");
+  });
+
+  it("an unconfigured reference path stops the audit too", async () => {
+    const previous = process.env.SEED_AUDIT_REFERENCE_PATH;
+    delete process.env.SEED_AUDIT_REFERENCE_PATH;
+    resetSeedTruth();
+    try {
+      const r = await auditState(createMockDb({}), "BEL");
+      assert.ok(r.error);
+      assert.match(r.error, /not configured/);
+    } finally {
+      process.env.SEED_AUDIT_REFERENCE_PATH = previous;
+      resetSeedTruth();
+    }
   });
 });
 

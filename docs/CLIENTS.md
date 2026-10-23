@@ -176,8 +176,14 @@ The Home Screen widget launches chat, voice, activity or controls; it does not c
 to display a live server snapshot. Notification approval actions retain device
 unlock requirements. Independent installations need their own Apple push configuration.
 
-A studio host can publish the canonical portal independently of its dashboard
-release: copy `apps/web/portal/public/*` into an immutable directory under
+In the studio deployment the ops dashboard release serves the canonical portal
+itself: `/keir/app`, `/portal.js`, `/portal.css` and `/api/portal/config` come
+from `apps/web/portal` in the same release and use the same SSO session as
+`/keir`. The Keir hub opens the chat and the chat links back to Ops, so there is
+no separate `/opt/keir/portal` release or Caddy import to keep in sync.
+
+An independent studio host that wants to publish the portal separately can still
+copy `apps/web/portal/public/*` into an immutable directory under
 `/opt/keir/portal`, add a public `config.json` containing `mode`, `auth` and the
 configured HTTPS `loginOrigins`, and point `/opt/keir/portal/current` to it.
 Import `apps/web/deploy/caddy/keir-portal.caddy` inside the existing Ops site.

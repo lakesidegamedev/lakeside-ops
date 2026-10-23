@@ -11,6 +11,20 @@ One repository, two deployment modes:
 | Standalone | Keir conversations, project investigation, task history and cancellation | Your installation's local owner account |
 | Lakeside | Studio dashboard, support desk and configured game services | Existing studio auth and role checks |
 
+The studio runs two surfaces on the same identity broker:
+
+| Surface | Home | Scope |
+| --- | --- | --- |
+| Ops | this repository, `ops.lakesidegames.net` | Game operations: tickets, kanban, Keir, scheduler, reports, deploys |
+| Fleet console | private `lakesidegamedev/lakeside-platform`, `console.lakesidegames.net` | Both boxes: hosts, containers, services, databases, logs, deploys and audited actions |
+
+The console stays in its private repository because it contains host paths,
+SSH interlinks, allowlists and action endpoints that do not belong in this
+public repository. The surfaces link to each other from their sidebars and use
+the same `lakeside-auth` broker, but remain separately deployable. A config
+`externalLinks` entry in the `Platform` group adds the fleet console to this
+sidebar.
+
 Standalone is the default for a new installation. It does not start Lakeside
 services, load their routes, connect to their databases, or require Lakeside SSO.
 The desktop client opens the Keir agent workspace, not the studio dashboard.

@@ -1,5 +1,8 @@
 "use strict";
 const { GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
+// Minutes between checks for a task waiting with nothing subscribed and no
+// reply owed: the first is a normal look, then it settles into a slow recheck.
+const QUIET_WAITS = [15, 30, 60, 120];
 const { createDelegation, childTools } = require("./delegation");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
@@ -23,7 +26,7 @@ const authority = require("./authority");
 const musePolicy = require("./ownermuse-policy");
 const chain = require("./chain");
 const issues = require("./issues");
-const { verifyLiveFix } = require("./livefix");
+const { verifyLiveFix: verifyLiveFixWith, liveDeployment: liveDeploymentWith, probeWith } = require("./livefix");
 const { createSurge } = require("./surge");
 const { pendingHandoffs, parkedOnHandoffs } = require("./developerwatch");
 const { isAppJob } = require("./appchannel");
@@ -48,7 +51,6 @@ const SUPPORT_READS = {
   // hours. Guarded below: prod only, game collections only, no secret fields.
   "heal-ops": ["heal_query", "heal_count", "heal_collections"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  railway: ["railway_status", "railway_deployments"],
   turndiag: ["turn_phase_timings", "phase_history", "lock_status"],
   // Corporation and sector traces are the same public game data the corp pages
   // show; without them ticket tasks asked players for screenshots of their own
@@ -73,6 +75,18 @@ function redactRaw(value, depth = 0) {
   if (depth > 12 || !value || typeof value !== "object") return value;
   if (Array.isArray(value)) return value.map((x) => redactRaw(x, depth + 1));
   return Object.fromEntries(Object.entries(value).filter(([k]) => !RAW_FIELD_CLOSED.test(k)).map(([k, x]) => [k, redactRaw(x, depth + 1)]));
+}
+function oidFilter(filter) {
+  const out = {}, match = [];
+  for (const [k, v] of Object.entries(filter)) {
+    const id = v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" ? v.$oid : null;
+    if (id && !k.startsWith("$")) match.push({ $eq: [{ $toString: "$" + k }, id] });
+    else out[k] = v;
+  }
+  if (!match.length) return filter;
+  const all = out.$expr ? [out.$expr, ...match] : match;
+  out.$expr = all.length === 1 ? all[0] : { $and: all };
+  return out;
 }
 function rawReadArgs(tool, args) {
   if (tool === "heal_collections") return { env: "prod" };
@@ -99,13 +113,12 @@ const FINDING_READS = {
   "heal-ops": ["heal_list", "heal_detect", ...SUPPORT_READS["heal-ops"]],
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
   gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"].includes(n)), "invariant_check"],
-  engine: SUPPORT_READS.engine, railway: SUPPORT_READS.railway,
+  engine: SUPPORT_READS.engine,
   "ops-knowledge": SUPPORT_READS["ops-knowledge"],
 };
 const QUICK_OWNER_READS = { ...SUPPORT_READS,
   "ops-knowledge": musePolicy.MCP_READS["ops-knowledge"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  railway: ["railway_status", "railway_deployments", "railway_logs"],
   turndiag: ["turn_phase_timings", "phase_history", "phase_regressions", "turn_anomalies", "lock_status"],
 };
 const gameKnowledge = knowledge.gameKnowledge;
@@ -243,6 +256,9 @@ function publicPatchLeak(patch) {
 // A schema rejection before execution repeats identically until the adapter
 // changes, which needs a restart. Rejections older than this process may retry.
 const STARTED_AT = Date.now();
+// Measured on the seven-hour Railway loop: paraphrased repeats scored 0.41 to
+// 0.79 against an earlier reply, unrelated app replies 0.05 or less.
+const APP_REPEAT_SIMILARITY = 0.35;
 const words = (t) => new Set(String(t || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2));
 function similarity(a, b) {
   const x = words(a), y = words(b);
@@ -252,6 +268,10 @@ function similarity(a, b) {
 }
 function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
   const d = ledger.data;
+  // Deployed-commit probes run through the broker's own exec, like gh.
+  const probe = probeWith(exec);
+  const verifyLiveFix = (args) => verifyLiveFixWith({ probe, ...args });
+  const liveDeployment = (args) => liveDeploymentWith({ probe, ...args });
   const supportDirectives = createSupportDirectives({ledger, config, mcp, discord, now});
   const delegation = createDelegation({ ledger, sandbox, config, now });
   const surge = createSurge({ ledger, mcp, discord, config, now, ...(config.jevAsk ? { ask: config.jevAsk } : {}) });
@@ -449,7 +469,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (screen.labels.length || screen.refuse) ledger.audit("post_screened", { job: job.id, ticket: ticketNo, labels: screen.labels, refused: Boolean(screen.refuse), model: screen.model });
       if (screen.refuse) throw Object.assign(new Error(screen.refuse), { screened: true });
     } catch (e) { if (e.screened) throw e; }
-    await ensureDisclosure(ticketNo);
+    if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
   }
   // Keir 4.0 phase 1: the player register, checked in code. Paths,
   // repositories, model names and Keir's own runtime never reach a player
@@ -462,6 +482,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     return null;
   };
   function guardPlayerRegister(job, ticketNo, text) {
+    require("./supportblockers").guard(ledger, ticketNo, text, now());
     const leak = playerLeak(text);
     if (leak) throw new Error(`Not posted: "${leak.match}" is a ${leak.kind}. Players never see paths, repositories, hosts, model or provider names or internal tools. Say what it means for them instead.`);
     const jg = JARGON.exec(String(text || ""));
@@ -475,13 +496,20 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   // The newest thing a human said in this ticket, across every task on it.
   const humanAt = (ticketNo) => Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => Math.max(j.observedPlayerAt || 0, j.lastPlayerAt || 0)));
   const MONOLOGUE_CAP = 3;
+  const waitingStage = ticketNo => JSON.stringify({ evidence: Object.fromEntries(Object.entries(ticketEvidence(ticketNo)).map(([k,v])=>[k,v.done])), suggestions: Object.values(d.jobs).filter(j=>ticketOf(j)===ticketNo).flatMap(j=>Object.values(j.filedSuggestions||{}).map(s=>s.number)).sort((a,b)=>a-b) });
   function guardTicketPostRules(job, ticketNo, message) {
+    require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
     // Blocked on the owner means one notice, then silence (ticket 1514 posted
     // "still waiting on your call" three times in four hours). A direct
     // question to the player, or a new player message, is not silence.
     const question = /\?/.test(message);
     const playerSpokeAfter = (at) => humanAt(ticketNo) > at;
+    if (!question && require("./supportblockers").unchangedWait(message)) {
+      const old = d.supportWaitingNotices?.[ticketNo];
+      if (old?.stage === waitingStage(ticketNo) && humanAt(ticketNo) <= old.humanAt)
+        throw new Error("Not posted: the player already has this waiting state. Keep working privately; post a new finding or verified milestone, not another unchanged deployment notice.");
+    }
     const pending = Object.values(d.decisions || {}).find((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo);
     if (pending) {
       const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
@@ -533,6 +561,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     try {
       let text = publicText(job.summary.replace(/[\u2013\u2014]/g, ","));
       const ticketNo = ticketOf(job);
+      require("./advicerouting").guard(job, d, text);
       // Keir 5.6: a finish summary that narrates Keir's own bookkeeping ("no
       // further post needed", "already answered in the source channel") is an
       // internal note, not a reply. It leaked into ticket 1575 on 2026-10-16.
@@ -736,6 +765,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     return most;
   }
   function recordTicketPost(job, ticketNo, message) {
+    if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
+    if (require("./supportblockers").unchangedWait(message)) {
+      (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
+    }
     if (!/^\[status card\]/.test(message)) {
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
@@ -1337,6 +1370,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
       if (require("./toolmarkup").leaked(input.message)) throw new Error("This message contains tool-call markup. Call the tool through the tool interface instead of writing it out, then reply with the result.");
       let message = publicText(input.message);
+      require("./advicerouting").guard(job, d, message);
       if (/^(?:i['’]m on it|on it|looking into it|will do)[.!]*$/i.test(message.trim())) return { skipped: "generic acknowledgment suppressed; use progress_update with a specific line" };
       const ticketNo = job.ticket || ticketNumberOf(job.source?.channelName);
       if (ticketNo) message = shapeTicketPost(message); // short, in paragraphs, or refused
@@ -1370,6 +1404,19 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           return { published: true, attachedToTicket: ticketNo, delivery: result.delivery?.status || "submitted" };
         }
       }
+      // Owner, 2026-10-23: a waiting app task re-posted the same "Railway is
+      // still unverified" answer on every 15-minute wake for seven hours. With
+      // no new owner message since its last reply, a near-repeat of any of its
+      // last five replies is not posted.
+      if (job.replyChannel === "app" && !ticketNo) {
+        const sent = job.appReplies || [], lastAt = sent.at(-1)?.at || 0;
+        const asked = [...(job.requestInbox || []), ...(job.inbox || [])].some((s) => (Date.parse(s?.at) || 0) > lastAt);
+        if (sent.length && !asked && sent.some((r) => similarity(r.text, message) >= APP_REPEAT_SIMILARITY)) {
+          job.appRepeats = (job.appRepeats || 0) + 1; ledger.save();
+          return { skipped: "Nothing materially new since your last reply in this conversation, so it was not posted. Checkpoint or finish; reply again only when something changed or the owner asks." };
+        }
+        job.appReplies = [...sent, { at: now(), text: message.slice(0, 2000) }].slice(-5); job.appRepeats = 0; job.lastPublishedAt = now();
+      }
       const key = `channel-reply:${job.id}:${hash(message)}`;
       if (ticketNo) recordTicketPost(job, ticketNo, message);
       ledger.notify(key, `channel:${job.id}`, message);
@@ -1385,6 +1432,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }
     if (name === "read_tool") {
       const args = { ...(input.args || {}) };
+      // knowledge_query takes `text`; models reach for query or question, and
+      // every such read failed schema validation (2026-10-23 DeepSeek trace).
+      if (input.server === "ops-knowledge" && input.tool === "knowledge_query" && args.text === undefined) {
+        const alias = ["query", "question", "q"].find((k) => typeof args[k] === "string");
+        if (alias) { args.text = args[alias]; delete args[alias]; }
+      }
+      // heal-ops passes filters through verbatim, so {"$oid": id} is an unknown
+      // operator. Match the id as text instead: ids are stored both ways.
+      if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool) && args.filter && typeof args.filter === "object") args.filter = oidFilter(args.filter);
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
       if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
@@ -1446,12 +1502,21 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if (!scope.ticket || args.kind !== "ticket" || args.number !== scope.ticket) throw new Error("read the assigned ticket only");
         } else if (input.server === "support") {
           // Intake needs summaries for deduplication, never other players' transcripts.
-          const rows = await mcp.call(input.server, input.tool, { ...args, openOnly: true, limit: 60 }, false, signal);
+          // support_search caps limit at 40; 60 failed every search (2026-10-23).
+          const rows = await mcp.call(input.server, input.tool, { ...args, openOnly: true, limit: input.tool === "support_search" ? 40 : 60 }, false, signal);
           const items = rows.items || rows.results || [];
           return items.map((r) => ({ number: r.number, category: r.category, status: r.status })).slice(0, 60);
         }
       }
-      const result = await mcp.call(input.server, input.tool, args, false, signal);
+      let result;
+      try { result = await mcp.call(input.server, input.tool, args, false, signal); }
+      catch (error) {
+        // A schema rejection with the schema attached is fixable in one retry;
+        // without it models guessed argument names until the step limit.
+        if (!/-32602|Input validation error/.test(String(error.message))) throw error;
+        const schema = await mcp.list(input.server, signal).then((list) => list.find((t) => t.name === input.tool)?.inputSchema).catch(() => null);
+        throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
+      }
       if (signal?.aborted && input.server === "ops-knowledge" && input.tool.startsWith("knowledge_")) throw new Error("knowledge read cancelled");
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool)) return redactRaw(result);
       if (job.role === "player" && input.server === "support") {
@@ -1549,7 +1614,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const fix = Number(input.fix);
         if (!fix) throw new Error("give fix: the merged AHDGame PR that fixed it");
         const gh = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000 }) || "null");
-        const verified = await verifyLiveFix({ api: gh, mcp, number: fix, signal });
+        const verified = await verifyLiveFix({ api: gh, number: fix, signal });
         if (!verified.live) return { resolved: false, reason: verified.reason || "the fix is not live for players yet" };
         const links = d.sentryLinks?.[input.id] || [];
         if (!links.includes(fix) && !links.some((n) => new RegExp(`\\b(?:refs?|fix(?:e[sd])?|close[sd]?|resolve[sd]?)\\s+#${n}\\b`, "i").test(verified.pr.body || "")) && !new RegExp(`https://[^\\s]*sentry[^\\s]*/issues/${input.id}(?:/|\\b)`, "i").test(verified.pr.body || "")) return { resolved: false, reason: "link this Sentry issue to its GitHub fix with sentry note before resolving" };
@@ -1561,7 +1626,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       throw new Error("action must be issues, issue, note or resolve");
     }
     if (name === "github") {
-      const readOnly = ["status", "where", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue"].includes(input.action);
+      const readOnly = ["status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue"].includes(input.action);
       // A ticket can span the game and the desktop client (1514 does); an
       // explicit repository wins over the task's default.
       if (input.repository && !["AHDGame", "AHDClient"].includes(input.repository)) throw new Error("repository must be AHDGame or AHDClient");
@@ -1854,8 +1919,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // body, or Keir's own issues for the ticket that opened it) once the fix
       // is live for players. Turn code needs turn-worker/production too.
       async function closeFixedIssues(prNumber, only = null) {
-        const verified = await verifyLiveFix({ api, mcp, number: prNumber, signal });
+        const verified = await verifyLiveFix({ api, number: prNumber, signal });
         if (!verified.live) return { closed: [], live: false };
+        if (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)
+          return { closed: [], live: true, closureHeld: true };
         const { pr, files } = verified;
         const turn = files.some((f) => ECONOMY_PATHS.test(f) || blast.WORKER_PATHS.test(f));
         const referenced = [...String(pr.body || "").matchAll(/\b(?:refs?|close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+((?:#\d+(?:,\s*)?)+)/gi)].flatMap((m) => [...m[1].matchAll(/#(\d+)/g)].map((x) => Number(x[1])));
@@ -1870,7 +1937,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if (!issue || issue.pull_request || issue.state !== "open") continue;
           // A partial fix keeps its issue open (the repo labels those).
           if ((issue.labels || []).some((l) => /status: partial/i.test(l.name || l))) continue;
-          await effect(job, `close-issue:${number}:${prNumber}`, async () => {
+          // A reopened issue must not reuse a receipt from its prior closure.
+          const generation = issue.updated_at || issue.created_at || "initial";
+          await effect(job, `close-issue:${number}:${prNumber}:${generation}`, async () => {
             await api(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}`]);
             return api(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]);
           });
@@ -1891,8 +1960,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         for (const b of ["main", "turn-worker/production"]) {
           try { const c = await api([`repos/${repo}/compare/${encodeURIComponent(b)}...${pr.merge_commit_sha}`]); where[b] = ["behind", "identical"].includes(c.status); } catch { where[b] = null; }
         }
-        const { closed } = await closeFixedIssues(fix, number);
+        const { closed, closureHeld } = await closeFixedIssues(fix, number);
+        if (closureHeld) return { closed: false, issue: number, fix, closureHeld: true, reason: "Issue closure is held by the ticket's explicit owner follow-up. Keep the verified live result and wait for the required outcome evidence." };
         return closed.length ? { closed: true, issue: number, fix } : { closed: false, issue: number, fix, where, reason: "the fix is not live for players yet, the issue is already closed, or it is marked partial. Check again with where after the promotion." };
+      }
+      if (input.action === "deployed") {
+        // The commits production actually runs, from the US box, plus site health.
+        if (desktop) throw new Error("Desktop fixes ship as client releases; deployed covers the game servers only.");
+        const live = await liveDeployment({ api, signal });
+        return { ...live, meaning: "web = commit the main server serves; worker = commit the turn worker runs. A fix is live when its merge commit is an ancestor of the running commit (github where on the PR closes its issues once it is, unless an explicit owner verification hold applies). A null sha means unknown: do not claim anything is live." };
       }
       if (input.action === "where") {
         // Where a change actually is. Turn code reaches players only when
@@ -1904,13 +1980,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         for (const b of branches) {
           try { const c = await api([`repos/${repo}/compare/${encodeURIComponent(b)}...${sha}`]); out[b] = ["behind", "identical"].includes(c.status); } catch { out[b] = null; }
         }
-        out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = web live after its Railway deploy finishes; turn-worker/production = turn processing live. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. turn-worker/sandbox containing it means the sandbox turn worker has been released it (the staging deploy follows within minutes).";
+        out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = merged for web; it is live once github deployed shows the main server running a commit that contains it. turn-worker/production = turn processing source; it is live once github deployed shows the turn worker running it. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. turn-worker/sandbox containing it means the sandbox turn worker has been released it (the staging deploy follows within minutes).";
         // Release claims in ticket copy are checked against these receipts.
         (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, sandboxWorker: out["turn-worker/sandbox"] === true };
         ledger.save();
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
-          const { closed, live } = await closeFixedIssues(Number(input.number));
+          const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));
           out.fixLive = live;
+          if (closureHeld) out.issueClosureHeld = true;
           if (closed.length) out.issuesClosed = closed;
         }
         return out;
@@ -1992,7 +2069,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         let pr = (await api([`repos/${repo}/pulls?state=open&base=${to}&head=${GITHUB_OWNER}:${from}`]))[0];
         if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => api(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}`]));
         const result = await mergeWhenGreen(pr.number, "merge", to);
-        return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Check the staging Railway deploy, then promote to main." : "Check the production Railway deploy is live and tell the requester.") : result.nextMove };
+        return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Promote to main once staging looks right." : "Check with github deployed that the main server (and the turn worker for turn code) runs the new commit, then tell the requester.") : result.nextMove };
       }
       throw new Error("action must be status, merge or promote");
     }
@@ -2058,6 +2135,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return { posted: true, description: rendered.description, rows: rendered.rows };
     }
     if (name === "status_card") {
+      if (require("./advicerouting").requiresRedirect(job, d)) throw new Error(`Advice requests need a short redirect to Ask, not an investigation card: ${require("./advicerouting").REPLY}`);
       const ticketNo = ticketOf(job);
       if (!ticketNo) throw new Error("status cards are for ticket tasks; use progress_update elsewhere");
       // A mechanics question gets an answer, not a fix-progress card ("Cause
@@ -2087,6 +2165,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (name === "progress_update") {
       if (!job.replyChannel) return { skipped: "no channel for this task; just do the work" };
       const message = publicText(input.message);
+      require("./advicerouting").guard(job, d, message);
       if ((job.ticket || ticketNumberOf(job.source?.channelName)) && TECHNICAL.test(message)) throw new Error("This status line is in a player's ticket: keep it plain, no PRs, CI, merges or code.");
       const statusTicket = ticketOf(job);
       if (statusTicket || job.role === "player") guardPlayerRegister(job, statusTicket, message);
@@ -2169,7 +2248,16 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (bytes.length > 4 * 1024 * 1024) throw new Error("image is oversized");
       return { image: { type: "base64", media_type: a.content_type, data: bytes.toString("base64") } };
     }
-    if (name === "open_suggestion") return require("./suggestionintake").openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal });
+    if (name === "open_suggestion") {
+      try { return await require("./suggestionintake").openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal }); }
+      catch (error) {
+        if (job.kind === "ticket" && !/authority is inactive|staff owns|existing support owner|coordinator owns/.test(error.message)) {
+          require("./supportblockers").report(ledger, job.ticket, error.message, now());
+          throw new Error(`${error.message}. This support failure was flagged privately to the owner. Repair the cause or raise an internal repair task; do not repeat the failure to the player.`);
+        }
+        throw error;
+      }
+    }
     // Proactive support (owner, 2026-10-19): a confirmed finding that hit a
     // specific player opens a normal bug ticket for them, so no player is the
     // first to notice and they can reply. The Discord account is resolved here
@@ -2346,6 +2434,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         throw new Error("terminal statuses require a resolution receipt");
       }
       if (input.tool === "support_resolve") {
+        require("./advicerouting").guardResolution(job, d, args);
         const recent = rows.filter((m) => !m.author.bot).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1).at(-1);
         if (recent && Date.parse(recent.timestamp) > (job.observedPlayerAt || job.lastPlayerAt || 0)) throw new Error("new player reply must be investigated before closure");
         // Keir 4.1.10 (owner, ticket 1542): a question or a call for staff
@@ -2700,18 +2789,35 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (state === "waiting" && input.waitFor === "developer_reply" && openCards.length && openCards.every((r) => r.selfOwned))
         throw new Error("No developer owns an open item for this task: your filed questions are your own work items. Keep investigating with your read tools, or wait for the player instead.");
       const replyWait = state === "waiting" && ["player_reply", "developer_reply"].includes(input.waitFor) && !subscription;
+      const playerAt = (t) => (typeof t === "number" ? t : Date.parse(t) || 0);
+      const owedAt = Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt));
       delete job.waitingFor;
       if (state === "waiting") {
         const requested = input.wakeAfterMinutes;
-        const minutes = Number.isFinite(requested) ? requested : replyWait ? 360 : 15;
+        // A wait with nothing subscribed and no reply owed has nothing to
+        // check. Tickets 1651 and 1663 re-read the same deployment every
+        // fifteen minutes for hours (2026-10-23), so the interval escalates
+        // and resets as soon as the player writes, the task posts or an
+        // effect lands.
+        const acted = Object.values(job.effects || {}).some((e) => (e.at || 0) >= (job.startedAt || 0));
+        const stamp = `${owedAt}:${job.lastPublishedAt || 0}:${acted ? job.startedAt : 0}`;
+        if (job.quietStamp !== stamp) { job.quietStamp = stamp; job.quietWaits = 0; }
+        const quiet = !subscription && !replyWait;
+        if (quiet) job.quietWaits = (job.quietWaits || 0) + 1;
+        const minutes = Number.isFinite(requested) ? requested : replyWait ? 360 : quiet ? QUIET_WAITS[Math.min(job.quietWaits - 1, QUIET_WAITS.length - 1)] : 15;
         job.wakeAt = now() + Math.max(1, Math.min(minutes, replyWait ? 360 : 1440)) * 60000;
       }
       // A reply wait, long requested wait or vision run leaving the player unanswered hands back to
       // the driver instead of sleeping (ticket 1542 waited fifteen minutes).
-      const playerAt = (t) => (typeof t === "number" ? t : Date.parse(t) || 0);
-      if (state === "waiting" && ["ticket", "command", "conversation"].includes(job.kind) && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15) && Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt)) > (job.lastPublishedAt || 0)) job.wakeAt = now() + 60000;
+      // Once per player message. Ticket 1643 (2026-10-23) re-ran every 89
+      // seconds for hours: the model had decided the message needed no reply,
+      // and this hand-back fired again on every wait.
+      const owedOnce = state === "waiting" && ["ticket", "command", "conversation"].includes(job.kind) && owedAt > (job.lastPublishedAt || 0) && job.replyOx !== owedAt;
+      if (owedOnce && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15)) { job.wakeAt = now() + 60000; job.replyOx = owedAt; }
       // A promotion held for the owner's waking hours wakes when the window opens, not every quarter hour.
       if (state === "waiting" && job.promotionHoldUntil > now()) job.wakeAt = Math.max(job.wakeAt || 0, job.promotionHoldUntil);
+      // Each wake that had nothing new to tell the owner doubles the next wait.
+      if (state === "waiting" && job.appRepeats > 0 && job.wakeAt) job.wakeAt = now() + Math.min(1440 * 60000, (job.wakeAt - now()) * 2 ** Math.min(job.appRepeats, 6));
       // Turn and CI watches wake their task; no timer polling meanwhile.
       if (["waiting", "blocked"].includes(state) && job.turnWatch) job.wakeAt = Math.max(job.wakeAt || 0, now() + 8 * 3600000);
       if (job.state === "waiting" && pendingHandoffs(job).length && !(job.inbox?.length) && Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt)) <= (job.lastPublishedAt || 0)) job.wakeAt = Math.max(job.wakeAt || 0, now() + 6 * 3600000);
@@ -2882,4 +2988,4 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };

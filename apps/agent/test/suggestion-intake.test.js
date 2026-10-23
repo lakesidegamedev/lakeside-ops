@@ -18,7 +18,9 @@ function fixture(t, text = "Please file a suggestion to show mine construction p
     calls.push({ server, tool, args, write }); return { filed: true, number: 42, url: "https://game.test/feedback/42", reporterId: args.discord_user_id };
   } };
   const messages = { [request]: { id: request, author: { id: developer }, content: text }, [report]: { id: report, author: { id: player }, content: "Could we show the remaining construction turns?" } };
-  const discord = async (_method, url) => url.includes("/messages/") ? messages[url.split("/").at(-1)] : { id: channel, guild_id: "guild" };
+  const discord = async (_method, url) => url.includes("/guilds/") ? [{ id: channel, name: "ticket-42" }]
+    : url.includes("/messages?") ? [messages[report]]
+    : url.includes("/messages/") ? messages[url.split("/").at(-1)] : { id: channel, guild_id: "guild" };
   const broker = createBroker({ ledger, config, appChannel: app, mcp, discord, sandbox: {} });
   return { ledger, config, app, job, calls, mcp, discord, messages, broker };
 }
@@ -73,4 +75,39 @@ test("uncertain writes are not replayed and incomplete receipts are never called
   assert.equal(attempts, 1);
   const g = fixture(t); g.mcp.call = async () => ({ filed: true, number: 42, reporterId: player });
   await assert.rejects(g.broker.tool(g.job, "open_suggestion", input), /verified native receipt/);
+});
+
+test("ticket filing through the broker accepts an abort signal without losing lifecycle checks", async t => {
+  const f = fixture(t);
+  const job = f.ledger.createJob("support-ticket", { kind: "ticket", role: "support", ticket: 42,
+    channelId: channel, source: {}, deadline: Date.now() + 60000 });
+  job.state = "running";
+  const signal = new AbortController().signal;
+  const result = await f.broker.tool(job, "open_suggestion", { ...input, reportMessageId: report }, signal);
+  assert.equal(result.reporterId, player);
+  assert.equal(f.calls[0].args.source_channel_id, channel);
+  assert.equal(f.calls[0].args.source_message_id, report);
+  job.state = "waiting";
+  await assert.rejects(f.broker.tool(job, "open_suggestion", { ...input, reportMessageId: report }, signal), /inactive/);
+  assert.equal(f.calls.length, 1);
+});
+
+test("reopened ticket filing uses the preserved author and authenticated opening report without fetching a deleted channel", async t => {
+ const f=fixture(t), oldChannel="777777777777777777", text="Please show remaining construction turns";
+ const job={id:"reopened",kind:"ticket",role:"support",ticket:42,channelId:channel,source:{},effects:{}};
+ f.ledger.data.jobs.old={id:"old",kind:"ticket",ticket:42,source:{channelId:oldChannel,authorId:player,content:"A follow-up"}};
+ f.mcp.call=async(server,tool,args)=>{f.calls.push({server,tool,args});return tool==="support_get"?{number:42,description:text,conversation:{channelId:channel,previousChannelId:oldChannel}}:{filed:true,number:8,url:"https://game.test/feedback/8",reporterId:player,source:`ticket:42:${require("node:crypto").createHash("sha256").update(text).digest("hex")}`};};
+ const args={...f,job,input:{...input,archivedMessage:text},supportAuthority:async(_j,states)=>assert.equal(states,undefined),effect:async(_j,_key,fn)=>fn(),discord:async()=>{throw Error("Deleted channel must not be fetched")}};
+ assert.equal((await openSuggestion(args)).reporterId,player);
+ assert.equal(f.calls.at(-1).args.source_ticket_number,42);assert.equal(f.calls.at(-1).args.source_ticket_message,text);
+ await assert.rejects(openSuggestion({...args,input:{...args.input,archivedMessage:"Invented text"}}),/authenticated original ticket description/);
+ delete f.ledger.data.jobs.old;
+ assert.equal((await openSuggestion(args)).reporterId,player,"native ticket provenance survives Keir task retention");
+});
+
+test("a filed outcome is not classified as an internal support failure", () => {
+ const {internalFailure}=require("../lib/operator/supportblockers");
+ assert.equal(internalFailure("Your original post is now filed as a suggestion. Here is its feedback link."),false);
+ assert.equal(internalFailure("I filed your wage and hiring proposal."),false);
+ assert.equal(internalFailure("The original post was deleted by its author."),false);
 });

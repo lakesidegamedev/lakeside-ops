@@ -10,6 +10,15 @@ const issues = require("../lib/operator/issues");
 
 const dirs = [];
 test.after(() => dirs.forEach((d) => fs.rmSync(d, { recursive: true, force: true })));
+// Production truth: the box probe reports the running commits, the site health
+// endpoint reports ok. Deployed shas map back to branch names for compare.
+const PROBE = "/fixture/ahd-deployed-sha.sh";
+const DEPLOYED = { web: "a".repeat(40), worker: "b".repeat(40) };
+const BRANCH_OF = { [DEPLOYED.web]: "main", [DEPLOYED.worker]: "turn-worker/production" };
+process.env.KEIR_DEPLOYED_SHA_CMD = PROBE;
+const realFetch = globalThis.fetch;
+globalThis.fetch = async () => ({ status: 200, json: async () => ({ status: "ok" }) });
+test.after(() => { globalThis.fetch = realFetch; });
 
 const good = {
   title: "Factory output panel shows zero after a retool",
@@ -47,7 +56,7 @@ test("an issue refuses names, Discord ids, ticket numbers, internal hosts and th
   assert.equal(issues.build({ ...good, kind: "enhancement", expected: "Show last turn's output with a note.", actual: "" }).labels[0], "enhancement");
 });
 
-function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false } = {}) {
+function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false, issueVersion = { updated_at: "2026-10-23T10:00:00Z" } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-issues-")); dirs.push(dir);
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [],
@@ -55,13 +64,13 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
   const calls = [], gh = [];
   const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => [], call: async (server, toolName, args) => {
     calls.push([server, toolName, args]);
-    if (toolName === "railway_status") return { services: [{ service: "AHD Production", status: "SUCCESS" }, { service: "AHD Turn Worker", status: "SUCCESS" }] };
     if (toolName === "support_get") return { number: 9, reporter: { characterName: "Lord Fixture" } };
     if (toolName === "kanban_list") return { items: [] };
     if (toolName === "kanban_add") return { id: 77 };
     return { ok: true };
   } };
   const exec = async (cmd, args) => {
+    if (cmd === PROBE) return `${DEPLOYED[args[0]]}\n`;
     const a = args.slice(1);
     gh.push(a);
     const method = a[0] === "-X" ? a[1] : "GET";
@@ -70,12 +79,9 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
     if (method === "POST" && route === "repos/lakesidegamedev/AHDGame/issues") return JSON.stringify({ number: 501, html_url: "https://github.com/lakesidegamedev/AHDGame/issues/501" });
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+\/files/.test(route)) { if (unreadableFiles) throw new Error("fixture unavailable files"); return JSON.stringify((pr?.files || []).map((filename) => ({ filename }))); }
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+$/.test(route)) return JSON.stringify(pr);
-    if (/^repos\/lakesidegamedev\/AHDGame\/commits\/.+\/status$/.test(route)) {
-      const branch = decodeURIComponent(route.split("/commits/")[1].split("/status")[0]);
-      return JSON.stringify({ sha: branch, statuses: [{ context: "A House Divided - AHD Production", state: "success" }, { context: "A House Divided - AHD Turn Worker", state: "success" }] });
-    }
-    if (/^repos\/lakesidegamedev\/AHDGame\/compare\//.test(route)) { const b = decodeURIComponent(route.split("/compare/")[1].split("...")[0]); return JSON.stringify({ status: compare[b] || "diverged" }); }
-    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: [] });
+    if (/^repos\/lakesidegamedev\/AHDGame\/deployments\?/.test(route)) return JSON.stringify([]);
+    if (/^repos\/lakesidegamedev\/AHDGame\/compare\//.test(route)) { const base = decodeURIComponent(route.split("/compare/")[1].split("...")[0]), b = BRANCH_OF[base] || base; return JSON.stringify({ status: compare[b] || "diverged" }); }
+    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: [], ...issueVersion });
     return JSON.stringify({ ok: true });
   };
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: {}, now: () => 5000, exec });
@@ -125,6 +131,42 @@ test("where closes the issues a live Keir PR references; turn code waits for the
   const other = fixture({ pr: { number: 602, merged: true, merge_commit_sha: "999999999999", head: { ref: "feat/x" }, body: "Refs #503", files: ["src/components/A.tsx"] }, compare: { main: "identical" } });
   const kept = await other.broker.tool(other.job, "github", { action: "where", number: 602 });
   assert.equal(kept.issuesClosed, undefined);
+});
+
+test("where preserves a held issue while still reporting the fix live", async () => {
+  const f = fixture({ pr: { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Refs #501", files: ["src/components/OutputPanel.tsx"] }, compare: { main: "identical" } });
+  f.ledger.data.keirIssues = { 501: { number: 501, state: "open", ticket: 9 } };
+  f.job.ownerClosureHold = { handoffId: "independent-review" };
+  const held = await f.broker.tool(f.job, "github", { action: "where", number: 600 });
+  assert.equal(held.fixLive, true);
+  assert.equal(held.issueClosureHeld, true);
+  assert.equal(held.issuesClosed, undefined);
+  assert.equal(f.ledger.data.keirIssues[501].state, "open");
+  assert.ok(!f.gh.some(a => a[0] === "-X" && ["POST", "PATCH"].includes(a[1])));
+  delete f.job.ownerClosureHold;
+  const released = await f.broker.tool(f.job, "github", { action: "where", number: 600 });
+  assert.deepEqual(released.issuesClosed, [501], "a held read must not consume the later closure effect");
+});
+
+test("explicit issue closure honors the canonical ticket's hold", async () => {
+  const f = fixture({ pr: { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Refs #501", files: ["src/components/OutputPanel.tsx"] }, compare: { main: "identical" } });
+  const root = f.ledger.createJob("held-root", { kind: "ticket", role: "support", ticket: 9 });
+  root.ownerClosureHold = { handoffId: "independent-review" };
+  f.ledger.data.seen["ticket:9"] = root.id;
+  const held = await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  assert.equal(held.closed, false);
+  assert.equal(held.closureHeld, true);
+  assert.match(held.reason, /held/i);
+  assert.ok(!f.gh.some(a => a[0] === "-X" && ["POST", "PATCH"].includes(a[1])));
+});
+
+test("a reopened issue needs a fresh closure instead of an old effect receipt", async () => {
+  const issueVersion = { updated_at: "2026-10-23T10:00:00Z" };
+  const f = fixture({ issueVersion, pr: { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Refs #501", files: ["src/components/OutputPanel.tsx"] }, compare: { main: "identical" } });
+  await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  issueVersion.updated_at = "2026-10-23T11:00:00Z";
+  await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  assert.equal(f.gh.filter(a => a[1] === "PATCH" && a[2] === "repos/lakesidegamedev/AHDGame/issues/501").length, 2);
 });
 
 test("public issue guards catch credentials and Unicode reporter names", () => {
@@ -183,4 +225,13 @@ test("concurrent tasks share one public issue and developer card", async () => {
   assert.equal(a.issue, b.issue);
   assert.equal(a.id, b.id);
   assert.equal(f.gh.filter((a) => a[1] === "POST" && a[2] === "repos/lakesidegamedev/AHDGame/issues").length, 1);
+});
+
+test("github deployed reports the running web and worker commits and site health", async () => {
+  const f = fixture();
+  const out = await f.broker.tool(f.job, "github", { action: "deployed" });
+  assert.deepEqual(out.web, { sha: DEPLOYED.web, source: "live-probe" });
+  assert.deepEqual(out.worker, { sha: DEPLOYED.worker, source: "live-probe" });
+  assert.equal(out.health.ok, true);
+  assert.ok(f.gh.some((a) => a[0].includes("environment=box%2Fahd-us-web")));
 });

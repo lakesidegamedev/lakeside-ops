@@ -1,4 +1,5 @@
 "use strict";
+const crypto = require("node:crypto");
 const policy = require("./ownermuse-policy");
 const { isAppJob } = require("./appchannel");
 const { ownerText } = require("./privacy");
@@ -22,6 +23,17 @@ async function openSuggestion({ ledger, config, mcp, discord, effect, supportAut
     if (input.channelId || input.reportMessageId || input.discord_user_id) throw new Error("App suggestions retain the authenticated owner as submitter");
     args.discord_user_id = config.ownerId; args.app_request_id = `${message.id}:${origin.digest}`;
     key = `suggestion:app:${message.id}`;
+  } else if (job.kind === "ticket" && input.archivedMessage) {
+    await supportAuthority(job);
+    if (input.channelId || input.reportMessageId) throw new Error("Archived ticket filing uses its persisted origin only");
+    const ticket = await mcp.call("support", "support_get", { kind: "ticket", number: job.ticket }, false, signal);
+    const previous = ticket.conversation?.previousChannelId;
+    if (ticket.number !== job.ticket || ticket.conversation?.channelId !== job.channelId || !previous) throw new Error("Archived filing needs this ticket's verified reopen lineage");
+    if (input.archivedMessage !== ticket.description) throw new Error("Archived filing uses the authenticated original ticket description");
+    // The native intake derives and verifies the reporter from the game ticket.
+    // It must not depend on an old Keir task surviving retention or another reopen.
+    args.source_ticket_number = job.ticket; args.source_ticket_message = input.archivedMessage;
+    key = `suggestion:ticket:${job.ticket}:${crypto.createHash("sha256").update(input.archivedMessage).digest("hex")}`;
   } else {
     let channelId = job.source?.channelId || job.channelId, reportId = input.reportMessageId || job.source?.replyTo || job.source?.messageId;
     const developer = job.kind === "command" && [config.ownerId, ...(config.staffIds || [])].includes(job.actorId) && ["owner", "support"].includes(job.role);
@@ -30,7 +42,7 @@ async function openSuggestion({ ledger, config, mcp, discord, effect, supportAut
       if (actual.webhook_id || actual.author?.bot || actual.author?.id !== job.actorId || !requested(actual.content)) throw new Error("Suggestion requester provenance changed or filing was not requested");
       channelId = input.channelId || channelId;
     } else if (job.kind === "ticket") {
-      const rows = await supportAuthority(job, signal);
+      const rows = await supportAuthority(job, ["running"]);
       if (input.channelId && input.channelId !== job.channelId || !rows.some(m => m.id === reportId)) throw new Error("Select a source message from this ticket's verified history");
       channelId = job.channelId;
     } else throw new Error("Suggestion filing needs an authenticated developer request or an assigned ticket");
@@ -43,8 +55,9 @@ async function openSuggestion({ ledger, config, mcp, discord, effect, supportAut
     key = `suggestion:discord:${channelId}:${reportId}`;
   }
   const result = await effect(job, key, () => mcp.call("support", "support_create_suggestion", args, true, signal));
-  if (result.filed !== true || !Number.isSafeInteger(result.number) || result.number <= 0 || result.reporterId !== args.discord_user_id || !result.url) throw new Error("Suggestion filing needs a verified native receipt; inspect before retrying");
+  if (result.filed !== true || !Number.isSafeInteger(result.number) || result.number <= 0 || (!args.source_ticket_number && result.reporterId !== args.discord_user_id) || !result.url || (args.source_ticket_number && (!snowflake(result.reporterId) || result.source !== key.slice("suggestion:".length)))) throw new Error("Suggestion filing needs a verified native receipt; inspect before retrying");
   (job.filedSuggestions ||= {})[key] = result; ledger.save();
+  if (job.ticket) require("./supportblockers").clear(ledger, job.ticket);
   return { ...result, instruction: "Native suggestion filed for the source author. Share its feedback link. This is a proposal, not an accepted design or a shipped fix. Do not create another GitHub enhancement for the same suggestion; its native intake owns optional GitHub mirroring." };
 }
 module.exports = { openSuggestion };

@@ -309,7 +309,8 @@ body{background:var(--bg-0);color:var(--text)}
     setStatus(null);
   }
 
-  function load() {
+  function load(attempt) {
+    attempt = attempt || 0;
     setStatus('loading', 'Loading CodeBurn breakdown…');
     kpis.hidden = true;
     breakGrid.hidden = true;
@@ -318,11 +319,20 @@ body{background:var(--bg-0);color:var(--text)}
     fetch('/api/code/costs/breakdown?period=' + encodeURIComponent(period), { cache: 'no-store' })
       .then(function(r) {
         return r.json().then(function(body) {
+          if (r.status === 202 && body && body.pending) return body;
           if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
           return body;
         });
       })
-      .then(render)
+      .then(function(body) {
+        if (body && body.pending) {
+          if (attempt >= 20) throw new Error('Usage data is still warming — try again shortly');
+          setStatus('loading', 'CodeBurn is indexing usage — this only happens once…');
+          setTimeout(function() { load(attempt + 1); }, 3000);
+          return;
+        }
+        render(body);
+      })
       .catch(function(err) {
         setStatus('error', err.message || 'Failed to load breakdown');
       });

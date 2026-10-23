@@ -34,6 +34,47 @@ test("progress resets the spin count; a spinning side task is stopped", () => {
   assert.equal(cmd.state, "cancelled");
 });
 
+test("a task activated every minute is backed off instead of re-run (ticket 1658)", () => {
+  // 104 activations in 2.5 hours, each ~30s, all refused a finish: the round
+  // guard never tripped because every activation was short.
+  const job = { id: "hot", kind: "ticket", ticket: 1658, state: "queued", activationAt: [] };
+  const w = world([job]);
+  for (let i = 0; i < 5; i++) { job.activationAt.push(w.now()); w.advance(60000); w.r.tick({}); }
+  assert.equal(job.state, "waiting");
+  assert.ok(job.wakeAt >= w.now() + 5 * 60000 - 60000, `wake ${job.wakeAt - w.now()}ms`);
+  assert.equal(job.hotStrikes, 1);
+  assert.deepEqual(w.ledger.data.recoveries.map((x) => x.action), ["backed-off"]);
+  // Still looping after the delay escalates, and never cancels the work.
+  for (let i = 0; i < 5; i++) job.activationAt.push(w.now());
+  w.r.tick({});
+  assert.equal(job.hotStrikes, 2);
+  assert.ok(job.wakeAt >= w.now() + 30 * 60000);
+  assert.equal(job.state, "waiting");
+  // The ladder belongs to one incident: after six quiet hours it starts again,
+  // so a burst days later is not punished by an old record.
+  w.advance(7 * 3600000);
+  job.activationAt = Array.from({ length: 5 }, (_, i) => w.now() + i);
+  w.r.tick({});
+  assert.equal(job.hotStrikes, 1);
+});
+
+test("a new human message, an active slot or another task's delivery keeps a hot task running", () => {
+  const human = { id: "h", kind: "ticket", ticket: 2, state: "queued", activationAt: [] };
+  const live = { id: "l", kind: "ticket", ticket: 3, state: "running", activationAt: [] };
+  const delivered = { id: "d", kind: "ticket", ticket: 4, state: "queued", activationAt: [], inbox: [{ authorId: "job-123", content: "coding result" }] };
+  const chat = { id: "c", kind: "conversation", state: "queued", activationAt: [] };
+  const w = world([human, live, delivered, chat]);
+  const t0 = w.now();
+  for (let i = 0; i < 6; i++) for (const j of [human, live, delivered, chat]) j.activationAt.push(t0 + i);
+  human.lastPlayerAt = t0 + 1;
+  w.advance(1000); w.r.tick({ investigation: slot(live, t0) });
+  assert.equal(human.state, "queued");
+  assert.equal(live.state, "running");
+  assert.equal(delivered.state, "queued");
+  assert.equal(chat.state, "queued");
+  assert.equal(w.ledger.data.recoveries, undefined);
+});
+
 test("a starving ticket preempts non-ticket work first, never an effect in flight", () => {
   const w = world([]);
   const starving = { id: "s", kind: "ticket", ticket: 1577, state: "queued", wakeAt: w.now() - STARVE_MS - 1 };

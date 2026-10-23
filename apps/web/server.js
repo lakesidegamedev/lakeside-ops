@@ -108,6 +108,27 @@ const dashboardSnapshot = createStaleRefreshCache({
   load: async () => getDashboardMetrics(await getDb()),
   onError: (error) => console.warn("[dashboard-snapshot] refresh failed:", error.message),
 });
+// Read-only engine/observatory views re-query Mongo over an SSH tunnel on every
+// request. Keep the last scan and refresh it in the background so navigation is
+// instant instead of paying 1-2s per visit.
+const enginePageSnapshot = createStaleRefreshCache({
+  ttlMs: 60_000,
+  load: async () => engineHealth(await getDb()),
+  onError: (error) => console.warn("[engine-page] refresh failed:", error.message),
+});
+const observatoryPageSnapshot = createStaleRefreshCache({
+  ttlMs: 60_000,
+  load: async () => {
+    const db = await getDb();
+    const [scan, registry] = await Promise.all([
+      watchtowerScan(db),
+      db.collection(REGISTRY_COLLECTION).find({}).sort({ status: 1, createdAt: -1 }).limit(100).toArray()
+        .catch(() => []),
+    ]);
+    return { scan, registry };
+  },
+  onError: (error) => console.warn("[observatory-page] refresh failed:", error.message),
+});
 // Full-codebase search index (TF-IDF over file contents). Declared early so the
 // path resolver below can consult it. Populated by buildSearchIndex() once the
 // sandbox is available, and rebuilt after each git pull.
@@ -476,7 +497,10 @@ async function getDb() {
   if (!mongoConnectPromise) {
     const staleClient = mongoClient;
     mongoConnectPromise = (async () => {
-      const nextClient = new MongoClient(MONGODB_URI, { maxPoolSize: 2, serverSelectionTimeoutMS: 10000 });
+      // The console fans out many small reads (dashboard snapshot, page data)
+      // against a database reached over a tunnel; two sockets serialized them
+      // and made ordinary page loads wait behind background refreshes.
+      const nextClient = new MongoClient(MONGODB_URI, { maxPoolSize: 6, serverSelectionTimeoutMS: 10000 });
       await nextClient.connect();
       mongoClient = nextClient;
       if (staleClient && staleClient !== nextClient) staleClient.close().catch(() => {});
@@ -2706,7 +2730,7 @@ const { normalizeResolution } = require('./ticket-receipt');
 const { ensureTicketContextRequest } = require('./ticket-context');
 const { TtlCache, compactUnchangedSnapshot, fingerprintOutput } = require('./live-agent-cache');
 const { resolveAgentModel, resolveAgentUsage } = require('./agent-usage');
-const { getCostBreakdownAsync, getCostForKind, getCostOverviewAsync, latestSessionForKind, normalizeBreakdownPeriod, peekCostOverview, warmCostOverviewAsync } = require('./agent-cost');
+const { getCostBreakdownAsync, getCostForKind, getCostOverviewAsync, latestSessionForKind, normalizeBreakdownPeriod, peekCostOverview, startCostRefresher, warmCostOverviewAsync } = require('./agent-cost');
 const { agentKindFor, answerPendingQuestion, autoTuneAgent, captureTmuxSession, createAgentGroup, deleteAgentGroup, detectAgentMode, detectAttention, detectModelFromOutput, detectPendingQuestion, detectUsageFromOutput, effortsForProvider, enrichLiveSessions, enqueueMessage, flushTmuxQueues, forceFlushQueue, getLastUserMessage, getQueue, getUserImage, getUserMessageAttachments, getUserMessageHistory, getWrapUpState, isHappyAcpSession, isOutputBusy, listAgentGroups, listProcessAgents, listTmuxSessions, maybeAutoApproveAttention, selectableModelsFor, permissionStateFor, refreshAgentCaptures, refreshWrapUpFromOutput, rememberUserMessage, removeQueuedMessage, renameAgentGroup, requestEndSession, safeTmuxName, selectAgentConfig, seedAgentPrompt, sendTmuxInput, sendTmuxKey, setAgentGroup, setAgentTitle, setPermissionMode, spawnOptionsFor, spawnTmuxAgent, sweepDeadSessions, terminateAgent } = require('./tmux-sessions');
 const { happySessionIdForTmux, happyTranscript } = require('./happy-bridge');
 const {
@@ -2985,6 +3009,7 @@ const { handleKanbanRoute } = require("./kanban-routes");
 const { handleSuggestionSwipeRoute } = require("./suggestion-swipe-routes");
 const { handleKeirInboxRoute } = require("./keir-inbox-routes");
 const { handleKeirHubRoute } = require("./keir-hub-routes");
+const { handleSecurityRoute } = require("./security-routes");
 async function loadTrackerSnapshot() {
   let board = null;
   let error = null;
@@ -4421,6 +4446,13 @@ const server = http.createServer(async (req, res) => {
   // Live view of Keir: workers, tickets, PRs, issues, kanban (/keir, /api/keir/hub).
   if (await handleKeirHubRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell })) return;
 
+  // ─── SECURITY ────────────────────────────────────────────────────
+  // Two-host security posture (/security, /api/security[/reprobe]). Facts come
+  // from lakeside-security-probe on each VPS; findings are judged here.
+  // NOTE: /security/* belongs to the Semgrep MCP via Caddy — only the exact
+  // paths above reach this app.
+  if (await handleSecurityRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell })) return;
+
   // ─── TRACKER ─────────────────────────────────────────────────────
   // Long-running projects, goals and checklists.
   //
@@ -4685,13 +4717,14 @@ const server = http.createServer(async (req, res) => {
       };
       const tokenPromise = within((async () => {
         const db = await getDb();
-        await agentTokens.ensureIndexes(db);
         return agentTokens.list(db);
       })(), 8000).catch(() => null);
       const usagePromise = within(getCostBreakdownAsync("today"), 4000).catch(() => null);
-      const paseoPromise = within(paseoLauncher.daemonReady(), 4000).catch(() => null);
+      const paseoPromise = within(paseoLauncher.daemonReadyCached(), 4000).catch(() => null);
       // live status of each hosted MCP (for the directory's health dots)
-      const _mcpPorts = { "ops-knowledge": 9725, discord: 9727, community: 9729, gamestate: 9730, engine: 9731, worldsim: 9732, security: 9733, railway: 9734, support: 9735 };
+      // Ports come from the catalogue, so a consolidated or retired server is
+      // never probed on a port nobody listens on any more.
+      const _mcpPorts = Object.fromEntries(require("./mcp-catalog").MCP_DEFS.filter((d) => d.health && d.connect !== "stdio").map((d) => [d.key, d.health]));
       const status = {};
       await Promise.all(Object.entries(_mcpPorts).map(async ([k, port]) => {
         try { status[k] = (await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(1500) })).ok; }
@@ -4707,7 +4740,7 @@ const server = http.createServer(async (req, res) => {
       const todayTokens = breakdown ? (breakdown.byModel || []).reduce((total, model) => total + (Number(model.totalTokens) || 0), 0) : null;
       const operations = {
         paseo,
-        todayCost: peekCostOverview()?.today?.label,
+        todayCost: breakdown ? breakdown.totals.label : peekCostOverview()?.today?.label,
         todayTokens,
         worktrees,
       };
@@ -4840,7 +4873,7 @@ const server = http.createServer(async (req, res) => {
     const session = await resolveSession(req);
     if (!session || session.role !== "admin") return denyHtml();
     try {
-      const health = await engineHealth(await getDb());
+      const health = await enginePageSnapshot.get();
       const { extraCss, body } = makeEngineBody({ health });
       addSecurityHeaders(res);
       res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
@@ -4856,12 +4889,7 @@ const server = http.createServer(async (req, res) => {
     const session = await resolveSession(req);
     if (!session || session.role !== "admin") return denyHtml();
     try {
-      const db = await getDb();
-      const [scan, registry] = await Promise.all([
-        watchtowerScan(db),
-        db.collection(REGISTRY_COLLECTION).find({}).sort({ status: 1, createdAt: -1 }).limit(100).toArray()
-          .catch(() => []),
-      ]);
+      const { scan, registry } = await observatoryPageSnapshot.get();
       const { extraCss, body } = makeObservatoryBody({ scan, registry });
       addSecurityHeaders(res);
       res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
@@ -5596,6 +5624,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Agents: MCP token management (admin only) ───────────────────────────
+  // GET /api/agents/usage — today's spend/tokens for the Agents page. Reads the
+  // warm cost cache and reports `pending` instead of waiting on CodeBurn.
+  if (req.method === "GET" && pathname === "/api/agents/usage") {
+    if (!(await requireAdmin())) return jsonResponse(403, { error: "Forbidden" });
+    const breakdown = await getCostBreakdownAsync("today");
+    const tokens = breakdown
+      ? (breakdown.byModel || []).reduce((total, model) => total + (Number(model.totalTokens) || 0), 0)
+      : null;
+    return jsonResponse(200, {
+      pending: !breakdown,
+      cost: breakdown ? breakdown.totals.label : null,
+      tokens,
+      generatedAt: breakdown ? breakdown.generatedAt : null,
+    });
+  }
+
   // POST /api/agents/tokens — issue a scoped token; raw value returned once.
   if (req.method === "POST" && pathname === "/api/agents/tokens") {
     if (!(await requireAdmin())) return jsonResponse(403, { error: "Forbidden" });
@@ -6865,7 +6909,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/code/costs") {
     if (!(await requireAdmin())) return jsonResponse(403, { error: "Forbidden" });
     try {
-      jsonResponse(200, await getCostOverviewAsync());
+      const overview = await getCostOverviewAsync();
+      if (!overview) return jsonResponse(202, { pending: true, source: "codeburn" });
+      jsonResponse(200, overview);
     } catch (e) {
       jsonResponse(502, { error: e.message, source: "codeburn" });
     }
@@ -6878,7 +6924,9 @@ const server = http.createServer(async (req, res) => {
     const period = normalizeBreakdownPeriod(url.searchParams.get("period") || "today");
     if (!period) return jsonResponse(400, { error: "period must be today, week, or month" });
     try {
-      jsonResponse(200, await getCostBreakdownAsync(period));
+      const breakdown = await getCostBreakdownAsync(period);
+      if (!breakdown) return jsonResponse(202, { pending: true, period, source: "codeburn" });
+      jsonResponse(200, breakdown);
     } catch (e) {
       jsonResponse(502, { error: e.message, source: "codeburn" });
     }
@@ -9680,6 +9728,25 @@ setInterval(() => {
   if (changed) saveSessions();
 }, 3600000);
 
+// ── Security alerting ───────────────────────────────────────────────
+// Push new critical/high host-security findings to Discord. The pull surface
+// is /security; this is the half that speaks up when nobody is looking.
+// De-duplicated on disk, so restarts and deploys do not re-alert an open issue.
+{
+  const securityService = require("./security-service");
+  const { runAlertCheck } = require("./security-alert");
+  const securityAlertTick = () =>
+    runAlertCheck({ snapshot: () => securityService.snapshot(), notify: notifyOpsDiscord })
+      .then((r) => {
+        if (r && (r.fresh || r.resolved)) {
+          console.log(`[security] alerts: ${r.fresh} new, ${r.resolved} cleared`);
+        }
+      })
+      .catch((e) => console.error("[security] alert check failed:", e && e.message));
+  setTimeout(securityAlertTick, 90_000).unref?.();
+  setInterval(securityAlertTick, 5 * 60_000).unref?.();
+}
+
 // ── Code Agent (Session-based, Python bridge) ───────────────────
 const { createSessionManager } = require('./code-session-manager');
 const { spawn } = require("child_process");
@@ -10295,6 +10362,20 @@ server.listen(PORT, process.env.BIND_HOST || "127.0.0.1", () => {
   // proxy is promoted only after health reports this snapshot as ready.
   warmUntilReady(dashboardSnapshot);
   warmUntilReady(dashboardReportsSnapshot);
+  // CodeBurn costs are expensive to compute (tens of seconds); warm them in the
+  // background from the persisted snapshot so usage stats render immediately.
+  startCostRefresher();
+  // Warm the Agents page's remote reads too: `paseo daemon status` takes ~3s and
+  // the token list crosses an SSH tunnel, so the first render should not pay it.
+  paseoLauncher.daemonReadyCached().catch(() => {});
+  getDb()
+    .then(async (db) => { await agentTokens.ensureIndexes(db); await agentTokens.list(db); })
+    .catch(() => {});
+  const later = setTimeout(() => {
+    enginePageSnapshot.refresh().catch(() => {});
+    observatoryPageSnapshot.refresh().catch(() => {});
+  }, 15_000);
+  later.unref?.();
   // Save sessions on startup so the file is created even if no logins happen
   if (sessions.size > 0) saveSessions();
   if (process.env.EVENT_CONSUMER_ENABLED !== "false") {

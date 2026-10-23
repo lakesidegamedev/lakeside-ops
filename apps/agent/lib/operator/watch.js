@@ -226,6 +226,9 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
     for (const f of Object.values(w.findings)) {
       const job = f.jobId && d.jobs[f.jobId];
       const finished = !job || TERMINAL.includes(job.state);
+      // Upgrade persisted whole-turn findings that predate distinct turn events.
+      const historicalTurn = /^turn:(\d+):failed$/.exec(f.fp);
+      if (!Number.isFinite(f.lastTurnSeen) && historicalTurn) f.lastTurnSeen = Number(historicalTurn[1]);
       // Keir 5.1: a problem that outlives its finished task is raised again
       // (bounded), instead of sitting "raised" while players keep hitting it.
       if (f.state === "raised" && job && finished && !f.correlatedWith && (f.afterJob || 0) >= RECUR_AFTER &&
@@ -253,14 +256,18 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
   }
 
   const sensors = {
-    async turns() {
+    async turns({ turn } = {}) {
       // turndiag kinds: turn-failed, phase-<status>, slow-turn, warning.
       const r = await mcp.call("turndiag", "turn_anomalies", { turns: 3 }, false);
-      const warnings = (r?.anomalies || []).map((a) => { const parsed = warningPhase(a); return parsed && { ...parsed, raw: a }; }).filter(Boolean);
+      // The recent window includes earlier attempts after crash recovery. A
+      // processed newer turn is not evidence of a fresh failure in that history.
+      const knownTurn = Number.isFinite(turn) ? turn : state().lastTurn;
+      const anomalies = (r?.anomalies || []).filter(a => !Number.isFinite(knownTurn) || !Number.isFinite(a.turn) || a.turn >= knownTurn);
+      const warnings = anomalies.map((a) => { const parsed = warningPhase(a); return parsed && { ...parsed, raw: a }; }).filter(Boolean);
       const coveredWarnings = new Set();
-      for (const a of r?.anomalies || []) {
+      for (const a of anomalies) {
         const kind = String(a.kind || "");
-        if (kind === "turn-failed") observe({ fp: `turn:${a.turn}:failed`, sensor: "turns", hard: true, severe: true, title: `Turn ${a.turn} failed`, evidence: JSON.stringify(a).slice(0, 1500) });
+        if (kind === "turn-failed") observe({ fp: `turn:${a.turn}:failed`, sensor: "turns", hard: true, severe: true, event: `turn:${a.turn}:failed`, title: `Turn ${a.turn} failed`, evidence: JSON.stringify(a).slice(0, 1500) });
         else if (PHASE_FAILURE.test(kind)) {
           const related = warnings.filter((x) => x.phase === a.phase && x.raw.turn === a.turn);
           const { covered } = observePhaseFailure(a, related);
@@ -269,7 +276,7 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
         // phase-running is the live turn; slow turns are tracked by the turn performance work.
       }
       // Unmatched warnings retain their own soft-signal persistence rule.
-      for (const a of r?.anomalies || []) if (a.kind === "warning" && !coveredWarnings.has(a)) {
+      for (const a of anomalies) if (a.kind === "warning" && !coveredWarnings.has(a)) {
         const text = typeof a.detail === "string" ? a.detail : JSON.stringify(a.detail || "");
         observe({ fp: warningFingerprint(text), sensor: "turns", event: `turn:${a.turn}`, title: `Turn warning: ${text.slice(0, 140)}`, evidence: `Turn ${a.turn}: ${text}`.slice(0, 1500) });
       }
@@ -377,7 +384,7 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
       if (perTurn ? !turnProcessed : !(name === "turns" && turnProcessed) && !due) continue;
       w.ran[name] = t;
       try {
-        const healthy = await sensors[name](); ran.push(name);
+        const healthy = await sensors[name]({ turn }); ran.push(name);
         if (healthy !== false) { w.succeeded[name] = t; delete w.errors?.[name]; }
       } catch (e) {
         const error = String(e.message).slice(0, 200), prior = w.errors?.[name];

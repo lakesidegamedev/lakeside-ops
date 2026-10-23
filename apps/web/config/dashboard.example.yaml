@@ -62,8 +62,13 @@ statusServices:
     pageUrl: https://ops.example.com
     category: ops
 
-# Optional external sidebar links (Observability, Analytics, Tools, Workflows groups).
+# Optional external sidebar links (Platform, Observability, Analytics, Tools, Workflows groups).
 # externalLinks:
+#   - id: console
+#     group: Platform
+#     label: Fleet console
+#     href: https://console.example.com
+#     icon: layers
 #   - id: status-board
 #     group: Observability
 #     label: Status board

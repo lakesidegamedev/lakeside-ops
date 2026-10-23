@@ -1,0 +1,409 @@
+#!/usr/bin/env python3
+"""Lakeside host security probe.
+
+Emits a single JSON object of *facts* about this host's security posture.
+It deliberately makes no judgements: severity, expected-port sets and alerting
+rules live in the ops console (apps/web/security-service.js), so they can change
+without touching production hosts.
+
+Runs as root from lakeside-security-probe.timer every 15 minutes and writes
+/var/lib/lakeside-security/latest.json (+ a bounded history.jsonl).
+
+    lakeside-security-probe            # pretty JSON to stdout
+    lakeside-security-probe --compact  # one-line JSON (for the timer)
+    lakeside-security-probe --write    # write latest.json/history.jsonl
+
+Design rules:
+  * never mutate the system;
+  * never block for more than ~20s on any single command;
+  * degrade to null/[] instead of failing the whole report.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+SCHEMA = 1
+STATE_DIR = "/var/lib/lakeside-security"
+HISTORY_MAX_BYTES = 8 * 1024 * 1024
+HISTORY_KEEP = 2000
+
+
+def run(cmd, timeout=20, default=""):
+    """Run a command, return stdout (str). Never raises."""
+    try:
+        out = subprocess.run(
+            cmd,
+            shell=isinstance(cmd, str),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        return out.stdout if out.stdout else default
+    except Exception:
+        return default
+
+
+def read(path, default=None):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except Exception:
+        return default
+
+
+def os_release():
+    data = {}
+    for line in (read("/etc/os-release", "") or "").splitlines():
+        if "=" in line:
+            k, _, v = line.partition("=")
+            data[k] = v.strip().strip('"')
+    return data
+
+
+def probe_firewall():
+    status = run(["ufw", "status", "verbose"], default="")
+    active = "Status: active" in status
+    default_in = default_out = default_routed = None
+    for line in status.splitlines():
+        m = re.match(r"Default:\s*(\w+)\s*\(incoming\),\s*(\w+)\s*\(outgoing\)(?:,\s*(\w+)\s*\(routed\))", line)
+        if m:
+            default_in, default_out, default_routed = m.groups()
+    allowed = []
+    for line in status.splitlines():
+        m = re.match(r"^(\d+(?:/\w+)?)\s+ALLOW IN\s+(\S+)", line)
+        if m:
+            allowed.append({"port": m.group(1), "from": m.group(2)})
+    return {
+        "active": active,
+        "defaultIncoming": default_in,
+        "defaultOutgoing": default_out,
+        "defaultRouted": default_routed,
+        "allowedInbound": allowed,
+    }
+
+
+def probe_fail2ban():
+    raw = run(["fail2ban-client", "status"], default="")
+    if not raw:
+        return {"running": False, "jails": [], "currentlyBanned": 0, "totalBanned": 0, "perJail": {}}
+    jails = []
+    m = re.search(r"Jail list:\s*(.*)", raw)
+    if m and m.group(1).strip():
+        jails = [j.strip() for j in m.group(1).split(",") if j.strip()]
+    per_jail, banned_now, banned_total = {}, 0, 0
+    for jail in jails:
+        js = run(["fail2ban-client", "status", jail], default="")
+        cur = re.search(r"Currently banned:\s*(\d+)", js)
+        tot = re.search(r"Total banned:\s*(\d+)", js)
+        cur_n = int(cur.group(1)) if cur else 0
+        tot_n = int(tot.group(1)) if tot else 0
+        per_jail[jail] = {"currentlyBanned": cur_n, "totalBanned": tot_n}
+        banned_now += cur_n
+        banned_total += tot_n
+    return {
+        "running": bool(jails),
+        "jails": jails,
+        "currentlyBanned": banned_now,
+        "totalBanned": banned_total,
+        "perJail": per_jail,
+    }
+
+
+SSHD_KEYS = {
+    "permitrootlogin": "permitRootLogin",
+    "passwordauthentication": "passwordAuthentication",
+    "kbdinteractiveauthentication": "kbdInteractiveAuthentication",
+    "pubkeyauthentication": "pubkeyAuthentication",
+    "permitemptypasswords": "permitEmptyPasswords",
+    "x11forwarding": "x11Forwarding",
+    "allowagentforwarding": "agentForwarding",
+    "allowtcpforwarding": "tcpForwarding",
+    "maxauthtries": "maxAuthTries",
+    "logingracetime": "loginGraceTime",
+    "port": "port",
+}
+
+
+def probe_ssh():
+    cfg = {}
+    out = run(["sshd", "-T"], timeout=10, default="")
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] in SSHD_KEYS:
+            cfg[SSHD_KEYS[parts[0]]] = parts[1]
+    cfg["active"] = run(["systemctl", "is-active", "ssh"], default="").strip() == "active"
+    # authorised keys per account that actually has a home directory
+    keys = {}
+    for home in ["/root"] + sorted(
+        os.path.join("/home", d) for d in (os.listdir("/home") if os.path.isdir("/home") else [])
+    ):
+        ak = os.path.join(home, ".ssh", "authorized_keys")
+        if os.path.exists(ak):
+            try:
+                with open(ak, "r", encoding="utf-8", errors="replace") as fh:
+                    n = sum(1 for ln in fh if re.match(r"^(ssh-|ecdsa-|sk-)", ln.strip()))
+                keys[os.path.basename(home) or "root"] = n
+            except Exception:
+                keys[os.path.basename(home) or "root"] = None
+    cfg["authorizedKeys"] = keys
+    return cfg
+
+
+def probe_auditd():
+    status = run(["auditctl", "-s"], timeout=10, default="")
+    fields = {}
+    for line in status.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            fields[parts[0]] = parts[1]
+    rules = run(["auditctl", "-l"], timeout=15, default="")
+    return {
+        "active": run(["systemctl", "is-active", "auditd"], default="").strip() == "active",
+        "enabled": fields.get("enabled"),
+        "rules": len([ln for ln in rules.splitlines() if ln.strip()]),
+        "lost": int(fields.get("lost", 0) or 0) if str(fields.get("lost", "0")).isdigit() else None,
+        "backlog": int(fields["backlog"]) if str(fields.get("backlog", "")).isdigit() else None,
+    }
+
+
+def probe_updates():
+    # Simulated upgrade: slowest single probe, ~5-10s. Acceptable at 15m cadence.
+    sim = run(["apt-get", "-s", "upgrade"], timeout=60, default="")
+    total = 0
+    security = 0
+    for line in sim.splitlines():
+        if line.startswith("Inst "):
+            total += 1
+            if "security" in line.lower():
+                security += 1
+    return {
+        "totalPending": total,
+        "securityPending": security,
+        "rebootRequired": os.path.exists("/var/run/reboot-required"),
+        "unattendedActive": run(["systemctl", "is-active", "unattended-upgrades"], default="").strip()
+        == "active",
+        "unattendedEnabled": run(["systemctl", "is-enabled", "unattended-upgrades"], default="").strip()
+        == "enabled",
+    }
+
+
+def probe_accounts():
+    uid0, shells, shadowless, empty_pw = [], [], [], []
+    for line in (read("/etc/passwd", "") or "").splitlines():
+        p = line.split(":")
+        if len(p) < 7:
+            continue
+        name, uid, shell = p[0], p[2], p[6]
+        if uid == "0":
+            uid0.append(name)
+        if shell not in ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false", "/usr/bin/false", "/bin/sync"):
+            shells.append(name)
+    for line in (read("/etc/shadow", "") or "").splitlines():
+        p = line.split(":")
+        if len(p) >= 2 and p[1] == "":
+            empty_pw.append(p[0])
+    sudoers = ""
+    for root_dir in ("/etc/sudoers.d",):
+        if os.path.isdir(root_dir):
+            for fn in os.listdir(root_dir):
+                p = os.path.join(root_dir, fn)
+                if os.path.isfile(p) and not fn.startswith("."):
+                    sudoers += read(p, "") or ""
+    sudoers += read("/etc/sudoers", "") or ""
+    nopasswd = len(
+        [
+            ln
+            for ln in sudoers.splitlines()
+            if "NOPASSWD" in ln and not ln.strip().startswith("#")
+        ]
+    )
+    return {
+        "uid0": uid0,
+        "loginShell": shells,
+        "emptyPassword": empty_pw,
+        "nopasswdSudoEntries": nopasswd,
+    }
+
+
+def probe_exposure():
+    """Public (non-loopback) listening sockets, plus docker port publishing."""
+    raw = run(["ss", "-Htuln"], timeout=10, default="")
+    listeners, seen = [], set()
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        proto, local = parts[0], parts[4]
+        if local.startswith("127.") or local.startswith("[::1]") or local.startswith("::1"):
+            continue
+        port = local.rsplit(":", 1)[-1]
+        key = (proto, port)
+        if key in seen:
+            continue
+        seen.add(key)
+        listeners.append({"proto": proto, "port": int(port) if port.isdigit() else port, "local": local})
+    listeners.sort(key=lambda x: (str(x["proto"]), str(x["port"])))
+
+    docker = {"published": [], "privileged": 0, "hostNetwork": 0, "running": 0}
+    ps = run(["docker", "ps", "--format", "{{.Names}}\t{{.Ports}}"], timeout=15, default="")
+    if ps:
+        for line in ps.splitlines():
+            if not line.strip():
+                continue
+            docker["running"] += 1
+            name, _, ports = line.partition("\t")
+            if ports.strip() and ("0.0.0.0" in ports or "[::]" in ports):
+                docker["published"].append({"name": name, "ports": ports.strip()})
+        insp = run(
+            ["docker", "ps", "-q"], timeout=10, default=""
+        )
+        ids = [i for i in insp.split() if i]
+        if ids:
+            fmt = run(
+                ["docker", "inspect", "--format", "{{.HostConfig.Privileged}} {{.HostConfig.NetworkMode}}"]
+                + ids,
+                timeout=15,
+                default="",
+            )
+            for line in fmt.splitlines():
+                bits = line.split()
+                if len(bits) >= 2:
+                    if bits[0] == "true":
+                        docker["privileged"] += 1
+                    if bits[1] == "host":
+                        docker["hostNetwork"] += 1
+    return {"publicListeners": listeners, "docker": docker}
+
+
+def probe_auth_24h():
+    """SSH authentication activity from the journal over the last 24h."""
+    since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 86400))
+    raw = run(
+        ["journalctl", "-u", "ssh", "-u", "sshd", "--since", since, "--no-pager", "-o", "short"],
+        timeout=45,
+        default="",
+    )
+    failed = accepted = 0
+    sources = {}
+    for line in raw.splitlines():
+        if re.search(r"Failed password|Invalid user|authentication failure|Connection closed by authenticating user", line):
+            failed += 1
+        elif "Accepted " in line:
+            accepted += 1
+        m = re.search(r"from\s+(\d{1,3}(?:\.\d{1,3}){3})", line)
+        if m and ("Failed" in line or "Invalid user" in line or "authentication failure" in line):
+            sources[m.group(1)] = sources.get(m.group(1), 0) + 1
+    top = sorted(sources.items(), key=lambda kv: kv[1], reverse=True)[:5]
+    return {
+        "sshFailed24h": failed,
+        "sshAccepted24h": accepted,
+        "uniqueSourceIps": len(sources),
+        "topSources": [{"ip": ip, "attempts": n} for ip, n in top],
+    }
+
+
+def probe_integrity():
+    ww_etc = []
+    for line in (run(["find", "/etc", "-xdev", "-type", "f", "-perm", "-0002"], timeout=25, default="")).splitlines():
+        if line.strip():
+            ww_etc.append(line.strip())
+        if len(ww_etc) >= 10:
+            break
+    suid = run(["find", "/usr", "/bin", "/sbin", "/opt", "-xdev", "-perm", "-4000", "-type", "f"], timeout=30, default="")
+    def mode(path):
+        try:
+            st = os.stat(path)
+            return oct(st.st_mode & 0o777)[2:]
+        except Exception:
+            return None
+    return {
+        "worldWritableEtc": ww_etc,
+        "suidRootCount": len([ln for ln in suid.splitlines() if ln.strip()]),
+        "perms": {
+            "/etc/shadow": mode("/etc/shadow"),
+            "/etc/passwd": mode("/etc/passwd"),
+            "/root/.ssh": mode("/root/.ssh"),
+            "/etc/ssh/sshd_config": mode("/etc/ssh/sshd_config"),
+        },
+    }
+
+
+def probe_services():
+    raw = run(["systemctl", "list-units", "--state=failed", "--no-legend", "--no-pager"], timeout=15, default="")
+    failed = []
+    for line in raw.splitlines():
+        m = re.match(r"\s*[●*]?\s*(\S+\.service)", line)
+        if m:
+            failed.append(m.group(1))
+    return {"failedUnits": failed}
+
+
+def collect():
+    rel = os_release()
+    try:
+        uptime = float(read("/proc/uptime", "0").split()[0])
+    except Exception:
+        uptime = None
+    return {
+        "schema": SCHEMA,
+        "host": os.uname().nodename,
+        "collectedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "os": rel.get("PRETTY_NAME"),
+        "kernel": os.uname().release,
+        "uptimeSeconds": round(uptime) if uptime is not None else None,
+        "firewall": probe_firewall(),
+        "fail2ban": probe_fail2ban(),
+        "ssh": probe_ssh(),
+        "auditd": probe_auditd(),
+        "updates": probe_updates(),
+        "accounts": probe_accounts(),
+        "exposure": probe_exposure(),
+        "auth": probe_auth_24h(),
+        "integrity": probe_integrity(),
+        "services": probe_services(),
+    }
+
+
+def write_state(payload):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    compact = json.dumps(payload, separators=(",", ":"))
+    latest = os.path.join(STATE_DIR, "latest.json")
+    tmp = latest + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(compact + "\n")
+    os.replace(tmp, latest)
+
+    hist = os.path.join(STATE_DIR, "history.jsonl")
+    try:
+        if os.path.exists(hist) and os.path.getsize(hist) > HISTORY_MAX_BYTES:
+            with open(hist, "r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()[-HISTORY_KEEP:]
+            with open(hist, "w", encoding="utf-8") as fh:
+                fh.writelines(lines)
+    except Exception:
+        pass
+    with open(hist, "a", encoding="utf-8") as fh:
+        fh.write(compact + "\n")
+
+
+def main(argv):
+    payload = collect()
+    if "--write" in argv:
+        write_state(payload)
+    if "--compact" in argv:
+        print(json.dumps(payload, separators=(",", ":")))
+    else:
+        print(json.dumps(payload, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

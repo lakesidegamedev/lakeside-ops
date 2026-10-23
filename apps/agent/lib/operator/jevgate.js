@@ -23,7 +23,8 @@ const defaultAsk = (spec) => process.env.KEIR_JEV === "off" ? Promise.resolve(nu
 
 const KINDS = {
   bug_report: "A player reports something broken, wrong, missing, lost or erroring in the game.",
-  mechanics_question: "A player asks how a rule, number or system works, or why a number is what it is.",
+  mechanics_question: "A factual question about how a rule, number or system works. Requests for strategy, investment choices or making a corporation profitable are gameplay_advice instead.",
+  gameplay_advice: "A player wants strategy or recommendations: where to invest or build, which sector or country to choose, how to improve profits or which gameplay choice to make. Redirect to Ask. A concrete broken screen, missing shares or erroneous transaction remains bug_report or data_repair.",
   design_feedback: "A player argues a rule or balance should be different; a grievance about design, not a defect.",
   owner_command: "The owner or a developer tells Keir to do, fetch, approve, ship or check something.",
   data_repair: "Someone asks for live game data to be corrected, refunded, credited or restored.",

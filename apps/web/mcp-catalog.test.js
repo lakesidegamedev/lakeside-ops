@@ -41,7 +41,18 @@ test("the directory hands every server a URL an agent can use", () => {
 test("the catalogue names every hosted server", () => {
   // The fleet the box runs. A server that is not in the catalogue is a server
   // the drift check never looks at.
-  const hosted = ["ops-knowledge", "community", "gamestate", "engine", "turndiag", "seed-audit", "worldsim", "security", "railway", "support", "discord", "reports", "lore", "tracker", "lean-lab", "heal-ops", "masscomm", "company-knowledge", "lakeside-hub", "metroforge", "grand-century", "paseo", "glitchtip"];
+  const hosted = ["ops-knowledge", "comms", "community", "game", "gamestate", "engine", "turndiag", "seed-audit", "sims", "worldsim", "security", "support", "discord", "reports", "lore", "tracker", "lean-lab", "heal-ops", "masscomm", "company-knowledge", "metroforge", "grand-century", "paseo", "glitchtip"];
   const keys = new Set(MCP_DEFS.map((d) => d.key));
   for (const key of hosted) assert.ok(keys.has(key), `${key} is hosted but not in the catalogue`);
+});
+
+test("an alias is answered by the server it names, on that server's port", () => {
+  const byKey = new Map(MCP_DEFS.map((d) => [d.key, d]));
+  for (const def of MCP_DEFS.filter((d) => d.aliasOf)) {
+    const target = byKey.get(def.aliasOf);
+    assert.ok(target, `${def.key} is an alias of ${def.aliasOf}, which is not catalogued`);
+    assert.strictEqual(def.health, target.health, `${def.key} must be reached on ${def.aliasOf}'s port`);
+    assert.strictEqual(localMcpUrl(def), `http://127.0.0.1:${target.health}/mcp/${def.key === "reports" ? "report-publish" : def.key}`);
+    for (const tool of def.tools) assert.ok(target.tools.includes(tool), `${def.aliasOf} does not list ${def.key}'s tool ${tool}`);
+  }
 });

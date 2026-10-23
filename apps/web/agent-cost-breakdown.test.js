@@ -4,10 +4,14 @@ const { describe, it, before, after, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 describe("agent-cost breakdown", () => {
   let agentCost;
   let childProcess;
+  let spawnCount = 0;
 
   before(() => {
     // Fresh require so we can stub spawnSync without poisoning other suites.
@@ -117,6 +121,7 @@ describe("agent-cost breakdown", () => {
       return realSpawn(cmd, args, opts);
     });
     mock.method(childProcess, "spawn", (cmd, args) => {
+      spawnCount++;
       const child = new EventEmitter();
       child.stdout = new PassThrough();
       child.stderr = new PassThrough();
@@ -130,6 +135,8 @@ describe("agent-cost breakdown", () => {
       return child;
     });
     process.env.CODEBURN_BIN = "/usr/bin/codeburn";
+    process.env.OPS_COST_CACHE = path.join(os.tmpdir(), `lakeside-cost-cache-test-${process.pid}.json`);
+    try { fs.rmSync(process.env.OPS_COST_CACHE, { force: true }); } catch {}
     agentCost = require("./agent-cost");
     agentCost.clearCostCache();
   });
@@ -138,6 +145,10 @@ describe("agent-cost breakdown", () => {
     mock.restoreAll();
     delete require.cache[require.resolve("./agent-cost")];
     delete process.env.CODEBURN_BIN;
+    if (process.env.OPS_COST_CACHE) {
+      try { fs.rmSync(process.env.OPS_COST_CACHE, { force: true }); } catch {}
+      delete process.env.OPS_COST_CACHE;
+    }
   });
 
   it("normalizeBreakdownPeriod accepts today|week|month only", () => {
@@ -168,17 +179,45 @@ describe("agent-cost breakdown", () => {
     assert.equal(breakdown.sessions[0].label, "$10.0");
   });
 
-  it("loads cost overviews asynchronously without blocking the event loop", async () => {
+  it("never blocks a request on CodeBurn: cold reads return null and warm in the background", async () => {
     agentCost.clearCostCache();
-    let eventLoopResponsive = false;
-    const pending = agentCost.getCostOverviewAsync();
-    await new Promise((resolve) => setImmediate(() => {
-      eventLoopResponsive = true;
-      resolve();
-    }));
-    assert.equal(eventLoopResponsive, true);
-    const overview = await pending;
+    const breakdown = await agentCost.getCostBreakdownAsync("today");
+    assert.equal(breakdown, null);
+    const warmed = await agentCost.refreshBreakdown("today");
+    assert.equal(warmed.totals.cost, 16);
+    const overview = await agentCost.getCostOverviewAsync();
+    assert.equal(overview, null);
+    const warmedOverview = await agentCost.refreshOverview();
+    assert.equal(warmedOverview.today.cost, 16);
+    const cached = await agentCost.getCostBreakdownAsync("today");
+    assert.equal(cached.totals.cost, 16);
+  });
+
+  it("coalesces concurrent refreshes into a single CodeBurn run per key", async () => {
+    agentCost.clearCostCache();
+    const before = spawnCount;
+    agentCost.refreshOverview();
+    agentCost.refreshOverview();
+    const overview = await agentCost.refreshOverview();
     assert.equal(overview.today.cost, 16);
     assert.equal(overview.month.cost, 16);
+    // sessions today + sessions month, nothing duplicated
+    assert.equal(spawnCount - before, 2);
+  });
+
+  it("persists snapshots so a restart renders usage without spawning CodeBurn", async () => {
+    agentCost.clearCostCache();
+    await agentCost.refreshBreakdown("today");
+    agentCost.persistCostCacheNow();
+    assert.ok(fs.existsSync(process.env.OPS_COST_CACHE));
+
+    delete require.cache[require.resolve("./agent-cost")];
+    const reloaded = require("./agent-cost");
+    const before = spawnCount;
+    const cached = await reloaded.getCostBreakdownAsync("today");
+    assert.equal(cached.totals.cost, 16);
+    assert.equal(spawnCount, before, "restart should serve the persisted snapshot without spawning CodeBurn");
+    delete require.cache[require.resolve("./agent-cost")];
+    agentCost = require("./agent-cost");
   });
 });

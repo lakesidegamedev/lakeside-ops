@@ -1,0 +1,51 @@
+# Lakeside host security audit rules (EU + US VPS)
+#
+# Installed to /etc/audit/rules.d/99-lakeside.rules by
+# deploy/security/harden-host.sh, then loaded with `augenrules --load`.
+#
+# Scope is deliberately evidence-focused rather than exhaustive: identity and
+# trust-store changes, privilege configuration, service definitions, scheduled
+# jobs, kernel module loads, clock changes and mounts. We do NOT log every
+# execve — both boxes run agent swarms and would generate hundreds of MB an
+# hour, which pushes auditd into its disk-full action and loses the trail.
+#
+# The `-e 2` immutable flag is intentionally NOT set: these rules are expected
+# to evolve, and making them immutable forces a production reboot to change.
+
+## Identity and authentication databases
+-w /etc/passwd      -p wa -k identity
+-w /etc/shadow      -p wa -k identity
+-w /etc/group       -p wa -k identity
+-w /etc/gshadow     -p wa -k identity
+-w /etc/opasswd     -p wa -k identity
+
+## Privilege configuration
+-w /etc/sudoers     -p wa -k privilege
+-w /etc/sudoers.d/  -p wa -k privilege
+-w /etc/security/   -p wa -k privilege
+-w /etc/pam.d/      -p wa -k privilege
+
+## SSH trust store and daemon config
+-w /etc/ssh/sshd_config    -p wa -k sshd
+-w /etc/ssh/sshd_config.d/ -p wa -k sshd
+
+## Service definitions and scheduled jobs
+-w /etc/systemd/system/ -p wa -k systemd
+-w /etc/cron.d/         -p wa -k cron
+-w /etc/crontab         -p wa -k cron
+-w /var/spool/cron/     -p wa -k cron
+
+## Package management trust
+-w /etc/apt/sources.list     -p wa -k apt
+-w /etc/apt/sources.list.d/  -p wa -k apt
+-w /etc/apt/trusted.gpg.d/   -p wa -k apt
+
+## Kernel module loading (rootkit ingress)
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k modules
+
+## Clock tampering (defeats log correlation)
+-a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time-change
+-w /etc/localtime -p wa -k time-change
+
+## Filesystem mounts
+-a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mount

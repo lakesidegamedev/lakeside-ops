@@ -18,7 +18,7 @@ function bearerFromEnv(tokenEnv, env = process.env) {
 }
 
 function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", buildServer, authorize,
-  auth, health, listen = true, jsonLimit = "256kb", logger = console, onListen,
+  auth, health, aliases = {}, listen = true, jsonLimit = "256kb", logger = console, onListen,
   normalizeDuplicateJsonContentType = true,
   transportFactory = () => new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }) } = {}) {
   if (!name || typeof buildServer !== "function") throw new Error("name and buildServer are required");
@@ -76,7 +76,7 @@ function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", build
     ];
     res.type("text/plain; version=0.0.4").send(lines.join("\n"));
   });
-  app.post("/mcp", async (req, res) => {
+  const handle = build => async (req, res) => {
     const count = () => counters.set(res.statusCode, (counters.get(res.statusCode) || 0) + 1);
     res.once("finish", count);
     let identity;
@@ -84,7 +84,7 @@ function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", build
     catch (error) { logger.error(`[${name}] auth error:`, error); return res.status(503).json(rpcError(-32603, "authentication unavailable")); }
     if (!identity) return res.status(401).json(rpcError(-32001, "invalid or missing bearer token"));
     try {
-      const server = buildServer(identity);
+      const server = build(identity);
       const transport = transportFactory();
       res.once("close", () => { transport.close(); server.close(); });
       await server.connect(transport);
@@ -93,7 +93,18 @@ function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", build
       logger.error(`[${name}] request error:`, error);
       if (!res.headersSent) res.status(500).json(rpcError(-32603, "internal error"));
     }
-  });
+  };
+  app.post("/mcp", handle(buildServer));
+  // A consolidated server also answers as each server it absorbed, at
+  // /mcp/<old name>, so a registration that named the old server keeps seeing
+  // exactly that server's name and tools. Same auth, same counters.
+  for (const [alias, build] of Object.entries(aliases)) {
+    if (!/^[a-z0-9-]+$/.test(alias) || typeof build !== "function") throw new Error(`invalid alias ${alias}`);
+    app.post(`/mcp/${alias}`, handle(build));
+    // The same endpoint where Keir's Rust MCP client looks: it strips a trailing
+    // "/mcp" from the registered URL and appends "/mcp" again (2026-10-22).
+    app.post(`/mcp/${alias}/mcp`, handle(build));
+  }
   const listener = listen ? app.listen(port, bind, () => {
     logger.log(`[${name}] on ${bind}:${port}`);
     if (onListen) Promise.resolve(onListen()).catch(error => logger.error(`[${name}] startup callback failed:`, error));

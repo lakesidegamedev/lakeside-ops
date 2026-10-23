@@ -4,10 +4,10 @@ const { logInput } = require("./ownermuse-policy");
 const SOURCES = {
   gamestate: ["Game state", "globe.europe.africa"], support: ["Support", "bubble.left.and.bubble.right"],
   "ops-knowledge": ["Knowledge", "books.vertical"], engine: ["Game engine", "gearshape.2"],
-  turndiag: ["Turn diagnostics", "waveform.path.ecg"], railway: ["Deployments", "shippingbox"],
+  turndiag: ["Turn diagnostics", "waveform.path.ecg"],
   community: ["Community", "person.3"], "heal-ops": ["Game records", "externaldrive"],
 };
-const TITLES = { game_overview: "Check game status", trace_corp: "Inspect corporation", trace_sector: "Inspect sector", support_get: "Read ticket", support_search: "Search support", knowledge_query: "Search knowledge", code_read: "Read source", code_search: "Search code", railway_status: "Check deployments", phase_history: "Read turn history" };
+const TITLES = { game_overview: "Check game status", trace_corp: "Inspect corporation", trace_sector: "Inspect sector", support_get: "Read ticket", support_search: "Search support", knowledge_query: "Search knowledge", code_read: "Read source", code_search: "Search code", phase_history: "Read turn history" };
 const LOCAL = {
   channel_reply: ["Reply", "bubble.left"], progress_update: ["Update progress", "text.bubble"],
   repository_snapshot: ["Load repository", "folder"], shell: ["Run workspace command", "terminal"],

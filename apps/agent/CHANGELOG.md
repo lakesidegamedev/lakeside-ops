@@ -17,6 +17,74 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - `progress_update` for an app job writes the line onto the answer bubble and skips the separate ack message; the activation keeps a 45 second liveness tick built from the tool log.
 - `voiceturn.finalReplyQueued` ignores provisional answers, so a voice turn still needs its own finished reply.
 
+## 5.9.17 (2026-10-23)
+
+- Answer voice turns on the small conversation brief with reads preloaded and direct, instead of the full operating brief (66,320 to about 1,600 characters per round), and allow one more round so a read, the reply and finish fit.
+- Keep the app conversation for conversation: background work posts only decisions needed, stuck tasks and fixes live on the main server; starts, PRs, merges, pauses and finishes stay on the working-now board. At most 30 work digests are retained, so they never evict the owner's messages, and digests are left out of the conversation history models read.
+- A waiting app task no longer reposts a near-repeat of its last five replies on each timer wake unless the owner has asked again; each skipped repeat doubles its next wait.
+
+## 5.9.16 (2026-10-23)
+
+- Keep activations inside their step budget on weaker tool-callers (found shadowing DeepSeek v4.1 Flash, where a third of runs hit the step limit): an identical read that already failed is refused with its original error, a read that timed out is not retried in the same activation, tool results warn when few steps remain so the reply is posted before the cut-off, and schema rejections from read tools now include the expected arguments.
+- Accept `{"$oid": id}` in heal reads by matching the id as text, and state the ticket reply limits in the `channel_reply` tool description so drafts stop failing the copy guard.
+
+## 5.9.15 (2026-10-23)
+
+- Fix three tool-argument failures found while shadowing DeepSeek v4.1 Flash: support searches no longer exceed the support server's 40-result limit, knowledge searches accept `query` or `question` as the search text, and calculations accept unit conversion constants such as 1000 and 3600000.
+
+## 5.9.14 (2026-10-23)
+
+- Preserve explicit ticket verification holds when checking a fix's deployment or closing its linked GitHub issues. A held check still reports the fix live. Reopened issues no longer reuse a receipt from their previous closure.
+
+## 5.9.13 (2026-10-23)
+
+- Route gameplay strategy and investment advice to Ask with an enforced short redirect across support replies, player conversations and advice closures. Advice gets no investigation card or portfolio research checklist. Concrete defects and repairs keep their support path.
+
+## 5.9.12 (2026-10-23)
+
+- Ignore historical turn anomalies once newer turns have completed, so recovered failures cannot open fresh incidents after a restart or a later poll. Whole-turn failures now record one distinct event per turn and retire old persisted findings after clean turns.
+
+## 5.9.11 (2026-10-23)
+
+- Remove conflicting instructions to send timed and per-stage support messages. Routine progress stays on the existing card; separate replies require a player question, a useful verified finding or a completed outcome.
+
+## 5.9.10 (2026-10-23)
+
+- Route support filing failures to private ops alerts once, block their repetition in player replies and cards, and suppress unchanged deployment notices across later checks.
+- File suggestions from authenticated archived ticket reports after their original Discord channel is deleted, preserving the reporter and native retry receipt.
+
+## 5.9.9 (2026-10-23)
+
+### For developers
+
+- A task that keeps activating without new input is now slowed down instead of restarted. A task activated five times in ten minutes is backed off five minutes, then thirty, then six hours, and the ladder resets after six quiet hours. A player message, another task's delivery or a live slot still runs immediately. One ticket had been activated 104 times in two and a half hours on a dependency no tool could resolve, at 65.5M context tokens.
+- A wait with nothing subscribed and no reply owed now climbs 15, 30, 60 then 120 minutes instead of a flat fifteen, and the one-minute reply hand-back fires once per player message rather than on every wait. Replaying the recorded timelines of the 52 jobs that sat on that timer, 1,547 activations become 392.
+- The brief now says that attempting a gated action to watch it be refused is itself an unauthorized attempt, covering heals, merges, deployments, account relinks and payouts.
+- `finish`, `status_card` and `support_action` state the rules their guards enforce at the point the model decides them: a filed question is Keir's own work item, a player-reply wait needs a posted reply, and card text is read by the player.
+
+## 5.9.8 (2026-10-23)
+
+### For users
+
+- Support reviews assess design, units, scale and usable player workflows, including reports whose calculations match the code. Failed suggestion filings and unresolved defects remain owned.
+- Account recovery follows up failed delivery with investigation and a concrete recovery handoff, instead of repeating answered reset questions.
+
+### For developers
+
+- Fix ticket suggestion filing passing an abort signal as the authorization helper's allowed states. A broker integration regression covers ticket filing, author attribution and inactive-task refusal.
+- Carry a fresh explicit owner closure hold onto the newly adopted job when a resolved ticket is reopened. Historical unrelated holds are not inherited.
+- The Rust MCP client uses registered server URLs verbatim, preserving alias paths used by consolidated MCP services.
+- The Keir Rust shadow pass reads the support MCP address from the support registration instead of a hardcoded port.
+
+
+## 5.9.7 (2026-10-22)
+
+### For developers
+
+- Keir no longer depends on Railway. Live-fix checks (issue closure and Sentry resolve) now read the commits production actually runs on the US box: a successful `box/ahd-us-web` or `box/ahd-us-worker` GitHub deployment when one exists, otherwise `ahd-deployed-sha.sh web|worker` (override with `KEIR_DEPLOYED_SHA_CMD`). The fix must be an ancestor of the running web commit, and of the worker commit for turn and economy code, and the site health check (`KEIR_AHD_HEALTH_URL`) must return ok. Unknown evidence fails closed. Railway "production" deployments and commit statuses are ignored.
+- New read-only `github deployed` action reports the running web and worker commits, where each came from, and site health. The prompt points deploy checks at it instead of Railway reads.
+- The `railway` MCP is gone from every Keir read allowlist (support, finding, quick owner, engineering, owner Muse), the tool activity labels and the `lakeside` CLI server list, so the server can be unregistered.
+
 ## 5.9.6 (2026-10-21)
 
 ### For developers

@@ -278,7 +278,7 @@ function buildSidebar() {
     { href: "/tickets", label: "Tickets", icon: "life-buoy", feature: "tickets" },
     { href: "/reports/worldsim-audit-program", label: "World Audit", icon: "activity" },
     { href: "/kanban", label: "Kanban", icon: "check-square" },
-    { href: "/keir", label: "Keir hub", icon: "activity" },
+    { href: "/keir", label: "Keir", icon: "activity" },
     { href: "/inbox", label: "Keir inbox", icon: "message-square" },
     { href: "/scheduler", label: "Scheduler", icon: "calendar" },
     { href: "/worktrees", label: "Worktrees", icon: "git-branch" },
@@ -287,8 +287,8 @@ function buildSidebar() {
     { href: "/status", label: "Uptime", icon: "activity", mod: true, feature: "statusPage" },
     { href: "/engine", label: "Engine", icon: "cpu" },
     { href: "/observatory", label: "Observatory", icon: "eye" },
-    { href: "/grafana/", label: "Grafana", icon: "bar-chart" },
     { href: "/events", label: "Event Recovery", icon: "activity" },
+    { href: "/security", label: "Security", icon: "shield" },
   ] },
   { label: "Product", items: [
     { href: "/games", label: "Games", icon: "globe" },
@@ -310,6 +310,7 @@ function buildSidebar() {
     { href: "/learn", label: "Learn", icon: "graduation-cap" },
   ] },
   { label: "External services", items: [
+    ...externalSidebarItems("Platform"),
     ...externalSidebarItems("Observability"),
     ...externalSidebarItems("Analytics"),
     ...externalSidebarItems("Tools"),
