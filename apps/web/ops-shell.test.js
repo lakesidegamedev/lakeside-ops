@@ -23,9 +23,10 @@ describe('legacy shell mobile navigation', () => {
 describe('v4 operations navigation', () => {
   it('shows admin recovery and ticket links together', () => {
     const html = renderSidebar('/', 'admin');
-    for (const href of ['/tickets', '/worktrees', '/events', '/grafana/', '/reports/worldsim-audit-program']) {
+    for (const href of ['/tickets', '/worktrees', '/events', '/reports/worldsim-audit-program']) {
       assert.match(html, new RegExp(`href="${href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
     }
+    assert.doesNotMatch(html, /href="\/grafana\/"/);
     assert.doesNotMatch(html, /href="\/agents"/);
     assert.doesNotMatch(html, /href="\/code"/);
     assert.match(html, /class="sb-brand-logo"[^>]+src="[^"]+"/);
