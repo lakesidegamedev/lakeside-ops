@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Remove conflicting instructions to send timed and per-stage support messages. Routine progress stays on the existing card; separate replies require a player question, a useful verified finding or a completed outcome.
+
 ## 5.9.10 (2026-10-23)
 
 - Route support filing failures to private ops alerts once, block their repetition in player replies and cards, and suppress unchanged deployment notices across later checks.
