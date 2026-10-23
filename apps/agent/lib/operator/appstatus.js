@@ -16,7 +16,7 @@ function formatStatus(s, now = Date.now()) {
     parts.push(`The latest turn ${s.lastTurn.success ? "succeeded" : "failed"}${seconds === null ? "" : ` in ${Math.floor(seconds / 60)} minutes ${seconds % 60} seconds`}.`);
   }
   if (Number.isSafeInteger(s.lastTurn?.warnings)) parts.push(`${s.lastTurn.warnings} warning${s.lastTurn.warnings === 1 ? "" : "s"} on the latest turn.`);
-  if (Number.isSafeInteger(s.recent?.failures) && Number.isSafeInteger(s.recent?.count) && s.recent.count > 0) parts.push(`${s.recent.failures} failures across the last ${s.recent.count} turns.`);
+  if (Number.isSafeInteger(s.recent?.failures) && Number.isSafeInteger(s.recent?.count) && s.recent.count > 0) parts.push(`${s.recent.failures} failed attempts across the last ${s.recent.count} recorded turn attempts. These are historical records; the latest turn result is reported separately.`);
   const next = Date.parse(s.schedule?.next);
   if (Number.isFinite(next)) parts.push(`The next turn is scheduled for ${new Date(next).toISOString().slice(11, 16)} UTC${s.schedule.overdueMin > 0 ? `, ${Math.ceil(s.schedule.overdueMin)} minutes overdue` : ""}.`);
   return parts.join(" ");
