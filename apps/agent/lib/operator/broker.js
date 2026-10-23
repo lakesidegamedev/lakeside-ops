@@ -1866,6 +1866,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       async function closeFixedIssues(prNumber, only = null) {
         const verified = await verifyLiveFix({ api, number: prNumber, signal });
         if (!verified.live) return { closed: [], live: false };
+        if (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)
+          return { closed: [], live: true, closureHeld: true };
         const { pr, files } = verified;
         const turn = files.some((f) => ECONOMY_PATHS.test(f) || blast.WORKER_PATHS.test(f));
         const referenced = [...String(pr.body || "").matchAll(/\b(?:refs?|close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+((?:#\d+(?:,\s*)?)+)/gi)].flatMap((m) => [...m[1].matchAll(/#(\d+)/g)].map((x) => Number(x[1])));
@@ -1880,7 +1882,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if (!issue || issue.pull_request || issue.state !== "open") continue;
           // A partial fix keeps its issue open (the repo labels those).
           if ((issue.labels || []).some((l) => /status: partial/i.test(l.name || l))) continue;
-          await effect(job, `close-issue:${number}:${prNumber}`, async () => {
+          // A reopened issue must not reuse a receipt from its prior closure.
+          const generation = issue.updated_at || issue.created_at || "initial";
+          await effect(job, `close-issue:${number}:${prNumber}:${generation}`, async () => {
             await api(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}`]);
             return api(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]);
           });
@@ -1901,14 +1905,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         for (const b of ["main", "turn-worker/production"]) {
           try { const c = await api([`repos/${repo}/compare/${encodeURIComponent(b)}...${pr.merge_commit_sha}`]); where[b] = ["behind", "identical"].includes(c.status); } catch { where[b] = null; }
         }
-        const { closed } = await closeFixedIssues(fix, number);
+        const { closed, closureHeld } = await closeFixedIssues(fix, number);
+        if (closureHeld) return { closed: false, issue: number, fix, closureHeld: true, reason: "Issue closure is held by the ticket's explicit owner follow-up. Keep the verified live result and wait for the required outcome evidence." };
         return closed.length ? { closed: true, issue: number, fix } : { closed: false, issue: number, fix, where, reason: "the fix is not live for players yet, the issue is already closed, or it is marked partial. Check again with where after the promotion." };
       }
       if (input.action === "deployed") {
         // The commits production actually runs, from the US box, plus site health.
         if (desktop) throw new Error("Desktop fixes ship as client releases; deployed covers the game servers only.");
         const live = await liveDeployment({ api, signal });
-        return { ...live, meaning: "web = commit the main server serves; worker = commit the turn worker runs. A fix is live when its merge commit is an ancestor of the running commit (github where on the PR closes its issues once it is). A null sha means unknown: do not claim anything is live." };
+        return { ...live, meaning: "web = commit the main server serves; worker = commit the turn worker runs. A fix is live when its merge commit is an ancestor of the running commit (github where on the PR closes its issues once it is, unless an explicit owner verification hold applies). A null sha means unknown: do not claim anything is live." };
       }
       if (input.action === "where") {
         // Where a change actually is. Turn code reaches players only when
@@ -1925,8 +1930,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, sandboxWorker: out["turn-worker/sandbox"] === true };
         ledger.save();
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
-          const { closed, live } = await closeFixedIssues(Number(input.number));
+          const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));
           out.fixLive = live;
+          if (closureHeld) out.issueClosureHeld = true;
           if (closed.length) out.issuesClosed = closed;
         }
         return out;

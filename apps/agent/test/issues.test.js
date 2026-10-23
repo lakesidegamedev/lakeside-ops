@@ -56,7 +56,7 @@ test("an issue refuses names, Discord ids, ticket numbers, internal hosts and th
   assert.equal(issues.build({ ...good, kind: "enhancement", expected: "Show last turn's output with a note.", actual: "" }).labels[0], "enhancement");
 });
 
-function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false } = {}) {
+function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false, issueVersion = { updated_at: "2026-10-23T10:00:00Z" } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-issues-")); dirs.push(dir);
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [],
@@ -81,7 +81,7 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+$/.test(route)) return JSON.stringify(pr);
     if (/^repos\/lakesidegamedev\/AHDGame\/deployments\?/.test(route)) return JSON.stringify([]);
     if (/^repos\/lakesidegamedev\/AHDGame\/compare\//.test(route)) { const base = decodeURIComponent(route.split("/compare/")[1].split("...")[0]), b = BRANCH_OF[base] || base; return JSON.stringify({ status: compare[b] || "diverged" }); }
-    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: [] });
+    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: [], ...issueVersion });
     return JSON.stringify({ ok: true });
   };
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: {}, now: () => 5000, exec });
@@ -131,6 +131,42 @@ test("where closes the issues a live Keir PR references; turn code waits for the
   const other = fixture({ pr: { number: 602, merged: true, merge_commit_sha: "999999999999", head: { ref: "feat/x" }, body: "Refs #503", files: ["src/components/A.tsx"] }, compare: { main: "identical" } });
   const kept = await other.broker.tool(other.job, "github", { action: "where", number: 602 });
   assert.equal(kept.issuesClosed, undefined);
+});
+
+test("where preserves a held issue while still reporting the fix live", async () => {
+  const f = fixture({ pr: { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Refs #501", files: ["src/components/OutputPanel.tsx"] }, compare: { main: "identical" } });
+  f.ledger.data.keirIssues = { 501: { number: 501, state: "open", ticket: 9 } };
+  f.job.ownerClosureHold = { handoffId: "independent-review" };
+  const held = await f.broker.tool(f.job, "github", { action: "where", number: 600 });
+  assert.equal(held.fixLive, true);
+  assert.equal(held.issueClosureHeld, true);
+  assert.equal(held.issuesClosed, undefined);
+  assert.equal(f.ledger.data.keirIssues[501].state, "open");
+  assert.ok(!f.gh.some(a => a[0] === "-X" && ["POST", "PATCH"].includes(a[1])));
+  delete f.job.ownerClosureHold;
+  const released = await f.broker.tool(f.job, "github", { action: "where", number: 600 });
+  assert.deepEqual(released.issuesClosed, [501], "a held read must not consume the later closure effect");
+});
+
+test("explicit issue closure honors the canonical ticket's hold", async () => {
+  const f = fixture({ pr: { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Refs #501", files: ["src/components/OutputPanel.tsx"] }, compare: { main: "identical" } });
+  const root = f.ledger.createJob("held-root", { kind: "ticket", role: "support", ticket: 9 });
+  root.ownerClosureHold = { handoffId: "independent-review" };
+  f.ledger.data.seen["ticket:9"] = root.id;
+  const held = await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  assert.equal(held.closed, false);
+  assert.equal(held.closureHeld, true);
+  assert.match(held.reason, /held/i);
+  assert.ok(!f.gh.some(a => a[0] === "-X" && ["POST", "PATCH"].includes(a[1])));
+});
+
+test("a reopened issue needs a fresh closure instead of an old effect receipt", async () => {
+  const issueVersion = { updated_at: "2026-10-23T10:00:00Z" };
+  const f = fixture({ issueVersion, pr: { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Refs #501", files: ["src/components/OutputPanel.tsx"] }, compare: { main: "identical" } });
+  await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  issueVersion.updated_at = "2026-10-23T11:00:00Z";
+  await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  assert.equal(f.gh.filter(a => a[1] === "PATCH" && a[2] === "repos/lakesidegamedev/AHDGame/issues/501").length, 2);
 });
 
 test("public issue guards catch credentials and Unicode reporter names", () => {
