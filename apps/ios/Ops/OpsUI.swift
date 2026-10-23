@@ -117,6 +117,9 @@ enum OpsFormat {
         return iso.date(from: value.string) ?? ISO8601DateFormatter().date(from: value.string)
     }
     static func percent(_ value: Double?) -> String { value.map { "\(Int(($0 * 100).rounded()))%" } ?? "-" }
+    /// A percentage that already arrives as 0 to 100 (service uptime), not a
+    /// 0 to 1 fraction, so it is never multiplied a second time.
+    static func percentValue(_ value: Double?) -> String { value.map { String(format: "%.2f%%", $0) } ?? "-" }
 }
 
 /// Keir's job and ticket states as one vocabulary, backed by `OpsStatus` so an

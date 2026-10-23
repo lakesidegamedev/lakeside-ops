@@ -35,15 +35,28 @@ final class LaunchTests: XCTestCase {
         }
         XCTFail("Keir tools menu did not offer \(name)")
     }
-    /// Opens a row in the Ops list by the start of its combined label, scrolling
-    /// the list until the row is actually hittable.
+    /// Opens a row in the Ops list by the start of its combined label. Returning
+    /// from a detail keeps the list where it was, so a target above the fold is
+    /// reached by first scrolling to the top rather than only swiping up.
     private func openRow(_ app: XCUIApplication, _ title: String, timeout: TimeInterval = 12) {
         let matches = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title))
-        let deadline = Date().addingTimeInterval(timeout)
+        func row() -> XCUIElement { matches.firstMatch }
+        func open() -> Bool {
+            guard row().exists && row().isHittable else { return false }
+            row().tap(); return true
+        }
+        if open() { return }
+        var deadline = Date().addingTimeInterval(timeout)
         repeat {
-            let row = matches.firstMatch
-            if row.exists && row.isHittable { row.tap(); return }
+            if open() { return }
             app.swipeUp()
+        } while Date() < deadline
+        // A detail return keeps the list where it was, so the target can be
+        // above the viewport. Scroll back to the top and search again.
+        deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if open() { return }
+            app.swipeDown()
         } while Date() < deadline
         let fallback = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
         if fallback.exists { fallback.tap(); return }
@@ -225,6 +238,7 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Ops"].tap()
         // Needs you lists only decisions and owner work; a degraded service is a
         // health fact, not an owner decision, and never appears as a separate list.
+        if !find(app, "Merge #201 to development", timeout: 3).exists { app.swipeUp() }
         XCTAssertTrue(find(app, "Merge #201 to development").waitForExistence(timeout: 10))
         XCTAssertFalse(find(app, "Lakeside Ask is degraded").exists)
         capture(app, "Ops briefing")
@@ -232,14 +246,17 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Health"].waitForExistence(timeout: 10))
         capture(app, "Health detail")
         app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 5))
         openRow(app, "Support desk")
         XCTAssertTrue(find(app, "Budget screen shows zero funding").waitForExistence(timeout: 10))
         capture(app, "Desk")
         app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 5))
         openRow(app, "Work in progress")
         XCTAssertTrue(find(app, "Keir chat in Lakeside Ops").waitForExistence(timeout: 10))
         capture(app, "Work")
         app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 5))
         openRow(app, "Files")
         let report = find(app, "Turn time breakdown")
         XCTAssertTrue(report.waitForExistence(timeout: 10)); report.tap()
@@ -253,7 +270,7 @@ final class LaunchTests: XCTestCase {
         for (row, title, evidence) in [
             ("Scheduler", "Scheduler", "ios-simulator"),
             ("Security", "Security", "fail2ban recidive jail"),
-            ("Pull requests", "Pull requests", "Pull requests"),
+            ("Pull requests", "Pull requests", "Keir mobile briefing redesign"),
             ("Worktrees and agents", "Worktrees", "Keir mobile briefing"),
             ("World simulations", "World sims", "seed-1991"),
             ("Backups and database", "Backups", "2026-10-15"),
@@ -261,7 +278,7 @@ final class LaunchTests: XCTestCase {
         ] {
             openRow(app, row)
             XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 10), "\(row) did not open")
-            if row != "Pull requests" { XCTAssertTrue(find(app, evidence).waitForExistence(timeout: 10), "\(row) is missing \(evidence)") }
+            XCTAssertTrue(find(app, evidence).waitForExistence(timeout: 10), "\(row) is missing \(evidence)")
             capture(app, row)
             app.navigationBars.buttons.firstMatch.tap()
             XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 5))
@@ -448,12 +465,13 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["keir-model"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["keir-model"].label.contains("Fixture model"))
         XCTAssertTrue(app.buttons["keir-activity-strip"].waitForExistence(timeout: 5))
-        // The question now lives in the needs-you stack at the top of chat, so
-        // scroll toward the top rather than relying on the old bottom placement.
-        app.swipeDown(); app.swipeDown()
+        // The redesign starts chat at the top, where the needs-you stack already
+        // holds the question. Wait for the model sheet to finish closing instead
+        // of swiping during its transition.
+        XCTAssertTrue(app.navigationBars["Conversation"].waitForNonExistence(timeout: 8))
         let choice = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Use filled jobs")).firstMatch
-        XCTAssertTrue(choice.waitForExistence(timeout: 8))
-        for _ in 0..<6 where !choice.isHittable { app.swipeDown() }
+        XCTAssertTrue(choice.waitForExistence(timeout: 10))
+        if !choice.isHittable { app.swipeDown() }
         guard choice.isHittable else { XCTFail("the structured choice is not reachable"); return }
         choice.tap()
         let answer = app.buttons["keir-answer-choices"]

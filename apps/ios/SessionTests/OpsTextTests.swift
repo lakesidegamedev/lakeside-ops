@@ -3,6 +3,13 @@ import LakesideCore
 @testable import LakesideOps
 
 final class OpsTextTests: XCTestCase {
+    func testServiceUptimeIsAlreadyAPercentage() {
+        XCTAssertEqual(OpsFormat.percentValue(98.1), "98.10%")
+        XCTAssertEqual(OpsFormat.percentValue(100), "100.00%")
+        XCTAssertEqual(OpsFormat.percentValue(nil), "-")
+        XCTAssertEqual(OpsFormat.percent(0.981), "98%", "fractions still use the 0 to 1 formatter")
+    }
+
     func testScrubRemovesEmptyTemplateArtifacts() {
         XCTAssertEqual(OpsText.scrub("It me or turn been stuck in processing: started. Was:."), "")
         XCTAssertEqual(OpsText.scrub("Ticket: started... Was:."), "")

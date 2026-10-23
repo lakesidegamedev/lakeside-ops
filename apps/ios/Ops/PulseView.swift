@@ -60,7 +60,7 @@ struct HealthView: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(up) of \(total) up").font(.opsCardTitle)
-                    Text("Worst 7-day uptime \(OpsFormat.percent(worst))")
+                    Text("Worst 7-day uptime \(OpsFormat.percentValue(worst))")
                         .font(.caption).foregroundStyle(OpsTheme.muted).monospacedDigit()
                 }
                 Spacer()
