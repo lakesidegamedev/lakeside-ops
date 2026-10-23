@@ -30,7 +30,7 @@ async function openSuggestion({ ledger, config, mcp, discord, effect, supportAut
       if (actual.webhook_id || actual.author?.bot || actual.author?.id !== job.actorId || !requested(actual.content)) throw new Error("Suggestion requester provenance changed or filing was not requested");
       channelId = input.channelId || channelId;
     } else if (job.kind === "ticket") {
-      const rows = await supportAuthority(job, signal);
+      const rows = await supportAuthority(job, ["running"]);
       if (input.channelId && input.channelId !== job.channelId || !rows.some(m => m.id === reportId)) throw new Error("Select a source message from this ticket's verified history");
       channelId = job.channelId;
     } else throw new Error("Suggestion filing needs an authenticated developer request or an assigned ticket");
