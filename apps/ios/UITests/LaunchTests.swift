@@ -480,8 +480,17 @@ final class LaunchTests: XCTestCase {
         answer.tap()
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "My answer: Use filled jobs")).firstMatch.waitForExistence(timeout: 10))
         capture(app, "Structured choice and parallel work")
+    }
+
+    /// Slash commands need a clean composer, so they get their own launch. The
+    /// combined flow answered a question first, which left the keyboard and the
+    /// chat in transition and made the composer query time out on CI.
+    func testSlashCommandsOfferChart() {
+        let app = launch()
         let composer = app.textFields["keir-composer"].exists ? app.textFields["keir-composer"] : app.textViews["keir-composer"]
-        composer.tap(); app.typeText("/chart")
+        XCTAssertTrue(composer.waitForExistence(timeout: 10))
+        composer.tap()
+        composer.typeText("/chart")
         let command = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Graph data with sources")).firstMatch
         XCTAssertTrue(command.waitForExistence(timeout: 10))
         if !command.isHittable { app.swipeUp() }
