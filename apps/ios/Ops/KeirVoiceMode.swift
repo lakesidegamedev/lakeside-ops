@@ -153,7 +153,7 @@ struct KeirVoiceMode: View {
     }
     private func cancelRequest() {
         request?.cancel()
-        request = nil
+        request = nil; expectedJob = nil
     }
     private func endVoice() {
         cancelRequest(); active = false
