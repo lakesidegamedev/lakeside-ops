@@ -23,12 +23,14 @@ function facts(job, d) {
     liveCard: card.length > 0 && card.every((i) => ["main", "confirmed", "answered"].includes(i.stage)),
     heal: Object.values(d.actions || {}).some((a) => a.jobId === job.id),
     suggestion: Boolean(job.suggestionOpened || job.suggestions?.length),
+    adviceRedirect: Boolean(job.adviceRedirectedAt && job.adviceRedirectedAt >= (job.lastPlayerAt || 0)),
   };
 }
 
 // The kind comes from intake tagging, then the channel category.
 function kindOf(job, d) {
   const tag = job.tags?.kind, cat = d.channels?.[job.channelId]?.category;
+  if (require("./advicerouting").requiresRedirect(job, d)) return "gameplay_advice";
   if (job.incidentCandidates?.length && tag !== "mechanics_question") return "incident_candidate";
   if (["bug_report", "mechanics_question", "data_repair", "design_feedback", "feature_request"].includes(tag)) return tag;
   if (cat === "mechanics" || cat === "gameplay") return "mechanics_question";
@@ -48,6 +50,10 @@ const PLAYBOOKS = {
     step("verify_loss", "Verify the loss from the ledger or history (trace_account, character history); never take the player's number on trust", f.reads >= 3),
     step("route", "Request the repair with the evidence (request_heal, which needs approval) or raise it to the developers; never promise money", f.heal || f.raised || f.merged || f.answeredCard),
     step("tell_player", "Tell the player what was verified and that the repair is with the developers, after their last message", f.answeredSincePlayer),
+  ],
+  gameplay_advice: (f) => [
+    step("redirect", `Send the short Ask redirect (${require("./advicerouting").URL}); do not research investments or create a progress card`, f.adviceRedirect),
+    step("route_if_bug", "Retain any separately verified broken screen, wrong figures or missing transaction as bug work", true, false),
   ],
   mechanics_question: (f) => [
     step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers", f.reads >= 2),

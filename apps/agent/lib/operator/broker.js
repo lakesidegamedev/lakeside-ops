@@ -454,7 +454,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (screen.labels.length || screen.refuse) ledger.audit("post_screened", { job: job.id, ticket: ticketNo, labels: screen.labels, refused: Boolean(screen.refuse), model: screen.model });
       if (screen.refuse) throw Object.assign(new Error(screen.refuse), { screened: true });
     } catch (e) { if (e.screened) throw e; }
-    await ensureDisclosure(ticketNo);
+    if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
   }
   // Keir 4.0 phase 1: the player register, checked in code. Paths,
   // repositories, model names and Keir's own runtime never reach a player
@@ -483,6 +483,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   const MONOLOGUE_CAP = 3;
   const waitingStage = ticketNo => JSON.stringify({ evidence: Object.fromEntries(Object.entries(ticketEvidence(ticketNo)).map(([k,v])=>[k,v.done])), suggestions: Object.values(d.jobs).filter(j=>ticketOf(j)===ticketNo).flatMap(j=>Object.values(j.filedSuggestions||{}).map(s=>s.number)).sort((a,b)=>a-b) });
   function guardTicketPostRules(job, ticketNo, message) {
+    require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
     // Blocked on the owner means one notice, then silence (ticket 1514 posted
     // "still waiting on your call" three times in four hours). A direct
@@ -545,6 +546,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     try {
       let text = publicText(job.summary.replace(/[\u2013\u2014]/g, ","));
       const ticketNo = ticketOf(job);
+      require("./advicerouting").guard(job, d, text);
       // Keir 5.6: a finish summary that narrates Keir's own bookkeeping ("no
       // further post needed", "already answered in the source channel") is an
       // internal note, not a reply. It leaked into ticket 1575 on 2026-10-16.
@@ -748,6 +750,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     return most;
   }
   function recordTicketPost(job, ticketNo, message) {
+    if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
     }
@@ -1343,6 +1346,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
       if (require("./toolmarkup").leaked(input.message)) throw new Error("This message contains tool-call markup. Call the tool through the tool interface instead of writing it out, then reply with the result.");
       let message = publicText(input.message);
+      require("./advicerouting").guard(job, d, message);
       if (/^(?:i['’]m on it|on it|looking into it|will do)[.!]*$/i.test(message.trim())) return { skipped: "generic acknowledgment suppressed; use progress_update with a specific line" };
       const ticketNo = job.ticket || ticketNumberOf(job.source?.channelName);
       if (ticketNo) message = shapeTicketPost(message); // short, in paragraphs, or refused
@@ -2070,6 +2074,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return { posted: true, description: rendered.description, rows: rendered.rows };
     }
     if (name === "status_card") {
+      if (require("./advicerouting").requiresRedirect(job, d)) throw new Error(`Advice requests need a short redirect to Ask, not an investigation card: ${require("./advicerouting").REPLY}`);
       const ticketNo = ticketOf(job);
       if (!ticketNo) throw new Error("status cards are for ticket tasks; use progress_update elsewhere");
       // A mechanics question gets an answer, not a fix-progress card ("Cause
@@ -2099,6 +2104,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (name === "progress_update") {
       if (!job.replyChannel) return { skipped: "no channel for this task; just do the work" };
       const message = publicText(input.message);
+      require("./advicerouting").guard(job, d, message);
       if ((job.ticket || ticketNumberOf(job.source?.channelName)) && TECHNICAL.test(message)) throw new Error("This status line is in a player's ticket: keep it plain, no PRs, CI, merges or code.");
       const statusTicket = ticketOf(job);
       if (statusTicket || job.role === "player") guardPlayerRegister(job, statusTicket, message);
@@ -2362,6 +2368,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         throw new Error("terminal statuses require a resolution receipt");
       }
       if (input.tool === "support_resolve") {
+        require("./advicerouting").guardResolution(job, d, args);
         const recent = rows.filter((m) => !m.author.bot).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1).at(-1);
         if (recent && Date.parse(recent.timestamp) > (job.observedPlayerAt || job.lastPlayerAt || 0)) throw new Error("new player reply must be investigated before closure");
         // Keir 4.1.10 (owner, ticket 1542): a question or a call for staff

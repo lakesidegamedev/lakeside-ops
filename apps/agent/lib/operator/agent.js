@@ -287,7 +287,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     context.playbook = require("./playbooks").contextFor(job, ledger.data);
     // Keir 3.1: every open ticket keeps one progress card. Show the current
     // card, or say plainly that it is missing so this activation creates it.
-    if (job.kind === "ticket" && job.ticket && job.role !== "player") {
+    if (job.kind === "ticket" && job.ticket && job.role !== "player" && !require("./advicerouting").requiresRedirect(job, ledger.data)) {
       const card = ledger.data.statusCards?.[job.ticket];
       context.statusCard = card ? { status: card.status, items: card.items, updatedMinutesAgo: Math.round((Date.now() - (card.at || 0)) / 60000) }
         : "missing: create this ticket's progress card with status_card in this activation, from what is verified now";

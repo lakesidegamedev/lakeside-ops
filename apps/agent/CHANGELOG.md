@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.13 (2026-10-23)
+
+- Route gameplay strategy and investment advice to Ask with an enforced short redirect across support replies, player conversations and advice closures. Advice gets no investigation card or portfolio research checklist. Concrete defects and repairs keep their support path.
+
 ## 5.9.12 (2026-10-23)
 
 - Ignore historical turn anomalies once newer turns have completed, so recovered failures cannot open fresh incidents after a restart or a later poll. Whole-turn failures now record one distinct event per turn and retire old persisted findings after clean turns.
