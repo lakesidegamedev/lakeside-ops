@@ -6,6 +6,7 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const {calculationInputSchema,prepareStructuredSubmission}=require("./structured-submission");
 const { redactSecrets } = require("../text");
+const stepguard = require("./stepguard");
 
 function createToolServer({ broker, normalizeImage, port = 0, effectGuard = false }) {
   const sessions = new Map();
@@ -44,6 +45,8 @@ function createToolServer({ broker, normalizeImage, port = 0, effectGuard = fals
     if (!(indirect ? session.deferred.availableTools : session.tools).some((t) => t.name === name)) return ok({ isError: true, content: [{ type: "text", text: `tool ${name} is not available in this task` }] });
     const finishingCall=name === "finish" || name === "submit_result" || name === "retry_result" || name === "finish_patch" || name === "edit_verify" && input.complete === true;
     if (session.completion || session.finishing || finishingCall && session.pending) return ok({ isError: true, content: [{ type: "text", text: "Activation is finished or another tool is still running; finish only after all tool results are verified." }] });
+    const repeat = stepguard.refuse(session, name, input);
+    if (repeat) { session.steps = (session.steps || 0) + 1; return ok({ isError: true, content: [{ type: "text", text: [repeat, stepguard.budgetNote(session)].filter(Boolean).join("\n") }] }); }
     session.pending++;
     if (finishingCall) session.finishing = true;
     try {
@@ -88,6 +91,8 @@ function createToolServer({ broker, normalizeImage, port = 0, effectGuard = fals
         catch (e) { content.push({ type: "text", text: e.message }); }
       }
       session.calls++;
+      session.steps = (session.steps || 0) + 1;
+      { const note = stepguard.budgetNote(session); if (note) content.push({ type: "text", text: note }); }
       const finished=(name === "finish" || submission) && typeof result?.state === "string" ? {state:result.state,summary:effectiveInput.summary} : (name === "finish_patch" || name === "edit_verify" && input.complete === true) && session.job.codingContract?.allowCompleteOnPass === true && session.job.state === "done" && result?.finished?.state === "done" ? result.finished : null;
       if (finished) {
         delete session.submissionDraft;
@@ -101,6 +106,9 @@ function createToolServer({ broker, normalizeImage, port = 0, effectGuard = fals
       }
       return ok({ content });
     } catch (e) {
+      stepguard.failed(session, name, input, e.message);
+      session.steps = (session.steps || 0) + 1;
+      const note = stepguard.budgetNote(session);
       return ok({ isError: true, content: [{ type: "text", text: redactSecrets((()=>{
         const canRetry=session.tools.some(tool=>tool.name==='retry_result')&&input.calculations!==undefined;
         const draft=name==='retry_result'?session.submissionDraft:name==='submit_result'&&input.result!==undefined?{id:crypto.randomBytes(16).toString('hex'),result:input.result,summary:input.summary}:null;
@@ -109,7 +117,7 @@ function createToolServer({ broker, normalizeImage, port = 0, effectGuard = fals
           return JSON.stringify({error:e.message,draftId:draft.id,retry:'Use retry_result with this draftId and corrected calculations; the complete report is retained. To change report text, send a new submit_result instead.'});
         }
         return e.message;
-      })()) }] });
+      })()) + (note ? "\n" + note : "") }] });
     } finally {
       session.pending--;
       if (finishingCall) session.finishing = false;
