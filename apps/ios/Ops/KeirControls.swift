@@ -32,7 +32,7 @@ struct KeirControls: View {
                         Toggle("YOLO mode", isOn: Binding(get: { keir.yolo }, set: { enabled in
                             Task { await keir.control(["action": .string("configure"), "approvalMode": .string(enabled ? "yolo" : "ask")], session) }
                         })).tint(OpsTheme.warn).accessibilityIdentifier("keir-yolo")
-                        Text("Skip approval prompts for supported owner actions in this conversation. Installation permissions still apply. Turning it off revokes its grant.")
+                        Text("Skip approval prompts for supported owner actions in this conversation: merges, promotions, replies and restarts. Destructive or irreversible actions still ask. Turning it off revokes the grant immediately.")
                             .font(.caption).foregroundStyle(.secondary)
                     } header: { Text("Approvals · this conversation") }
                     Section {

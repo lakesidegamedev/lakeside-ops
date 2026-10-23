@@ -245,7 +245,7 @@ test("a handed-off voice reply stays correlated with the accepted voice turn", (
   const parent = ledger.data.jobs[accepted.jobId];
   const worker = ledger.createJob("voice-worker", { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: parent.source, museParent: parent.id, appThread: "main" });
   app.deliver("channel-reply:voice-worker", { content: "Turn 241 is healthy." }, worker);
-  const answer = app.view().messages.find(m => m.role === "keir" && m.jobId === accepted.jobId);
+  const answer = app.view().messages.find(m => m.role === "keir" && m.jobId === accepted.jobId && m.voiceProgress !== true);
   assert.ok(answer, "voice must receive the worker answer for the originally accepted task");
   assert.equal(answer.voice, true);
   assert.equal(answer.taskId, worker.id);
@@ -260,7 +260,7 @@ test("an exact live status voice request answers without provider discovery or a
   assert.equal(calls, 1, "must read current status through the status reader");
   assert.equal(drains, 0, "must not enqueue a language model or a worker for the simple status query");
   assert.equal(ledger.data.jobs[accepted.jobId].state, "done");
-  const answer = app.view().messages.find(m => m.role === "keir" && m.jobId === accepted.jobId);
+  const answer = app.view().messages.find(m => m.role === "keir" && m.jobId === accepted.jobId && m.voiceProgress !== true);
   assert.match(answer?.text || "", /turn 241 is healthy/);
   assert.equal(answer.voice, true);
 });
@@ -401,4 +401,14 @@ test("an older app build that never asked for revisions keeps append-only answer
   app.deliver(`channel-reply:${worker.id}:x`, { content: "Full answer." }, worker);
   const rows = app.view().messages.filter(m => m.role === "keir");
   assert.equal(rows.length, 1); assert.equal(rows[0].text, "Full answer."); assert.equal(rows[0].provisional, undefined);
+});
+
+test("voice acceptance acknowledges before provider work and idempotent resend does not speak twice", () => {
+ const {ledger,app,drained}=setup();
+ const result=app.authenticatedPost("What happened in the game today?","instant-voice","main",{voice:true,mode:"new"});
+ const replies=app.view(0).messages.filter(m=>m.role==="keir"&&m.jobId===result.jobId);
+ assert.equal(replies.length,1);assert.equal(replies[0].voiceProgress,true);assert.equal(replies[0].voice,true);assert.equal(replies[0].text,"Got it.");
+ assert.equal(ledger.data.jobs[result.jobId].firstReplyAt,undefined);assert.ok(drained()>0);
+ const again=app.authenticatedPost("What happened in the game today?","instant-voice","main",{voice:true,mode:"new"});
+ assert.equal(again.duplicate,true);assert.equal(app.view(0).messages.filter(m=>m.role==="keir"&&m.jobId===result.jobId).length,1);
 });

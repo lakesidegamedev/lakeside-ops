@@ -81,6 +81,9 @@ function revise(data, message, patch, now) {
   if (patch.text !== undefined && patch.text !== current.text) next.editedAt = now;
   if (patch.provisional !== true) delete next.provisional;
   if (patch.progress === undefined) delete next.progress;
+  // An accepted voice acknowledgment becomes the provisional answer; it is no
+  // longer a "got it" progress row. Only clear it when the caller asked.
+  if (Object.prototype.hasOwnProperty.call(patch, "voiceProgress") && patch.voiceProgress === undefined) delete next.voiceProgress;
   t.messages = t.messages.map((m, n) => (n === i ? next : m));
   return next;
 }
@@ -166,6 +169,13 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     }
     if (client) t.clients[client] = { messageId: message.id, jobId: job.id, requestDigest, at: now() };
     for (const [k, v] of Object.entries(t.clients)) if (v.at < now() - 7 * 86400000) delete t.clients[k];
+    // Acceptance is immediate and independent of provider startup or tool calls.
+    // A progress acknowledgment never counts as the substantive answer.
+    if (voice && !connectionCheck && !statusRequest && !auditRequest) {
+      const acknowledgment = append(d, { role: "keir", text: "Got it.", jobId: job.id, thread, voice: true, voiceProgress: true }, now());
+      job.voiceAcknowledgedAt = now();
+      job.voiceAcknowledgmentId = acknowledgment.id;
+    }
     if (connectionCheck) {
       job.state = "done"; job.summary = "Received. I’m here."; job.provider = { runner: "local", model: "connection-check", lane: "quick" };
       const reply = append(d, { role: "keir", text: job.summary, jobId: job.id, thread, ...(voice ? { voice: true, provider: job.provider } : {}) }, now()); record(reply);
@@ -260,9 +270,11 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     const source = t.messages.find((m) => m.id === root.source?.messageId);
     // The answer already posted for *this* turn (not an earlier follow-up on the
     // same conversation job) becomes the provisional row the worker revises.
-    const posted = [...t.messages].reverse().find((m) => m.role === "keir" && m.jobId === root.id && !m.voiceProgress && (!source || m.seq > source.seq));
+    // A voice acknowledgment already posted for this turn ("Got it.") is
+    // reused as the provisional answer instead of opening a second bubble.
+    const posted = [...t.messages].reverse().find((m) => m.role === "keir" && m.jobId === root.id && (!source || m.seq > source.seq));
     const slot = answerRow(d, root.id);
-    if (posted && !slot) { claimAnswer(d, root.id, posted, now()); revise(d, posted, { provisional: true }, now()); return posted.id; }
+    if (posted && !slot) { claimAnswer(d, root.id, posted, now()); revise(d, posted, { provisional: true, progress: undefined, voiceProgress: undefined, ...(worker?.id && worker.id !== root.id ? { taskId: worker.id } : {}), ...(text ? { text } : {}) }, now()); return posted.id; }
     if (slot && text) { revise(d, slot, { text, provisional: true, progress: undefined }, now()); return slot.id; }
     if (slot) { if (slot.provisional) revise(d, slot, { provisional: true }, now()); return slot.id; }
     const row = append(d, { role: "keir", text: text || "I'm checking this now. I'll update this same message with the answer.", provisional: true, ...(root.voiceMode ? { voice: true, provider: root.provider || null } : {}), jobId: root.id, ...(worker?.id && worker.id !== root.id ? { taskId: worker.id } : {}), thread: appThread(job) }, now());

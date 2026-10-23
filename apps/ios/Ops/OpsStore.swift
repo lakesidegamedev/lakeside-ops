@@ -8,6 +8,7 @@ import LakesideCore
     @Published var hub: JSONValue = .null
     @Published var kanban: JSONValue = .null
     @Published var host: JSONValue = .null
+    @Published var scheduler: JSONValue = .null
     @Published var decisions: [JSONValue] = []
     @Published var alerts: [JSONValue] = []
     @Published var answerReceipt: JSONValue = .null
@@ -17,8 +18,9 @@ import LakesideCore
 
     private var generation = UUID()
     func reset() {
-        generation = UUID(); services = []; hub = .null; kanban = .null; host = .null
+        generation = UUID(); services = []; hub = .null; kanban = .null; host = .null; scheduler = .null
         decisions = []; alerts = []; answerReceipt = .null; updated = nil; error = nil; loading = false; UNBadge.set(0)
+        AttentionCenter.shared.reset()
     }
     var kpis: JSONValue { hub["kpis"] }
     var servicesDown: [JSONValue] { services.filter { !["operational", ""].contains($0["current"].string) } }
@@ -26,7 +28,7 @@ import LakesideCore
     var blocked: [JSONValue] { kanban["blocked"].array }
     var needsOwner: [JSONValue] { kanban["needs_owner"].array }
     /// The count on the Pulse tab badge: only things the owner can act on now.
-    var attention: Int { decisions.count }
+    var attention: Int { AttentionCenter.shared.count }
 
     func refresh(_ session: AppSession) async {
         guard !loading else { return }
@@ -35,17 +37,18 @@ import LakesideCore
         async let status = try? session.get("/api/status")
         async let keir = try? session.get("/api/keir/hub")
         async let board = try? session.get("/api/kanban/brief")
-        async let scheduler = try? session.get("/api/scheduler")
+        async let schedule = try? session.get("/api/scheduler")
         async let open = try? session.get("/api/keir/app/decisions")
         async let feed = try? session.get("/api/keir/app/alerts")
-        let (s, k, b, h, d, a) = await (status, keir, board, scheduler, open, feed)
+        let (s, k, b, h, d, a) = await (status, keir, board, schedule, open, feed)
         guard generation == epoch else { return }
         if let s { services = s["services"].array }
         if let k { hub = k }
         if let b { kanban = b }
-        if let h { host = h["host"] }
+        if let h { host = h["host"]; scheduler = h }
         if let d { decisions = d["decisions"].array }
         if let a { alerts = a["alerts"].array }
+        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: kanban["needs_owner"].array)
         let failed = [s, k, b, h, d, a].filter { $0 == nil }.count
         error = failed == 6 ? "Ops is unreachable. Pull to retry." : failed > 0 ? "Some panels could not refresh." : nil
         if failed < 6 { updated = Date() }
@@ -59,6 +62,7 @@ import LakesideCore
             guard epoch == generation else { return false }
             answerReceipt = result
             decisions.removeAll { $0["id"].string == id }
+            AttentionCenter.shared.setWork(decisions: decisions, ownerWork: kanban["needs_owner"].array)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             UNBadge.set(attention)
             return true
@@ -93,6 +97,7 @@ import LakesideCore
         threads = []; thread = "main"; connected = false; working = false; sending = false; queued = 0
         models = []; modelSelection = "auto"; selectingModel = false; controls = .null; controlling = false
         error = nil; lastSentJob = nil; pending = nil; cursor = 0; version = ""; steeringTask = nil; sendMode = "new"
+        AttentionCenter.shared.setQuestions([])
     }
     var stopped: Bool { controls["stopped"].bool }
     var yolo: Bool { controls["approvalMode"].string == "yolo" }
@@ -182,8 +187,10 @@ import LakesideCore
         working = view["working"].bool
         queued = Int(view["queued"].number ?? 0)
         questions = view["questions"].array
+        AttentionCenter.shared.setQuestions(questions)
         backgroundTasks = view["backgroundTasks"].array
         team = view["team"]
+        for item in team["items"].array { _ = firstSeen(item["id"].string) }
         if !view["modelSelection"].string.isEmpty { modelSelection = view["modelSelection"].string }
         if let target = steeringTask, !live.contains(where: { $0["id"].string == target }) { steeringTask = nil; sendMode = "new" }
         cursor = Int(view["cursor"].number ?? Double(cursor))
@@ -257,6 +264,15 @@ import LakesideCore
         catch { if epoch == generation { self.error = error.displayMessage } }
     }
     var threadTitle: String { threads.first { $0["id"].string == thread }?["title"].string ?? (thread == "watches" ? "Watches" : "Keir") }
+
+    private var observedStart: [String: Date] = [:]
+
+    /// The first moment this session saw a piece of work. Used only when the
+    /// server has no recorded start for it.
+    func firstSeen(_ id: String) -> Date {
+        if let seen = observedStart[id] { return seen }
+        let now = Date(); observedStart[id] = now; return now
+    }
 
     func stop(_ task: String, _ session: AppSession) async {
         do { _ = try await session.post("/api/keir/app/cancel", ["taskId": .string(task)]); tasks.removeAll { $0["id"].string == task } }
