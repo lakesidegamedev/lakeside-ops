@@ -48,6 +48,8 @@ const CSS = `
 .kh-live.paused{background:var(--kh-chip);color:var(--text-3)}.kh-live.paused i{background:var(--text-3)}.kh-live.paused i:after{animation:none}
 @keyframes khPing{0%{transform:scale(.6);opacity:.7}80%,100%{transform:scale(1.9);opacity:0}}
 .kh-actions{display:flex;gap:8px;align-items:center}
+.kh-actions .kh-chat{text-decoration:none;color:var(--on-accent,#fff)}
+.kh-actions .kh-chat:hover{color:var(--on-accent,#fff);filter:brightness(1.08)}
 .kh-seg{display:inline-flex;padding:3px;border-radius:10px;background:var(--surface-2,var(--kh-chip));gap:2px}
 .kh-seg button{height:28px;padding:0 12px;border:0;border-radius:8px;background:transparent;color:var(--text-2);font:600 12.5px/1 var(--font);cursor:pointer;transition:background .2s var(--kh-ease),color .2s,box-shadow .2s;display:inline-flex;align-items:center;gap:6px}
 .kh-seg button:hover{color:var(--text)}
@@ -723,7 +725,7 @@ function makeKeirHubBody() {
   const body = `<main class="kh">
   <header class="kh-top rise" style="--i:0">
     <div class="kh-title"><h1>Keir <span class="kh-live" id="kh-live"><i></i>Live</span></h1><div class="kh-sub" id="kh-sub"></div></div>
-    <div class="kh-actions"><button class="kh-btn2" id="kh-ping" title="Run a quick probe through Keir">Ping Keir</button><div class="kh-seg"><button class="on" id="kh-livebtn">Pause</button></div><a class="kh-link" href="/inbox">Inbox</a><a class="kh-link" href="/kanban">Kanban</a><a class="kh-link" href="/reports/keir-4-shadow">Shadow report</a></div>
+    <div class="kh-actions"><a class="kh-btn2 primary kh-chat" href="/keir/app">Open chat</a><button class="kh-btn2" id="kh-ping" title="Run a quick probe through Keir">Ping Keir</button><div class="kh-seg"><button class="on" id="kh-livebtn">Pause</button></div><a class="kh-link" href="/inbox">Inbox</a><a class="kh-link" href="/kanban">Kanban</a><a class="kh-link" href="/reports/keir-4-shadow">Shadow report</a></div>
   </header>
   <div class="kh-note" id="kh-src"></div>
   <section class="kt rise" id="kh-throughput" aria-label="Delivery throughput"></section>

@@ -278,7 +278,7 @@ function buildSidebar() {
     { href: "/tickets", label: "Tickets", icon: "life-buoy", feature: "tickets" },
     { href: "/reports/worldsim-audit-program", label: "World Audit", icon: "activity" },
     { href: "/kanban", label: "Kanban", icon: "check-square" },
-    { href: "/keir", label: "Keir hub", icon: "activity" },
+    { href: "/keir", label: "Keir", icon: "activity" },
     { href: "/inbox", label: "Keir inbox", icon: "message-square" },
     { href: "/scheduler", label: "Scheduler", icon: "calendar" },
     { href: "/worktrees", label: "Worktrees", icon: "git-branch" },
