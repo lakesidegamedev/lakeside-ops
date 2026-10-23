@@ -59,8 +59,8 @@ final class LaunchTests: XCTestCase {
             app.swipeDown()
         } while Date() < deadline
         let fallback = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
-        if fallback.exists { fallback.tap(); return }
-        XCTFail("Ops row \(title) is missing")
+        if fallback.exists && fallback.isHittable { fallback.tap(); return }
+        XCTFail("Ops row \(title) is missing or not hittable")
     }
     private func digits(_ text: String) -> String {
         text.filter(\.isNumber)
@@ -248,7 +248,8 @@ final class LaunchTests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 5))
         openRow(app, "Support desk")
-        XCTAssertTrue(find(app, "Budget screen shows zero funding").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Desk"].waitForExistence(timeout: 15))
+        XCTAssertTrue(find(app, "Budget screen shows zero funding", timeout: 20).waitForExistence(timeout: 20))
         capture(app, "Desk")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 5))

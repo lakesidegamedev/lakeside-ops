@@ -64,7 +64,7 @@ struct KeirView: View {
                         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: keir.messages.count)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .onChange(of: keir.messages) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
+                .onChange(of: keir.messages.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
                 .onChange(of: keir.live.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
             }
             if draft.hasPrefix("/") { commands }
