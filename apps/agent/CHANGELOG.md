@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.9 (2026-10-23)
+
+### For developers
+
+- A task that keeps activating without new input is now slowed down instead of restarted. A task activated five times in ten minutes is backed off five minutes, then thirty, then six hours, and the ladder resets after six quiet hours. A player message, another task's delivery or a live slot still runs immediately. One ticket had been activated 104 times in two and a half hours on a dependency no tool could resolve, at 65.5M context tokens.
+- A wait with nothing subscribed and no reply owed now climbs 15, 30, 60 then 120 minutes instead of a flat fifteen, and the one-minute reply hand-back fires once per player message rather than on every wait. Replaying the recorded timelines of the 52 jobs that sat on that timer, 1,547 activations become 392.
+- The brief now says that attempting a gated action to watch it be refused is itself an unauthorized attempt, covering heals, merges, deployments, account relinks and payouts.
+- `finish`, `status_card` and `support_action` state the rules their guards enforce at the point the model decides them: a filed question is Keir's own work item, a player-reply wait needs a posted reply, and card text is read by the player.
+
 ## 5.9.8 (2026-10-23)
 
 ### For users
