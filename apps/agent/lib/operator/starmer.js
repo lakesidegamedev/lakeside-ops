@@ -61,6 +61,9 @@ function route(spec) {
 function createStarmer({ ledger, config, app, now = () => Date.now(), generate, stateDir = config?.stateDir, log = () => {} }) {
   const d = ledger.data;
   const t = () => threadOf(d);
+  // The flag is in-process only: a crash mid-generation must not wedge the
+  // next line when the service starts again.
+  state().running = false;
 
   function state() {
     const thread = t();
