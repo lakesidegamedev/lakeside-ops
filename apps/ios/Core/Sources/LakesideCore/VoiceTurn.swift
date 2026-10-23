@@ -16,3 +16,24 @@ public enum VoiceTurn {
 }
 
 private extension String { var nonempty: String? { isEmpty ? nil : self } }
+
+/// Retains cancellation intent while a voice send is awaiting its server receipt.
+@MainActor public final class VoiceRequest {
+    public private(set) var jobID: String?
+    public private(set) var cancelled = false
+    private var cancellationSent = false
+    private let stop: (String) -> Void
+
+    public init(stop: @escaping (String) -> Void) { self.stop = stop }
+    public func accept(_ jobID: String) {
+        guard self.jobID == nil, !jobID.isEmpty else { return }
+        self.jobID = jobID
+        stopIfNeeded()
+    }
+    public func cancel() { cancelled = true; stopIfNeeded() }
+    private func stopIfNeeded() {
+        guard cancelled, !cancellationSent, let jobID else { return }
+        cancellationSent = true
+        stop(jobID)
+    }
+}
