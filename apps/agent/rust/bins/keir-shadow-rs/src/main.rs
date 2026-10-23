@@ -23,12 +23,24 @@ use std::path::PathBuf;
 
 struct Args { ledger: PathBuf, events: PathBuf, out: PathBuf, support_url: String, token_file: PathBuf, network: bool, release: Option<String> }
 
+/// The support MCP as everything else on the box finds it: the `support`
+/// registration in the Claude-style MCP config, loopback only. Hardcoding the
+/// port left this pass on the retired Rust front after the support server
+/// moved (2026-10-23, MCP fleet consolidation).
+const DEFAULT_SUPPORT_URL: &str = "http://127.0.0.1:19735/mcp";
+
+fn registered_support_url(config: &std::path::Path) -> Option<String> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(config).ok()?).ok()?;
+    let url = v.pointer("/mcpServers/support/url")?.as_str()?;
+    (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:")).then(|| url.trim_end_matches('/').to_string())
+}
+
 fn args() -> Args {
     let mut a = Args {
         ledger: "/var/lib/keir-operator/ledger.json".into(),
         events: "/var/lib/keir-operator/events.db".into(),
         out: "/var/lib/keir-operator/shadow-rs".into(),
-        support_url: "http://127.0.0.1:9735".into(),
+        support_url: registered_support_url(std::path::Path::new("/root/.claude.json")).unwrap_or_else(|| DEFAULT_SUPPORT_URL.into()),
         token_file: "/etc/keir-agent.env".into(),
         network: true,
         release: std::env::var("KEIR_SHADOW_RELEASE").ok().or_else(|| std::fs::read_to_string("/opt/keir/current/RELEASE").ok().and_then(|t| t.split_whitespace().next().map(|s| s[..s.len().min(12)].to_string()))),
@@ -195,4 +207,22 @@ async fn main() -> anyhow::Result<()> {
     writeln!(hist, "{}", json!({ "at": now, "agreement_24h": report["agreement_24h"], "card_findings": card_findings.len(), "promotion_findings": promo_findings.len(), "open_tasks": report["open_tasks"].as_array().map(|a| a.len()).unwrap_or(0) }))?;
     println!("shadow pass {now}: {} tasks, {} attempts, {} card findings, {} promotion findings, {} labels, events {event_count}", graph.tasks.len(), graph.attempts.len(), card_findings.len(), promo_findings.len(), labels.len());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_support_url_comes_from_the_registration() {
+        let dir = std::env::temp_dir().join(format!("shadow-support-url-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("claude.json");
+        std::fs::write(&f, r#"{"mcpServers":{"support":{"url":"http://127.0.0.1:19735/mcp"}}}"#).unwrap();
+        assert_eq!(registered_support_url(&f).as_deref(), Some("http://127.0.0.1:19735/mcp"));
+        std::fs::write(&f, r#"{"mcpServers":{"support":{"url":"https://mcp.example.com/support/mcp"}}}"#).unwrap();
+        assert_eq!(registered_support_url(&f), None, "only loopback");
+        assert_eq!(registered_support_url(&dir.join("missing.json")), None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
