@@ -256,3 +256,31 @@ test("a browser that cannot start degrades the page sensor instead of reporting 
   assert.equal(Object.keys(f).filter((k) => k.startsWith("page:")).length, 0);
   assert.match(h.l.data.watch.errors.pages.error, /page sensor browser unavailable/);
 });
+
+test("startup does not open incidents for failures behind the completed turn", async () => {
+  const h = harness({ anomalies: [
+    { turn: 384, kind: "turn-failed" },
+    { turn: 384, kind: "phase-failed", phase: "bondTurn" },
+  ] });
+  const r = await h.w.tick({ turn: 386 });
+  assert.deepEqual(r.raised, []);
+  assert.equal(h.proposals.length, 0);
+  assert.equal(Object.values(h.l.data.jobs).length, 0);
+  h.advance(5 * 60000);
+  await h.w.tick();
+  assert.equal(h.proposals.length, 0, "cadence polls use the last completed turn too");
+});
+
+test("a failed turn is one event and old persisted failure state clears after clean turns", async () => {
+  const h = harness({ anomalies: [{ turn: 384, kind: "turn-failed" }] });
+  await h.w.tick({ turn: 383 });
+  const f = h.l.data.watch.findings["turn:384:failed"];
+  assert.equal(f.lastTurnSeen, 384);
+  h.l.data.jobs[f.jobId].state = "done";
+  h.advance(5 * 60000); await h.w.tick({ turn: 383 });
+  assert.equal(f.afterJob || 0, 0, "polling the same attempt is not a recurrence");
+  delete f.lastTurnSeen; // Upgrade a finding created before the turn event was recorded.
+  await h.w.tick({ turn: 386 });
+  assert.equal(f.state, "resolved");
+  assert.equal(h.proposals.length, 1);
+});
