@@ -11,7 +11,7 @@ test("current game status makes one read-only bounded health call", async () => 
   const result = await readGameStatus({ call: async (server, tool, args, write, signal) => {
     calls++; assert.equal(server, "engine"); assert.equal(tool, "engine_health"); assert.deepEqual(args, {}); assert.equal(write, false); assert.ok(signal instanceof AbortSignal); assert.equal(signal.aborted, false); return snapshot();
   } });
-  assert.equal(calls, 1); assert.match(result, /turn 241, year 1994/); assert.match(result, /4 minutes 43 seconds/); assert.match(result, /2 warnings/); assert.match(result, /0 failures across the last 24 turns/); assert.match(result, /18:00 UTC/);
+  assert.equal(calls, 1); assert.match(result, /turn 241, year 1994/); assert.match(result, /4 minutes 43 seconds/); assert.match(result, /2 warnings/); assert.match(result, /0 failed attempts across the last 24 recorded turn attempts/); assert.match(result, /18:00 UTC/);
 });
 test("paused and failed states are reported without implying healthy operation", () => {
   const s = snapshot(); s.paused = true; s.pauseReason = "operator pause"; s.lastTurn.success = false; s.schedule.overdueMin = 9;

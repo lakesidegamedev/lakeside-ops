@@ -57,3 +57,20 @@ test("waiting on a player is never overdue for the owner, even past Keir's revie
  const own = make({ id: "b", wakeAt: 0, waitingFor: { kind: "developer_reply" }, waitReview: { since: 100, reviewAt: 300 } });
  assert.equal(workStatus(data([own]), own, { now: 10000 }).overdue, true);
 });
+
+test("the canonical ticket job wins over an older owner command about the same ticket", async () => {
+ const canonical=make({id:"support",waitingFor:{kind:"player_reply"},summary:"Recovery applied; awaiting sign-in confirmation."});
+ const command=make({id:"command",role:"owner",kind:"command",updatedAt:300,wakeAt:999999,summary:"Old investigation"});
+ const d=data([canonical,command]);d.seen={"ticket:1560":"support"};
+ const q=createWorkQueue({ledger:{data:d},now:()=>10000,mcp:{servers:()=>["support"],call:async()=>({items:[{number:1560,title:"Recovery",status:"blocked"}]})}});
+ const view=await q.view();assert.equal(view.tickets[0].task,"support");assert.equal(view.tickets[0].timing.state,"waiting");assert.match(view.tickets[0].timing.reason,/player_reply/);
+});
+test("a staff-held ticket does not become overdue because Keir's old forecast expired",()=>{
+ const j=make({channelId:"staff",waitReview:{since:100,reviewAt:200},completionForecast:{kind:"worker-estimate",at:100,expectedAt:200}});
+ const d=data([j]);d.channels.staff={claimedBy:"staff"};
+ const status=workStatus(d,j,{now:10000});assert.equal(status.state,"held");assert.equal(status.overdue,false);assert.equal(status.expectedDoneAt,null);
+});
+test("waiting for the player retires an obsolete completion forecast",()=>{
+ const j=make({waitingFor:{kind:"player_reply"},completionForecast:{kind:"worker-estimate",at:100,expectedAt:200},updatedAt:300});
+ const status=workStatus(data([j]),j,{now:10000});assert.equal(status.overdue,false);assert.equal(status.expectedDoneAt,null);
+});
