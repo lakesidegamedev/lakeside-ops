@@ -330,6 +330,11 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
       if (!x.selfRecovery || x.selfRecovery.appliedAt || !["approve", "reject"].includes(x.state)) continue;
       const j = d.jobs[x.jobId]; x.selfRecovery.appliedAt = now();
       if (!j) continue;
+      // A late answer cannot resurrect work after canonical closure or a stop.
+      if (TERMINAL.includes(j.state) || j.resolved || j.channelClosed) {
+        record(d, ledger, { at: now(), job: x.jobId, ticket: j.ticket || null, action: "obsolete-answer-ignored", reason: x.selfRecovery.kind });
+        continue;
+      }
       if (x.selfRecovery.kind === "effect") {
         const key = x.selfRecovery.effect;
         if (x.state === "approve") delete (j.effects || {})[key];
