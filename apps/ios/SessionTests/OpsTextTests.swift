@@ -12,6 +12,11 @@ final class OpsTextTests: XCTestCase {
 
     func testTicketNumberIsNotRepeated() {
         XCTAssertEqual(OpsText.deTicket("Ticket 1651: Ticket 1651 remains open", number: 1651), "remains open")
+        XCTAssertEqual(OpsText.deTicket("Ticket 1651:", number: 1651), "", "an empty template is not a title")
+        let template: JSONValue = .object([
+            "kind": .string("started"), "ticket": .number(1651), "text": .string("Ticket 1651: .")
+        ])
+        XCTAssertEqual(OpsText.updateTitle(template), "#1651 Work started")
         let detail = OpsText.updateDetail(.object([
             "ticket": .number(1651),
             "text": .string("Ticket 1651, Fund fix: needs your decision.")

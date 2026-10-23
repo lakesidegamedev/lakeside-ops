@@ -34,8 +34,8 @@ final class AttentionCenter: ObservableObject {
         var tickets = Set<Int>()
         var rows: [AttentionItem] = []
 
-        for decision in decisions {
-            let id = "decision:" + decision["id"].string
+        for (index, decision) in decisions.enumerated() {
+            let id = "decision:" + (decision["id"].string.nonempty ?? "index-\(index)")
             guard seen.insert(id).inserted else { continue }
             if let number = decision["ticket"].number { tickets.insert(Int(number)) }
             rows.append(AttentionItem(
@@ -51,8 +51,8 @@ final class AttentionCenter: ObservableObject {
             ))
         }
 
-        for question in questions {
-            let id = "question:" + question["id"].string
+        for (index, question) in questions.enumerated() {
+            let id = "question:" + (question["id"].string.nonempty ?? "index-\(index)")
             guard seen.insert(id).inserted else { continue }
             rows.append(AttentionItem(
                 id: id,
@@ -66,10 +66,11 @@ final class AttentionCenter: ObservableObject {
             ))
         }
 
-        for work in ownerWork {
+        for (index, work) in ownerWork.enumerated() {
             let number = work["ticket"].number.map { Int($0) }
             if let number, tickets.contains(number) { continue }
-            let id = "work:" + (work["id"].string.isEmpty ? work["title"].string : work["id"].string)
+            let rawID = work["id"].string.isEmpty ? work["title"].string : work["id"].string
+            let id = "work:" + (rawID.isEmpty ? "index-\(index)" : rawID)
             guard seen.insert(id).inserted else { continue }
             if let number { tickets.insert(number) }
             rows.append(AttentionItem(

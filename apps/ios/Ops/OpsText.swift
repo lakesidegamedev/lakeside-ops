@@ -52,10 +52,10 @@ enum OpsText {
     static func workTitle(_ item: JSONValue) -> String {
         let number = item["ticket"].number
         let title = scrub(item["title"].string.nonempty ?? item["summary"].string.nonempty ?? "")
-        if let number, !title.isEmpty {
-            return "#\(Int(number)) \(deTicket(title, number: Int(number)))"
+        if let number {
+            let cleaned = title.isEmpty ? "" : deTicket(title, number: Int(number))
+            return cleaned.isEmpty ? "Ticket #\(Int(number))" : "#\(Int(number)) \(cleaned)"
         }
-        if let number { return "Ticket #\(Int(number))" }
         if !title.isEmpty { return title }
         return stateWord(item["state"].string)
     }
@@ -64,8 +64,8 @@ enum OpsText {
         let n = number.number
         let clean = scrub(title)
         if let n {
-            if clean.isEmpty { return "Ticket #\(Int(n))" }
-            return "#\(Int(n)) \(deTicket(clean, number: Int(n)))"
+            let cleaned = clean.isEmpty ? "" : deTicket(clean, number: Int(n))
+            return cleaned.isEmpty ? "Ticket #\(Int(n))" : "#\(Int(n)) \(cleaned)"
         }
         return clean
     }
@@ -81,8 +81,7 @@ enum OpsText {
             text = text.replacingOccurrences(of: first, with: "", options: .regularExpression)
         }
         text = text.replacingOccurrences(of: patterns[1], with: "remains open", options: .regularExpression)
-        text = scrub(text)
-        return text.isEmpty ? "remains open" : text
+        return scrub(text)
     }
 
     /// The headline for a Keir progress update item: kind, then structured
@@ -93,7 +92,10 @@ enum OpsText {
         let known = scrub(item["title"].string.nonempty ?? "")
         let parsed = number.flatMap { textSubject(item["text"].string, number: Int($0)) } ?? ""
         let subject = [known, scrub(parsed)].first { !$0.isEmpty } ?? stateHeadline(kind)
-        if let number { return "#\(Int(number)) \(deTicket(subject, number: Int(number)))" }
+        if let number {
+            let cleaned = deTicket(subject, number: Int(number))
+            return "#\(Int(number)) \(cleaned.isEmpty ? stateHeadline(kind) : cleaned)"
+        }
         return subject
     }
 

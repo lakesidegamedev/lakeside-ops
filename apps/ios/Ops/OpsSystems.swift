@@ -51,7 +51,7 @@ struct SchedulerView: View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: "Checks", count: checks.count)
             if checks.isEmpty { Text("No checks in the queue.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.vertical, 8) }
-            ForEach(checks, id: \.["id"].string) { job in
+            ForEach(Array(checks.enumerated()), id: \.offset) { _, job in
                 let status = OpsStatus.from(job["state"].string)
                 let priority = job["priority"].string.isEmpty ? "" : " · \(job["priority"].string)"
                 HStack(alignment: .top, spacing: 10) {
