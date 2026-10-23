@@ -8,6 +8,7 @@
 // The line is a private owner-facing note. It may mention counts and public
 // work, never a player's name, a credential or a ticket's private content.
 const path = require("node:path");
+const fs = require("node:fs");
 const { threadOf } = require("./appchannel");
 
 const INTERVAL_MS = 30 * 60000;
@@ -125,10 +126,12 @@ function createStarmer({ ledger, config, app, now = () => Date.now(), generate, 
   async function generateLine(input) {
     const spec = route(config?.starmerProvider || config?.quickProvider || DEFAULT_ROUTE);
     const invoke = require("./cli-runner").invokeCli;
+    const dir = path.join(stateDir || process.env.KEIR_OPERATOR_STATE_DIR || "/tmp/keir", "starmer");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const result = await invoke({
       kind: "generation", runner: spec.runner, model: spec.model, effort: spec.effort, brief: BRIEF,
       prompt: JSON.stringify(input), tools: [], url: "http://127.0.0.1:1", maxTurns: 1, maxOutputTokens: 220,
-      timeoutMs: 90000, stateDir: path.join(stateDir || process.env.KEIR_OPERATOR_STATE_DIR || "/tmp/keir", "starmer"),
+      timeoutMs: 90000, stateDir: dir,
       job: { id: "starmer-line" }, lane: "reflection", signal: (input.signal || new AbortController().signal),
     });
     if (result.is_error) throw new Error("starmer generation incomplete");

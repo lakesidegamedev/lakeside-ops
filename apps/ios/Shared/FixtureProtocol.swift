@@ -311,6 +311,9 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/approvals": value = ["approvals": Self.keir.open()]
         case "/api/keir/app/decisions/abcdefabcdef": value = Self.keir.answer("abcdefabcdef")
         case "/api/keir/app/alerts": value = ["alerts": [["key": "error:watch-recurring:turn", "kind": "incident", "text": "Turn warning repeated after the fix: index fund settlement for one corporation.", "at": 1792019000000]]]
+        case "/api/keir/app/starmer", "/api/keir/app/starmer/refresh": value = OpsFixtures.starmer()
+        case "/api/keir/app/recap": value = OpsFixtures.recap()
+        case "/api/keir/app/recap/ack": value = ["acknowledgedAt": 1792020000000.0]
         case "/api/keir/app/devices": value = ["registered": true]
         case "/api/keir/app/ideas/301": value = KeirAgentFixtures.dismiss("301")
         case "/api/keir/app/work", "/api/keir/app/threads", "/api/keir/app/tasks", "/api/keir/app/tasks/abcdef012345", "/api/keir/app/ideas", "/api/keir/app/watches", "/api/keir/app/memory":
@@ -605,6 +608,23 @@ enum OpsFixtures {
         var history: [[String: Any]] = []
         for day in 0..<30 { history.append(["date": "d\(day)", "pct": day == dip ? 96.2 : 100.0]) }
         return ["id": id, "name": name, "current": current, "latencyMs": latency, "uptime7d": uptime, "lastChecked": "2026-10-15T02:43:31Z", "history": history]
+    }
+    static func starmer() -> [String: Any] {
+        let items: [[String: Any]] = [
+            ["id": "abcdef012345", "title": "Choose payroll behavior", "state": "running", "ticket": 1575, "since": 1792019000000.0],
+            ["id": "fedcba543210", "title": "Verify the funding fix on main", "state": "waiting", "ticket": 1001, "since": 1792018000000.0],
+        ]
+        return ["at": 1792020000000.0,
+                "text": "Two turns ran clean and the queue is one ticket shorter than yesterday.",
+                "nextAt": 1792021800000.0,
+                "working": ["headline": "On the move", "detail": "#1575 Choose payroll behavior", "running": 1, "waiting": 1, "queued": 0, "items": items]]
+    }
+    static func recap() -> [String: Any] {
+        let items: [[String: Any]] = [
+            ["id": "r1", "kind": "win", "title": "Merged PR #210", "detail": "The mobile redesign reached main.", "at": 1792019000000.0, "source": "event", "task": NSNull(), "goal": NSNull()],
+            ["id": "r2", "kind": "decision", "title": "Merge #201 to development", "detail": "approve by the owner", "at": 1792017000000.0, "source": "owner", "task": NSNull(), "goal": NSNull()],
+        ]
+        return ["since": 1791950000000.0, "total": items.count, "items": items]
     }
     static func hub() -> [String: Any] {
         var activity: [[String: Any]] = []
