@@ -169,7 +169,7 @@ import LakesideCore
         Task { await KeirLiveActivity.shared.sync(snapshot, session: OpsServices.shared.session) }
     }
 
-    func send(_ text: String, _ session: AppSession, voice: Bool = false, attachments: JSONValue = .array([])) async -> Bool {
+    func send(_ text: String, _ session: AppSession, voice: Bool = false, attachments: JSONValue = .array([]), accepted: ((String) -> Void)? = nil) async -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (!body.isEmpty || !attachments.array.isEmpty), !sending else { return false }
         let epoch = generation
@@ -180,6 +180,7 @@ import LakesideCore
         }
         do {
             let result = try await session.post("/api/keir/app/messages", ["text": .string(body), "clientId": .string(pending!.id), "thread": .string(selected), "mode": .string(mode), "taskId": target.map(JSONValue.string) ?? .null, "voice": .bool(voice), "attachments": attachments])
+            if let jobID = result["jobId"].string.nonempty { accepted?(jobID) }
             guard generation == epoch else { return false }
             pending = nil; error = nil; lastSentJob = result["jobId"].string.nonempty
             guard thread == selected else { return true }
