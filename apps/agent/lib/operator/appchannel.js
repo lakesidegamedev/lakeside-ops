@@ -118,6 +118,13 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     }
     if (client) t.clients[client] = { messageId: message.id, jobId: job.id, requestDigest, at: now() };
     for (const [k, v] of Object.entries(t.clients)) if (v.at < now() - 7 * 86400000) delete t.clients[k];
+    // Acceptance is immediate and independent of provider startup or tool calls.
+    // A progress acknowledgment never counts as the substantive answer.
+    if (voice && !connectionCheck && !statusRequest && !auditRequest) {
+      const acknowledgment = append(d, { role: "keir", text: "Got it.", jobId: job.id, thread, voice: true, voiceProgress: true }, now());
+      job.voiceAcknowledgedAt = now();
+      job.voiceAcknowledgmentId = acknowledgment.id;
+    }
     if (connectionCheck) {
       job.state = "done"; job.summary = "Received. I’m here."; job.provider = { runner: "local", model: "connection-check", lane: "quick" };
       const reply = append(d, { role: "keir", text: job.summary, jobId: job.id, thread, ...(voice ? { voice: true, provider: job.provider } : {}) }, now()); record(reply);
