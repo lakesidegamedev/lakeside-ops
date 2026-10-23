@@ -25,7 +25,7 @@ struct DeskView: View {
                 ForEach(workers, id: \.["id"].string) { worker in
                     NavigationLink { WorkerDetail(worker: worker) } label: {
                         WorkRow(title: workerTitle(worker), meta: "\(worker["runner"].string) · \(worker["model"].string)\(worker["effort"].string.isEmpty ? "" : " @\(worker["effort"].string)") · \(OpsFormat.ago(worker["updatedAt"]))", bar: OpsState.color(worker["state"].string)) {
-                            StateWord(text: OpsState.word(worker["state"].string), color: OpsState.color(worker["state"].string))
+                            OpsStatusBadge(status: OpsState.status(worker["state"].string), compact: true)
                         }
                     }
                 }.listRowBackground(Color.clear)
@@ -70,7 +70,7 @@ struct TicketDetail: View {
                         SectionLabel(text: "Blocking progress", count: detail["blockers"].array.count)
                         ForEach(Array(detail["blockers"].array.enumerated()), id: \.offset) { _, blocker in
                             VStack(alignment: .leading, spacing: 4) {
-                                Label(blocker["title"].string, systemImage: blocker["kind"].string == "decision" ? "person.crop.circle.badge.questionmark" : "pause.circle").font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.warn)
+                                Label(OpsText.scrub(blocker["title"].string), systemImage: blocker["kind"].string == "decision" ? "person.crop.circle.badge.questionmark" : OpsStatus.blocked.icon).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.warn)
                                 if !blocker["detail"].string.isEmpty && blocker["detail"] != blocker["title"] { Text(blocker["detail"].string).font(.callout).textSelection(.enabled) }
                             }
                         }
@@ -115,9 +115,9 @@ struct TicketDetail: View {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
                             SectionLabel(text: "Keir's work")
-                            StateWord(text: OpsState.word(detail["current"]["state"].string), color: OpsState.color(detail["current"]["state"].string))
+                            OpsStatusBadge(status: OpsStatus.from(detail["current"]["state"].string))
                         }
-                        Text(detail["current"]["status"].string.nonempty ?? "Keir has not recorded its next action.").font(.body).textSelection(.enabled)
+                        Text(OpsText.scrub(detail["current"]["status"].string).nonempty ?? "Keir has not recorded its next action.").font(.body).textSelection(.enabled)
                         if !detail["current"]["summary"].string.isEmpty && detail["current"]["summary"] != detail["current"]["status"] {
                             NativeMarkdown(text: detail["current"]["summary"].string)
                         }
@@ -209,7 +209,7 @@ private struct WorkerDetail: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack { StateWord(text: OpsState.word(worker["state"].string), color: OpsState.color(worker["state"].string)); Spacer(); Text(OpsFormat.ago(worker["updatedAt"])).font(.caption).foregroundStyle(OpsTheme.muted) }
+                HStack { OpsStatusBadge(status: OpsStatus.from(worker["state"].string)); Spacer(); Text(OpsFormat.ago(worker["updatedAt"])).font(.caption).foregroundStyle(OpsTheme.muted) }
                 Text(worker["summary"].string.nonempty ?? "No summary yet.").font(.body).textSelection(.enabled)
                 VStack(alignment: .leading, spacing: 6) {
                     SectionLabel(text: "Run")

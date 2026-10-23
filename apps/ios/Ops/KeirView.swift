@@ -22,6 +22,7 @@ struct KeirView: View {
     @State private var presentingSheet = false
     @State private var sheetRequest: Task<Void, Never>?
     @State private var connectionAttempt = 0
+    @State private var confirmingYoloOff = false
     enum KeirSheet: String, Identifiable { case threads, ideas, watches, memory, computer, controls; var id: String { rawValue } }
 
     private var content: some View {
@@ -31,12 +32,18 @@ struct KeirView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
                         DecisionAnswerReceipt()
-                        if !ops.decisions.isEmpty {
+                        if AttentionCenter.shared.count > 0 {
                             VStack(alignment: .leading, spacing: 10) {
-                                SectionLabel(text: "Needs you", count: ops.decisions.count)
-                                ForEach(ops.decisions, id: \.["id"].string) { DecisionCard(decision: $0) }
+                                SectionLabel(text: AttentionCenter.label, count: AttentionCenter.shared.count, identifier: "keir-attention-count")
+                                AttentionStack(limit: 2, panels: keir.questions)
+                                if AttentionCenter.shared.count > 2 {
+                                    Button("See all \(AttentionCenter.shared.count)") { router.activityFilter = "all"; router.tab = .activity }
+                                        .font(.callout.weight(.semibold))
+                                        .accessibilityIdentifier("keir-attention-all")
+                                }
                             }
                         }
+                        if keir.thread == "main", (keir.team["open"].number ?? 0) > 0 { KeirWorkingNow(team: keir.team) }
                         if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
                         else if keir.messages.isEmpty && keir.thread == "main" { KeirEmpty { draft = $0; composing = true } }
                         if keir.messages.isEmpty && keir.thread == "watches" { Text("When a watch is met, Keir reports it here.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.top, 24) }
@@ -48,18 +55,15 @@ struct KeirView: View {
                         }
                         ForEach(keir.live.filter { $0["state"].string == "running" || !$0["live"].array.isEmpty }, id: \.["id"].string) { task in
                             VStack(alignment: .leading, spacing: 6) {
-                                Text(task["status"].string.nonempty ?? "Working on your request").font(.caption).foregroundStyle(OpsTheme.muted)
+                                OpsStatusBadge(status: .running)
                                 if !task["live"].array.isEmpty { KeirToolCalls(calls: task["live"].array) }
                             }.accessibilityIdentifier("keir-chat-working")
                         }
-                        if keir.thread == "main", (keir.team["open"].number ?? 0) > 0 { KeirWorkingNow(team: keir.team) }
-                        ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) { KeirQuestions(panel: $0) }
                         Color.clear.frame(height: 1).id("end")
                     }.padding(.horizontal, 16).padding(.vertical, 16)
                         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: keir.messages.count)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                .defaultScrollAnchor(.bottom)
                 .onChange(of: keir.messages.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
                 .onChange(of: keir.live.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
             }
@@ -89,10 +93,7 @@ struct KeirView: View {
                     Toggle(isOn: $spokenReplies) { Label("Speak replies", systemImage: "speaker.wave.2") }
                     if session.profile["mode"].string != "standalone" {
                     Button { presentFromMenu(.computer) } label: { Label("Computer history", systemImage: "desktopcomputer") }
-                    Button { presentFromMenu(.ideas) } label: { Label("Ideas", systemImage: "lightbulb") }
-                    Button { presentFromMenu(.watches) } label: { Label("Watches", systemImage: "binoculars") }
                     }
-                    Button { presentFromMenu(.memory) } label: { Label("Memory", systemImage: "brain") }
                 } label: { Image(systemName: "line.3.horizontal") }.accessibilityLabel("Keir tools").accessibilityIdentifier("keir-tools").disabled(presentingSheet)
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -100,7 +101,7 @@ struct KeirView: View {
                     Button {
                         voice.stop()
                         Task { await keir.control(["action": .string(keir.stopped ? "start" : "stop")], session) }
-                    } label: { Image(systemName: keir.stopped ? "play.fill" : "stop.fill") }
+                    } label: { Image(systemName: keir.stopped ? "play.circle.fill" : "stop.circle.fill") }
                         .tint(keir.stopped ? OpsTheme.mint : OpsTheme.ink)
                         .accessibilityLabel(keir.stopped ? "Start Keir" : "Stop Keir")
                         .disabled(keir.controlling).accessibilityIdentifier("keir-kill-switch")
@@ -131,6 +132,14 @@ struct KeirView: View {
 
     var body: some View {
         lifecycleContent
+        .confirmationDialog("Turn off autonomy?", isPresented: $confirmingYoloOff, titleVisibility: .visible) {
+            Button("Turn off autonomy", role: .destructive) {
+                Task { await keir.control(["action": .string("configure"), "approvalMode": .string("ask")], session) }
+            }
+            Button("Keep it on", role: .cancel) {}
+        } message: {
+            Text("Keir will ask before supported owner actions again. The grant is revoked immediately.")
+        }
         .sensoryFeedback(.selection, trigger: voice.listening)
         .sensoryFeedback(.warning, trigger: presence == .approval) { _, needed in needed }
         .onChange(of: keir.stopped) { _, stopped in if stopped { voice.stop() } }
@@ -171,9 +180,24 @@ struct KeirView: View {
             }
             Spacer(minLength: 0)
             if keir.yolo {
-                Button { sheet = .controls } label: { Label("YOLO", systemImage: "bolt.fill").font(.caption.weight(.semibold)) }
-                    .tint(OpsTheme.warn).accessibilityLabel("YOLO: supported actions only. Open approval settings")
-                    .accessibilityIdentifier("keir-yolo-banner")
+                Button { confirmingYoloOff = true } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "bolt.fill").accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Autonomy on").font(.caption.weight(.semibold))
+                            Text("Keir can act without asking for supported owner actions. Tap to turn it off.")
+                                .font(.caption2).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(OpsTheme.warn.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    .foregroundStyle(OpsTheme.warn)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Autonomy mode is on. Keir can act without asking for supported owner actions. Double tap to turn it off.")
+                .accessibilityIdentifier("keir-yolo-banner")
             }
         }.padding(.horizontal, 18).padding(.vertical, presence == .ready && !keir.yolo ? 0 : 8)
     }
@@ -248,14 +272,13 @@ struct KeirView: View {
         }.overlay(alignment: .top) { Hairline() }.accessibilityIdentifier("keir-activity-strip")
     }
 
-    private var needsInput: Int { keir.tasks.filter { !$0["approvals"].array.isEmpty || $0["state"].string == "blocked" }.count + keir.questions.filter { $0["state"].string == "pending" }.count }
     private var presence: KeirPresence.State {
         if keir.stopped { return .stopped }
         if !keir.connected { return .offline }
         if voice.listening { return .listening }
         if voice.speaking { return .speaking }
         if voice.preparingSpeech { return .thinking }
-        if needsInput > 0 { return .approval }
+        if AttentionCenter.shared.count > 0 { return .approval }
         if keir.sending { return .thinking }
         return keir.working ? .working : .ready
     }
@@ -290,7 +313,7 @@ struct KeirView: View {
             Spacer(minLength: 4)
             if !keir.live.isEmpty || !keir.backgroundTasks.isEmpty {
                 Button { router.tab = .activity } label: {
-                    Label(needsInput > 0 ? "\(needsInput) need you" : "\(keir.live.count + keir.backgroundTasks.count) tasks", systemImage: needsInput > 0 ? "hand.raised" : "list.bullet")
+                    Label(AttentionCenter.shared.count > 0 ? AttentionCenter.shared.shortSummary : "\(keir.live.count + keir.backgroundTasks.count) tasks", systemImage: AttentionCenter.shared.count > 0 ? "hand.raised" : "list.bullet")
                 }.accessibilityIdentifier("keir-activity-strip")
             }
             Menu {
@@ -345,7 +368,7 @@ private struct KeirEmpty: View {
     private let prompts = ["What needs my attention right now?", "How did the last turn go?", "Which PRs are waiting on me?", "Promote development to production"]
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Keir").font(.system(size: 34, weight: .bold, design: .rounded)).tracking(-1)
+            Text("Keir").font(.opsHero).tracking(-1)
             Text("Owner channel. Anything you ask here carries your authority, the same as a DM.").font(.callout).foregroundStyle(OpsTheme.muted)
             VStack(spacing: 0) {
                 ForEach(prompts, id: \.self) { prompt in
@@ -435,17 +458,21 @@ struct DecisionCard: View {
         else {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                StateWord(text: decision["signoff"].bool ? "Sign-off" : "Decision", color: OpsTheme.warn)
+                OpsStatusBadge(status: .waiting, label: decision["signoff"].bool ? "Sign-off" : "Decision")
                 if let n = decision["ticket"].number { Text("Ticket \(Int(n))").font(.caption).foregroundStyle(OpsTheme.muted) }
                 Spacer()
                 Text(OpsFormat.ago(decision["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
             }
-            if !decision["tldr"].string.isEmpty { Text(decision["tldr"].string).font(.callout.weight(.semibold)) }
-            Text(decision["question"].string).font(.callout).foregroundStyle(decision["tldr"].string.isEmpty ? OpsTheme.ink : OpsTheme.muted).lineLimit(8)
-            if decision["question"].string.count > 300 || decision["scope"] != .null {
+            Text(OpsText.decisionTitle(decision)).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+            let question = OpsText.scrub(decision["question"].string)
+            if !question.isEmpty && question != OpsText.decisionTitle(decision) {
+                Text(question).font(.callout).foregroundStyle(decision["tldr"].string.isEmpty ? OpsTheme.ink : OpsTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if question.count > 300 || decision["scope"] != .null {
                 DisclosureGroup("Review full action and scope") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(decision["question"].string).fixedSize(horizontal: false, vertical: true)
+                        Text(question).fixedSize(horizontal: false, vertical: true)
                         if !decision["kind"].string.isEmpty { LabeledContent("Action", value: decision["kind"].string) }
                         if decision["args"] != .null { Text(decision["args"].pretty).font(.caption.monospaced()) }
                         if decision["scope"] != .null { Text(decision["scope"].pretty).font(.caption.monospaced()).accessibilityIdentifier("decision-scope") }

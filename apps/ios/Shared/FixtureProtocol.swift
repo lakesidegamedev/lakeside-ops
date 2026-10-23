@@ -137,6 +137,15 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 if after < 3 { view["messages"] = (view["messages"] as? [[String: Any]] ?? []) + [update] }
                 view["cursor"] = max(messages.count, 3)
             }
+            if ProcessInfo.processInfo.arguments.contains("--uitest-broken-status") {
+                view["team"] = ["open": 1, "working": 1, "needsYou": 0, "stuck": 0, "waiting": 0, "held": 0, "items": [
+                    ["id": "brokenjob001", "ticket": 1651, "link": "ticket", "title": "", "state": "working", "reason": "It me or turn been stuck in processing: started."]]]
+                let broken: [String: Any] = ["seq": 900, "id": "broken-update", "role": "keir", "update": true, "thread": "main", "at": 1792020090000,
+                    "text": "It me or turn been stuck in processing: started.",
+                    "items": [["kind": "started", "ticket": 1651, "link": "ticket", "text": "It me or turn been stuck in processing: started. Was:."]]]
+                view["messages"] = [broken]
+                view["cursor"] = 900
+            }
             view["controls"] = controlValue
             return view
         }
@@ -292,7 +301,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             }
         case "/api/auth/native-session": value = ["token": String(repeating: "a", count: 64), "expiresAt": Date().addingTimeInterval(30 * 86400).timeIntervalSince1970 * 1000]
         case "/api/keir/app/questions/123456abcdef": value = Self.keir.answerChoices()
-        case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Waiting for the owner decision"], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
+        case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
         case "/api/keir/app/controls": value = Self.keir.controls(bodyObject())
         case "/api/keir/app/models": value = Self.keir.models(bodyObject()?["selection"] as? String)
         case "/api/keir/app/computer": value = ["computers": [] as [Any]]
@@ -303,9 +312,18 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/decisions/abcdefabcdef": value = Self.keir.answer("abcdefabcdef")
         case "/api/keir/app/alerts": value = ["alerts": [["key": "error:watch-recurring:turn", "kind": "incident", "text": "Turn warning repeated after the fix: index fund settlement for one corporation.", "at": 1792019000000]]]
         case "/api/keir/app/devices": value = ["registered": true]
+        case "/api/keir/app/ideas/301": value = KeirAgentFixtures.dismiss("301")
         case "/api/keir/app/work", "/api/keir/app/threads", "/api/keir/app/tasks", "/api/keir/app/tasks/abcdef012345", "/api/keir/app/ideas", "/api/keir/app/watches", "/api/keir/app/memory":
             value = KeirAgentFixtures.value(url.path, method: request.httpMethod ?? "GET", body: bodyObject() ?? [:])
         case "/api/keir/app/cancel": value = ["state": "cancelled"]
+        case "/api/security": value = OpsFixtures.security()
+        case "/api/backups": value = ["backups": [["date": "2026-10-15", "collections": 42, "totalBytes": 73400320], ["date": "2026-10-14", "collections": 42, "totalBytes": 73390000]], "total": 2]
+        case "/api/db/stats": value = ["collections": 42, "totalDocuments": 128400, "dataSize": 52428800, "indexSize": 8388608]
+        case "/api/events/dead-letters": value = ["events": [["streamId": "1-0", "type": "turn:failed", "source": "worker", "occurredAt": "2026-10-15T02:00:00Z", "error": "Receipt store timed out."]]]
+        case "/api/code/sessions": value = ["sessions": [
+            ["id": "s1", "title": "Keir mobile briefing", "kind": "codex", "activity": "working", "needsInput": false, "statusLine": "Running the iOS simulator suite", "worktreePath": "/root/projects/lakeside-ops/worktrees/keir-mobile-briefing"],
+            ["id": "s2", "title": "Audit CI back-merges", "kind": "claude", "activity": "ready", "needsInput": true, "statusLine": "Waiting for review", "worktreePath": "/root/projects/lakeside-ops/worktrees/keir-ci-audit"]
+        ]]
         case "/api/status", "/api/keir/hub", "/api/kanban/brief", "/api/scheduler": value = OpsFixtures.value(url.path)
         case "/api/ops/bootstrap": value = ["cursor": 0, "conversation": ["id": 1], "conversations": [["id": 1, "title": "Build the studio hub"]], "staff": [["id": "staff-1", "name": "Release engineer", "role": "Maintain release quality", "provider": "auto"]], "workers": [["id": "worker-1", "name": "Export repair", "brief": "Repair and verify the export flow.", "job_status": "completed", "runtime_provider": "codex", "permissions": [], "result": "Export fixed. All checks passed."]]]
         case "/api/chat/turns": value = ["turns": [["id": 1, "role": "owner", "body": "Help me build the studio hub.", "status": "done"], ["id": 2, "role": "assistant", "body": "The export worker has finished. I am checking the changes before accepting them.", "status": "done", "route": ["label": "Muse"], "actions": [["name": "bash", "label": "Run export checks", "command": "npm test", "output": "All 12 checks passed", "state": "completed", "exitCode": 0]]]]]
@@ -506,6 +524,15 @@ enum KeirAgentFixtures {
     private final class State: @unchecked Sendable {
         let lock = NSLock()
         var watches: [[String: Any]] = [["id": "aaaaaaaaaaaa", "condition": "PR 201 is merged", "every": "hourly", "once": true, "active": true, "runs": 2, "hits": 0, "lastResult": "no change", "running": false]]
+        var dismissedIdeas = Set<String>()
+        func dismissIdea(_ id: String) {
+            lock.lock(); defer { lock.unlock() }
+            dismissedIdeas.insert(id)
+        }
+        func listIdeas(_ ideas: [[String: Any]]) -> [[String: Any]] {
+            lock.lock(); defer { lock.unlock() }
+            return ideas.filter { !dismissedIdeas.contains($0["id"] as? String ?? "") }
+        }
         func addWatch(_ body: [String: Any]) -> [String: Any] {
             lock.lock(); defer { lock.unlock() }
             let w: [String: Any] = ["id": "bbbbbbbbbbbb", "condition": body["condition"] as? String ?? "", "every": body["every"] as? String ?? "hourly", "once": true, "active": true, "runs": 0, "hits": 0, "running": false]
@@ -514,6 +541,7 @@ enum KeirAgentFixtures {
         func list() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return watches }
     }
     private static let state = State()
+    static func dismiss(_ id: String) -> [String: Any] { state.dismissIdea(id); return ["ok": true] }
     static func value(_ path: String, method: String, body: [String: Any]) -> [String: Any] {
         switch path {
         case "/api/keir/app/threads":
@@ -541,15 +569,20 @@ enum KeirAgentFixtures {
                 "at": 1792019000000.0, "status": "Waiting for the main deploy", "steps": [step], "receipts": [receipt], "decisions": empty, "cards": [card], "canRetry": false, "canStop": true,
                 "plan": plan, "live": live]
         case "/api/keir/app/ideas":
-            let idea: [String: Any] = ["id": "301", "title": "CI runs the full matrix for verified empty back-merges", "url": "https://github.com/Egg3901/AHDGame/issues/301", "evidence": "Every back-merge with no content change re-ran the 24 minute verify job.", "accepted": false]
+            let idea: [String: Any] = ["id": "301", "kind": "issue", "title": "CI runs the full matrix for verified empty back-merges", "url": "https://github.com/Egg3901/AHDGame/issues/301", "reason": "Every back-merge with no content change re-ran the 24 minute verify job.", "evidence": "Every back-merge with no content change re-ran the 24 minute verify job. The verify lane is the slowest in the matrix.", "accepted": false]
             if ProcessInfo.processInfo.arguments.contains("--uitest-goal-suggestions") {
                 return ["ideas": [["id": "s-123456abcdef", "kind": "suggestion", "title": "Keep replies under five seconds", "evidence": "Recent response times are too high.", "prompt": "Measure end-to-end reply latency and keep the median below five seconds.", "accepted": false]]]
             }
-            return ["ideas": [idea]]
+            let visible = state.listIdeas([idea])
+            return ["ideas": visible]
         case "/api/keir/app/watches":
             if method == "POST" { return state.addWatch(body) }
             return ["watches": state.list(), "intervals": ["15m", "hourly", "6h", "daily"]]
         default:
+            if path.hasPrefix("/api/keir/app/ideas/") {
+                state.dismissIdea(path.split(separator: "/").last.map(String.init) ?? "")
+                return ["ok": true]
+            }
             let lesson: [String: Any] = ["id": "n1", "kind": "lesson", "text": "Never promote economy changes while a turn is running.", "owner": true, "at": 1792010000000.0]
             let mechanic: [String: Any] = ["id": "n2", "kind": "mechanic", "text": "A department's funding is the yearly cost of the enacted laws in its policy areas.", "owner": false, "at": 1792000000000.0]
             return ["total": 2, "notes": [lesson, mechanic]]
@@ -564,6 +597,7 @@ enum OpsFixtures {
         case "/api/status": return ["updated": "2026-10-15T02:43:31Z", "services": [service("production", "A House Divided", "operational", 167, 99.85, dip: 21), service("ask", "Lakeside Ask", "degraded", 912, 98.1, dip: 28)]]
         case "/api/keir/hub": return hub()
         case "/api/kanban/brief": return kanban()
+        case "/api/scheduler": return scheduler()
         default: return ["host": host()]
         }
     }
@@ -592,7 +626,12 @@ enum OpsFixtures {
         let quality: [String: Any] = ["tickets": 18, "closed": 12, "decisions_unanswered": 2, "time_to_closure": ["median_ms": 3600000, "p90_ms": 86400000], "decision_latency": ["median_ms": 1200000, "p90_ms": 7200000], "oldest_open_age_ms": 172800000, "labels": ["closed_observing": 10, "reopened": 2, "open": 6]]
         let jev: [String: Any] = ["tagged": 31, "injections": 1, "screened": 26, "refused": 2, "tags": ["kind": ["bug": 23, "question": 8], "mood": ["calm": 22, "frustrated": 9]], "labels": ["certaintyWithoutReceipt": 2]]
         let watch: [String: Any] = ["status": "active", "mode": "enforce", "paused": false, "openFindings": 3, "budget": ["hourUsed": 1, "perHour": 3, "dayUsed": 4, "perDay": 8], "score": ["caughtFirst": 7, "playerFirst": 3, "share": 70], "sensors": [["id": "operator", "label": "Operator health", "status": "healthy", "lastSuccessAt": 1792020000000.0]], "capabilities": ["authorityCarried": 4, "issuesClosedLive": 2, "sentryResolved": 1, "heldPromotions": 1, "sensorFailures": 0, "skillFailures": 0, "scope": "Retained ledger audit events"]]
-        return ["at": 1792020000000.0, "release": ["version": "5.4.0"], "routing": ["quick": "codex:gpt-6.1-sol@medium", "coding": "codex:gpt-6.1-sol@medium"], "paused": false, "kpis": kpis, "activity": activity, "workers": [worker], "recent": empty, "tickets": [ticket], "throughput": throughput, "quality": quality, "jev": jev, "watch": watch, "sources": ["support": "ok", "prs": "ok"], "sourceFreshness": ["support": ["at": 1792020000000.0, "refreshing": false]]]
+        let prs: [[String: Any]] = [
+            ["number": 211, "title": "Voice turns: fast first answer", "state": "OPEN", "ci": "red", "url": "https://github.com/lakesidegamedev/lakeside-ops/pull/211"],
+            ["number": 210, "title": "Keir mobile briefing redesign", "state": "OPEN", "ci": "green", "url": "https://github.com/lakesidegamedev/lakeside-ops/pull/210"],
+            ["number": 209, "title": "Promote development to production", "state": "MERGED", "ci": "green", "url": "https://github.com/lakesidegamedev/lakeside-ops/pull/209"],
+        ]
+        return ["at": 1792020000000.0, "release": ["version": "5.4.0"], "routing": ["quick": "codex:gpt-6.1-sol@medium", "coding": "codex:gpt-6.1-sol@medium"], "paused": false, "kpis": kpis, "activity": activity, "workers": [worker], "recent": empty, "tickets": [ticket], "prs": prs, "throughput": throughput, "quality": quality, "jev": jev, "watch": watch, "sources": ["support": "ok", "prs": "ok"], "sourceFreshness": ["support": ["at": 1792020000000.0, "refreshing": false]]]
     }
     static func kanban() -> [String: Any] {
         let needs: [String: Any] = ["id": 1, "title": "Pick the 1991 seed sector mix", "product": "a-house-divided", "lane": "next", "needs_owner": true, "assigned_to": "", "impact": "high", "updated_at": "2026-10-14T20:00:00Z"]
@@ -606,6 +645,31 @@ enum OpsFixtures {
     static func host() -> [String: Any] {
         let memory: [String: Any] = ["usedPct": 32], disk: [String: Any] = ["usedPct": 36], checks: [String: Any] = ["running": 0, "queued": 1]
         return ["cpuUsedPct": 21, "load": [4.7, 5.4, 3.7], "memory": memory, "disk": disk, "checks": checks]
+    }
+    static func scheduler() -> [String: Any] {
+        let checks: [[String: Any]] = [
+            ["id": "check-1", "state": "running", "label": "ios-simulator", "preset": "verify", "workdir": "/root/projects/lakeside-ops/worktrees/keir-mobile-briefing/apps/ios", "priority": "normal", "requested_at": 1792019000000.0],
+            ["id": "check-2", "state": "queued", "label": "web-verify", "preset": "verify", "workdir": "/root/projects/lakeside-ops/apps/web", "priority": "low", "requested_at": 1792018000000.0]
+        ]
+        let sims: [[String: Any]] = [
+            ["runId": "sim-1", "preset": "singleplayer", "turns": 64, "seed": "seed-1991", "status": "running", "currentTurn": 18, "autonomyLevel": "v4", "marketSystemMode": "clearing", "createdAt": 1792010000000.0, "updatedAt": 1792020000000.0],
+            ["runId": "sim-2", "preset": "multiplayer", "turns": 32, "seed": "seed-1992", "status": "queued", "currentTurn": 0, "autonomyLevel": "v3", "marketSystemMode": "off", "createdAt": 1792015000000.0, "updatedAt": 1792015000000.0]
+        ]
+        return ["host": host(), "checks": checks, "worldSims": sims, "presets": ["verify", "test", "build"]]
+    }
+    static func security() -> [String: Any] {
+        let hosts: [[String: Any]] = [
+            ["id": "contabo-vps18", "label": "EU console", "name": "contabo-vps18", "ok": true, "collectedAt": "2026-10-15T02:30:00Z", "ageMs": 600000, "stale": false],
+            ["id": "contabo-vps12-us", "label": "US host", "name": "contabo-vps12-us", "ok": true, "collectedAt": "2026-10-15T02:31:00Z", "ageMs": 540000, "stale": false]
+        ]
+        let findings: [[String: Any]] = [
+            ["id": "us:ssh-agent", "rule": "ssh-agent-forwarding", "host": "contabo-vps12-us", "hostLabel": "US host", "severity": "medium", "title": "SSH agent forwarding is enabled", "detail": "The forwarded agent could be used by a process on the host.", "remedy": "Set AllowAgentForwarding no and reload sshd."],
+            ["id": "eu:fail2ban", "rule": "fail2ban-recividive", "host": "contabo-vps18", "hostLabel": "EU console", "severity": "high", "title": "fail2ban recidive jail is not active", "detail": "Repeat offenders are not being banned.", "remedy": "Enable the recidive jail and restart fail2ban."]
+        ]
+        return ["generatedAt": "2026-10-15T02:43:31Z", "schema": 1,
+                "summary": ["score": 82, "posture": "degraded", "counts": ["critical": 0, "high": 1, "medium": 1, "low": 2, "info": 0], "hostsReachable": 2, "hostsTotal": 2],
+                "hosts": hosts, "findings": findings,
+                "monitoring": ["expectedIntervalMinutes": 15, "staleAfterMinutes": 45, "hostsReporting": 2, "hostsTotal": 2]]
     }
 }
 #endif
