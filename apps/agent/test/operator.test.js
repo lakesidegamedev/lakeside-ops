@@ -2249,8 +2249,26 @@ test("voice activation preloads reviewed reads and limits discovery rounds witho
   const schemas = [{server:"ops-knowledge",tool:"kanban_get",schema:{type:"object"}}];
   f.broker.voiceReads = async () => schemas;
   const agent = createAgent({ledger:f.ledger,broker:f.broker,config:{briefFile:path.join(__dirname,"../KEIR.md"),model:"claude-opus-5-5",quickProvider:"claude",quickMaxRounds:6,quickMaxTurnMs:10000,maxRounds:12,maxTurnMs:10000,stateDir:f.dir,tagIntake:async()=>{classified++;return null;}},
-    spawnImpl:fakeClaude(async({prompt,call,args})=>{assert.deepEqual(prompt.voiceReadSchemas,schemas);assert.equal(prompt.voiceTurn.jobId,j.id);assert.equal(args[args.indexOf("--max-turns")+1],"3");await call("channel_reply",{message:"The current evidence is incomplete."});await call("finish",{state:"done",summary:"Answered current voice turn."});return{};},seen)});
+    spawnImpl:fakeClaude(async({prompt,call,args})=>{assert.deepEqual(prompt.voiceReadSchemas,schemas);assert.equal(prompt.voiceTurn.jobId,j.id);assert.equal(args[args.indexOf("--max-turns")+1],"4");await call("channel_reply",{message:"The current evidence is incomplete."});await call("finish",{state:"done",summary:"Answered current voice turn."});return{};},seen)});
   await agent.run(j,new AbortController().signal);assert.equal(j.state,"done");assert.equal(seen.length,1);assert.equal(classified,0);
+});
+
+test("a waiting app task does not repost the same answer on every wake, and waits longer each time", async () => {
+  const f = fixture(), owner = f.config.ownerId;
+  const j = running(f, { kind: "command", channelId: "app", replyChannel: "app", actorId: owner, source: { channelId: "app", authorId: owner, content: "Railway still down?", at: new Date(1000).toISOString() } });
+  const posted = () => Object.values(f.ledger.data.outbox).filter(e => e.destination === `channel:${j.id}`).length;
+  await f.broker.tool(j, "channel_reply", { message: "Railway status reads returned Not Authorized, so I cannot confirm whether hosting is up. The engine is healthy at turn 365." });
+  assert.equal(posted(), 1);
+  const again = await f.broker.tool(j, "channel_reply", { message: "Railway is still unverified: the status read returned Not Authorized again. The engine is separately healthy at turn 366." });
+  assert.match(again.skipped, /Nothing materially new/); assert.equal(posted(), 1); assert.equal(j.appRepeats, 1);
+  await f.broker.tool(j, "finish", { state: "waiting", summary: "Rechecking Railway", wakeAfterMinutes: 15 });
+  assert.equal(j.wakeAt - f.now(), 30 * 60000, "one repeat doubles the requested wait");
+  j.state = "running";
+  await f.broker.tool(j, "channel_reply", { message: "Turn 367 failed in bond processing; I opened a fix for the null value." });
+  assert.equal(posted(), 2, "a different answer still posts"); assert.equal(j.appRepeats, 0);
+  j.requestInbox = [{ authorId: owner, content: "And Railway?", at: new Date(f.now() + 1).toISOString() }];
+  await f.broker.tool(j, "channel_reply", { message: "Railway status reads still return Not Authorized, so I cannot confirm whether hosting is up." });
+  assert.equal(posted(), 3, "the owner asked again, so the same answer is posted");
 });
 
 test("a plain model answer to a voice turn is queued before closing the owner task", async () => {

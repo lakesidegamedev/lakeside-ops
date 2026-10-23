@@ -217,7 +217,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     delete job.waitingFor;
     const ownerMuse = musePolicy.origin(ledger.data, job);
     const ownerBrief = ownerMuse.valid && ownerMuse.scoped ? OWNER_MUSE_BRIEF : "";
-    const quick = isQuick(job), maxRounds = quick ? Math.min(config.quickMaxRounds || 6, job.voiceMode ? 3 : Infinity) : config.maxRounds;
+    const quick = isQuick(job), maxRounds = quick ? Math.min(config.quickMaxRounds || 6, job.voiceMode ? 4 : Infinity) : config.maxRounds;
     // A ticket whose channel was closed by hand has nothing left to do; never
     // spend a model run rediscovering that (tickets 1512 and 1518 looped).
     if (job.channelClosed) { job.state = "done"; ledger.save(); return; }
@@ -351,7 +351,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       } catch { /* version facts unavailable */ }
       // Keir 4.2: vendored skills for this lane (skills/manifest.json).
       const skillBrief = leanCtx ? { ...skillPrep, text: leanCtx.skillDigest(skillPrep.names) } : skillPrep;
-      const skillText = skillBrief.text + (job.resultSchema ? "\n\nThis task requires a structured deliverable: complete it with submit_result and its required result object. When its schema exposes calculations, final arithmetic can be computed and inserted by reference in that same call instead of copied through another model turn. Use finish only for waiting, blocked or dismissed work; never fabricate a result." : "") + (job.voiceMode ? "\n\nVoice conversation: answer promptly in one or two short spoken sentences. Avoid Markdown and long introductions. For substantial work, delegate it and give a brief acknowledgement. Do not invent progress or results." : "");
+      const skillText = skillBrief.text + (job.resultSchema ? "\n\nThis task requires a structured deliverable: complete it with submit_result and its required result object. When its schema exposes calculations, final arithmetic can be computed and inserted by reference in that same call instead of copied through another model turn. Use finish only for waiting, blocked or dismissed work; never fabricate a result." : "") + (job.voiceMode ? chatContext.VOICE_NOTE : "");
       job.activeSkills = skillBrief.names; ledger.save();
       if (skillBrief.errors.length) ledger.audit("skills_unavailable", { job: job.id, lane: skillLane, errors: skillBrief.errors });
       if (job.codingContract && !quick && !job.investigation && job.role !== "player") context.codingPreparation = await require("./coding-context").prepareCodingContext(job, input => broker.tool(job,"evidence_batch",input,signal));
@@ -362,7 +362,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       const lane = quick ? "quick" : "worker";
       // API model loops use OpenCode; native Rust transports remain explicit.
       const viaRust = !["ollama", "deepseek", "opencode"].includes(p) && rustLaneAllowed(config, job, lane);
-      const runnerBrief = compact ? chatContext.SMALL_BRIEF : p === "claude" && !viaRust ? (leanCtx ? leanCtx.brief + TOOL_NOTE : brief) + skillText : common.brief;
+      const runnerBrief = compact ? chatContext.SMALL_BRIEF + (job.voiceMode ? chatContext.VOICE_NOTE : "") : p === "claude" && !viaRust ? (leanCtx ? leanCtx.brief + TOOL_NOTE : brief) + skillText : common.brief;
       ledger.audit("activation_skills", { job: job.id, lane: skillLane, skills: skillBrief.names, disabled: config.skills === false,
         skillChars: skillText.length, skillBytes: Buffer.byteLength(skillText), briefChars: runnerBrief.length, briefBytes: Buffer.byteLength(runnerBrief),
         degraded: skillBrief.errors.length > 0 });

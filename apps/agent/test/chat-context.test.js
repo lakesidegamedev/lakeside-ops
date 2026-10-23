@@ -5,11 +5,11 @@ const { EventEmitter } = require("node:events");
 const { createAgent } = require("../lib/operator/agent");
 const { createLedger } = require("../lib/operator/store");
 
-async function capture(t, content = "Hello", tags = { kind: "banter", complexity: "trivial", kindConfidence: 0.99 }) {
+async function capture(t, content = "Hello", tags = { kind: "banter", complexity: "trivial", kindConfidence: 0.99 }, extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-chat-context-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { stateDir: dir, briefFile: path.join(__dirname, "../KEIR.md"), model: "fixture", quickProvider: "claude:fixture", taskLifetimeMs: 60000, skills: false, tagIntake: async () => tags, dynamicEffort: false, ownerId: "owner", repositories: {} };
-  const job = ledger.createJob("hello", { kind: "conversation", role: "owner", actorId: "owner", replyChannel: "app", channelId: "app", source: { channelId: "app", content, at: new Date().toISOString() } });
+  const job = ledger.createJob("hello", { kind: "conversation", role: "owner", actorId: "owner", replyChannel: "app", channelId: "app", source: { channelId: "app", content, at: new Date().toISOString() }, ...extra });
   let seen, recalled = 0;
   const broker = { servers: () => ["gamestate"], appContext: () => ({ sharedWork: "UNRELATED_WORK".repeat(2000) }), context: () => ({ messages: [{ text: "OLD_THREAD".repeat(2000) }] }), notebook: { recall: () => { recalled++; return ["UNRELATED_MEMORY".repeat(1000)]; } },
     tool: async (_job, name) => { if (name === "finish") job.state = "done"; return { state: job.state }; } };
@@ -88,4 +88,13 @@ test("a focused owner capability question reaches the provider with the build-of
   const { seen } = await capture(t, "Can the USSR dissolve?", { kind: "mechanics_question", complexity: "simple", kindConfidence: 0.99, contextProfile: "focused" });
   assert.match(seen.prompt, /capabilityQuestion/);
   assert.match(seen.prompt, /offer to build it/);
+});
+
+test("a voice turn runs on the small brief with its reads direct, not the operating manual", async t => {
+  const { seen, job } = await capture(t, "Is the turn running on time?", undefined, { voiceMode: true });
+  t.diagnostic(JSON.stringify(job.contextBudget));
+  assert.equal(job.contextBudget.profile, "voice");
+  assert.ok(seen.brief.length < 6000, `voice brief is ${seen.brief.length} characters`);
+  assert.match(seen.brief, /Voice conversation: answer promptly/);
+  assert.doesNotMatch(seen.prompt, /UNRELATED_WORK|UNRELATED_MEMORY/);
 });

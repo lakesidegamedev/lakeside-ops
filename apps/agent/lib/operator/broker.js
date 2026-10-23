@@ -256,6 +256,9 @@ function publicPatchLeak(patch) {
 // A schema rejection before execution repeats identically until the adapter
 // changes, which needs a restart. Rejections older than this process may retry.
 const STARTED_AT = Date.now();
+// Measured on the seven-hour Railway loop: paraphrased repeats scored 0.41 to
+// 0.79 against an earlier reply, unrelated app replies 0.05 or less.
+const APP_REPEAT_SIMILARITY = 0.35;
 const words = (t) => new Set(String(t || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2));
 function similarity(a, b) {
   const x = words(a), y = words(b);
@@ -1391,6 +1394,19 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           ledger.save();
           return { published: true, attachedToTicket: ticketNo, delivery: result.delivery?.status || "submitted" };
         }
+      }
+      // Owner, 2026-10-23: a waiting app task re-posted the same "Railway is
+      // still unverified" answer on every 15-minute wake for seven hours. With
+      // no new owner message since its last reply, a near-repeat of any of its
+      // last five replies is not posted.
+      if (job.replyChannel === "app" && !ticketNo) {
+        const sent = job.appReplies || [], lastAt = sent.at(-1)?.at || 0;
+        const asked = [...(job.requestInbox || []), ...(job.inbox || [])].some((s) => (Date.parse(s?.at) || 0) > lastAt);
+        if (sent.length && !asked && sent.some((r) => similarity(r.text, message) >= APP_REPEAT_SIMILARITY)) {
+          job.appRepeats = (job.appRepeats || 0) + 1; ledger.save();
+          return { skipped: "Nothing materially new since your last reply in this conversation, so it was not posted. Checkpoint or finish; reply again only when something changed or the owner asks." };
+        }
+        job.appReplies = [...sent, { at: now(), text: message.slice(0, 2000) }].slice(-5); job.appRepeats = 0; job.lastPublishedAt = now();
       }
       const key = `channel-reply:${job.id}:${hash(message)}`;
       if (ticketNo) recordTicketPost(job, ticketNo, message);
@@ -2786,6 +2802,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (owedOnce && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15)) { job.wakeAt = now() + 60000; job.replyOx = owedAt; }
       // A promotion held for the owner's waking hours wakes when the window opens, not every quarter hour.
       if (state === "waiting" && job.promotionHoldUntil > now()) job.wakeAt = Math.max(job.wakeAt || 0, job.promotionHoldUntil);
+      // Each wake that had nothing new to tell the owner doubles the next wait.
+      if (state === "waiting" && job.appRepeats > 0 && job.wakeAt) job.wakeAt = now() + Math.min(1440 * 60000, (job.wakeAt - now()) * 2 ** Math.min(job.appRepeats, 6));
       // Turn and CI watches wake their task; no timer polling meanwhile.
       if (["waiting", "blocked"].includes(state) && job.turnWatch) job.wakeAt = Math.max(job.wakeAt || 0, now() + 8 * 3600000);
       if (job.state === "waiting" && pendingHandoffs(job).length && !(job.inbox?.length) && Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt)) <= (job.lastPublishedAt || 0)) job.wakeAt = Math.max(job.wakeAt || 0, now() + 6 * 3600000);

@@ -17,7 +17,7 @@ function context(data, job) {
   if (!root) return null;
   const messages = data.appThread?.messages || [], source = messages.find(m => m.id === root.source?.messageId);
   return { turn: { jobId: root.id, sourceMessageId: root.source?.messageId, replyRequired: !finalReplyQueued(data, job), instruction: "Answer this accepted voice turn. Similar wording or an answer to a different job ID does not count as delivery. Use fresh evidence, then channel_reply before finish. Progress acknowledgements are not final answers." },
-    conversation: { evidenceOnly: true, messages: messages.filter(m => (m.thread || "main") === (root.appThread || "main") && (!source || m.seq <= source.seq)).slice(-24).map(m => ({ role: m.role, content: m.text, at: m.at, jobId: m.jobId })) } };
+    conversation: { evidenceOnly: true, messages: messages.filter(m => !m.update && (m.thread || "main") === (root.appThread || "main") && (!source || m.seq <= source.seq)).slice(-12).map(m => ({ role: m.role, content: m.text, at: m.at, jobId: m.jobId })) } };
 }
 const READS = { "ops-knowledge": ["kanban_list", "kanban_get"], engine: ["engine_health"], support: ["support_get", "support_search"], gamestate: ["entity_search", "trace_corp"] };
 async function readSchemas(mcp, signal) {

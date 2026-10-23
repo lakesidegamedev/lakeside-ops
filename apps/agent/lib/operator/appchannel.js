@@ -16,6 +16,9 @@ const APP_CHANNEL = "app";
 const isAppJob = (job) => Boolean(job && job.replyChannel === APP_CHANNEL && job.source?.channelId === APP_CHANNEL);
 const CLOSED = ["done", "dismissed", "cancelled"];
 const MAX_MESSAGES = 400;
+// Background work digests are glanceable, not conversation. Keep only the
+// newest few so they never push the owner's own exchanges out of the thread.
+const MAX_UPDATES = 30;
 const MAX_TEXT = 6000;
 
 function threadOf(data) {
@@ -27,7 +30,10 @@ function threadOf(data) {
 function append(data, row, now) {
   const t = threadOf(data);
   const message = { seq: ++t.seq, id: row.id || `app-${t.seq}-${crypto.randomBytes(3).toString("hex")}`, at: now, ...row };
-  t.messages = [...t.messages, message].slice(-MAX_MESSAGES);
+  let messages = [...t.messages, message];
+  const updates = messages.filter((m) => m.update);
+  if (updates.length > MAX_UPDATES) { const drop = new Set(updates.slice(0, -MAX_UPDATES)); messages = messages.filter((m) => !drop.has(m)); }
+  t.messages = messages.slice(-MAX_MESSAGES);
   return message;
 }
 
@@ -220,7 +226,8 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
 
   // Recent thread rows for the model's source_history tool.
   function history(limit = 20, thread = null) {
-    return threadOf(d).messages.filter((m) => !thread || (m.thread || "main") === thread).slice(-limit).map((m) => ({ id: m.id, author: m.role === "owner" ? "owner" : "Keir", authorId: m.role === "owner" ? config.ownerId : config.botId, bot: m.role !== "owner", content: m.text, attachments: (m.attachments || []).map(a => ({ ...a, index: d.jobs[m.jobId]?.appAttachments?.findIndex(x => x.id === a.id && x.messageId === m.id) })), at: new Date(m.at).toISOString() }));
+    // Work digests are not part of the conversation a model reads.
+    return threadOf(d).messages.filter((m) => !m.update && (!thread || (m.thread || "main") === thread)).slice(-limit).map((m) => ({ id: m.id, author: m.role === "owner" ? "owner" : "Keir", authorId: m.role === "owner" ? config.ownerId : config.botId, bot: m.role !== "owner", content: m.text, attachments: (m.attachments || []).map(a => ({ ...a, index: d.jobs[m.jobId]?.appAttachments?.findIndex(x => x.id === a.id && x.messageId === m.id) })), at: new Date(m.at).toISOString() }));
   }
 
   // Keir's open questions for the owner, answerable from the app. The answer
