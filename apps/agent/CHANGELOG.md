@@ -8,6 +8,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ### For developers
 
 - The Rust MCP client (harness-store) uses each registered server URL verbatim instead of stripping and re-appending `/mcp`, so servers registered at an alias path such as `/mcp/gamestate` are reachable.
+- The Keir Rust shadow pass reads the support MCP address from the `support` registration instead of a hardcoded port, so it follows the support server when it moves.
 
 ## 5.9.7 (2026-10-22)
 
