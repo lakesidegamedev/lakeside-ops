@@ -88,3 +88,38 @@ test("activation clears a prior reply gate before durably entering running state
   f.ledger.save = () => { assert.equal(f.job.state, "running"); assert.equal(f.job.waitingFor, undefined); throw stop; };
   await assert.rejects(agent.run(f.job, new AbortController().signal), (e) => e === stop);
 });
+
+test("a wait with nothing subscribed backs off, and a player message resets it", async (t) => {
+  // Tickets 1651 and 1663 re-read the same deployment every fifteen minutes
+  // for hours on 2026-10-23. The first look is normal; the rest are slower.
+  const f = fixture(t);
+  const waits = [];
+  for (let i = 0; i < 4; i++) { f.job.state = "running"; await f.finish({}); waits.push(Math.round((f.job.wakeAt - NOW) / MINUTE)); }
+  assert.deepEqual(waits, [15, 30, 60, 120]);
+  // A player message is new input: the ladder starts again.
+  f.job.state = "running"; f.job.lastPlayerAt = NOW + 5000;
+  await f.finish({});
+  assert.equal(Math.round((f.job.wakeAt - NOW) / MINUTE), 15);
+});
+
+test("a reply hand-back fires once per player message, not on every wait", async (t) => {
+  // Ticket 1643 re-ran every 89 seconds for hours because this fired forever.
+  const f = fixture(t, { lastPlayerAt: NOW - 1000, lastPublishedAt: NOW - 2000 });
+  await f.finish({ wakeAfterMinutes: 30 });
+  assert.equal(f.job.wakeAt, NOW + MINUTE, "first wait hands back to the driver");
+  f.job.state = "running";
+  await f.finish({ wakeAfterMinutes: 30 });
+  assert.equal(f.job.wakeAt, NOW + 30 * MINUTE, "same message does not hand back again");
+  f.job.state = "running"; f.job.lastPlayerAt = NOW + 5000;
+  await f.finish({ wakeAfterMinutes: 30 });
+  assert.equal(f.job.wakeAt, NOW + MINUTE, "a new player message earns its own hand-back");
+});
+
+test("real progress resets the quiet ladder instead of escalating on it", async (t) => {
+  const f = fixture(t);
+  for (let i = 0; i < 2; i++) { f.job.state = "running"; await f.finish({}); }
+  assert.equal(Math.round((f.job.wakeAt - NOW) / MINUTE), 30);
+  f.job.state = "running"; f.job.lastPublishedAt = NOW - 1;
+  await f.finish({});
+  assert.equal(Math.round((f.job.wakeAt - NOW) / MINUTE), 15);
+});
