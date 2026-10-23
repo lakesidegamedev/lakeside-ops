@@ -298,19 +298,20 @@ final class LaunchTests: XCTestCase {
         capture(app, "Structured choice and parallel work")
         let composer = app.textFields["keir-composer"].exists ? app.textFields["keir-composer"] : app.textViews["keir-composer"]
         composer.tap(); app.typeText("/chart")
-        XCTAssertTrue(app.scrollViews["keir-commands"].waitForExistence(timeout: 5))
-        let chart = app.buttons["keir-command-chart"]
+        // Resolve the leaf directly. Enumerating scroll containers here can stall
+        // accessibility snapshots while the keyboard and command panel coexist.
+        let chart = app.buttons["keir-command-chart"].firstMatch
         XCTAssertTrue(chart.waitForExistence(timeout: 5))
         XCTAssertTrue(chart.isHittable); chart.tap()
         // The multiline composer can change its accessibility type after editing.
         let prompt = NSPredicate { _, _ in
-            [app.textFields["keir-composer"], app.textViews["keir-composer"]].contains {
+            [app.textFields["keir-composer"].firstMatch, app.textViews["keir-composer"].firstMatch].contains {
                 $0.exists && ($0.value as? String ?? "").contains("Show a chart")
             }
         }
         expectation(for: prompt, evaluatedWith: app)
         waitForExpectations(timeout: 8)
-        XCTAssertFalse(app.scrollViews["keir-commands"].exists)
+        XCTAssertFalse(chart.exists)
         capture(app, "Slash commands")
     }
 
