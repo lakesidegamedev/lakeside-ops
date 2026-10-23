@@ -9,6 +9,14 @@ function adviceQuestion(text) {
     /\b(?:should|best|recommend|advice|strategy)\b[\s\S]{0,120}\b(?:invest|build|expand|profit|company|corporation|campaign)\b/i.test(t) ||
     /\b(?:how (?:can|do|should) i|help me)\b[\s\S]{0,100}\b(?:profit|make money|invest)\b/i.test(t);
 }
+function latestInput(job) {
+  return [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system")].filter(Boolean).at(-1);
+}
+function bugFollowup(job) {
+  const latest = latestInput(job);
+  return job.tags?.kind === "gameplay_advice" && latest && latest !== job.source &&
+    /\b(?:broken|error|incorrect|missing|not working|cannot log in|can.t log in)\b|\b(?:shares|holding|balance)\b[\s\S]{0,100}\b(?:but|says|wrong)\b/i.test(String(latest.content || ""));
+}
 function requiresRedirect(job, d) {
   if (!["ticket", "conversation", "command"].includes(job.kind) || !["support", "player"].includes(job.role) || job.codingParent) return false;
   if (job.incidentCandidates?.length) return false;
@@ -16,8 +24,9 @@ function requiresRedirect(job, d) {
   // A mixed ticket retains its concrete defect work. Advice is redirected
   // separately by the brief; a gameplay category never overrides a bug.
   if (["bug_report", "data_repair", "feature_request", "design_feedback", "moderation"].includes(kind) || job.pullRequests?.length) return false;
+  if (bugFollowup(job)) return false;
   if (kind === "gameplay_advice") return true;
-  const latest = [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system")].filter(Boolean).at(-1);
+  const latest = latestInput(job);
   return adviceQuestion(latest?.content);
 }
 function guard(job, d, message) {
@@ -31,4 +40,4 @@ function guardResolution(job, d, args) {
       (args.followUp && args.followUp !== "Report a concrete bug here if something is broken."))
     throw new Error("Advice resolution must contain only the Ask redirect, action 'Directed gameplay advice to Ask.', and optional follow-up 'Report a concrete bug here if something is broken.'. Do not add investment advice.");
 }
-module.exports = { URL, REPLY, adviceQuestion, requiresRedirect, guard, guardResolution };
+module.exports = { URL, REPLY, adviceQuestion, bugFollowup, requiresRedirect, guard, guardResolution };

@@ -30,6 +30,7 @@ function facts(job, d) {
 // The kind comes from intake tagging, then the channel category.
 function kindOf(job, d) {
   const tag = job.tags?.kind, cat = d.channels?.[job.channelId]?.category;
+  if (require("./advicerouting").bugFollowup(job)) return "bug_report";
   if (require("./advicerouting").requiresRedirect(job, d)) return "gameplay_advice";
   if (job.incidentCandidates?.length && tag !== "mechanics_question") return "incident_candidate";
   if (["bug_report", "mechanics_question", "data_repair", "design_feedback", "feature_request"].includes(tag)) return tag;

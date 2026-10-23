@@ -41,3 +41,12 @@ test("player conversations also redirect advice, including new messages after a 
   assert.throws(() => advice.guard(j, data, "Build in another state."), /Ask/);
   assert.equal(advice.requiresRedirect({ ...j, role: "owner" }, data), false);
 });
+
+test("a later concrete defect in an advice thread switches to the bug playbook", () => {
+  const j = job({ tags: { kind: "gameplay_advice" }, inbox: [{ role: "user", content: "My holding has shares but it says a smaller total." }] });
+  assert.equal(advice.requiresRedirect(j, data), false);
+  assert.equal(playbookFor(j, data).kind, "bug_report");
+  assert.doesNotThrow(() => advice.guard(j, data, "I will check the holding and the displayed total."));
+  j.inbox.push({ role: "user", content: "Which state should I invest in?" });
+  assert.equal(advice.requiresRedirect(j, data), true);
+});
