@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.12 (2026-10-23)
+
+- Ignore historical turn anomalies once newer turns have completed, so recovered failures cannot open fresh incidents after a restart or a later poll. Whole-turn failures now record one distinct event per turn and retire old persisted findings after clean turns.
+
 ## 5.9.11 (2026-10-23)
 
 - Remove conflicting instructions to send timed and per-stage support messages. Routine progress stays on the existing card; separate replies require a player question, a useful verified finding or a completed outcome.
