@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Fix three tool-argument failures found while shadowing DeepSeek v4.1 Flash: support searches no longer exceed the support server's 40-result limit, knowledge searches accept `query` or `question` as the search text, and calculations accept unit conversion constants such as 1000 and 3600000.
+
 ## 5.9.14 (2026-10-23)
 
 - Preserve explicit ticket verification holds when checking a fix's deployment or closing its linked GitHub issues. A held check still reports the fix live. Reopened issues no longer reuse a receipt from their previous closure.

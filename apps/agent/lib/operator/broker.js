@@ -1395,6 +1395,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }
     if (name === "read_tool") {
       const args = { ...(input.args || {}) };
+      // knowledge_query takes `text`; models reach for query or question, and
+      // every such read failed schema validation (2026-10-23 DeepSeek trace).
+      if (input.server === "ops-knowledge" && input.tool === "knowledge_query" && args.text === undefined) {
+        const alias = ["query", "question", "q"].find((k) => typeof args[k] === "string");
+        if (alias) { args.text = args[alias]; delete args[alias]; }
+      }
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
       if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
@@ -1456,7 +1462,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if (!scope.ticket || args.kind !== "ticket" || args.number !== scope.ticket) throw new Error("read the assigned ticket only");
         } else if (input.server === "support") {
           // Intake needs summaries for deduplication, never other players' transcripts.
-          const rows = await mcp.call(input.server, input.tool, { ...args, openOnly: true, limit: 60 }, false, signal);
+          // support_search caps limit at 40; 60 failed every search (2026-10-23).
+          const rows = await mcp.call(input.server, input.tool, { ...args, openOnly: true, limit: input.tool === "support_search" ? 40 : 60 }, false, signal);
           const items = rows.items || rows.results || [];
           return items.map((r) => ({ number: r.number, category: r.category, status: r.status })).slice(0, 60);
         }
