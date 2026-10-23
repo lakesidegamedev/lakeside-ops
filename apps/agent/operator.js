@@ -140,8 +140,10 @@ const appQuestions = require("./lib/operator/appquestions").createAppQuestions({
 // Keir 2.0: a lasting notebook.
 const knowledgeLayer = require("./lib/operator/knowledge");
 const notebook = knowledgeLayer.createNotebook({ file: path.join(config.stateDir, "notebook.json") });
+// Keir 5.10: the Ops widget line, generated on the DeepSeek quick route.
+const starmer = require("./lib/operator/starmer").createStarmer({ ledger, config, app: appChannel, log });
 // Keir 2.1 owner app (Muse parity): goals, feed, brief, approvals, upcoming, files.
-const appMuse = createAppMuse({ ledger, config, app: appChannel, drain: () => drain() });
+const appMuse = createAppMuse({ ledger, config, app: appChannel, starmer, drain: () => drain() });
 const broker = createBroker({ ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse });
 const agent = createAgent({ ledger, broker, config });
 const toolSessions = new Map(); // Keir 4.0: Rust runner tool sessions (see /v4/tool-session)
@@ -982,6 +984,11 @@ const effectRecovery = require("./lib/operator/effectrecovery").createEffectReco
   running: (job) => Object.values(active).some((s) => s?.job.id === job.id) });
 setInterval(() => effectRecovery.tick().catch((e) => log(`effect recovery: ${e.message}`)), 5 * 60000).unref();
 setInterval(() => { try { appAgent.tickWatches(); appMuse.tick(); } catch (e) { log(`app agent: ${e.message}`); } }, 60000).unref();
+// One widget line every thirty minutes. Failures are counted, never logged
+// with their private context.
+const starmerTick = () => starmer.tick().catch(() => log("starmer line update failed; retry in ten minutes"));
+starmerTick();
+setInterval(starmerTick, 60000).unref();
 const appUpdates = require("./lib/operator/appupdates").createAppUpdates({ ledger, config });
 const updateTick = () => { try { appUpdates.tick(); } catch (e) { log(`app updates: ${e.message}`); } };
 updateTick();

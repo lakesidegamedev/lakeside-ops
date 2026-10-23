@@ -36,7 +36,7 @@ function eastern(ms) {
   return { day: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) % 24 };
 }
 
-function createAppMuse({ ledger, config, app, now = () => Date.now(), drain = () => {} }) {
+function createAppMuse({ ledger, config, app, starmer = null, now = () => Date.now(), drain = () => {} }) {
   const d = ledger.data;
   const owner = () => ({ authorId: config.ownerId, author: "owner", channelId: "app", channelName: "keir-app", attachments: [], embeds: [] });
 
@@ -362,6 +362,8 @@ function createAppMuse({ ledger, config, app, now = () => Date.now(), drain = ()
     if (path === "/feed/brief" && method === "POST") return brief("on demand");
     if (path === "/recap" && method === "GET") return recap();
     if (path === "/recap/ack" && method === "POST") return ackRecap();
+    if (path === "/starmer" && method === "GET") return starmer ? starmer.view() : { text: null, working: null };
+    if (path === "/starmer/refresh" && method === "POST") return starmer ? starmer.refresh() : { text: null, working: null };
     if (path === "/goals" && method === "GET") return { goals: goals(), cadences: Object.keys(CADENCE) };
     if (path === "/goals" && method === "POST") return addGoal(body);
     let m = /^\/goals\/([a-f0-9]{12})(?:\/(advance))?$/.exec(path);

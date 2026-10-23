@@ -10,6 +10,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - In the Keir app, a conversation now gets a real answer quickly and the same message is revised in place as the investigation lands, instead of one acknowledgement followed by a long silence and a second reply. Revisions need the matching app build; an older build keeps append-only answers until it updates. A short remark like "Railway still down" is answered in the conversation lane rather than quietly becoming a background task.
 - While Keir works, a specific line under the answer says what he is doing ("Still on it: checking deployments."), refreshed every 45 seconds and cleared by the final answer. Revised answers show an "edited" marker.
 - The app opens with what happened while you were away: work Keir finished, decisions you answered and anything that changed in the feed since your last visit. Acknowledging the recap clears it, so the same day is never briefed twice.
+- The Ops widget shows an animated 8-bit Keir Starmer with a fresh line every thirty minutes: the game, a confident fact, what is pressing, or what Keir is doing. Swipe the widget to see the live queue. The line is generated on the DeepSeek quick route and the last one stays visible if the provider is slow.
 
 ### For developers
 
@@ -18,6 +19,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - `progress_update` for an app job writes the line onto the answer bubble and skips the separate ack message; the activation keeps a 45 second liveness tick built from the tool log.
 - `voiceturn.finalReplyQueued` ignores provisional answers, so a voice turn still needs its own finished reply.
 - `GET /api/keir/app/recap` returns feed entries, quiet finished owner work and owner-answered decisions since the last acknowledgement, newest first and capped at 20. `POST /api/keir/app/recap/ack` records the visit. It reads existing records and changes no work, goal, feed or decision.
+- `GET /api/keir/app/starmer` returns the last widget line, its next slot and the live work summary. The line is generated every 30 minutes by `lib/operator/starmer.js` on `KEIR_STARMER_PROVIDER` (default `KEIR_QUICK_PROVIDER`, DeepSeek V4.1 Flash), rejects URLs, em dashes, templates and repeats, retries in ten minutes on failure, and keeps the previous line visible. `POST /api/keir/app/starmer/refresh` asks for a line now, at most once a minute. No line text or provider error enters the log.
 
 ## 5.9.18 (2026-10-23)
 
