@@ -1,9 +1,13 @@
 "use strict";
 // Keir as a dev partner in the owner's app. Work the owner did not start from
-// the app (tickets, watch findings, Discord requests, role tasks) used to be
-// visible only in Activity. This module reports its material changes in the
-// main conversation, the way a colleague posts progress: a fix moving a stage,
-// a PR opened or merged, a decision needed, a task stuck or finished.
+// the app (tickets, watch findings, Discord requests, role tasks) shows on the
+// working-now board and in Activity. The main conversation only hears about
+// what the owner should act on or would want to know unprompted: a decision
+// needed, a task stuck, a fix live on the main server.
+//
+// Owner, 2026-10-23: every started, PR, merge, paused and finished line went
+// into the chat. 353 of the 400 retained messages were these digests, and they
+// pushed the owner's own conversations out of the thread.
 //
 // It also keeps a small board of current work for the chat's working-now bar,
 // computed on the tick so the thread long poll stays cheap.
@@ -23,6 +27,8 @@ const URGENT_GAP_MS = 60000;
 const MAX_LINES = 6;
 const MAX_PENDING = 60;
 const BOARD_ITEMS = 8;
+// Change kinds that earn a line in the conversation. The rest stay on the board.
+const CHAT_KINDS = new Set(["needs-you", "stuck", "live"]);
 const STAGE_LABEL = { found: "investigating", written: "fix written", tested: "tested on development", sandbox: "on the sandbox", main: "live on the main server", confirmed: "live and confirmed in game", answered: "answered, no fix needed" };
 const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const sentence = (s, n = 180) => { const t = clip(s, n).replace(/[–—]/g, ","); return t && !/[.!?…]$/.test(t) ? `${t}.` : t; };
@@ -152,7 +158,7 @@ function createAppUpdates({ ledger, config = {}, now = () => Date.now(), save = 
     u.seen = { jobs: compact(next.jobs, u.seen.jobs), cards: next.cards };
     if (enabled() && !d.paused) {
       const known = new Set(u.pending.map(e => e.id));
-      for (const e of found) if (!known.has(e.id)) u.pending.push({ ...e, at });
+      for (const e of found) if (CHAT_KINDS.has(e.kind) && !known.has(e.id)) u.pending.push({ ...e, at });
       u.pending = u.pending.slice(-MAX_PENDING);
     } else u.pending = [];
     const posted = flush(at);
@@ -194,4 +200,4 @@ function compact(jobs, prev = null) {
     started: !prev || Boolean(prev[id]?.started) || j.state === "working" || j.rounds > 0 }]));
 }
 
-module.exports = { createAppUpdates, changes, snapshot, board, reportable, COALESCE_MS, MIN_GAP_MS, URGENT_GAP_MS };
+module.exports = { createAppUpdates, changes, snapshot, board, reportable, CHAT_KINDS, COALESCE_MS, MIN_GAP_MS, URGENT_GAP_MS };
