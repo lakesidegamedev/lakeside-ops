@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keep activations inside their step budget on weaker tool-callers (found shadowing DeepSeek v4.1 Flash, where a third of runs hit the step limit): an identical read that already failed is refused with its original error, a read that timed out is not retried in the same activation, tool results warn when few steps remain so the reply is posted before the cut-off, and schema rejections from read tools now include the expected arguments.
+- Accept `{"$oid": id}` in heal reads by matching the id as text, and state the ticket reply limits in the `channel_reply` tool description so drafts stop failing the copy guard.
+
 ## 5.9.15 (2026-10-23)
 
 - Fix three tool-argument failures found while shadowing DeepSeek v4.1 Flash: support searches no longer exceed the support server's 40-result limit, knowledge searches accept `query` or `question` as the search text, and calculations accept unit conversion constants such as 1000 and 3600000.

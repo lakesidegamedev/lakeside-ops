@@ -27,7 +27,7 @@ const TOOLS = [
   ["operator_roles", "Read the support, Watchkeeper and engineering states and observation receipts. This grants no execution authority.", schema({})],
   ["task_progress", "Read public task states in this channel. No private findings, owner decisions or approval arguments are exposed.", schema({})],
   ["handoff", "Move an authenticated owner or support delegate's original request to the work queue when it needs deeper investigation or actions. Players cannot authorize a handoff. This does not grant approval.", schema({})],
-  ["channel_reply", "Reply conversationally in the authenticated source channel. Use only player-safe copy; approvals and private findings stay in owner DMs. This never changes a ticket status or resolves it.", schema({ message: str }, ["message"])],
+  ["channel_reply", "Reply conversationally in the authenticated source channel. Use only player-safe copy; approvals and private findings stay in owner DMs. In a ticket channel the post is at most 5 short sentences and 700 characters, speaks to the player as you, leads with the answer, and never uses usernames, ticket numbers or engine terms; drafts that break this are refused. Post the reply before further reading when you already have the answer. This never changes a ticket status or resolves it.", schema({ message: str }, ["message"])],
   ["read_servers", "List the exact available MCP server names for this task. Call this before discovering schemas; never guess server names.", schema({})],
   ["read_tools", "Discover tool descriptions and argument schemas for a read-only MCP server.", schema({ server: str }, ["server"])],
   ["read_tool", "Call a read-only tool. Support reads are scoped to this ticket, production code, public world overview and deduplication summaries.", schema({ server: str, tool: str, args: obj }, ["server", "tool", "args"])],
@@ -327,6 +327,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     const deferred = compact ? chatContext.sessionContext({ job, ledger, broker, config, tools, fullBrief: briefText + OTHER_NOTE + ownerBrief, recallPlayer }) : leanCtx?.session || null;
     if (deferred) context.capabilityCatalog = deferred.names;
     const { url, completionUrl, session, close } = await toolServer.open(job, deferred?.tools || tools, signal, deferred);
+    session.maxTurns = maxRounds;
     let result;
     const nudge = !quick && setTimeout(() => { if (job.progressMessageId && !job.progressAt) broker.tool(job, "progress_update", { message: "Still on it. This one needs a closer look, I'll reply here when it's done." }, signal).catch(() => {}); }, 150000);
     const startedAt = Date.now();

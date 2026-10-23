@@ -76,6 +76,18 @@ function redactRaw(value, depth = 0) {
   if (Array.isArray(value)) return value.map((x) => redactRaw(x, depth + 1));
   return Object.fromEntries(Object.entries(value).filter(([k]) => !RAW_FIELD_CLOSED.test(k)).map(([k, x]) => [k, redactRaw(x, depth + 1)]));
 }
+function oidFilter(filter) {
+  const out = {}, match = [];
+  for (const [k, v] of Object.entries(filter)) {
+    const id = v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" ? v.$oid : null;
+    if (id && !k.startsWith("$")) match.push({ $eq: [{ $toString: "$" + k }, id] });
+    else out[k] = v;
+  }
+  if (!match.length) return filter;
+  const all = out.$expr ? [out.$expr, ...match] : match;
+  out.$expr = all.length === 1 ? all[0] : { $and: all };
+  return out;
+}
 function rawReadArgs(tool, args) {
   if (tool === "heal_collections") return { env: "prod" };
   const collection = String(args.collection || "");
@@ -1401,6 +1413,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const alias = ["query", "question", "q"].find((k) => typeof args[k] === "string");
         if (alias) { args.text = args[alias]; delete args[alias]; }
       }
+      // heal-ops passes filters through verbatim, so {"$oid": id} is an unknown
+      // operator. Match the id as text instead: ids are stored both ways.
+      if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool) && args.filter && typeof args.filter === "object") args.filter = oidFilter(args.filter);
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
       if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
@@ -1468,7 +1483,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           return items.map((r) => ({ number: r.number, category: r.category, status: r.status })).slice(0, 60);
         }
       }
-      const result = await mcp.call(input.server, input.tool, args, false, signal);
+      let result;
+      try { result = await mcp.call(input.server, input.tool, args, false, signal); }
+      catch (error) {
+        // A schema rejection with the schema attached is fixable in one retry;
+        // without it models guessed argument names until the step limit.
+        if (!/-32602|Input validation error/.test(String(error.message))) throw error;
+        const schema = await mcp.list(input.server, signal).then((list) => list.find((t) => t.name === input.tool)?.inputSchema).catch(() => null);
+        throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
+      }
       if (signal?.aborted && input.server === "ops-knowledge" && input.tool.startsWith("knowledge_")) throw new Error("knowledge read cancelled");
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool)) return redactRaw(result);
       if (job.role === "player" && input.server === "support") {
@@ -2933,4 +2956,4 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
