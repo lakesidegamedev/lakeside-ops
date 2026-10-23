@@ -3,7 +3,7 @@ const test = require("node:test"), assert = require("node:assert/strict");
 const advice = require("../lib/operator/advicerouting");
 const { playbookFor, finishRefusal } = require("../lib/operator/playbooks");
 const data = { channels: { c: { category: "gameplay" } }, jobs: {} };
-const job = (extra = {}) => ({ id: "j", kind: "ticket", role: "support", ticket: 99, channelId: "c", tags: { kind: "mechanics_question" }, source: { content: "I want to know which state or country I can invest for energy or chemical industries" }, ...extra });
+const job = (extra = {}) => ({ id: "j", kind: "ticket", role: "support", ticket: 99, channelId: "c", tags: { kind: "mechanics_question" }, source: { role: "system", content: "I want to know which state or country I can invest for energy or chemical industries" }, ...extra });
 
 test("old mechanics tags still route the original investment question to Ask", () => {
   const j = job(); assert.equal(advice.requiresRedirect(j, data), true);

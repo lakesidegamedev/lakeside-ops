@@ -17,7 +17,7 @@ function requiresRedirect(job, d) {
   // separately by the brief; a gameplay category never overrides a bug.
   if (["bug_report", "data_repair", "feature_request", "design_feedback", "moderation"].includes(kind) || job.pullRequests?.length) return false;
   if (kind === "gameplay_advice") return true;
-  const latest = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system").at(-1);
+  const latest = [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system")].filter(Boolean).at(-1);
   return adviceQuestion(latest?.content);
 }
 function guard(job, d, message) {
