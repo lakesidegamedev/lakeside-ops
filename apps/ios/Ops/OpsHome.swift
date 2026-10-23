@@ -175,14 +175,24 @@ struct OpsHub: View {
         let queuedChecks = checks.filter { $0["state"].string == "queued" }.count
         return "\(runningChecks) checks running · \(queuedChecks) queued"
     }
-    private var schedulerStatus: OpsStatus { ops.scheduler == .null ? .idle : .queued }
+    private var schedulerStatus: OpsStatus {
+        if ops.scheduler == .null { return .idle }
+        let checks = ops.scheduler["checks"].array
+        if checks.contains(where: { $0["state"].string == "running" }) { return .running }
+        return checks.isEmpty ? .done : .queued
+    }
     private var simsDetail: String {
         let sims = ops.scheduler["worldSims"].array
         if ops.scheduler["worldSimError"].string.nonempty != nil { return "Sim queue unreachable" }
         let live = sims.filter { ["running", "queued", "claimed"].contains($0["status"].string) }.count
         return live == 0 ? "No run active · overnight window" : "\(live) active or queued"
     }
-    private var simsStatus: OpsStatus { ops.scheduler["worldSimError"].string.nonempty != nil ? .failed : .queued }
+    private var simsStatus: OpsStatus {
+        if ops.scheduler["worldSimError"].string.nonempty != nil { return .failed }
+        if ops.scheduler == .null { return .idle }
+        let live = ops.scheduler["worldSims"].array.filter { $0["status"].string == "running" }.count
+        return live > 0 ? .running : .queued
+    }
 
     // MARK: Keir surfaces
 

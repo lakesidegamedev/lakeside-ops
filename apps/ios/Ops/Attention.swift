@@ -114,7 +114,7 @@ struct AttentionItem: Identifiable {
     let work: JSONValue
 }
 
-enum AttentionKind {
+enum AttentionKind: Equatable {
     case decision, question, ownerWork
 }
 
