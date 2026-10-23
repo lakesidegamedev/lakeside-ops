@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.19 (2026-10-23)
+
 ### Fixed
 - Ending or interrupting a voice call cancels its accepted task and delegated work, including a send still awaiting its receipt. Opening the task preserves it.
 - Cancelled voice work cannot deliver a late queued answer. DeepSeek tool markup with repeated delimiters is rejected instead of shown as an answer.
