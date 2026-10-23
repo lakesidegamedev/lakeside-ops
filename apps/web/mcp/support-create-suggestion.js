@@ -5,9 +5,18 @@ const CATEGORIES = ["feature_request", "ui_improvement", "game_balance", "new_co
 const SYSTEMS = ["elections", "legislature", "executive", "judiciary", "economy", "corporations", "parties", "npps", "map_geo", "combat_or_military", "diplomacy", "onboarding_account", "notifications", "meta_other"];
 const snowflake = /^\d{15,22}$/;
 
+function verifiedReceipt(result, game) {
+  if (!Number.isSafeInteger(result?.issueNumber) || result.issueNumber <= 0) return null;
+  try {
+    const url = new URL(result.detailUrl), expected = new URL(`${game}/feedback/${result.issueNumber}`);
+    if (url.protocol !== expected.protocol || url.port !== expected.port || url.hostname.replace(/^www\./, "") !== expected.hostname.replace(/^www\./, "") || url.pathname !== expected.pathname || url.username || url.password || url.search || url.hash) return null;
+    return { number: result.issueNumber, url: url.href, githubIssueUrl: result.githubIssueUrl || null, filed: true };
+  } catch { return null; }
+}
+
 // A durable claim precedes the game API call. An ambiguous response stays held:
 // repeating a timed-out POST could create a second suggestion and notification.
-function registerCreateSuggestion(server, { auth, Intake, Tickets, z, jsonResult, errorResult, fetchImpl = fetch, env = process.env }) {
+function registerCreateSuggestion(server, { auth, Intake, Tickets, Suggestions, z, jsonResult, errorResult, fetchImpl = fetch, env = process.env }) {
   server.tool("support_create_suggestion", "File a native suggestion on behalf of its verified submitter (WRITE). Discord sources are fetched to verify the author. App origins must be supplied by the authenticated owner broker. Returns the native suggestion number and feedback URL, separately from optional GitHub delivery.", {
     title: z.string().trim().min(1).max(200), description: z.string().trim().min(1).max(4000),
     category: z.enum(CATEGORIES), gameSystem: z.enum(SYSTEMS),
@@ -64,16 +73,28 @@ function registerCreateSuggestion(server, { auth, Intake, Tickets, z, jsonResult
         const old = await Intake.findOne({ _id: id });
         if (old?.reporterId !== reporter.id || old?.digest !== digest) throw new Error("This source already belongs to a different submission; inspect its receipt");
         if (old.state === "done") return jsonResult({ ...old.receipt, duplicate: true });
+        // Reconcile a response lost after the game committed, without another POST.
+        const matches = Suggestions ? await Suggestions.find({ discordSubmitUserId: reporter.id, title: payload.title, description: payload.description, category: payload.category, gameSystem: payload.gameSystem, createdAt: { $gte: old.at, $lte: new Date(new Date(old.at).getTime() + 120000) } }).limit(2).toArray() : [];
+        if (matches.length === 1) {
+          const found = matches[0];
+          const verified = verifiedReceipt({ issueNumber: found.issueNumber, detailUrl: found.context?.url, githubIssueUrl: found.githubIssueUrl }, game);
+          if (verified && (payload.impact === undefined || found.impact === payload.impact) && (payload.priority === undefined || found.priority === payload.priority)) {
+            const receipt = { ...verified, reporterId: reporter.id, source };
+            await Intake.updateOne({ _id: id, digest }, { $set: { state: "done", receipt, completedAt: new Date(), reconciled: true } });
+            return jsonResult({ ...receipt, duplicate: true, recovered: true });
+          }
+        }
         throw new Error("Previous submission outcome needs inspection; no second suggestion was created");
       }
       const response = await fetchImpl(`${game}/api/discord-bot/suggestions`, { method: "POST", headers: { "Content-Type": "application/json", "X-Bot-Token": env.DISCORD_BOT_API_KEY }, body: JSON.stringify(payload), signal: AbortSignal.timeout(30000), redirect: "error" });
       if (!response.ok) throw new Error(`Suggestion API returned ${response.status}; inspect the intake before retrying`);
       const result = await response.json();
-      if (!Number.isSafeInteger(result.issueNumber) || result.issueNumber <= 0 || result.detailUrl !== `${game}/feedback/${result.issueNumber}`) throw new Error("Suggestion API returned an incomplete receipt; inspect before retrying");
-      const receipt = { number: result.issueNumber, url: result.detailUrl, reporterId: reporter.id, source, githubIssueUrl: result.githubIssueUrl || null, filed: true };
+      const verified = verifiedReceipt(result, game);
+      if (!verified) throw new Error("Suggestion API returned an incomplete receipt; inspect before retrying");
+      const receipt = { ...verified, reporterId: reporter.id, source };
       await Intake.updateOne({ _id: id }, { $set: { state: "done", receipt, completedAt: new Date() } });
       return jsonResult(receipt);
     } catch (error) { return errorResult(error.message); }
   });
 }
-module.exports = { registerCreateSuggestion, CATEGORIES, SYSTEMS };
+module.exports = { registerCreateSuggestion, verifiedReceipt, CATEGORIES, SYSTEMS };
