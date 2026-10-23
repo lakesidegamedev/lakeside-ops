@@ -163,7 +163,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
   // Called by the outbox for an entry whose destination job is an app job.
   function deliver(key, entry, job) {
     // A queued reply can race with cancellation after the model has finished.
-    if (job.state === "cancelled" || rootOf(job)?.state === "cancelled") return [];
+    if (job.state === "cancelled" || job.appCancelledAt != null || rootOf(job)?.state === "cancelled" || rootOf(job)?.appCancelledAt != null) return [];
     const text = ownerText(entry.content).replace(/[–—]/g, ",");
     if (key.startsWith("ack:")) { setStatus(d, job.id, text, now()); job.progressMessageId = `app-status-${job.id}`; return [job.progressMessageId]; }
     // A watch speaks only when its condition is met.
@@ -222,6 +222,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
       while (current && !seen.has(current.id)) {
         seen.add(current.id);
         if (current.id === job.id) {
+          candidate.appCancelledAt ??= now();
           if (!CLOSED.includes(candidate.state)) { candidate.state = "cancelled"; candidate.summary = "Stopped from the app."; clearStatus(d, candidate.id); }
           break;
         }

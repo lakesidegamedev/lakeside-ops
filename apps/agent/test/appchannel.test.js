@@ -345,3 +345,15 @@ test("cancellation suppresses a completed child's reply queued before its root w
   app.deliver(`channel-reply:${child.id}:queued`, { content: "Late answer" }, child);
   assert.equal(app.view().messages.length, before);
 });
+
+test("cancelling an already completed family fences an undelivered answer", () => {
+  const { ledger, app } = setup();
+  const { jobId } = app.post("Read today's events", "finished-voice-late", "main", { voice: true });
+  const root = ledger.data.jobs[jobId]; root.state = "done";
+  const child = ledger.createJob("finished-voice-child", { kind: "command", state: "done", codingParent: jobId });
+  const before = app.view().messages.length;
+  app.cancel(jobId);
+  app.deliver(`channel-reply:${child.id}:queued`, { content: "Late answer" }, child);
+  assert.equal(app.view().messages.length, before);
+  assert.equal(root.state, "done"); assert.equal(child.state, "done");
+});
