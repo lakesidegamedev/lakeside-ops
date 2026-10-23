@@ -311,6 +311,7 @@ function buildSidebar() {
     { href: "/learn", label: "Learn", icon: "graduation-cap" },
   ] },
   { label: "External services", items: [
+    ...externalSidebarItems("Platform"),
     ...externalSidebarItems("Observability"),
     ...externalSidebarItems("Analytics"),
     ...externalSidebarItems("Tools"),
