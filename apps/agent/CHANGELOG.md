@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.11 (2026-10-23)
+
 - Remove conflicting instructions to send timed and per-stage support messages. Routine progress stays on the existing card; separate replies require a player question, a useful verified finding or a completed outcome.
 
 ## 5.9.10 (2026-10-23)
