@@ -183,14 +183,34 @@ function localMcpUrl(value) {
   if (url.hostname === "localhost") url.hostname = "127.0.0.1";
   return url.href;
 }
-function createMcp(configFile, readToken) {
+// heal-ops answers a read by starting a fresh game-checkout CLI every time: about
+// twelve seconds on an idle host, and past thirty when several workers run. A
+// shared thirty second cap aborted reads the server would have answered, and the
+// model got a bare Node timeout string with no next step (2026-10-23 shadow:
+// heal_collections aborted 24 times across ten tasks). Give that server the time
+// it needs; every other server keeps the tight cap.
+const READ_DEADLINE_MS = { "heal-ops": 90000 };
+const DEFAULT_READ_DEADLINE_MS = 30000;
+const readDeadline = (server, deadlines = READ_DEADLINE_MS) => deadlines[server] ?? DEFAULT_READ_DEADLINE_MS;
+const timedOut = (error) => error?.name === "TimeoutError" || /aborted due to timeout/i.test(String(error?.message || ""));
+function createMcp(configFile, readToken, options = {}) {
   const servers = JSON.parse(fs.readFileSync(configFile, "utf8")).mcpServers;
+  const deadlines = options.readDeadlines || READ_DEADLINE_MS;
   async function rpc(server, method, params, write = false, signal) {
     const c = servers[server];
     const url = localMcpUrl(c?.url);
     if (!url) throw new Error("unavailable local MCP server");
-    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: write ? c.headers.Authorization : `Bearer ${readToken}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
+    const deadline = readDeadline(server, deadlines);
+    const label = params?.name ? `${server}/${params.name}` : server;
+    let res;
+    try {
+      res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: write ? c.headers.Authorization : `Bearer ${readToken}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(deadline), ...(signal ? [signal] : [])]) });
+    } catch (error) {
+      // The activation's own abort is not a slow server; leave it alone.
+      if (signal?.aborted || !timedOut(error)) throw error;
+      throw new Error(`${label} timed out after ${Math.round(deadline / 1000)} seconds and returned nothing. It is slow, not refused. Ask for less in one call (a filter, a projection or a lower limit), use a narrower tool, or carry on with what you already read; an identical call times out again.`);
+    }
     const j = parseRpc(await res.text());
     if (!res.ok || j.error || j.result?.isError) {
       const error = new Error(redactSecrets(JSON.stringify(j.error || j.result || {}).slice(0, 2000)));
@@ -2988,4 +3008,4 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, readDeadline, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
