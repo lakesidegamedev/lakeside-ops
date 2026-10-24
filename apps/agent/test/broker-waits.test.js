@@ -123,3 +123,15 @@ test("real progress resets the quiet ladder instead of escalating on it", async 
   await f.finish({});
   assert.equal(Math.round((f.job.wakeAt - NOW) / MINUTE), 15);
 });
+
+test("malformed DeepSeek tool markup cannot replace a durable checkpoint or finish summary", async (t) => {
+ const f = fixture(t, { summary: "Verified fix is live; waiting for the reporter." });
+ const { createBroker } = require("../lib/operator/broker");
+ const broker = createBroker({ ledger: f.ledger, config: { ownerId: "owner", staffIds: [], stateDir: os.tmpdir(), repositories: {} }, mcp: { servers: () => [] }, discord: async () => { throw Error("unexpected external call"); }, sandbox: {}, now: () => NOW });
+ const markup = '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="keir_read_tools">support</｜｜DSML｜｜ invoke>';
+ for (const name of ["checkpoint", "finish"]) {
+  await assert.rejects(broker.tool(f.job, name, { state: "waiting", summary: markup }), /tool.*markup/i);
+  assert.equal(f.job.summary, "Verified fix is live; waiting for the reporter.");
+  assert.equal(f.job.state, "running");
+ }
+});

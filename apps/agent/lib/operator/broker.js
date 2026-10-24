@@ -2700,6 +2700,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       a.state = "done"; ledger.save(); return result;
     }
     if (name === "checkpoint") {
+      if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a checkpoint. Call tools through their interface and preserve the last verified conclusion.");
       if (input.completionMinutes !== undefined) {
         if (!Number.isInteger(input.completionMinutes) || input.completionMinutes < 1 || input.completionMinutes > 1440 || !String(input.estimateBasis || "").trim()) throw new Error("A task forecast needs 1-1440 remaining minutes and an evidence basis");
         job.completionForecast = { at: now(), expectedAt: now() + input.completionMinutes * 60000, basis: String(input.estimateBasis).slice(0, 400), kind: "worker-estimate" };
@@ -2714,6 +2715,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ledger.save(); return { saved: true };
     }
     if (name === "finish") {
+      if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a completion summary. Call tools through their interface and preserve the last verified conclusion.");
       if (job.ownerMuseBlocker) {
         job.state = "blocked"; job.summary = job.ownerMuseBlocker.message;
         job.history = [...(job.history || []), { at: new Date(now()).toISOString(), kind: "finish", state: "blocked", summary: job.summary }].slice(-20);

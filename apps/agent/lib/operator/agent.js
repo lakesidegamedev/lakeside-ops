@@ -443,7 +443,13 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     if (require("./toolmarkup").leaked(text)) {
       ledger.audit("tool_markup_leaked", { job: job.id, lane: quick ? "quick" : "worker", model: job.provider?.model });
       if (quick && job.role !== "player") { await broker.tool(job, "handoff", {}, signal); return; }
+      job.toolMarkupFailures = (job.toolMarkupFailures || 0) + 1;
       job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "refused", summary: "The previous activation wrote tool calls as text. Call tools through the tool interface; never print tool-call markup." }].slice(-20);
+      if (job.toolMarkupFailures >= 3) {
+        job.state = "blocked"; delete job.wakeAt;
+        ledger.audit("tool_markup_budget_exhausted", { job: job.id, ticket: job.ticket, attempts: job.toolMarkupFailures });
+        ledger.save(); return;
+      }
       job.state = "waiting"; job.wakeAt = Date.now() + 30000; ledger.save(); return;
     }
     job.summary = text.slice(0, 4000);
