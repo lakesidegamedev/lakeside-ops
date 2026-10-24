@@ -49,7 +49,7 @@ final class KeirSpriteTests: XCTestCase {
             XCTAssertNotNil(pack.states[name], "idle variety names \(name)")
         }
         for index in pack.priority.indices {
-            let available = Set(pack.priority.prefix(index + 1))
+            let available = Set(pack.priority[index...])
             XCTAssertEqual(pack.resolve(available), Optional(pack.priority[index]), "priority \(index)")
         }
         XCTAssertNil(pack.resolve([]))
