@@ -42,6 +42,7 @@ struct AwayRecap: View {
             .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(OpsTheme.hairline, lineWidth: 1))
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("away-recap")
     }
 
