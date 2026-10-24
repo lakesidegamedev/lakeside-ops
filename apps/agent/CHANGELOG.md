@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- heal-ops reads now get 90 seconds instead of 30, because that server starts a fresh command for every read (about twelve seconds on an idle host, more when several workers run) and the shared cap was aborting reads it would have answered; a read that still times out now names the server and tool and says what to do next (a filter, a projection or a lower limit, a narrower tool, or carry on with what was already read) instead of returning a bare timeout string.
+
 ## 5.10.0 (2026-10-24)
 
 The proactive studio-agent release: the 2.4.0 iOS redesign, an answer-first
