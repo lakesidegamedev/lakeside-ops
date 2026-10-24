@@ -952,7 +952,7 @@ dependencies = [
 
 [[package]]
 name = "lakeside"
-version = "5.9.18"
+version = "5.10.0"
 dependencies = [
  "anyhow",
  "chrono",
