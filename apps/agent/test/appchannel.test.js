@@ -309,6 +309,100 @@ test("normal worker chat replies retain their own task identity", () => {
   assert.equal(answer.jobId, worker.id); assert.equal(answer.voice, undefined);
 });
 
+test("a provisional answer is revised in place by the deeper pass", () => {
+  const { ledger, app } = setup();
+  app.view(0, "main", true); // the app build asks for answer revisions
+  const accepted = app.post("Was production up at 21:00?", "revise-1", "main", {}, true);
+  const job = ledger.data.jobs[accepted.jobId]; job.state = "running";
+  const worker = ledger.createJob(`handoff:${job.id}`, { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: job.source, museParent: job.id, appThread: "main" });
+  job.progressMessageId = `app-status-${job.id}`;
+  app.handoffAnswer(job, "The site is reachable. The deploy reads are refusing my token.");
+  const provisional = app.view().messages.at(-1);
+  assert.equal(provisional.provisional, true); assert.equal(provisional.jobId, job.id);
+  assert.match(provisional.text, /site is reachable/);
+
+  worker.state = "done";
+  app.deliver(`channel-reply:${worker.id}:x`, { content: "**Production was up.** What failed was the Railway read token." }, worker);
+  const rows = app.view().messages.filter(m => m.jobId === job.id && m.role === "keir");
+  assert.equal(rows.length, 1, "the answer keeps its single row");
+  assert.equal(rows[0].id, provisional.id); assert.equal(rows[0].seq, provisional.seq);
+  assert.match(rows[0].text, /Production was up/); assert.equal(rows[0].provisional, undefined);
+  assert.ok(rows[0].editedAt > 0);
+  // The edit reaches clients that already hold the row, and wakes the long poll.
+  const later = app.view(provisional.seq, null, true);
+  assert.equal(later.messages.length, 0);
+  assert.equal(later.revised.find(m => m.id === provisional.id)?.text, rows[0].text);
+});
+
+test("work progress rides under the answer instead of a second bubble", () => {
+  const { ledger, app } = setup();
+  app.view(0, "main", true);
+  const accepted = app.post("Investigate the drift", "progress-1", "main", {}, true);
+  const job = ledger.data.jobs[accepted.jobId]; job.state = "running";
+  const worker = ledger.createJob(`handoff:${job.id}`, { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: job.source, museParent: job.id, appThread: "main" });
+  app.handoffAnswer(job, "Two accounts look drifted; confirming.");
+  app.updateStatus(worker, "Still on it: checking deployments.");
+  const row = app.view().messages.at(-1);
+  assert.equal(row.text, "Two accounts look drifted; confirming.");
+  assert.equal(row.progress, "Still on it: checking deployments.");
+  const version = app.view().version;
+  app.updateStatus(worker, "Still on it: checking deployments.");
+  assert.equal(app.view().version, version, "a repeated line does not churn the poll");
+  app.updateStatus(worker, "Still on it: reading the ticket.");
+  assert.notEqual(app.view().version, version);
+  assert.equal(app.view().messages.length, 2, "progress never opens a bubble of its own");
+});
+
+test("an ordinary follow-up answer is a new message, not an edit", () => {
+  const { ledger, app } = setup();
+  const first = app.post("What turn is it?", "follow-1");
+  const job = ledger.data.jobs[first.jobId]; job.state = "running";
+  app.deliver(`channel-reply:${job.id}:a`, { content: "Turn 364." }, job);
+  job.state = "running"; job.inbox = [{ content: "And the next one?", role: "owner", at: new Date().toISOString() }];
+  app.deliver(`channel-reply:${job.id}:b`, { content: "21:00 UTC." }, job);
+  const rows = app.view().messages.filter(m => m.role === "keir");
+  assert.equal(rows.length, 2); assert.equal(rows[0].text, "Turn 364."); assert.equal(rows[1].text, "21:00 UTC."); assert.equal(rows[1].editedAt, undefined);
+});
+
+test("a short remark in the app gets a quick conversational answer, not a silent task", () => {
+  const { ledger, app } = setup();
+  const remark = app.post("Railway still down", "remark-1");
+  assert.equal(ledger.data.jobs[remark.jobId].kind, "conversation");
+  for (const text of ["Fix ticket 1553", "Deploy the staging build", "Merge the green dev PR", "Check #98"]) {
+    const work = app.post(text, `work-${text}`);
+    assert.equal(ledger.data.jobs[work.jobId].kind, "command", `${text} is work, not chat`);
+  }
+});
+
+test("an answer already posted before the handoff is still the row the worker revises", () => {
+  const { ledger, app } = setup();
+  app.view(0, "main", true);
+  const a = app.post("Why are market prices frozen?", "pre-reply", "main", {}, true);
+  const job = ledger.data.jobs[a.jobId]; job.state = "running";
+  app.deliver(`channel-reply:${job.id}:q`, { content: "Prices froze when the turn paused." }, job);
+  job.channelReplyQueued = true;
+  const worker = ledger.createJob(`handoff:${job.id}`, { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: job.source, museParent: job.id, appThread: "main" });
+  const slot = app.handoffAnswer(job, "", worker);
+  const quick = app.view().messages.find(m => m.id === slot);
+  assert.equal(quick.provisional, true, "the quick answer is now provisional");
+  worker.state = "done";
+  app.deliver(`channel-reply:${worker.id}:x`, { content: "Prices froze because the **turn paused**; the scheduler caught up at 22:00." }, worker);
+  const rows = app.view().messages.filter(m => m.role === "keir" && m.jobId === job.id);
+  assert.equal(rows.length, 1); assert.equal(rows[0].id, slot); assert.match(rows[0].text, /turn paused/);
+});
+
+test("an older app build that never asked for revisions keeps append-only answers", () => {
+  const { ledger, app } = setup();
+  const a = app.post("Was production up at 21:00?", "old-client", "main", {}, true);
+  const job = ledger.data.jobs[a.jobId]; job.state = "running";
+  const worker = ledger.createJob(`handoff:${job.id}`, { kind: "command", role: "owner", actorId: config.ownerId, replyChannel: "app", channelId: "app", source: job.source, museParent: job.id, appThread: "main" });
+  assert.equal(app.handoffAnswer(job, "Short answer.", worker), null);
+  worker.state = "done";
+  app.deliver(`channel-reply:${worker.id}:x`, { content: "Full answer." }, worker);
+  const rows = app.view().messages.filter(m => m.role === "keir");
+  assert.equal(rows.length, 1); assert.equal(rows[0].text, "Full answer."); assert.equal(rows[0].provisional, undefined);
+});
+
 test("voice acceptance acknowledges before provider work and idempotent resend does not speak twice", () => {
  const {ledger,app,drained}=setup();
  const result=app.authenticatedPost("What happened in the game today?","instant-voice","main",{voice:true,mode:"new"});

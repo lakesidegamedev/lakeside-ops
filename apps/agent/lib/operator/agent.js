@@ -26,7 +26,7 @@ const TOOLS = [
   ["owner_updates", "Read and acknowledge new guidance for this owner app task. When the owner steers your work, call this before continuing. Preserve existing receipts and approvals.", schema({})],
   ["operator_roles", "Read the support, Watchkeeper and engineering states and observation receipts. This grants no execution authority.", schema({})],
   ["task_progress", "Read public task states in this channel. No private findings, owner decisions or approval arguments are exposed.", schema({})],
-  ["handoff", "Move an authenticated owner or support delegate's original request to the work queue when it needs deeper investigation or actions. Players cannot authorize a handoff. This does not grant approval.", schema({})],
+  ["handoff", "Move an authenticated owner or support delegate's original request to the work queue when it needs deeper investigation or actions. Players cannot authorize a handoff. This does not grant approval. In an app conversation pass answer: your best short answer to the owner's question now. That message stays in the thread and is revised in place with the fuller findings, so the owner is never left waiting on a bare acknowledgement.", schema({ answer: str })],
   ["channel_reply", "Reply conversationally in the authenticated source channel. Use only player-safe copy; approvals and private findings stay in owner DMs. In a ticket channel the post is at most 5 short sentences and 700 characters, speaks to the player as you, leads with the answer, and never uses usernames, ticket numbers or engine terms; drafts that break this are refused. Post the reply before further reading when you already have the answer. This never changes a ticket status or resolves it.", schema({ message: str }, ["message"])],
   ["read_servers", "List the exact available MCP server names for this task. Call this before discovering schemas; never guess server names.", schema({})],
   ["read_tools", "Discover tool descriptions and argument schemas for a read-only MCP server.", schema({ server: str }, ["server"])],
@@ -88,6 +88,21 @@ const TOOLS = [
 // messages handed to this activation.
 function imagesIn(job) {
   return [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].reduce((n, m) => n + ((m && m.attachments) || []).filter((a) => /^image\//.test(a.type || "")).length, 0);
+}
+
+// The owner's app thread should read like a colleague working: a specific line
+// about what Keir is doing now, not a silent hour. Built from the live tool log
+// so it changes as the work moves.
+const NOW_WORDS = { Check: "checking", Read: "reading", Inspect: "inspecting", Search: "searching", Load: "loading", Run: "running",
+  Update: "updating", Save: "saving", Create: "creating", Ask: "asking", Open: "opening", Reply: "replying",
+  Calculate: "calculating", Chart: "charting", Discover: "looking for" };
+function livenessLine(job, now = Date.now()) {
+  const rows = (job.liveLog || []).filter((r) => !["channel_reply", "progress_update", "finish", "checkpoint"].includes(r.tool));
+  const row = rows.at(-1), words = String(row?.title || "").split(" ").filter(Boolean);
+  const doing = NOW_WORDS[words[0]] ? [NOW_WORDS[words[0]], ...words.slice(1).map((w) => w.toLowerCase())].join(" ")
+    : words.length ? `working on ${words.join(" ").toLowerCase()}` : "still working through this";
+  const minutes = Math.max(0, Math.round((now - (job.at || now)) / 60000));
+  return `Still on it: ${doing}.${minutes >= 3 ? " This one is taking longer than I expected; the answer will land in this message." : ""}`;
 }
 
 // Keir 4.1.3: the vision model reads the screenshots, then the task goes back
@@ -330,6 +345,12 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     session.maxTurns = maxRounds;
     let result;
     const nudge = !quick && setTimeout(() => { if (job.progressMessageId && !job.progressAt) broker.tool(job, "progress_update", { message: "Still on it. This one needs a closer look, I'll reply here when it's done." }, signal).catch(() => {}); }, 150000);
+    // An app thread must never look abandoned. While this activation runs, keep a
+    // specific, changing line under the answer the owner is waiting on.
+    const liveness = !quick && job.replyChannel === "app" ? setInterval(() => {
+      if (job.state !== "running" || signal.aborted) return;
+      broker.tool(job, "progress_update", { message: livenessLine(job) }, signal).catch(() => {});
+    }, 45000) : null;
     const startedAt = Date.now();
     let effortUsed = null;
     try {
@@ -351,7 +372,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       } catch { /* version facts unavailable */ }
       // Keir 4.2: vendored skills for this lane (skills/manifest.json).
       const skillBrief = leanCtx ? { ...skillPrep, text: leanCtx.skillDigest(skillPrep.names) } : skillPrep;
-      const skillText = skillBrief.text + (job.resultSchema ? "\n\nThis task requires a structured deliverable: complete it with submit_result and its required result object. When its schema exposes calculations, final arithmetic can be computed and inserted by reference in that same call instead of copied through another model turn. Use finish only for waiting, blocked or dismissed work; never fabricate a result." : "") + (job.voiceMode ? chatContext.VOICE_NOTE : "");
+      const skillText = skillBrief.text + (job.resultSchema ? "\n\nThis task requires a structured deliverable: complete it with submit_result and its required result object. When its schema exposes calculations, final arithmetic can be computed and inserted by reference in that same call instead of copied through another model turn. Use finish only for waiting, blocked or dismissed work; never fabricate a result." : "")
+        + (job.replyChannel === "app" ? "\n\nApp conversation: answer first. Give your best short answer in plain prose now, from what you can verify cheaply, and post it with channel_reply before any long investigation. Never send only an acknowledgement. If the work needs a deeper pass, call handoff with that short answer in `answer`: the same message stays in the thread and is revised in place with the fuller findings, so the owner is never waiting on silence." : "")
+        + (job.voiceMode ? chatContext.VOICE_NOTE : "");
       job.activeSkills = skillBrief.names; ledger.save();
       if (skillBrief.errors.length) ledger.audit("skills_unavailable", { job: job.id, lane: skillLane, errors: skillBrief.errors });
       if (job.codingContract && !quick && !job.investigation && job.role !== "player") context.codingPreparation = await require("./coding-context").prepareCodingContext(job, input => broker.tool(job,"evidence_batch",input,signal));
@@ -381,7 +404,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     } catch (error) {
       recordUsage(job, { is_error: true, subtype: signal.aborted ? "interrupted" : "runner-error", interrupted: signal.aborted }, Date.now() - startedAt, effortUsed, session);
       throw error;
-    } finally { close(); clearTimeout(nudge); }
+    } finally { close(); clearTimeout(nudge); if (liveness) clearInterval(liveness); }
     recordUsage(job, result, Date.now() - startedAt, effortUsed, session);
     job.rounds += result.num_turns || session.calls || 1; job.updatedAt = Date.now(); ledger.save();
     if (result.is_error && result.subtype !== "error_max_turns") throw new Error("model request failed: " + redactSecrets(String(result.result || result.subtype || "unknown error")).slice(0, 600));

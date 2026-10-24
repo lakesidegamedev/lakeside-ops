@@ -2,6 +2,24 @@
 const $ = id => document.getElementById(id);
 const taskPanel = $("tasks");
 $("messages").append(taskPanel);
+
+/// One thread row, keyed by message id so a revised answer updates in place.
+function renderMessage(row) {
+  let a = row.id ? document.getElementById(`msg-${row.id}`) : null;
+  if (!a) {
+    a = document.createElement("article"); a.id = `msg-${row.id || Math.random().toString(36).slice(2)}`;
+    $("messages").insertBefore(a, taskPanel);
+  }
+  a.className = row.role || "keir"; a.replaceChildren();
+  const author = document.createElement("strong"); author.textContent = row.role === "owner" ? "You" : "Keir";
+  a.append(author);
+  if (row.activity?.length) a.append(toolActivity(row.activity));
+  a.append(document.createTextNode(row.text || ""));
+  if (row.editedAt) { const edited = document.createElement("small"); edited.className = "edited"; edited.textContent = " · edited"; a.append(edited); }
+  if (row.progress) { const progress = document.createElement("em"); progress.className = "progress"; progress.textContent = row.progress; a.append(progress); }
+  return a;
+}
+
 function toolActivity(calls) {
   const group = document.createElement("div"); group.className = "tool-activity"; group.setAttribute("role", "list");
   for (const call of calls || []) {
@@ -42,12 +60,14 @@ async function poll(run) {
   while (!stopped && run === generation) {
     const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 32000);
     try {
-      const q = new URLSearchParams({ thread: selected, after: String(cursor), since: version, wait: version ? "25" : "0" });
+      const q = new URLSearchParams({ thread: selected, after: String(cursor), since: version, wait: version ? "25" : "0", edits: "1" });
       const view = await api(`/api/keir/app/thread?${q}`, null, controller.signal);
       if (run !== generation) return;
       if (view.messages?.length) $("welcome")?.remove();
-      for (const row of view.messages || []) { const a = document.createElement("article"), author = document.createElement("strong"); a.className = row.role; author.textContent = row.role === "owner" ? "You" : "Keir"; a.append(author); if (row.activity?.length) a.append(toolActivity(row.activity)); a.append(document.createTextNode(row.text)); $("messages").insertBefore(a, taskPanel); }
-      if (view.messages?.length) $("messages").scrollTop = $("messages").scrollHeight;
+      // A revised answer keeps its id and arrives in `revised`: update the row in
+      // place, keyed by message id, rather than posting a second bubble.
+      for (const row of [...(view.messages || []), ...(view.revised || [])]) renderMessage(row);
+      if (view.messages?.length || view.revised?.length) $("messages").scrollTop = $("messages").scrollHeight;
       cursor = view.cursor; version = view.version; $("connection").textContent = view.controls?.stopped ? "Stopped" : view.working ? "Working" : "Connected"; $("connection").dataset.state = view.controls?.stopped ? "stopped" : view.working ? "working" : "ready";
       legacyModelSelection = view.modelSelection || "auto";
       if (view.controls) renderControls(view.controls);
