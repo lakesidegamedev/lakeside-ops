@@ -41,7 +41,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.lakesidegames.ops
-        MARKETING_VERSION: '2.4.0'
+        MARKETING_VERSION: '2.4.1'
         INFOPLIST_KEY_LakesideOpsServerURL: "$(OPS_SERVER_URL)"
         INFOPLIST_KEY_CFBundleDisplayName: Lakeside Ops
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Talk to Keir using your microphone.
@@ -52,7 +52,7 @@ targets:
   KeirWidgets:
     type: app-extension
     platform: iOS
-    sources: [KeirWidgets, ActivityShared]
+    sources: [KeirWidgets, ActivityShared, Ops/KeirSprite.swift, Shared/KeirWidgetCache.swift, Resources/KeirSprites]
     info:
       path: Generated/Widgets-Info.plist
       properties:
@@ -61,9 +61,11 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.lakesidegames.ops.widgets
-        MARKETING_VERSION: '2.4.0'
+        MARKETING_VERSION: '2.4.1'
         INFOPLIST_KEY_CFBundleDisplayName: Keir
         SKIP_INSTALL: YES
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]": scripts/widgets.entitlements
+        "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": scripts/widgets.entitlements
         APPLICATION_EXTENSION_API_ONLY: YES
   OpsUITests:
     type: bundle.ui-testing
