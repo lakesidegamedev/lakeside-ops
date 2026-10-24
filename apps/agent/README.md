@@ -116,6 +116,11 @@ host slots with other external workers and reserves one additional host slot
 for conversation. Memory admission still applies. A busy host waits and retries;
 a reserved slot cannot guarantee provider availability or response latency.
 
+The independent Watchkeeper systemd unit allows half a CPU for its short runs.
+Cold Node HTTP-client startup needs headroom within the fixed five-second read
+deadline. The unit still has a 128 MiB memory cap and a 45-second start timeout;
+the observer's request and run deadlines and read-only scope are unchanged.
+
 `node bin/keir-usage.js [usage.jsonl] [hours]` reports measured tokens and
 approximate API-equivalent USD by provider/model and task. The authenticated
 admin endpoint `GET /v5/usage` reports the last 24 hours plus live lane occupancy
