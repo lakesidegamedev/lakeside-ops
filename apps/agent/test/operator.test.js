@@ -2377,3 +2377,20 @@ test("repeated malformed DeepSeek activations stop without replacing the verifie
  assert.equal(j.wakeAt || 0, 0);
  assert.equal(f.calls.filter(c => c[1] === "support_public_update").length, 0);
 });
+
+test("activation repairs a malformed legacy summary from the last saved conclusion", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123,
+  summary: '<｜｜DSML｜｜ calls>', history: [
+   { kind: "checkpoint", summary: "Verified: shipped; awaiting reporter confirmation." },
+   { kind: "finish", summary: '<｜｜DSML｜｜ calls>' },
+  ] });
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+  spawnImpl: fakeClaude(async () => {
+   assert.equal(j.summary, "Verified: shipped; awaiting reporter confirmation.");
+   return { result: '<｜｜DSML｜｜ calls>' };
+  }) });
+ await agent.run(j, new AbortController().signal);
+ assert.equal(j.summary, "Verified: shipped; awaiting reporter confirmation.");
+ assert.ok(f.ledger.data.audit.some(a => a.kind === "checkpoint_recovered"));
+});

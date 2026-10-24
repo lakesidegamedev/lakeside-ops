@@ -236,6 +236,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     // A ticket whose channel was closed by hand has nothing left to do; never
     // spend a model run rediscovering that (tickets 1512 and 1518 looped).
     if (job.channelClosed) { job.state = "done"; ledger.save(); return; }
+    if (require("./toolmarkup").hasToolMarkup(job.summary)) {
+      const checkpoint = [...(job.history || [])].reverse().find(h => ["checkpoint", "finish"].includes(h.kind) && h.summary && !require("./toolmarkup").hasToolMarkup(h.summary));
+      job.summary = checkpoint?.summary || "The previous summary contained tool-call markup. No valid checkpoint was retained; re-read the ticket evidence before continuing.";
+      ledger.audit("checkpoint_recovered", { job: job.id, ticket: job.ticket, restored: Boolean(checkpoint) });
+    }
     job.state = "running"; job.startedAt = Date.now(); ledger.save();
     // Activation timestamps feed self-recovery's hot-loop guard: short
     // activations that repeat every minute never reach its round threshold.
