@@ -6,18 +6,17 @@ import LakesideCore
 /// is never briefed twice. Dismissing the card only hides it for this visit.
 struct AwayRecap: View {
     @EnvironmentObject private var session: AppSession
-    @State private var items: [JSONValue] = []
+    /// The recap rides in the feed payload, so it is present on the same render
+    /// as the briefing and needs no second request.
+    let recap: JSONValue
     @State private var hidden = false
-    @State private var loaded = false
+    @State private var acknowledged = false
+
+    private var items: [JSONValue] { recap["items"].array }
 
     var body: some View {
-        Group {
-            if !hidden && loaded && !items.isEmpty { card }
-            else { Color.clear.frame(height: 0) }
-        }
-        .task {
-            guard !loaded else { return }
-            await load()
+        if !hidden && !items.isEmpty {
+            card.task { await acknowledge() }
         }
     }
 
@@ -90,27 +89,17 @@ struct AwayRecap: View {
     private func color(_ kind: String?) -> Color {
         switch kind {
         case "win", "task": return OpsTheme.mint
-        case "warning": return OpsTheme.warn
-        case "decision": return OpsTheme.warn
+        case "warning", "decision": return OpsTheme.warn
         case "brief", "insight", "goal": return OpsTheme.sky
         default: return OpsTheme.muted
         }
     }
 
-    private func load() async {
-        for _ in 0..<3 {
-            if let value = try? await session.get("/api/keir/app/recap") {
-                withAnimation(.snappy(duration: 0.25)) {
-                    items = value["items"].array
-                    loaded = true
-                }
-                // Acknowledge the visit as soon as the recap is in hand. A relaunch
-                // then starts from this point, not from the same events again.
-                _ = try? await session.post("/api/keir/app/recap/ack", [:])
-                return
-            }
-            try? await Task.sleep(for: .seconds(2))
-        }
-        loaded = true
+    /// One acknowledgement per visit. The card stays on screen for this render;
+    /// the next launch starts from this point.
+    private func acknowledge() async {
+        guard !acknowledged else { return }
+        acknowledged = true
+        _ = try? await session.post("/api/keir/app/recap/ack", [:])
     }
 }

@@ -491,7 +491,7 @@ enum MuseFixtures {
         case "/feed":
             let brief: [String: Any] = ["id": "f1", "kind": "brief", "title": "Morning brief", "body": "- Turn 203 ran in 41s, no failures\n- 3 tickets open, 2 resolved overnight\n- PR #201 is green and waiting on you", "links": empty, "at": 1792040000000.0]
             let win: [String: Any] = ["id": "f2", "kind": "win", "title": "Milestone done: Capture phase timings for 20 turns", "body": "Settlement is 38% of wall time.", "links": empty, "at": 1792030000000.0]
-            return ["feed": [brief, win]]
+            return ["feed": [brief, win], "recap": OpsFixtures.recap()]
         case "/feed/brief": return ["taskId": "abcdef012345"]
         case "/goals":
             if method == "POST" { return state.add(body["title"] as? String ?? "Goal") }

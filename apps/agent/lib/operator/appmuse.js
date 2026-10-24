@@ -358,7 +358,7 @@ function createAppMuse({ ledger, config, app, starmer = null, now = () => Date.n
   }
 
   async function route(path, method, body) {
-    if (path === "/feed" && method === "GET") return { feed: feed() };
+    if (path === "/feed" && method === "GET") return { feed: feed(), recap: recap() };
     if (path === "/feed/brief" && method === "POST") return brief("on demand");
     if (path === "/recap" && method === "GET") return recap();
     if (path === "/recap/ack" && method === "POST") return ackRecap();

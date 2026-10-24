@@ -9,6 +9,7 @@ struct FeedView: View {
     @EnvironmentObject private var router: OpsRouter
     @ObservedObject private var attention = AttentionCenter.shared
     @State private var feed: [JSONValue] = []
+    @State private var recap: JSONValue = .null
     @State private var ideas: [JSONValue] = []
     @State private var upcoming: [JSONValue] = []
     @State private var briefing = false
@@ -22,7 +23,7 @@ struct FeedView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26) {
                 hero
-                AwayRecap()
+                AwayRecap(recap: recap)
                 needsYou
                 whatKeirDid
                 whatsNext
@@ -156,7 +157,7 @@ struct FeedView: View {
         async let i = try? session.get("/api/keir/app/ideas")
         async let u = try? session.get("/api/keir/app/upcoming")
         let (fv, iv, uv) = await (f, i, u)
-        if let fv { feed = fv["feed"].array.filter { $0["kind"].string != "suppressed" } }
+        if let fv { feed = fv["feed"].array.filter { $0["kind"].string != "suppressed" }; recap = fv["recap"] }
         if let iv { ideas = iv["ideas"].array.filter { !$0["accepted"].bool } }
         if let uv { upcoming = uv["upcoming"].array }
         error = fv == nil ? "The briefing could not refresh." : nil
