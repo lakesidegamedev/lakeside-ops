@@ -22,6 +22,41 @@ function fixture() {
   return { notebook, files, file, exec, tick: () => { time += 3600001; } };
 }
 
+test("a large freshness scan lets the event loop run before the scan completes", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-memory-responsive-")); dirs.push(dir);
+  let reads = 0;
+  const n = createNotebook({ file: path.join(dir, "notebook.json"), exec: () => { reads++; return "sha"; } });
+  for (let i = 0; i < 80; i++) n.remember({ kind: "mechanic", text: `Verified production rule number ${i}`, path: "src/rule.ts" });
+  reads = 0;
+  let finished = false;
+  const observed = [];
+  function heartbeat() {
+    if (finished) return;
+    observed.push(reads);
+    setImmediate(heartbeat);
+  }
+  setImmediate(heartbeat);
+  try { await n.refresh(async () => { throw new Error("No verification was requested"); }, { limit: 0 }); }
+  finally { finished = true; }
+  assert.ok(observed.some(count => count > 0 && count < reads), "the event loop must make progress during freshness work");
+});
+
+test("a note superseded during a freshness scan stays archived without being invalidated", async () => {
+  const f = fixture(), n = f.notebook;
+  n.remember({ kind: "mechanic", text: "First production rule needs verification", path: "src/rule.ts" });
+  const old = n.remember({ kind: "mechanic", text: "Second production rule needs verification", path: "src/rule.ts" });
+  f.files["src/rule.ts"].sha = "two";
+  const replaced = new Promise(resolve => setImmediate(() => {
+    n.remember({ kind: "mechanic", text: "Second production rule has current evidence", path: "src/rule.ts", supersedes: [old.id], reason: "Current code supersedes the old note" });
+    resolve();
+  }));
+  await n.refresh(async () => { throw new Error("No verification was requested"); }, { limit: 0 });
+  await replaced;
+  const archived = n.archive().find(note => note.id === old.id);
+  assert.ok(archived.supersededBy);
+  assert.equal(archived.invalidatedAt, undefined);
+});
+
 test("merged mechanics keep all code, doc and ticket dependencies; changing either file makes the note stale", () => {
   const f = fixture(), n = f.notebook;
   const a = n.remember({ kind: "mechanic", text: "Tax rate is twenty percent of company profits", path: "src/rule.ts", ticket: 1503, doc: "tax-rules", docVersion: 2 });
