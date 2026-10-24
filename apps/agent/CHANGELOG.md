@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keep the operator responsive during periodic notebook freshness scans by yielding between notes. Source hashes, stale-note quarantine and exact verification evidence still apply.
+
 - Give the independent Watchkeeper half a CPU so cold HTTP-client startup has headroom within its existing five-second read deadlines. Memory limits, deadlines and permissions stay unchanged.
 
 ## 5.10.0 (2026-10-24)

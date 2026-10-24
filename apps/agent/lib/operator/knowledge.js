@@ -267,15 +267,28 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
   }
   function forget(id) { const note = data.notes.find((n) => n.id === id && live(n)); if (!note) return false; recordHistory(note, "forgotten"); note.retiredAt = now(); save(); return true; }
   // Scan every active code dependency, rather than only notes recalled recently.
+  function invalidateStale(n) {
+    if (!live(n) || !stale(n) || n.invalidatedAt) return 0;
+    n.invalidatedAt = now(); delete n.lastVerificationAttempt; delete n.verificationError;
+    return 1;
+  }
   function queueStale() {
     let added = 0;
-    for (const n of data.notes.filter(live)) if (stale(n) && !n.invalidatedAt) { n.invalidatedAt = now(); delete n.lastVerificationAttempt; delete n.verificationError; added++; }
+    for (const n of data.notes.filter(live)) added += invalidateStale(n);
     if (added) save(); return added;
   }
   // Pin all source files to one commit. A model cannot mark a note verified
   // unless each dependency has a quote present verbatim in the supplied code.
   async function refresh(verifier, { limit = 2, retryMs = 3600000, interrupted = () => false } = {}) {
-    queueStale(); const results = [];
+    let added = 0;
+    for (const n of data.notes.filter(live)) {
+      added += invalidateStale(n);
+      // Local Git reads are synchronous; let HTTP and heartbeat callbacks run
+      // between notes without weakening any freshness or evidence checks.
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    if (added) save();
+    const results = [];
     for (const n of data.notes.filter((x) => live(x) && x.invalidatedAt && !docPending(x) && codeSources(x).length && (!x.lastVerificationAttempt || now() - x.lastVerificationAttempt >= retryMs)).slice(0, limit)) {
       if (interrupted()) break;
       n.lastVerificationAttempt = now(); save();

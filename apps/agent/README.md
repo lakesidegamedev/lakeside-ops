@@ -121,6 +121,10 @@ Cold Node HTTP-client startup needs headroom within the fixed five-second read
 deadline. The unit still has a 128 MiB memory cap and a 45-second start timeout;
 the observer's request and run deadlines and read-only scope are unchanged.
 
+Periodic notebook freshness scans yield between notes so local Git checks do
+not monopolize the event loop. The operator can serve HTTP and heartbeat
+callbacks while the scan continues, with the same source and evidence checks.
+
 `node bin/keir-usage.js [usage.jsonl] [hours]` reports measured tokens and
 approximate API-equivalent USD by provider/model and task. The authenticated
 admin endpoint `GET /v5/usage` reports the last 24 hours plus live lane occupancy
