@@ -3,6 +3,8 @@
 Keir: the A House Divided Discord operator, support desk and /summon bridge.
 New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/release.sh`.
 
+## Unreleased
+
 ## 5.10.0 (2026-10-24)
 
 The proactive studio-agent release: the 2.4.0 iOS redesign, an answer-first
