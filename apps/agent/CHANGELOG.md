@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Preserve player and developer reply safety deadlines during hourly wait reviews, including after status updates, so unchanged tickets do not trigger premature investigations.
+
 - Keep the operator responsive during periodic notebook freshness scans by yielding between notes. Source hashes, stale-note quarantine and exact verification evidence still apply.
 
 - Give the independent Watchkeeper half a CPU so cold HTTP-client startup has headroom within its existing five-second read deadlines. Memory limits, deadlines and permissions stay unchanged.
