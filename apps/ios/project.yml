@@ -64,8 +64,6 @@ targets:
         MARKETING_VERSION: '2.4.1'
         INFOPLIST_KEY_CFBundleDisplayName: Keir
         SKIP_INSTALL: YES
-        "CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]": scripts/widgets.entitlements
-        "CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]": scripts/widgets.entitlements
         APPLICATION_EXTENSION_API_ONLY: YES
   OpsUITests:
     type: bundle.ui-testing

@@ -135,10 +135,12 @@ struct KeirHomeView: View {
                     .lineLimit(3)
                     .minimumScaleFactor(0.85)
                 Spacer(minLength: 0)
-                HStack(spacing: 12) {
-                    count(snapshot?.running ?? 0, "running")
-                    count(snapshot?.waiting ?? 0, "waiting")
-                    count(snapshot?.queued ?? 0, "queued")
+                if snapshot != nil {
+                    HStack(spacing: 12) {
+                        count(snapshot?.running ?? 0, "running")
+                        count(snapshot?.waiting ?? 0, "waiting")
+                        count(snapshot?.queued ?? 0, "queued")
+                    }
                 }
                 updated
             }

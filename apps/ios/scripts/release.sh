@@ -29,10 +29,7 @@ for scheme in "${schemes[@]}"; do
       CURRENT_PROJECT_VERSION="${GITHUB_RUN_NUMBER:-1}" CODE_SIGNING_ALLOWED=NO
     app="build/$scheme.xcarchive/Products/Applications/$scheme.app"
     python3 scripts/verify-native.py "$app"
-    find "$app" -depth \( -name '*.framework' -o -name '*.dylib' \) -exec codesign --force --sign - {} \;
-    # The widget extension needs the App Group in its own signature; the app
-    # carries it too, and the export re-signs both for distribution.
-    find "$app" -depth -name '*.appex' -exec codesign --force --sign - --entitlements scripts/widgets.entitlements --generate-entitlement-der {} \;
+    find "$app" -depth \( -name '*.framework' -o -name '*.dylib' -o -name '*.appex' \) -exec codesign --force --sign - {} \;
     codesign --force --sign - --entitlements scripts/ops.entitlements --generate-entitlement-der "$app"
     entitlement=$(codesign -d --entitlements - --xml "build/$scheme.xcarchive/Products/Applications/$scheme.app" 2>/dev/null | plutil -extract aps-environment raw -o - - 2>/dev/null || true)
     if [ "$entitlement" != production ]; then echo "::error::$scheme archive is missing aps-environment" >&2; exit 1; fi
