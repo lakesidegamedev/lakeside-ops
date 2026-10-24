@@ -314,7 +314,7 @@ enum StarmerArt {
         "S": Color(red: 0.91, green: 0.73, blue: 0.56),
         "s": Color(red: 0.82, green: 0.60, blue: 0.45),
         "G": Color(red: 0.11, green: 0.12, blue: 0.15),
-        "E": Color(red: 0.07, green: 0.08, blue: 0.10),
+        "E": Color(red: 0.86, green: 0.90, blue: 0.95),
         "W": Color(red: 0.95, green: 0.94, blue: 0.91),
         "T": Color(red: 0.75, green: 0.22, blue: 0.17),
         "U": Color(red: 0.14, green: 0.16, blue: 0.21),
