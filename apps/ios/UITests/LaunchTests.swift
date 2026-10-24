@@ -42,26 +42,28 @@ final class LaunchTests: XCTestCase {
         let matches = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title))
         func row() -> XCUIElement { matches.firstMatch }
         func open() -> Bool {
-            guard row().exists && row().isHittable else { return false }
-            row().tap(); return true
+            let target = row()
+            guard target.exists && target.isHittable else { return false }
+            // SwiftUI can report a clipped row as hittable under the navigation
+            // bar. The recorded failure tapped that row and stayed on Ops.
+            let top = app.navigationBars.firstMatch.frame.maxY
+            let bottom = app.tabBars.firstMatch.frame.minY
+            guard target.frame.minY >= top && target.frame.maxY <= bottom else { return false }
+            target.tap()
+            return app.navigationBars["Ops"].waitForNonExistence(timeout: 3)
         }
-        if open() { return }
-        var deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(timeout)
         repeat {
             if open() { return }
-            app.swipeUp()
+            if row().exists && row().frame.minY < app.navigationBars.firstMatch.frame.maxY {
+                app.swipeDown()
+            } else {
+                app.swipeUp()
+            }
         } while Date() < deadline
-        // A detail return keeps the list where it was, so the target can be
-        // above the viewport. Scroll back to the top and search again.
-        deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if open() { return }
-            app.swipeDown()
-        } while Date() < deadline
-        let fallback = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
-        if fallback.exists && fallback.isHittable { fallback.tap(); return }
-        XCTFail("Ops row \(title) is missing or not hittable")
+        XCTFail("Ops row \(title) could not be opened inside the visible list")
     }
+
     private func digits(_ text: String) -> String {
         text.filter(\.isNumber)
     }
@@ -492,11 +494,21 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
         composer.tap()
         composer.typeText("/chart")
-        let command = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Graph data with sources")).firstMatch
-        XCTAssertTrue(command.waitForExistence(timeout: 10))
-        if !command.isHittable { app.swipeUp() }
-        command.tap()
-        XCTAssertTrue((composer.value as? String ?? "").contains("Show a chart"))
+        // Resolve the identified leaf without enumerating scroll containers.
+        let chart = app.buttons["keir-command-chart"].firstMatch
+        XCTAssertTrue(chart.waitForExistence(timeout: 10))
+        if !chart.isHittable { app.swipeUp() }
+        XCTAssertTrue(chart.isHittable); chart.tap()
+        // The multiline composer can change its accessibility type after editing.
+        let prompt = NSPredicate { _, _ in
+            [app.textFields["keir-composer"].firstMatch, app.textViews["keir-composer"].firstMatch].contains {
+                $0.exists && ($0.value as? String ?? "").contains("Show a chart")
+            }
+        }
+        expectation(for: prompt, evaluatedWith: app)
+        waitForExpectations(timeout: 8)
+        XCTAssertFalse(chart.exists)
+
         capture(app, "Slash commands")
     }
 

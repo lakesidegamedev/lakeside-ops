@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### Fixed
+- Ending or interrupting a voice call cancels its accepted task and delegated work, including a send still awaiting its receipt. Opening the task preserves it.
+- Slash-command rows have a full tappable area and stable accessibility identifiers.
+- Cancelled voice work cannot deliver a late queued answer. DeepSeek tool markup with repeated delimiters is rejected instead of shown as an answer.
+
 ### For users
 
 - In the Keir app, a conversation now gets a real answer quickly and the same message is revised in place as the investigation lands, instead of one acknowledgement followed by a long silence and a second reply. Revisions need the matching app build; an older build keeps append-only answers until it updates. A short remark like "Railway still down" is answered in the conversation lane rather than quietly becoming a background task.

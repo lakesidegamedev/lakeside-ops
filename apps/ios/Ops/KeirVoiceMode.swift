@@ -25,8 +25,9 @@ struct KeirVoiceMode: View {
     @State private var error: String?
     @State private var active = false
     @State private var listenTask: Task<Void, Never>?
+    @State private var request: VoiceRequest?
+    @State private var preserveTask = false
     @State private var expectedJob: String?
-    @State private var sendTask: Task<Void, Never>?
     @State private var waitTask: Task<Void, Never>?
     @State private var connectionAttempt = 0
     @EnvironmentObject private var router: OpsRouter
@@ -81,7 +82,7 @@ struct KeirVoiceMode: View {
                         .disabled(keir.controlling).accessibilityIdentifier("keir-voice-model")
                 }
                 Spacer()
-                Button { dismiss() } label: { Image(systemName: "xmark").frame(width: 44, height: 44).background(OpsTheme.surface, in: Circle()) }.accessibilityLabel("End voice conversation")
+                Button { endVoice(); dismiss() } label: { Image(systemName: "xmark").frame(width: 44, height: 44).background(OpsTheme.surface, in: Circle()) }.accessibilityLabel("End voice conversation")
             }
             Spacer(minLength: 12)
             KeirVoiceOrb(state: state, level: voice.level).frame(width: 190, height: 190).accessibilityHidden(true)
@@ -95,8 +96,8 @@ struct KeirVoiceMode: View {
             }.frame(maxHeight: 200)
             if let message = error ?? voice.error ?? (!keir.connected ? keir.error : nil) {
                 Text(message).font(.callout).foregroundStyle(OpsTheme.warn)
-                Button("Try voice again") { waiting = false; waitTask?.cancel(); paused = false; error = nil; if !keir.connected { connectionAttempt += 1 }; listen() }
-                if let expectedJob { Button("Open voice task") { router.openTask(expectedJob); dismiss() } }
+                Button("Try voice again") { cancelRequest(); waiting = false; waitTask?.cancel(); paused = false; error = nil; if !keir.connected { connectionAttempt += 1 }; listen() }
+                if let expectedJob { Button("Open voice task") { preserveTask = true; router.openTask(expectedJob); dismiss() } }
                 Button("Open iOS Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
             }
             Text("Pause to send. Tap the waveform to interrupt.").font(.caption).foregroundStyle(OpsTheme.muted)
@@ -112,10 +113,10 @@ struct KeirVoiceMode: View {
             } label: { Image(systemName: paused ? "mic.slash.fill" : "mic.fill").frame(width: 58, height: 58).background(OpsTheme.surface, in: Circle()) }
                 .accessibilityLabel(paused ? "Resume microphone" : "Pause microphone")
             Button {
-                waiting = false; expectedJob = nil; waitTask?.cancel(); sendTask?.cancel(); error = nil; voice.stop(); paused = false; listen()
+                cancelRequest(); waiting = false; expectedJob = nil; waitTask?.cancel(); error = nil; voice.stop(); paused = false; listen()
             } label: { Image(systemName: "waveform").font(.title).frame(width: 76, height: 76).background(OpsTheme.sky.opacity(0.18), in: Circle()) }
                 .accessibilityLabel("Interrupt and speak").disabled(keir.stopped || !keir.connected)
-            Button { voice.stop(); dismiss() } label: { Image(systemName: "phone.down.fill").frame(width: 58, height: 58).background(OpsTheme.warn.opacity(0.15), in: Circle()) }.tint(OpsTheme.warn).accessibilityLabel("End voice mode")
+            Button { endVoice(); dismiss() } label: { Image(systemName: "phone.down.fill").frame(width: 58, height: 58).background(OpsTheme.warn.opacity(0.15), in: Circle()) }.tint(OpsTheme.warn).accessibilityLabel("End voice mode")
         }
     }
     var body: some View {
@@ -138,7 +139,7 @@ struct KeirVoiceMode: View {
                     error = "Voice has not started. Check the connection and microphone permissions, then try again."
                 }
             }
-            .onDisappear { active = false; listenTask?.cancel(); sendTask?.cancel(); waitTask?.cancel(); voice.stop() }
+            .onDisappear { if !preserveTask { cancelRequest() }; active = false; listenTask?.cancel(); waitTask?.cancel(); voice.stop() }
             .onChange(of: phase) { _, next in
                 if next == .active && !paused && !fixture { listen() }
                 else if next == .background || (next != .active && !voice.requesting) { paused = true; voice.stop() }
@@ -157,14 +158,28 @@ struct KeirVoiceMode: View {
         guard active, !paused, !waiting, !voice.listening, !voice.requesting, !voice.speaking, !voice.preparingSpeech, !keir.stopped, keir.connected, phase == .active else { return }
         error = nil; listenTask?.cancel(); listenTask = Task { await voice.start(automatic: true) }
     }
+    private func cancelRequest() {
+        request?.cancel()
+        request = nil; expectedJob = nil
+    }
+    private func endVoice() {
+        cancelRequest(); active = false
+        listenTask?.cancel(); waitTask?.cancel(); voice.stop()
+    }
     private func submit() {
         let text = voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard active, !text.isEmpty, !waiting, !paused, phase == .active else { return }
         waiting = true; expectedJob = nil; error = nil; reply = ""
-        sendTask = Task {
-            let sent = await keir.send(text, session, voice: true)
-            guard !Task.isCancelled else { return }
-            expectedJob = keir.lastSentJob
+        let turn = VoiceRequest { jobID in
+            // This task survives dismissal so the accepted server job is stopped.
+            Task { await keir.stop(jobID, session) }
+        }
+        request = turn
+        Task {
+            // Do not cancel this HTTP send on hangup: retain its receipt and stop it.
+            let sent = await keir.send(text, session, voice: true, accepted: { turn.accept($0) })
+            guard active, request === turn, !turn.cancelled else { return }
+            expectedJob = turn.jobID
             if sent {
                 receive()
                 if waiting {

@@ -12,3 +12,8 @@ test("printed tool calls are recognised and never treated as an answer", () => {
   assert.equal(leaked("Let me discover the tools I have access to."), true);
   assert.equal(leaked("I'll check your mine's sales next turn and tell you here."), false);
 });
+
+test("direct DeepSeek double-bar tool markup is rejected", () => {
+  assert.equal(leaked('<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="read_tool">'), true);
+  assert.equal(leaked('<||DSML|| calls>'), true);
+});

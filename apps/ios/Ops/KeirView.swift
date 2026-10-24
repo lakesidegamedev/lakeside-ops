@@ -244,7 +244,8 @@ struct KeirView: View {
                             default: break
                             }
                         }
-                    } label: { HStack { Text(command.id).font(.callout.monospaced().weight(.semibold)); Text(command.detail).font(.caption).foregroundStyle(OpsTheme.muted); Spacer() }.padding(.horizontal, 18).padding(.vertical, 10) }.buttonStyle(.plain)
+                    } label: { HStack { Text(command.id).font(.callout.monospaced().weight(.semibold)); Text(command.detail).font(.caption).foregroundStyle(OpsTheme.muted); Spacer() }.padding(.horizontal, 18).padding(.vertical, 10).contentShape(Rectangle()) }.buttonStyle(.plain)
+                        .accessibilityIdentifier("keir-command-\(command.id.dropFirst())")
                 }
             }
         }.frame(maxHeight: 210).background(OpsTheme.surface).accessibilityIdentifier("keir-commands")
