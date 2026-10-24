@@ -13,6 +13,13 @@ struct KeirVoiceMode: View {
     @State private var paused = false
     @State private var reply = ""
     @State private var lastReply = ""
+    /// Identity of a spoken reply: the message id plus the revision that produced
+    /// its current text, so an edited answer is spoken once more.
+    private func replyStamp(_ message: JSONValue) -> String? {
+        let id = message["id"].string
+        guard !id.isEmpty else { return nil }
+        return "\(id)@\(Int(message["editedAt"].number ?? 0))#\(Int(message["rev"].number ?? 0))"
+    }
     @State private var requestedRoute = ""
     @State private var since = Date()
     @State private var error: String?
@@ -191,13 +198,17 @@ struct KeirVoiceMode: View {
         guard active, let expectedJob, !voice.speaking, !voice.preparingSpeech else { return }
         // Keep the accepted turn after timeout, without interrupting a new utterance.
         if voice.listening && !voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return }
-        guard let message = VoiceTurn.reply(in: keir.messages, jobID: expectedJob), message["id"].string != lastReply else {
+        guard let message = VoiceTurn.reply(in: keir.messages, jobID: expectedJob),
+              let stamp = replyStamp(message), stamp != lastReply else {
             if let blocker = VoiceTurn.blocker(in: keir.tasks, jobID: expectedJob) {
                 waiting = false; waitTask?.cancel(); error = blocker
             }
             return
         }
-        lastReply = message["id"].string; reply = message["text"].string; waiting = message["voiceProgress"].bool; error = nil
+        // A provisional answer is spoken now; the revised findings, which edit the
+        // same message, are spoken again when the stamp changes.
+        lastReply = stamp; reply = message["text"].string
+        waiting = message["voiceProgress"].bool || message["provisional"].bool; error = nil
         waitTask?.cancel()
         if waiting {
             // A handoff acknowledgement restarts the clock: the worker answer can take minutes.

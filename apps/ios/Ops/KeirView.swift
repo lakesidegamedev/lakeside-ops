@@ -402,9 +402,18 @@ private struct KeirMessage: View {
                 HStack(spacing: 6) {
                     Text("Keir").font(.caption.weight(.semibold))
                     Text(OpsFormat.ago(message["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
+                    if message["editedAt"] != .null { Text("· edited").font(.caption).foregroundStyle(OpsTheme.muted) }
                 }
                 if !message["activity"].array.isEmpty { KeirToolCalls(calls: message["activity"].array) }
-                NativeMarkdown(text: message["text"].string).textSelection(.enabled)
+                if !message["text"].string.isEmpty { NativeMarkdown(text: message["text"].string).textSelection(.enabled) }
+                // Keir revises this same message with the fuller answer; the line
+                // underneath says what he is doing meanwhile.
+                if let progress = message["progress"].string.nonempty {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text(progress).font(.caption).foregroundStyle(OpsTheme.muted).italic()
+                    }.accessibilityLabel("Keir is working: \(progress)")
+                }
                 if !message["chart"].string.isEmpty { KeirChart(name: message["chart"].string) }
                 if !message["cards"].array.isEmpty { KeirCards(cards: message["cards"].array) }
                 if message["computer"] != .null, !message["jobId"].string.isEmpty {
