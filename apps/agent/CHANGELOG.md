@@ -5,21 +5,32 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.10.0 (2026-10-24)
+
+The proactive studio-agent release: the 2.4.0 iOS redesign, an answer-first
+conversation, a visit recap, and the owner-approved Keir sprite widget that
+speaks every thirty minutes. Keir runs on DeepSeek V4.1 Flash.
+
 ### For users
 
-- In the Keir app, a conversation now gets a real answer quickly and the same message is revised in place as the investigation lands, instead of one acknowledgement followed by a long silence and a second reply. Revisions need the matching app build; an older build keeps append-only answers until it updates. A short remark like "Railway still down" is answered in the conversation lane rather than quietly becoming a background task.
-- While Keir works, a specific line under the answer says what he is doing ("Still on it: checking deployments."), refreshed every 45 seconds and cleared by the final answer. Revised answers show an "edited" marker.
+- The iOS app has a new design. Feed answers three questions in order: what needs you, what Keir is doing now, and what is broken. One attention model supplies the count on every screen, so the badge, the headline and the list cannot disagree.
+- Feed is a live briefing: one hero answer, a needs-you stack with inline approve, reject and reply, then what Keir did and what is next. Ideas support swipe to start or dismiss with a one-line reason.
+- Ops is one health and queue surface with drill-downs for the scheduler, security posture, pull requests, worktrees and agents, world simulations, backups and database health, and event recovery. The per-service uptime catalogue is gone.
+- A conversation now gets a real answer quickly and the same message is revised in place as the investigation lands, instead of an acknowledgement followed by a long silence. Revisions need this app build; an older build keeps append-only answers. A short remark like "Railway still down" is answered in the conversation lane instead of quietly becoming a task.
 - The app opens with what happened while you were away: work Keir finished, decisions you answered and anything that changed in the feed since your last visit. Acknowledging the recap clears it, so the same day is never briefed twice.
-- The Ops widget shows an animated 8-bit Keir Starmer with a fresh line every thirty minutes: the game, a confident fact, what is pressing, or what Keir is doing. Swipe the widget to see the live queue. The line is generated on the DeepSeek quick route and the last one stays visible if the provider is slow.
+- The Ops widget shows the owner-approved Keir sprite with a fresh line every thirty minutes: the game, a confident fact, what is pressing, or what Keir is doing. The pack has 45 states, including idle, talking, thinking, listening, working, reading, alert, celebrate, sleeping, moods, gestures and quirks; he waves when the app opens, blinks every few seconds and occasionally takes a sip of tea, peeks over his glasses or waggles a brow. Swipe the widget, or tap the flip control, to see the live queue. The line is generated on the DeepSeek quick route and the last one stays visible if the provider is slow.
+- Autonomy mode is a visible banner that spells out what it allows and turns off in one tap. Status headlines are composed from structured ticket data, with one status vocabulary (running, waiting on you, blocked, done, failed).
+- Completed suggestions now post their Discord card immediately instead of waiting for the game's next turn sweep.
 
 ### For developers
 
-- `appchannel`: `answers` slot per conversational turn, `revise()` in place with `rev`/`editedAt`, `handoffAnswer()` for the provisional first answer, and `revised` rows in the thread view so an edit reaches clients that already hold the message. The thread version hashes `rev`, so a revision wakes the long poll. A client opts in with `edits=1`; until then the thread keeps posting a new message, because an older build cannot render an edit.
-- `handoff` accepts `answer` (the quick turn's best short answer) and marks an already-queued reply provisional instead; only a provisional row is revised, so ordinary follow-ups stay separate messages.
-- `progress_update` for an app job writes the line onto the answer bubble and skips the separate ack message; the activation keeps a 45 second liveness tick built from the tool log.
-- `voiceturn.finalReplyQueued` ignores provisional answers, so a voice turn still needs its own finished reply.
-- `GET /api/keir/app/recap` returns feed entries, quiet finished owner work and owner-answered decisions since the last acknowledgement, newest first and capped at 20. `POST /api/keir/app/recap/ack` records the visit. It reads existing records and changes no work, goal, feed or decision.
-- `GET /api/keir/app/starmer` returns the last widget line, its next slot and the live work summary. The line is generated every 30 minutes by `lib/operator/starmer.js` on `KEIR_STARMER_PROVIDER` (default `KEIR_QUICK_PROVIDER`, DeepSeek V4.1 Flash), rejects URLs, em dashes, templates and repeats, retries in ten minutes on failure, and keeps the previous line visible. `POST /api/keir/app/starmer/refresh` asks for a line now, at most once a minute. No line text or provider error enters the log.
+- iOS 2.4.0: one `AttentionCenter` (decisions, questions, owner work, deduplicated by ticket), a three-question Ops hub, composed status headlines (`OpsText`), the new design tokens (`OpsDesign`), scheduler/security/PR/worktree/worldsim/backup/event drill-downs, and the redesign UI-test scope. Service uptime is a 0 to 100 value and now uses `OpsFormat.percentValue`, not the fraction formatter (the 9810% bug).
+- `appchannel`: an answer slot per conversational turn, `revise()` in place with `rev`/`editedAt`, `handoffAnswer()` for the provisional first answer, and `revised` rows in the thread view so an edit reaches clients that already hold the message. The thread version hashes `rev`, so a revision wakes the long poll. A client opts in with `edits=1`. An accepted voice acknowledgment ("Got it.") becomes the provisional answer instead of a second bubble.
+- `handoff` accepts `answer`; `progress_update` for an app job writes the line under the answer and the activation keeps a 45 second liveness tick. `voiceturn.finalReplyQueued` ignores provisional answers.
+- `GET /api/keir/app/recap` returns feed entries, quiet finished owner work and owner-answered decisions since the last acknowledgement, newest first, capped at 20. `POST /api/keir/app/recap/ack` records the visit. The feed payload carries the same recap. It reads existing records and changes no work, goal, feed or decision.
+- `GET /api/keir/app/starmer` returns the last widget line, its next slot and the live work summary. `POST /api/keir/app/starmer/refresh` asks for a line now, at most once a minute. `lib/operator/starmer.js` generates on `KEIR_STARMER_PROVIDER` (default `KEIR_QUICK_PROVIDER`, the direct DeepSeek API route), rejects URLs, templates and repeats, converts em dashes, retries in ten minutes, and keeps the last line visible. No line text or provider error enters the log.
+- The Ops widget uses the owner-approved `keir-S/M/L.png` sheets (24, 40 and 80px cells) and `keir-frames.json` (45 states, fps, loop, trigger, priority and idle variety). `KeirSprite` loads and caches each sheet, slices frames with `CGImage.cropping(to:)`, draws with `.interpolation(.none)` and drives a `TimelineView` at the state's fps; there is no `repeatForever` animation, and Reduce Motion shows frame 0. `KeirPortrait` resolves the state from the JSON priority using `busy`, `lineAt`, `changedAt`, `waiting` and `error`, plays `wave` once on first appear, blinks every 4.5s and plays a date-seeded idle quirk every 29s; non-looping states fall back to the state underneath and `celebrate` plays twice. `KeirSpriteTests` parses the JSON, checks every frame rect against all three sheets, and checks that every priority and idle-variety name resolves. The about screen carries the Open Government Licence v3.0 credit for the official Prime Minister's Office portrait the likeness derives from.
+- All Keir lanes run DeepSeek V4.1 Flash; quick, worker and investigator use the direct DeepSeek API route (`deepseek:deepseek-flash`).
 
 ## 5.9.18 (2026-10-23)
 
