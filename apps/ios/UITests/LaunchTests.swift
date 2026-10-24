@@ -280,6 +280,24 @@ final class LaunchTests: XCTestCase {
         capture(app, "Ops widget working")
     }
 
+    /// Four stable states for the PR evidence. The widget reads the forced
+    /// state from the launch arguments, so the screenshots do not depend on
+    /// timing or on what the fixture happens to be doing.
+    func testKeirSpriteStateScreenshots() {
+        for state in ["idle", "talking", "thinking", "alert"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--uitest-fixtures", "--uitest-starmer-state", state]
+            app.launch()
+            XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 20), state)
+            app.tabBars.buttons["Ops"].tap()
+            let line = app.staticTexts["ops-starmer-line"]
+            for _ in 0..<4 where !line.exists { app.swipeUp() }
+            XCTAssertTrue(line.waitForExistence(timeout: 15), state)
+            capture(app, "Keir \(state)")
+            app.terminate()
+        }
+    }
+
     func testAwayRecapShowsAndDismisses() {
         let app = launch()
         app.tabBars.buttons["Feed"].tap()

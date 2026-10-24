@@ -26,7 +26,7 @@ targets:
   LakesideOps:
     type: application
     platform: iOS
-    sources: [Shared, Ops, ActivityShared]
+    sources: [Shared, Ops, ActivityShared, Resources]
     dependencies:
       - package: LakesideCore
       - package: SwiftDraw
