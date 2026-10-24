@@ -11,6 +11,7 @@ struct StarmerWidget: View {
     @State private var showWork = false
     @State private var busy = false
     @State private var error: String?
+    @State private var changedAt: Date?
 
     private var message: String {
         line["text"].string.nonempty ?? "Keir is settling in. The first line lands shortly."
@@ -23,6 +24,8 @@ struct StarmerWidget: View {
         working["detail"].string.nonempty ?? "Nothing is running right now."
     }
     private var items: [JSONValue] { working["items"].array }
+    private var waiting: Int { Int(working["waiting"].number ?? 0) }
+    private var lineDate: Date? { line["at"].number.map { Date(timeIntervalSince1970: $0 / 1000) } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -100,7 +103,7 @@ struct StarmerWidget: View {
 
     private var messageFace: some View {
         HStack(alignment: .top, spacing: 14) {
-            StarmerPortrait()
+            StarmerPortrait(busy: busy, waiting: waiting, lineAt: lineDate, changedAt: changedAt)
                 .frame(width: 96, height: 96)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
@@ -127,7 +130,7 @@ struct StarmerWidget: View {
 
     private var workFace: some View {
         HStack(alignment: .top, spacing: 14) {
-            StarmerPortrait()
+            StarmerPortrait(waiting: waiting, lineAt: lineDate)
                 .frame(width: 72, height: 72)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 7) {
@@ -197,6 +200,7 @@ struct StarmerWidget: View {
 
     private func load() async {
         if let value = try? await session.get("/api/keir/app/starmer") {
+            if value["text"].string != line["text"].string { changedAt = Date() }
             withAnimation(.snappy(duration: 0.25)) { line = value }
             error = nil
         }
@@ -208,6 +212,7 @@ struct StarmerWidget: View {
         defer { busy = false }
         do {
             let value = try await session.post("/api/keir/app/starmer/refresh", [:])
+            if value["text"].string != line["text"].string { changedAt = Date() }
             withAnimation(.snappy(duration: 0.25)) { line = value }
             error = nil
         } catch {
@@ -220,49 +225,63 @@ struct StarmerWidget: View {
 /// a Canvas so it stays crisp at any size. Blink, bob and tie sway are the only
 /// animation: no repeatForever loops, which would stop UI tests reaching idle.
 struct StarmerPortrait: View {
+    var busy = false
+    var waiting = 0
+    var lineAt: Date?
+    var changedAt: Date?
+
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.2)) { timeline in
+        TimelineView(.periodic(from: .now, by: 0.15)) { timeline in
+            let mood = mood(at: timeline.date)
+            let rows = StarmerArt.rows(for: mood, time: timeline.date.timeIntervalSinceReferenceDate)
             Canvas { context, size in
                 let columns = StarmerArt.columns
-                let rows = StarmerArt.rows.count
-                let pixel = min(size.width / CGFloat(columns), size.height / CGFloat(rows))
+                let pixel = min(size.width / CGFloat(columns), size.height / CGFloat(rows.count))
                 let ox = (size.width - pixel * CGFloat(columns)) / 2
-                let oy = (size.height - pixel * CGFloat(rows)) / 2
+                let oy = (size.height - pixel * CGFloat(rows.count)) / 2
                 let seconds = timeline.date.timeIntervalSinceReferenceDate
-                let blinking = seconds.truncatingRemainder(dividingBy: 4.4) < 0.18
-                let bob: CGFloat = Int(seconds * 2) % 2 == 0 ? 0 : pixel * 0.5
+                let bob: CGFloat = (mood == .idle || mood == .talking) ? (Int(seconds * 2) % 2 == 0 ? 0 : pixel * 0.5) : 0
                 let sway = Int(seconds / 0.9) % 2 == 0 ? 0 : 1
-                for (r, row) in StarmerArt.rows.enumerated() {
+                for (r, row) in rows.enumerated() {
                     for (c, character) in row.enumerated() {
-                        var color = StarmerArt.palette[character]
-                        if character == "E" && blinking { color = StarmerArt.palette["S"] }
-                        guard let color else { continue }
+                        guard let color = StarmerArt.palette[character] else { continue }
                         let x = CGFloat(c) + (character == "T" ? CGFloat(sway) : 0)
-                        let rect = CGRect(
-                            x: ox + x * pixel,
-                            y: oy + CGFloat(r) * pixel + bob,
-                            width: pixel + 0.6,
-                            height: pixel + 0.6
-                        )
+                        let rect = CGRect(x: ox + x * pixel, y: oy + CGFloat(r) * pixel + bob, width: pixel + 0.6, height: pixel + 0.6)
                         context.fill(Path(rect), with: .color(color))
                     }
                 }
             }
-            .background(
-                LinearGradient(colors: [OpsTheme.raised, OpsTheme.background], startPoint: .top, endPoint: .bottom)
-            )
+            .background(LinearGradient(colors: [OpsTheme.raised, OpsTheme.background], startPoint: .top, endPoint: .bottom))
         }
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(OpsTheme.hairline, lineWidth: 1))
     }
+
+    /// The mood is derived inside the timeline so it changes with the clock,
+    /// not only when the parent re-renders.
+    private func mood(at date: Date) -> StarmerMood {
+        if busy || lineAt == nil { return .thinking }
+        if let changedAt {
+            let age = date.timeIntervalSince(changedAt)
+            if age < 2.4 { return .talking }
+            if age < 5.0, waiting == 0 { return .celebrate }
+        }
+        return waiting > 0 ? .alert : .idle
+    }
+}
+
+enum StarmerMood: CaseIterable {
+    case idle, talking, thinking, alert, celebrate
 }
 
 /// The 8-bit design: side-parted dark hair, glasses, a white shirt and a red
 /// tie, in the suit the owner sees at the dispatch box and in the studio.
+/// Expressions are overlays on the same 24 by 24 base, so every mood stays
+/// on-model and the sprite remains one palette.
 enum StarmerArt {
     static let columns = 24
 
-    static let rows: [String] = [
+    static let baseRows: [String] = [
         "........................",
         "........................",
         "........HHHHHHHH........",
@@ -301,5 +320,50 @@ enum StarmerArt {
         "U": Color(red: 0.14, green: 0.16, blue: 0.21),
         "u": Color(red: 0.18, green: 0.22, blue: 0.27),
         "M": Color(red: 0.61, green: 0.36, blue: 0.27),
+        "B": Color(red: 0.18, green: 0.20, blue: 0.25),
+        "o": Color(red: 0.30, green: 0.17, blue: 0.14),
+        "K": Color(red: 0.31, green: 0.90, blue: 0.67),
+        "A": Color(red: 0.94, green: 0.34, blue: 0.31),
     ]
+
+    /// One mood, one frame. Time drives blink, talking, thought dots, the
+    /// alert beacon and the celebration sparkle; the canvas adds the bob and
+    /// tie sway. Every result is still a complete 24 by 24 grid.
+    static func rows(for mood: StarmerMood, time: Double) -> [String] {
+        var g = baseRows.map { Array($0) }
+        let blink = time.truncatingRemainder(dividingBy: 4.4) < 0.18
+        func set(_ r: Int, _ c: Int, _ ch: Character) {
+            guard r >= 0, r < g.count, c >= 0, c < columns else { return }
+            g[r][c] = ch
+        }
+        switch mood {
+        case .idle, .talking:
+            if blink {
+                for r in 9...11 {
+                    for c in 0..<columns where g[r][c] == "E" { g[r][c] = "S" }
+                }
+            }
+            if mood == .talking, Int(time / 0.15).isMultiple(of: 2) {
+                set(14, 11, "o"); set(15, 11, "o")
+            }
+        case .thinking:
+            set(9, 8, "E"); set(9, 13, "E"); set(10, 8, "G"); set(10, 13, "G")
+            let phase = Int(time / 0.5) % 3
+            for i in 0...2 where i <= phase { set(1, 18 + i * 2, "K") }
+        case .alert:
+            for c in 7...9 { set(8, c, "B") }
+            for c in 12...14 { set(8, c, "B") }
+            if Int(time * 3).isMultiple(of: 2) { set(3, 20, "A") }
+        case .celebrate:
+            for c in 9...13 { set(14, c, "M") }
+            set(13, 9, "M"); set(13, 13, "M")
+            for c in 0..<columns where g[10][c] == "E" { g[10][c] = "S" }
+            if Int(time * 4).isMultiple(of: 2) {
+                set(2, 3, "K"); set(2, 20, "K")
+            } else {
+                set(3, 2, "K"); set(3, 21, "K")
+            }
+        }
+        return g.map { String($0) }
+    }
 }
