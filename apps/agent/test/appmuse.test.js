@@ -182,3 +182,28 @@ test("tool starts change the live chat version and completed activity stays atta
   app.deliver("channel-reply:activity-followup", { content: "Anything else?" }, job);
   assert.equal(app.view().messages.at(-1).activity, undefined);
 });
+
+test("recap covers what happened since the owner last looked, then acknowledges once", async () => {
+  const { ledger, muse, agent, clock } = setup();
+  const job = ledger.createJob("owner:quiet-result", { kind: "command", role: "owner", appThread: "main", source: { content: "Check the queue", at: new Date(clock.t).toISOString() }, deadline: clock.t + 3600000 });
+  job.state = "done"; job.summary = "The queue is clear."; job.updatedAt = clock.t - 2 * 3600000;
+  const player = ledger.createJob("support:other", { kind: "ticket", role: "support", source: {}, deadline: clock.t + 3600000 });
+  player.state = "done"; player.summary = "Player-only work."; player.updatedAt = clock.t - 2 * 3600000;
+  muse.addFeed({ kind: "win", title: "Merged PR #900", body: "Turn time improved." });
+  ledger.data.appThread.feed[0].at = clock.t - 3600000;
+  ledger.data.decisions = {
+    a: { id: "a", jobId: job.id, question: "Promote dev?", state: "approve", at: clock.t - 4 * 3600000, answeredAt: clock.t - 3 * 3600000 },
+    b: { id: "b", jobId: job.id, question: "Still waiting?", state: "pending", at: clock.t - 1800000 },
+  };
+  const recap = await agent.route("/recap", "GET", {}, new URLSearchParams());
+  assert.equal(recap.total, 3, "feed, quiet owner work and the answered decision");
+  assert.deepEqual(recap.items.map((i) => i.kind), ["win", "task", "decision"]);
+  assert.ok(!recap.items.some((i) => /Player-only/.test(i.title)));
+  assert.ok(!recap.items.some((i) => /Still waiting/.test(i.title)));
+  const ack = await agent.route("/recap/ack", "POST", {}, new URLSearchParams());
+  assert.equal(ack.acknowledgedAt, clock.t);
+  assert.equal(muse.recap().total, 0, "the same recap is not shown twice");
+  clock.t += 60000; muse.addFeed({ kind: "warning", title: "A service is degraded", body: "Ask is down." });
+  assert.equal(muse.recap().total, 1);
+  assert.equal(ledger.data.audit.filter((r) => r.kind === "app_recap_ack").length, 1);
+});

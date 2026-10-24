@@ -1,0 +1,454 @@
+{
+  "version": 1,
+  "character": "keir",
+  "palette": {
+    "A": "#121318",
+    "B": "#5F5A57",
+    "C": "#8C8883",
+    "D": "#B9B6B2",
+    "E": "#E2E0DC",
+    "F": "#DFA38E",
+    "G": "#F2C4B0",
+    "H": "#BF7F6C",
+    "K": "#8E5646",
+    "f": "#CF9886",
+    "g": "#E2B6A8",
+    "h": "#A8705F",
+    "n": "#95594A",
+    "I": "#6E4029",
+    "J": "#3A2018",
+    "w": "#D9D6DA",
+    "T": "#5C7186",
+    "S": "#2A2B33",
+    "L": "#9E5452",
+    "M": "#F4F2EE",
+    "P": "#C4C2C8",
+    "Q": "#862532",
+    "R": "#4E1219",
+    "N": "#2C3346",
+    "O": "#1B1F2D",
+    "p": "#E0807A",
+    "q": "#A9C7E0",
+    "y": "#F5C451",
+    "r": "#E5534B",
+    "k": "#4FD6A0",
+    "b": "#8EC9F0"
+  },
+  "alpha": "1-bit",
+  "sizes": {
+    "S": {
+      "image": "keir-S.png",
+      "cell": 24,
+      "use": "lists, badges, notifications (16-32pt)"
+    },
+    "M": {
+      "image": "keir-M.png",
+      "cell": 40,
+      "use": "widget, cards (40-80pt)"
+    },
+    "L": {
+      "image": "keir-L.png",
+      "cell": 80,
+      "use": "hero, onboarding, about (80pt+)"
+    }
+  },
+  "states": {
+    "idle": {
+      "row": 0,
+      "frames": 8,
+      "fps": 8,
+      "loop": true,
+      "group": "core",
+      "trigger": "default resting state"
+    },
+    "blink": {
+      "row": 1,
+      "frames": 3,
+      "fps": 12,
+      "loop": false,
+      "group": "core",
+      "trigger": "one-shot, every 3-6s from idle"
+    },
+    "talking": {
+      "row": 2,
+      "frames": 6,
+      "fps": 10,
+      "loop": true,
+      "group": "core",
+      "trigger": "a new line is arriving; run for the reveal"
+    },
+    "listening": {
+      "row": 3,
+      "frames": 6,
+      "fps": 6,
+      "loop": true,
+      "group": "core",
+      "trigger": "owner typing / voice input open"
+    },
+    "thinking": {
+      "row": 4,
+      "frames": 6,
+      "fps": 6,
+      "loop": true,
+      "group": "core",
+      "trigger": "refresh or model generation in flight"
+    },
+    "idea": {
+      "row": 5,
+      "frames": 4,
+      "fps": 6,
+      "loop": false,
+      "group": "core",
+      "trigger": "generation finished with an answer"
+    },
+    "working": {
+      "row": 6,
+      "frames": 6,
+      "fps": 8,
+      "loop": true,
+      "group": "core",
+      "trigger": "a run or job is executing"
+    },
+    "reading": {
+      "row": 7,
+      "frames": 6,
+      "fps": 6,
+      "loop": true,
+      "group": "core",
+      "trigger": "summarising a doc, ticket or log"
+    },
+    "alert": {
+      "row": 8,
+      "frames": 4,
+      "fps": 6,
+      "loop": true,
+      "group": "core",
+      "trigger": "broken > 0 or owner decision waiting"
+    },
+    "error": {
+      "row": 9,
+      "frames": 4,
+      "fps": 6,
+      "loop": true,
+      "group": "core",
+      "trigger": "request failed / offline"
+    },
+    "celebrate": {
+      "row": 10,
+      "frames": 6,
+      "fps": 8,
+      "loop": false,
+      "group": "core",
+      "trigger": "goal win, PR merged, deploy green; play twice"
+    },
+    "sleeping": {
+      "row": 11,
+      "frames": 8,
+      "fps": 4,
+      "loop": true,
+      "group": "core",
+      "trigger": "quiet hours or nothing queued for a while"
+    },
+    "waking": {
+      "row": 12,
+      "frames": 4,
+      "fps": 8,
+      "loop": false,
+      "group": "core",
+      "trigger": "first event after sleeping"
+    },
+    "happy": {
+      "row": 13,
+      "frames": 4,
+      "fps": 6,
+      "loop": true,
+      "group": "mood",
+      "trigger": "good news line"
+    },
+    "laughing": {
+      "row": 14,
+      "frames": 6,
+      "fps": 10,
+      "loop": false,
+      "group": "mood",
+      "trigger": "joke line / owner reacts"
+    },
+    "surprised": {
+      "row": 15,
+      "frames": 4,
+      "fps": 8,
+      "loop": false,
+      "group": "mood",
+      "trigger": "unexpected spike or big number"
+    },
+    "sceptical": {
+      "row": 16,
+      "frames": 4,
+      "fps": 6,
+      "loop": false,
+      "group": "mood",
+      "trigger": "flaky test, dubious claim"
+    },
+    "concerned": {
+      "row": 17,
+      "frames": 4,
+      "fps": 6,
+      "loop": true,
+      "group": "mood",
+      "trigger": "warning trend, degraded service"
+    },
+    "sad": {
+      "row": 18,
+      "frames": 4,
+      "fps": 4,
+      "loop": true,
+      "group": "mood",
+      "trigger": "rollback, incident, lost goal"
+    },
+    "stern": {
+      "row": 19,
+      "frames": 4,
+      "fps": 6,
+      "loop": true,
+      "group": "mood",
+      "trigger": "red gate blocking a merge"
+    },
+    "confused": {
+      "row": 20,
+      "frames": 6,
+      "fps": 6,
+      "loop": true,
+      "group": "mood",
+      "trigger": "unparseable input / unknown state"
+    },
+    "thumbs_up": {
+      "row": 21,
+      "frames": 6,
+      "fps": 8,
+      "loop": false,
+      "group": "gesture",
+      "trigger": "task acknowledged or approved"
+    },
+    "glasses_peek": {
+      "row": 22,
+      "frames": 6,
+      "fps": 6,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "idle variety; peering over the frames at a dubious number"
+    },
+    "glasses_glint": {
+      "row": 23,
+      "frames": 6,
+      "fps": 12,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "idle variety; 'leave it with me'"
+    },
+    "wink": {
+      "row": 24,
+      "frames": 4,
+      "fps": 8,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "idle variety; after a joke"
+    },
+    "eye_roll": {
+      "row": 25,
+      "frames": 6,
+      "fps": 8,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "same alert for the third time"
+    },
+    "tea_sip": {
+      "row": 26,
+      "frames": 10,
+      "fps": 6,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "idle variety; long quiet stretch"
+    },
+    "nervous": {
+      "row": 27,
+      "frames": 4,
+      "fps": 6,
+      "loop": true,
+      "group": "quirk",
+      "trigger": "deploy in progress near a turn"
+    },
+    "shrug": {
+      "row": 28,
+      "frames": 4,
+      "fps": 6,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "nothing to report"
+    },
+    "brow_wiggle": {
+      "row": 29,
+      "frames": 6,
+      "fps": 10,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "idle variety; teasing line"
+    },
+    "facepalm": {
+      "row": 30,
+      "frames": 6,
+      "fps": 8,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "same bug reopened"
+    },
+    "red_box": {
+      "row": 31,
+      "frames": 6,
+      "fps": 6,
+      "loop": false,
+      "group": "quirk",
+      "trigger": "release cut / budget-ish news"
+    },
+    "humming": {
+      "row": 32,
+      "frames": 8,
+      "fps": 6,
+      "loop": true,
+      "group": "quirk",
+      "trigger": "idle variety; all green and calm"
+    },
+    "dizzy": {
+      "row": 33,
+      "frames": 4,
+      "fps": 8,
+      "loop": true,
+      "group": "quirk",
+      "trigger": "huge queue or too many alerts"
+    },
+    "wave": {
+      "row": 34,
+      "frames": 6,
+      "fps": 8,
+      "loop": false,
+      "group": "gesture",
+      "trigger": "app opened / first view of the day"
+    },
+    "point": {
+      "row": 35,
+      "frames": 6,
+      "fps": 8,
+      "loop": false,
+      "group": "gesture",
+      "trigger": "draws the eye to the message text on his right"
+    },
+    "phone": {
+      "row": 36,
+      "frames": 6,
+      "fps": 6,
+      "loop": true,
+      "group": "gesture",
+      "trigger": "voice call or support DM in progress"
+    },
+    "nod": {
+      "row": 37,
+      "frames": 4,
+      "fps": 10,
+      "loop": false,
+      "group": "gesture",
+      "trigger": "quick yes / acknowledged"
+    },
+    "shake_no": {
+      "row": 38,
+      "frames": 6,
+      "fps": 10,
+      "loop": false,
+      "group": "gesture",
+      "trigger": "denied, blocked or rejected"
+    },
+    "yawn": {
+      "row": 39,
+      "frames": 6,
+      "fps": 6,
+      "loop": false,
+      "group": "mood",
+      "trigger": "late night, or a very long idle"
+    },
+    "blush": {
+      "row": 40,
+      "frames": 4,
+      "fps": 6,
+      "loop": false,
+      "group": "mood",
+      "trigger": "owner praise or thanks"
+    },
+    "fuming": {
+      "row": 41,
+      "frames": 6,
+      "fps": 8,
+      "loop": true,
+      "group": "mood",
+      "trigger": "outage or the same failure repeating"
+    },
+    "gloom": {
+      "row": 42,
+      "frames": 6,
+      "fps": 4,
+      "loop": true,
+      "group": "mood",
+      "trigger": "incident open or rollback in progress"
+    },
+    "look_left": {
+      "row": 43,
+      "frames": 2,
+      "fps": 2,
+      "loop": true,
+      "group": "gesture",
+      "trigger": "steer attention to UI on his left"
+    },
+    "look_right": {
+      "row": 44,
+      "frames": 2,
+      "fps": 2,
+      "loop": true,
+      "group": "gesture",
+      "trigger": "steer attention to UI on his right"
+    }
+  },
+  "layout": "frame i of state s lives at x = i * cell, y = states[s].row * cell, in every size's sheet",
+  "priority": [
+    "error",
+    "fuming",
+    "alert",
+    "gloom",
+    "thinking",
+    "working",
+    "talking",
+    "celebrate",
+    "idea",
+    "thumbs_up",
+    "waking",
+    "listening",
+    "reading",
+    "sleeping",
+    "idle"
+  ],
+  "idle_variety": {
+    "every_s": [
+      18,
+      40
+    ],
+    "pick_from": [
+      "blink",
+      "glasses_peek",
+      "glasses_glint",
+      "wink",
+      "tea_sip",
+      "brow_wiggle",
+      "humming"
+    ],
+    "blink_every_s": [
+      3,
+      6
+    ]
+  }
+}

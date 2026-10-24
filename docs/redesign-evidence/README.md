@@ -16,3 +16,19 @@ The before set comes from the temporary evidence branch built at `f1bbcc2`
 `keir-mobile-briefing`. Screenshots are exported by the iOS workflow's
 `xcresulttool export attachments` step; these files are the four named
 attachments from each run.
+
+## Keir sprite states (2.4.0)
+
+Captured from the owner-approved 45-state pack (`keir-M.png`) in the Ops widget,
+with `--uitest-starmer-state` forcing each state. The player drives each state at
+its JSON fps with nearest-neighbour sampling.
+
+| State | Screenshot |
+| --- | --- |
+| Idle | `keir-idle.png` |
+| Talking | `keir-talking.png` |
+| Thinking | `keir-thinking.png` |
+| Alert | `keir-alert.png` |
+
+The likeness derives from the official Prime Minister's Office portrait, licensed
+under the Open Government Licence v3.0. The credit is in Settings > About.

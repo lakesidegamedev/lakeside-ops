@@ -114,6 +114,11 @@ struct OpsSettings: View {
                 Section("Appearance") {
                     Picker("Theme", selection: $appearance) { Text("Dark").tag("dark"); Text("Light").tag("light"); Text("System").tag("system") }
                 }
+                Section("About") {
+                    LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                    Text("Keir portrait art derived from an official Prime Minister's Office photograph, licensed under the Open Government Licence v3.0.")
+                        .font(.caption).foregroundStyle(OpsTheme.muted)
+                }
                 Section {
                     LabeledContent("Signed in as", value: session.profile["email"].string.hasPrefix("discord_") ? "Owner" : session.profile["email"].string)
                     Button("Sign out", role: .destructive) { Task { await session.signOut(); dismiss() } }

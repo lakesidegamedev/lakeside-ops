@@ -265,6 +265,54 @@ final class LaunchTests: XCTestCase {
         capture(app, "File")
     }
 
+    func testStarmerWidgetFlipsToWork() {
+        let app = launch()
+        app.tabBars.buttons["Ops"].tap()
+        let line = app.staticTexts["ops-starmer-line"]
+        for _ in 0..<4 where !line.exists { app.swipeUp() }
+        XCTAssertTrue(line.waitForExistence(timeout: 15))
+        XCTAssertTrue(find(app, "Two turns ran clean").exists)
+        capture(app, "Ops widget line")
+        app.buttons["ops-starmer-flip"].tap()
+        let working = app.staticTexts["ops-starmer-working"]
+        XCTAssertTrue(working.waitForExistence(timeout: 5))
+        XCTAssertTrue(find(app, "Choose payroll behavior").waitForExistence(timeout: 5))
+        capture(app, "Ops widget working")
+    }
+
+    /// Four stable states for the PR evidence. The widget reads the forced
+    /// state from the launch arguments, so the screenshots do not depend on
+    /// timing or on what the fixture happens to be doing.
+    func testKeirSpriteStateScreenshots() {
+        for state in ["idle", "talking", "thinking", "alert"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--uitest-fixtures", "--uitest-starmer-state", state]
+            app.launch()
+            XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 20), state)
+            app.tabBars.buttons["Ops"].tap()
+            let line = app.staticTexts["ops-starmer-line"]
+            for _ in 0..<4 where !line.exists { app.swipeUp() }
+            XCTAssertTrue(line.waitForExistence(timeout: 15), state)
+            capture(app, "Keir \(state)")
+            app.terminate()
+        }
+    }
+
+    func testAwayRecapShowsAndDismisses() {
+        let app = launch()
+        app.tabBars.buttons["Feed"].tap()
+        // The app can restore the previous test's scroll position. Start at the
+        // top so the recap, which sits under the hero, is on screen.
+        for _ in 0..<3 { app.swipeDown() }
+        let dismiss = app.buttons["recap-dismiss"]
+        for _ in 0..<4 where !dismiss.exists { app.swipeUp() }
+        XCTAssertTrue(dismiss.waitForExistence(timeout: 15))
+        XCTAssertTrue(find(app, "Merged PR #210").exists)
+        capture(app, "While you were away")
+        dismiss.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "WHILE YOU WERE AWAY")).firstMatch.waitForNonExistence(timeout: 5))
+    }
+
     func testOpsSystemsDrillDowns() {
         let app = launch()
         app.tabBars.buttons["Ops"].tap()
