@@ -157,7 +157,13 @@ struct FeedView: View {
         async let i = try? session.get("/api/keir/app/ideas")
         async let u = try? session.get("/api/keir/app/upcoming")
         let (fv, iv, uv) = await (f, i, u)
-        if let fv { feed = fv["feed"].array.filter { $0["kind"].string != "suppressed" }; recap = fv["recap"] }
+        if let fv {
+            feed = fv["feed"].array.filter { $0["kind"].string != "suppressed" }
+            // Acknowledging the visit makes the next recap empty. Keep the one
+            // this session already showed so the card does not vanish mid-read.
+            let incoming = fv["recap"]
+            if !incoming["items"].array.isEmpty || recap == .null { recap = incoming }
+        }
         if let iv { ideas = iv["ideas"].array.filter { !$0["accepted"].bool } }
         if let uv { upcoming = uv["upcoming"].array }
         error = fv == nil ? "The briefing could not refresh." : nil
