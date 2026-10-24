@@ -13,7 +13,8 @@ TimeoutStartSec=45s
 TimeoutStopSec=1s
 KillMode=control-group
 MemoryMax=128M
-CPUQuota=10%
+# A cold Node HTTP client needs CPU headroom inside the fixed read deadlines.
+CPUQuota=50%
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Give the independent Watchkeeper half a CPU so cold HTTP-client startup has headroom within its existing five-second read deadlines. Memory limits, deadlines and permissions stay unchanged.
+
 ## 5.10.0 (2026-10-24)
 
 The proactive studio-agent release: the 2.4.0 iOS redesign, an answer-first
