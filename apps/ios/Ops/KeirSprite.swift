@@ -171,6 +171,25 @@ struct KeirSprite: View {
     }
 }
 
+/// One static frame for WidgetKit. Home Screen widgets are snapshots, so they
+/// get the first frame of the state rather than a timeline that cannot animate.
+struct KeirSpriteStill: View {
+    let state: String
+    var size: KeirSpriteSize = .medium
+    var index: Int = 0
+
+    var body: some View {
+        if let image = KeirSheetCache.shared.frame(state: state, size: size.rawValue, index: index) {
+            Image(uiImage: image)
+                .interpolation(.none)
+                .resizable()
+                .scaledToFit()
+        } else {
+            Color.clear
+        }
+    }
+}
+
 /// Decides which state the widget is in. The state is recomputed inside the
 /// timeline so time-based states (talking, celebrate, blink, quirks) advance
 /// without mutating the parent view. Priority comes from keir-frames.json.

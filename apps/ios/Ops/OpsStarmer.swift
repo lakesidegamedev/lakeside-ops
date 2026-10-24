@@ -204,9 +204,24 @@ struct StarmerWidget: View {
 
     // MARK: Data
 
+    /// The Home Screen widget cannot authenticate, so the app leaves it the
+    /// latest line and queue counts in the shared App Group.
+    private func cache(_ value: JSONValue) {
+        KeirWidgetCache.save(
+            text: value["text"].string,
+            at: value["at"].number ?? 0,
+            running: Int(value["working"]["running"].number ?? 0),
+            waiting: Int(value["working"]["waiting"].number ?? 0),
+            queued: Int(value["working"]["queued"].number ?? 0),
+            headline: value["working"]["headline"].string,
+            detail: value["working"]["detail"].string
+        )
+    }
+
     private func load() async {
         if let value = try? await session.get("/api/keir/app/starmer") {
             if value["text"].string != line["text"].string { changedAt = Date() }
+            cache(value)
             withAnimation(.snappy(duration: 0.25)) { line = value }
             error = nil
         }
@@ -219,6 +234,7 @@ struct StarmerWidget: View {
         do {
             let value = try await session.post("/api/keir/app/starmer/refresh", [:])
             if value["text"].string != line["text"].string { changedAt = Date() }
+            cache(value)
             withAnimation(.snappy(duration: 0.25)) { line = value }
             error = nil
         } catch {

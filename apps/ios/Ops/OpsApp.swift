@@ -44,7 +44,7 @@ struct OpsRoot: View {
         .onOpenURL { url in
             guard url.scheme == "lakesideops", url.host == "keir" else { return }
             let view = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value
-            router.tab = view == "activity" ? .activity : .keir
+            router.tab = view == "activity" ? .activity : view == "ops" ? .ops : .keir
             router.openKeirControls = view == "controls"
             router.openKeirVoice = view == "voice"
         }
