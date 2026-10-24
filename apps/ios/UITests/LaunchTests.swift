@@ -283,6 +283,9 @@ final class LaunchTests: XCTestCase {
     func testAwayRecapShowsAndDismisses() {
         let app = launch()
         app.tabBars.buttons["Feed"].tap()
+        // The app can restore the previous test's scroll position. Start at the
+        // top so the recap, which sits under the hero, is on screen.
+        for _ in 0..<3 { app.swipeDown() }
         let dismiss = app.buttons["recap-dismiss"]
         for _ in 0..<4 where !dismiss.exists { app.swipeUp() }
         XCTAssertTrue(dismiss.waitForExistence(timeout: 15))
