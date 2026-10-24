@@ -13,6 +13,7 @@ struct AwayRecap: View {
     var body: some View {
         Group {
             if !hidden && loaded && !items.isEmpty { card }
+            else { Color.clear.frame(height: 0) }
         }
         .task {
             guard !loaded else { return }
@@ -97,14 +98,19 @@ struct AwayRecap: View {
     }
 
     private func load() async {
-        guard let value = try? await session.get("/api/keir/app/recap") else { loaded = true; return }
-        let found = value["items"].array
-        withAnimation(.snappy(duration: 0.25)) {
-            items = found
-            loaded = true
+        for _ in 0..<3 {
+            if let value = try? await session.get("/api/keir/app/recap") {
+                withAnimation(.snappy(duration: 0.25)) {
+                    items = value["items"].array
+                    loaded = true
+                }
+                // Acknowledge the visit as soon as the recap is in hand. A relaunch
+                // then starts from this point, not from the same events again.
+                _ = try? await session.post("/api/keir/app/recap/ack", [:])
+                return
+            }
+            try? await Task.sleep(for: .seconds(2))
         }
-        // Acknowledge the visit as soon as the recap is in hand. A relaunch
-        // then starts from this point, not from the same events again.
-        _ = try? await session.post("/api/keir/app/recap/ack", [:])
+        loaded = true
     }
 }
