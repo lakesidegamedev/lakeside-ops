@@ -2394,3 +2394,31 @@ test("activation repairs a malformed legacy summary from the last saved conclusi
  assert.equal(j.summary, "Verified: shipped; awaiting reporter confirmation.");
  assert.ok(f.ledger.data.audit.some(a => a.kind === "checkpoint_recovered"));
 });
+
+// Another investigation can finish while the coordinator is still generating.
+test("new shared ticket evidence prevents a stale public answer until reread", async () => {
+  const f = fixture(), coordinator = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  const investigator = f.ledger.createJob("investigator", { role: "support", kind: "command", ticket: 123, deadline: 9e15 }); investigator.state = "running";
+  await f.broker.tool(coordinator, "ticket_record", { op: "read" });
+  await f.broker.tool(investigator, "ticket_record", { op: "add", kind: "fact", text: "Regional workforce fell to 580762 workers", source: "macro_history" });
+  await assert.rejects(f.broker.tool(coordinator, "support_action", { tool: "support_public_update", args: { message: "All operations are profitable; please supply the workforce figures." } }), /ticket record.*changed/i);
+  assert.equal(f.calls.length, 0);
+  await assert.rejects(f.broker.tool(coordinator, "finish", { state: "waiting", summary: "Waiting for the player", waitFor: "player_reply" }), /ticket record.*changed/i);
+  await assert.rejects(f.broker.tool(coordinator, "status_card", { status: "paused", items: [] }), /ticket record.*changed/i);
+  await f.broker.tool(coordinator, "ticket_record", { op: "read" });
+  await f.broker.tool(coordinator, "support_action", { tool: "support_public_update", args: { message: "The regional workforce fell to 580762 workers; I am checking why." } });
+  assert.ok(f.calls.some(call => call[1] === "support_public_update"));
+});
+
+test("new shared evidence wakes an external-reply wait without creating player reply debt", async () => {
+  const f = fixture(), coordinator = running(f, { role: "support", kind: "ticket", ticket: 123 });
+  coordinator.state = "waiting"; coordinator.wakeAt = 9e15;
+  coordinator.waitingFor = { kind: "player_reply", deadline: 9e15 };
+  const investigator = f.ledger.createJob("investigator", { role: "support", kind: "command", ticket: 123, deadline: 9e15 }); investigator.state = "running";
+  await f.broker.tool(investigator, "ticket_record", { op: "add", kind: "fact", text: "Workforce decline verified independently", source: "macro_history" });
+  assert.equal(coordinator.state, "queued");
+  assert.equal(coordinator.waitingFor, undefined);
+  assert.equal(coordinator.inbox.at(-1).role, "system");
+  assert.match(coordinator.inbox.at(-1).content, /ticket_record/);
+  assert.equal(coordinator.observedPlayerAt, undefined);
+});

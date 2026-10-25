@@ -127,8 +127,38 @@ function updateRecord(ledger, ticket, job, input) {
     rec[key].push({ id: crypto.randomBytes(3).toString("hex"), text: String(input.text).slice(0, 600), source: input.source ? String(input.source).slice(0, 300) : undefined, at, by: job.id });
     rec[key] = rec[key].slice(-40);
   }
+  rec.revision = (rec.revision || 0) + 1;
+  // An independent investigation can finish after the coordinator's context
+  // was serialized. Deliver an internal event, never a new player message.
+  for (const target of Object.values(ledger.data.jobs || {})) {
+    if (target.id === job.id || Number(target.ticket) !== Number(ticket) || target.kind !== "ticket" ||
+        !["running", "waiting", "queued"].includes(target.state)) continue;
+    const messageId = `ticket-record:${ticket}`;
+    target.inbox = [...(target.inbox || []).filter(row => row.messageId !== messageId), {
+      messageId, role: "system", investigationResult: true, at,
+      content: `Ticket ${ticket}'s shared evidence changed. Read ticket_record before replying or deciding what is blocked.`,
+    }].slice(-20);
+    if (target.state === "waiting" && ["player_reply", "developer_reply"].includes(target.waitingFor?.kind)) {
+      target.state = "queued"; delete target.waitingFor; delete target.wakeAt;
+    }
+  }
   ledger.save();
   return rec;
+}
+function readTicketRecord(ledger, ticket, job) {
+  const rec = ticketRecord(ledger, ticket);
+  (job.ticketRecordRevisions ||= {})[String(ticket)] = rec.revision || 0;
+  if (job.inbox) job.inbox = job.inbox.filter(row => row.messageId !== `ticket-record:${ticket}`);
+  // Facts learned through an explicit reread are evidence in this activation.
+  const text = rec.facts.filter(f => !f.closedAt).map(f => f.text).join("\n");
+  job.evidence = [...(job.evidence || []), ...numbersIn(text).map(n => n.value)].slice(-8000);
+  return rec;
+}
+function requireCurrentTicketRecord(ledger, job) {
+  if (!job.ticket) return;
+  const revision = ticketRecord(ledger, job.ticket).revision || 0;
+  if ((job.ticketRecordRevisions?.[String(job.ticket)] || 0) !== revision)
+    throw new Error("The ticket record changed during this activation. Call ticket_record op read, reconcile the new findings with your draft and blocker, then continue.");
 }
 
 // ---------- Notebook ----------
@@ -430,4 +460,4 @@ async function curateNotebook(notebook, curator, { players = 10, batch = 40, log
   return results;
 }
 
-module.exports = { shapeKnowledge, listAll, knowledgeRows, noteSources, makeVerifier, makeKnowledgeCorrector, makeCurator, curateNotebook, gameKnowledge, GAME_TAGS, PRIVATE_TAGS, makeDistiller, revivedRuledOut, numbersIn, unsupportedNumbers, calculate, calculateBatch, supported, ticketRecord, updateRecord, createNotebook, KINDS };
+module.exports = { shapeKnowledge, listAll, knowledgeRows, noteSources, makeVerifier, makeKnowledgeCorrector, makeCurator, curateNotebook, gameKnowledge, GAME_TAGS, PRIVATE_TAGS, makeDistiller, revivedRuledOut, numbersIn, unsupportedNumbers, calculate, calculateBatch, supported, ticketRecord, readTicketRecord, requireCurrentTicketRecord, updateRecord, createNotebook, KINDS };
