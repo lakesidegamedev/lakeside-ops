@@ -131,3 +131,13 @@ test("a taken-over task can end its activation quietly without claiming resoluti
   assert.equal(JSON.stringify(f.ledger.data.outbox), outbox);
   assert.equal(f.ledger.data.supportOwner.tickets[1558], "codex");
 });
+
+test("a taken-over owner command finishes terminal so it cannot fence later ticket replies", async t => {
+  const f=fixture(t);
+  f.job.kind="command"; f.job.role="owner";
+  f.owner.setTicketOwner(1558,"codex","owner");
+  const result=await f.broker.tool(f.job,"finish",{state:"blocked",summary:"Standing down"});
+  assert.equal(result.state,"dismissed");
+  assert.equal(f.job.state,"dismissed");
+  assert.equal(Object.keys(f.ledger.data.outbox).length,0);
+});
