@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Stop timer-generated handback, missing-plan and uncertain-receipt permission cards. Retire old synthetic approvals while preserving ownership and write holds, require real pending actions for action approvals, and send each decision question once without generated pros/cons or duplicated details.
+
 ## 5.10.1 (2026-10-24)
 
 - Recognize DeepSeek's doubled DSML delimiters, recover corrupted summaries from the last valid checkpoint, reject tool markup in saved checkpoints and finish summaries, and stop malformed-answer retries after three attempts while retaining the last verified checkpoint.

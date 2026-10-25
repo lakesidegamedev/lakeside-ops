@@ -16,7 +16,6 @@
 // operator re-reads the DM from Discord and trusts only a verdict line appended
 // after the text it sent. Nothing in the poke itself is trusted.
 const crypto = require("node:crypto");
-const { makeSpark } = require("./spark");
 const authority = require("./authority");
 const musePolicy = require("./ownermuse-policy");
 const { rootJob } = require("./workrecord");
@@ -49,49 +48,29 @@ function buttons(id) {
 // Model-written text must never be able to forge a verdict line.
 const clean = (t) => String(t || "").replace(/\*\*Decision:\*\*/gi, "Decision:").replace(/[\u2013\u2014]/g, ",").trim().slice(0, 1500);
 
-function render(question, { onBehalf, tldr, signoff } = {}) {
+function render(question, { onBehalf, signoff } = {}) {
   const head = signoff ? `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to sign off on Egg's behalf.\n\n" : ""}**Sign-off to ship**\n` : `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to decide on Egg's behalf.\n\n" : ""}**Decision needed**\n`;
-  return tldr ? `${head}${tldr}\n\n**Details:** ${question}` : `${head}${question}`;
+  return `${head}${question}`;
 }
 
-// The plain-English brief at the top of a decision DM. Owner, 2026-10-13:
-// "gimme a brief TL;DR"; owner, 2026-10-16: "who is they? The user didn't ask
-// for this? Simple English, argue for and against, and put the agent's
-// recommendation." The model sees what the requester actually asked, not only
-// Keir's own question, so it can say whether anyone asked for the change.
-const TLDR_SYSTEM = [
-  "You write the brief at the top of a decision request sent to the owner of the game A House Divided.",
-  "Use exactly these labelled lines, each one short plain sentence:",
-  "Who asked: who raised it (a player, staff, the owner, or Keir itself) and what they actually asked for. If Keir is proposing a change nobody asked for, say so.",
-  "The choice: what the owner is deciding.",
-  "Then one line per option, written as: <option in a few words>: for, <reason>; against, <reason>.",
-  "Keir recommends: the option and why, in one sentence.",
-  "Never write they, them or their for Keir or the requester; name who it is. No jargon, code names, file paths, PR numbers, hashes or dashes. Reply with the brief only.",
-].join("\n");
+// Shared short preview for app work lists; permission copy is never rewritten.
 function firstSentence(text) { const m = /^[\s\S]{20,220}?[.!?](\s|$)/.exec(String(text)); return (m ? m[0] : String(text).slice(0, 200)).trim(); }
-function makeTldr(options = {}) {
-  const spark = makeSpark(options);
-  return async (question, context = {}) => {
-    const asked = context.ask ? `What the requester actually wrote${context.ticket ? ` (ticket ${context.ticket})` : ""}: ${String(context.ask).slice(0, 800)}\n\n` : "";
-    const text = clean(await spark(TLDR_SYSTEM, `${asked}Keir's decision request: ${String(question).slice(0, 4000)}`)).replace(/\n{2,}/g, "\n").slice(0, 900);
-    // A refusal, a question back, or a vague "they" is not a brief.
-    return text.length >= 10 && /Who asked:/i.test(text) && !/\bthey(?:'re|’re)?\b|\bthem\b/i.test(text) && !/^I (?:don't|do not|can't|cannot)|could you|please provide/i.test(text) ? text : firstSentence(question);
-  };
-}
 
 /** Open (or reuse) a pending decision for a job, optionally bound to an action. */
 // binds: { number, head } of an AHDGame PR the question asks the owner to
 // merge. An approval then records an exact merge approval at that head
 // (Keir 5.1.1), so later promotions carrying it chain instead of re-asking.
-function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null }) {
+function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null, decisionKey = null }) {
+  if (signoff && !actionId && !binds) throw new Error("Sign-off requires a bound action or exact PR head");
+  if (actionId && (!ledger.data.actions?.[actionId] || ledger.data.actions[actionId].jobId !== jobId || ledger.data.actions[actionId].state !== "pending")) throw new Error("Approval requires a pending bound action owned by this task");
   if (!actionId && !signoff && !binds) require("./decisionpolicy").requireRealDecision(question);
   const d = ledger.data;
   d.decisions ||= {};
-  const existing = Object.values(d.decisions).find((x) => x.state === "pending" && x.jobId === jobId && (x.actionId || null) === actionId);
+  const existing = Object.values(d.decisions).find((x) => x.state === "pending" && x.jobId === jobId && (x.actionId || null) === actionId && (x.decisionKey || null) === decisionKey);
   if (existing) return existing;
   const id = crypto.randomBytes(6).toString("hex");
   const text = clean(question);
-  const decision = { id, jobId, actionId, question: text, state: "pending", at: Date.now(), sent: {}, ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
+  const decision = { id, jobId, actionId, question: text, state: "pending", at: Date.now(), sent: {}, ...(decisionKey ? { decisionKey } : {}), ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
   d.decisions[id] = decision;
   // The durable decision is already exposed by the authenticated app API and
   // app push collector. App-only delivery does not mint an approval receipt.
@@ -116,6 +95,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
   const authenticated = Symbol("verified human decision ingress");
   function apply(x, verdict, actor, text, proof = null, via = null) {
     if (d.decisions?.[x.id] !== x || x.state !== "pending") throw new Error("Decision is stale or already answered");
+    if (require("./decisionpolicy").obsoleteReason(x, d)) throw new Error("This obsolete synthetic approval cannot authorize work; its existing hold is preserved");
     const job = d.jobs[x.jobId];
     const action = x.actionId && d.actions[x.actionId];
     const ownerMuse = musePolicy.origin(d, job).scoped || Boolean(action?.ownerMuse);
@@ -228,6 +208,15 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     for (const x of obsolete.sort((a, b) => (a.cleanupAttemptAt || 0) - (b.cleanupAttemptAt || 0)).slice(0, 6)) { x.cleanupAttemptAt = now(); await closeOut(x); }
     for (const x of Object.values(d.decisions || {})) {
       if (x.state !== "pending") continue;
+      const obsoleteReason = require("./decisionpolicy").obsoleteReason(x, d);
+      if (obsoleteReason) {
+        x.state = "withdrawn"; x.withdrawnReason = obsoleteReason;
+        // Preserve the operational hold. Withdrawing a fake permission card
+        // cannot transfer ownership, clear uncertainty or approve a plan.
+        if (d.jobs[x.jobId]) d.jobs[x.jobId].recoveryReviewRequired = obsoleteReason;
+        ledger.audit("synthetic_decision_withdrawn", { decision: x.id, job: x.jobId, reason: obsoleteReason });
+        ledger.save(); await closeOut(x); continue;
+      }
       const job = d.jobs[x.jobId];
       const action = x.actionId && d.actions[x.actionId];
       if (!job || ["done", "dismissed", "cancelled"].includes(job.state) || (action && action.state !== "pending")) {
@@ -271,4 +260,4 @@ function withdrawDecisions(ledger, jobId, reason) {
   }
 }
 
-module.exports = { ownerInitiated, makeTldr, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
+module.exports = { ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
