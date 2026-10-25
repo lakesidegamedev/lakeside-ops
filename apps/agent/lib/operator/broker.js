@@ -1015,6 +1015,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   }
   async function toolInner(job, name, input, signal) {
     active(job);
+    if (["channel_reply", "progress_update", "status_card", "support_action", "finish"].includes(name)) knowledge.requireCurrentTicketRecord(ledger, job);
     musePolicy.guard(ledger, config, job, name, input);
     if (name === "release_efficiency") {
       if (job.role !== "owner") throw new Error("release efficiency requires an owner task");
@@ -1325,11 +1326,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const n = input.ticket || job.ticket;
       if (!n) throw new Error("no ticket for this task");
       if (job.role === "player") throw new Error("players cannot edit the ticket record");
-      if (input.op === "read") return knowledge.ticketRecord(ledger, n);
+      if (input.op === "read") return knowledge.readTicketRecord(ledger, n, job);
       // Legacy app briefs used record notes as delivery. Keep that path honest:
       // accept the same original owner message in the support inbox first.
       const receipt = isAppJob(job) && job.role === "owner" ? await supportDirectives.send(job, {ticket:n, context:input.text}, signal) : null;
-      const record = knowledge.updateRecord(ledger, n, job, input);
+      knowledge.updateRecord(ledger, n, job, input);
+      const record = knowledge.readTicketRecord(ledger, n, job);
       return receipt ? {...record, supportDirective:receipt} : record;
     }
     const participantTools = ["read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "channel_reply", "checkpoint", "finish", "task_progress"];
