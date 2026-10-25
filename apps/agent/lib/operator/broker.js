@@ -1014,6 +1014,17 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     return result;
   }
   async function toolInner(job, name, input, signal) {
+    // Ending an activation is local bookkeeping. Ownership still fences every
+    // read, public reply and action, but must not trap finish behind itself.
+    const takeover = name === "finish" && job.state === "running" && ["blocked", "dismissed", "waiting"].includes(input.state)
+      ? require("./supporttakeover").held(d, job) : null;
+    if (takeover) {
+      job.state = "deferred"; delete job.wakeAt; delete job.waitingFor;
+      job.history = [...(job.history || []), { at: new Date(now()).toISOString(), kind: "finish", state: "deferred",
+        summary: `Standing down for ticket owner ${takeover.owner}; prior findings preserved.` }].slice(-20);
+      ledger.audit("takeover_activation_ended", { job: job.id, ...takeover }); ledger.save();
+      return { state: "deferred", takeover };
+    }
     active(job);
     if (["channel_reply", "progress_update", "status_card", "support_action", "finish"].includes(name)) knowledge.requireCurrentTicketRecord(ledger, job);
     musePolicy.guard(ledger, config, job, name, input);

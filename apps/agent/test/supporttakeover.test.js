@@ -118,3 +118,16 @@ test("a waiting notice keeps ticket provenance when takeover lands during its hi
   assert.match(notice.summary, /owned by codex/);
   assert.deepEqual(notice.effects, {}, "a known refusal before execution is not an uncertain write");
 });
+
+test("a taken-over task can end its activation quietly without claiming resolution", async t => {
+  const f = fixture(t);
+  f.owner.setTicketOwner(1558, "codex", "owner");
+  f.job.summary = "Verified regional workforce decline; cause still under investigation.";
+  const outbox = JSON.stringify(f.ledger.data.outbox);
+  const result = await f.broker.tool(f.job, "finish", { state: "blocked", summary: "Standing down for the current ticket owner." });
+  assert.equal(result.state, "deferred");
+  assert.equal(f.job.state, "deferred");
+  assert.match(f.job.summary, /Verified regional workforce/);
+  assert.equal(JSON.stringify(f.ledger.data.outbox), outbox);
+  assert.equal(f.ledger.data.supportOwner.tickets[1558], "codex");
+});
