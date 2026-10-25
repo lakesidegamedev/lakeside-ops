@@ -9,6 +9,9 @@ test("a hold without a reviewable proposal is Keir's blocker, not an owner permi
  assert.equal(s.state,"stuck");assert.match(s.reason,/no owner approval/);
  d.decisions.real={jobId:j.id,state:"pending",question:"Approve the exact repair?"};
  assert.equal(workStatus(d,j,{now:500}).state,"needs-you");
+ delete d.decisions.real;j.state="running";
+ assert.equal(workStatus(d,j,{now:500}).state,"working");
+ j.state="done";assert.equal(workStatus(d,j,{now:500}).state,"finished");
 });
 test("a delegated running worker means actual work, not a waiting parent",()=>{
  const parent=make(), child=make({id:"c",ticket:null,kind:"coding",codingParent:"a",state:"running"});
