@@ -2463,3 +2463,47 @@ for (const reason of ["fallback already used", "uncertain effect"]) test(`malfor
  assert.equal(j.state,"blocked");assert.equal(j.wakeAt,undefined);
  assert.equal(j.summary,"Verified checkpoint");assert.equal(JSON.stringify(j.effects),original);
 });
+
+test("owner natural-language ticket pause is durable, silent to further chat, and only explicit resume lifts it", async () => {
+ const f=fixture(),ch={...f.ch,name:"ticket-bug-fixture-123"},g=createGateway(f);
+ const j=running(f,{role:"support",kind:"ticket",ticket:123,channelId:ch.id,summary:"Verified checkpoint"});
+ g.ingest(ch,f.msg("Keir pause for now please"));
+ assert.equal(j.state,"paused");assert.equal(j.summary,"Verified checkpoint");assert.ok(f.ledger.data.channels[ch.id].keirPaused);
+ assert.equal(f.ledger.data.paused,false);
+ const ack=Object.values(f.ledger.data.outbox);assert.equal(ack.length,1);assert.equal(ack[0].content,"Paused. I'll wait for you to say resume.");
+ await assert.rejects(f.broker.tool(j,"calculate",{expression:"1+1"}),/paused/i);
+ const count=Object.keys(f.ledger.data.jobs).length;
+ g.ingest(ch,f.msg("Keir can you check that?","666666666666666670"));
+ g.ingest(ch,f.msg("Keir resume","666666666666666671","888888888888888888"));
+ assert.equal(j.state,"paused");assert.equal(Object.keys(f.ledger.data.jobs).length,count);
+ const restarted=createLedger(path.join(f.dir,"ledger.json"));assert.ok(restarted.data.channels[ch.id].keirPaused);
+ g.ingest(ch,f.msg("Keir resume please","666666666666666672"));
+ assert.equal(j.state,"queued");assert.equal(j.ticketPaused,undefined);assert.equal(f.ledger.data.channels[ch.id].keirPaused,undefined);
+});
+
+test("an internal conversation wake cannot republish old findings after only tool discovery", async () => {
+ const f=fixture(),j=running(f,{kind:"conversation",role:"owner",replyChannel:f.ch.id,channelId:f.ch.id,lastPublishedAt:2000,
+ source:{channelId:f.ch.id,channelName:"supporter-chat",content:"Are you there?",at:new Date(1000).toISOString()},
+ inbox:[{role:"system",at:new Date(3000).toISOString(),content:"This wait is overdue. Inspect its dependency."}],summary:"Earlier workforce finding"});
+ const responses=[];
+ const agent=createAgent({ledger:f.ledger,broker:f.broker,config:{briefFile:path.join(__dirname,"../KEIR.md"),model:"claude-opus-5-5",maxRounds:6,maxTurnMs:10000,stateDir:f.dir},
+ spawnImpl:fakeClaude(async({call})=>{
+  await call("read_servers",{});
+  const r=await call("channel_reply",{message:"I checked directly; the plants are input bound rather than short of staff."});
+  responses.push(r);
+  await call("read_tool",{server:"gamestate",tool:"game_overview",args:{}});
+  responses.push(await call("channel_reply",{message:"The current turn is ready for the next check."}));
+  await call("finish",{state:"done",summary:"No newly verified finding to publish."});return {};
+ })});
+ await agent.run(j,new AbortController().signal);
+ assert.equal(responses[1].isError,undefined);
+ assert.equal(responses[0].isError,true);assert.match(responses[0].content[0].text,/current evidence|internally/i);
+ assert.equal(Object.values(f.ledger.data.outbox).filter(x=>x.content.includes("input bound")).length,0);
+});
+
+test("public intake confirmations omit task and persistence bookkeeping", async () => {
+ const f=fixture(),j=running(f,{kind:"command",role:"owner",replyChannel:f.ch.id,source:{channelId:f.ch.id,channelName:"supporter-chat"}});
+ await assert.rejects(f.broker.tool(j,"channel_reply",{message:"Intake persisted, receipt and intake card delivered; its support task picks up the investigation."}),/bookkeeping.*private/i);
+ await f.broker.tool(j,"channel_reply",{message:"Opened ticket #123. We will continue there."});
+ assert.equal(Object.values(f.ledger.data.outbox).length,1);
+});

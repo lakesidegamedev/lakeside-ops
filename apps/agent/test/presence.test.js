@@ -21,3 +21,9 @@ test("slow or failed typing does not overlap requests or fail a task", async () 
   stop(); await pulse(); assert.equal(calls, 1);
   p.begin(null)();
 });
+test("an owner pause stops further typing pulses even before an activation unwinds", async () => {
+ let allowed=true,pulse,calls=0;
+ const p=createPresence({discord:async()=>{calls++},allowed:()=>allowed,setIntervalImpl:fn=>(pulse=fn,1),clearIntervalImpl:()=>{}});
+ const stop=p.begin("123");await Promise.resolve();assert.equal(calls,1);
+ allowed=false;await pulse();assert.equal(calls,1);stop();
+});

@@ -95,6 +95,22 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     const controlText = s.content.replace(new RegExp(`<@!?${config.botId}>`, "g"), "").replace(/^\s*\/?(?:keir|keith)\b[,:]?/i, "").trim();
     const controlAddress = (channel.type === 1 && role !== "player") || message.referenced_message?.author?.id === config.botId ||
       (message.mentions || []).some(u => u.id === config.botId) || new RegExp(`^\\s*(?:<@!?${config.botId}>|\\/?(?:keir|keith)\\b)`, "i").test(s.content);
+    const pauseVerb = /^(?:please\s+)?(pause|resume)(?:\s+(?:this ticket|here|for now|now))?(?:\s+please)?[.!]*$/i.exec(controlText);
+    if (!historical && !summonTask && nTicket && role === "owner" && controlAddress && pauseVerb) {
+      const key = `discord:${message.id}`;
+      if (d.seen[key]) return;
+      const paused = pauseVerb[1].toLowerCase() === "pause";
+      require("./ticketpause").setPause(ledger, channel.id, nTicket, paused, s, now());
+      const notice = ledger.createJob(`ticket-control:${message.id}`, { kind: "notice", role: "owner", ticket: nTicket,
+        channelId: channel.id, replyChannel: channel.id, ticketPauseControl: true, source: s });
+      notice.state = "done";
+      ledger.notify(key, `channel:${notice.id}`, paused ? "Paused. I'll wait for you to say resume." : "Resumed.");
+      d.seen[key] = "ticket-control"; ledger.save(); drain(); return;
+    }
+    if (nTicket && d.channels[channel.id]?.keirPaused) {
+      d.seen[`discord:${message.id}`] = "owner-ticket-pause";
+      delete d.classify?.[message.id]; ledger.save(); return;
+    }
     if (!historical && !summonTask && nTicket && role !== "player" && controlAddress &&
         /^(?:please\s+)?(?:stop|stand down|leave (?:this|the) ticket alone)(?:\s+(?:please|now|here|working|work|this ticket|on this ticket|on this|this|it))?[.!]*$/i.test(controlText)) {
       const key = `discord:${message.id}`;

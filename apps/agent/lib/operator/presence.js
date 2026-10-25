@@ -1,5 +1,5 @@
 "use strict";
-function createPresence({ discord, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval }) {
+function createPresence({ discord, allowed = () => true, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval }) {
   const channels = new Map();
   function begin(channelId) {
     // Only Discord channels have a typing indicator; the app channel shows task state.
@@ -8,7 +8,7 @@ function createPresence({ discord, setIntervalImpl = setInterval, clearIntervalI
     if (!entry) {
       entry = { users: 0, busy: false };
       const pulse = async () => {
-        if (entry.busy || channels.get(channelId) !== entry) return;
+        if (entry.busy || channels.get(channelId) !== entry || !allowed(channelId)) return;
         entry.busy = true;
         try { await discord("POST", `/channels/${channelId}/typing`); } catch { /* Presence is best effort, never task authority. */ }
         finally { entry.busy = false; }

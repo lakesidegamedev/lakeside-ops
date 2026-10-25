@@ -47,6 +47,7 @@ const isSupportWork = (job) => job.role !== "owner" && ["ticket", "candidate"].i
 // Why this job may not start now, or null. ctx: { now, supportDeferred
 // (boolean, or a per-job function), claimedBy(channelId) }. Mirrors operator.js drain() before nextJob.
 function hold(job, { now = Date.now(), supportDeferred = false, claimedBy = () => null } = {}) {
+  if (job.ticketPaused) return "owner-ticket-pause";
   const automatic = job.role !== "owner" && !["command", "conversation"].includes(job.kind);
   if (automatic && job.ticket && !TERMINAL.includes(job.state)) {
     if (claimedBy(job.channelId)) return "staff-owned";

@@ -359,7 +359,7 @@ setInterval(async () => {
 const active = emptyLanes();
 const RESUME_HORIZON_MS = positive("KEIR_RESUME_HORIZON_MINUTES", 30) * 60000;
 let ticking = false, delivering = false, stopping = false;
-const presence = createPresence({ discord });
+const presence = createPresence({ discord, allowed: id => !ledger.data.channels[id]?.keirPaused });
 const scanHealth = createScanHealth({ ledger });
 
 async function ensureDm(recipient) {
@@ -659,7 +659,7 @@ function legacyHandoff() {
 // (2026-10-19: an owner "close it" sat 2.5 hours behind a held directive).
 function unreadWatchdog(d, now, staffHeld) {
   for (const j of Object.values(d.jobs)) {
-    if (j.kind !== "ticket" || ["done", "cancelled", "dismissed", "running"].includes(j.state) || j.channelClosed) continue;
+    if (j.ticketPaused || j.kind !== "ticket" || ["done", "cancelled", "dismissed", "running"].includes(j.state) || j.channelClosed) continue;
     const oldest = (j.inbox || []).filter((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup|turn-watch)$/.test(String(m.authorId || ""))).map((m) => Date.parse(m.at || m.timestamp || "")).filter(Number.isFinite).sort((a, b) => a - b)[0];
     if (!oldest || now - oldest < 30 * 60000) continue;
     const why = broker.supportDirectiveHeld(j) ? "an owner directive is held" : d.channels[j.channelId]?.claimedBy ? "staff claimed it" : config.supportDeferred(j) ? "another coordinator owns support" : staffHeld(j) ? "staff are active in it" : j.ownerDecisionPending ? "an owner decision is pending" : `it is ${j.state}`;
@@ -670,15 +670,19 @@ function unreadWatchdog(d, now, staffHeld) {
 function drain() {
   if (stopping) return;
   const d = ledger.data;
+  for (const job of Object.values(d.jobs)) {
+    const pause = require("./lib/operator/ticketpause").pauseFor(d, job);
+    if (pause) job.ticketPaused = pause;
+  }
   const staffHeld = (job) => ["staff-owned", "staff-active"].includes(admissionHold(rootJob(job, d.jobs), { now: Date.now(), claimedBy: (id) => d.channels[id]?.claimedBy }));
   for (const slot of Object.values(active)) {
-    if (slot && (d.paused || (slot.job.state === "cancelled" || slot.job.appPaused) || staffHeld(slot.job) || (slot.job.role === "support" && !["command", "conversation"].includes(slot.job.kind) && (config.supportDeferred(slot.job) || d.channels[slot.job.channelId]?.claimedBy)))) slot.controller.abort();
+    if (slot && (d.paused || (slot.job.state === "cancelled" || slot.job.appPaused || slot.job.ticketPaused) || staffHeld(slot.job) || (slot.job.role === "support" && !["command", "conversation"].includes(slot.job.kind) && (config.supportDeferred(slot.job) || d.channels[slot.job.channelId]?.claimedBy)))) slot.controller.abort();
   }
   if (d.paused) return;
   broker.delegationTick?.();
   const now = Date.now();
   require("./lib/operator/workqueue").reviewWaits(ledger, config, now);
-  selfRecovery.tick(active, { supportDeferred: (j) => config.supportDeferred(j), setTicketOwner: (t, o) => supportOwner.setTicketOwner(t, o, "self-recovery", {}), canRun: (j) => !(config.supportDeferred(j) || d.channels[j.channelId]?.claimedBy || broker.supportDirectiveHeld(j) || staffHeld(j)) });
+  selfRecovery.tick(active, { supportDeferred: (j) => config.supportDeferred(j), setTicketOwner: (t, o) => supportOwner.setTicketOwner(t, o, "self-recovery", {}), canRun: (j) => !(j.ticketPaused || config.supportDeferred(j) || d.channels[j.channelId]?.claimedBy || broker.supportDirectiveHeld(j) || staffHeld(j)) });
   for (const j of Object.values(d.jobs)) {
     if (j.codingParent && !j.operatorRole) {
       const role = rootJob(j, d.jobs).operatorRole;
@@ -740,7 +744,8 @@ function drain() {
       // Only a write this activation started makes an abort uncertain; an older
       // unsettled receipt is effect recovery's job (a restart blocked ticket 1578).
       const startedHere = Object.values(job.effects).some((e) => e.state === "started" && (e.at || 0) >= startedAt);
-      if (controller.signal.aborted && (d.paused || config.supportDeferred(job) || stopping || staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy)) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(Date.now() + 60000, rootJob(job, d.jobs).staffActiveUntil || 0); }
+      if (controller.signal.aborted && require("./lib/operator/ticketpause").pauseFor(d, job)) { job.state = "paused"; delete job.wakeAt; }
+      else if (controller.signal.aborted && (d.paused || config.supportDeferred(job) || stopping || staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy)) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(Date.now() + 60000, rootJob(job, d.jobs).staffActiveUntil || 0); }
       else if (retryReadFailure(job, e)) {
         ledger.audit("transient_retry", {job:job.id, attempt:job.transientFailures, emptyWaits: job.emptyWaits});
         // One owner alert an hour while the provider answers with nothing.
