@@ -382,7 +382,7 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
       ledger.audit("app_decision_refresh", { decision: x.id, job: job.id, actor: config.ownerId }); ledger.save(); drain();
       return { ...require("./appdecision").decisionView(d, x, now()), taskState: job.state };
     }
-    if (!["approve", "reject", "explain"].includes(verdict)) throw Object.assign(new Error("verdict must be approve, reject or explain"), { status: 400 });
+    if (!["approve", "reject", "explain"].includes(verdict) && !(x.options && /^choose:[1-6]$/.test(verdict))) throw Object.assign(new Error("verdict must be approve, reject or explain"), { status: 400 });
     if (verdict === "explain" && !String(text || "").trim()) throw Object.assign(new Error("say what to explain"), { status: 400 });
     const api = decisions();
     if (!api) throw Object.assign(new Error("decisions unavailable"), { status: 503 });

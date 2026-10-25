@@ -34,21 +34,54 @@ function ownerInitiated(d, config, job) {
 
 const ESCALATE_MS = 3 * 3600000;
 const PLAIN_EXPIRY_MS = 48 * 3600000;
-const VERDICT = /\n\n\*\*Decision:\*\* (✅ Approved|❌ Rejected|💬 Explain) (?:by|from) <@(\d{15,22})>(?: <t:\d+:R>)?(?::\s*([\s\S]*))?$/;
+const VERDICT = /\n\n\*\*Decision:\*\* (✅ Approved|❌ Rejected|💬 Explain|🔹 Selected [1-6]) (?:by|from) <@(\d{15,22})>(?: <t:\d+:R>)?(?::\s*([\s\S]*))?$/;
 const KIND = { "✅ Approved": "approve", "❌ Rejected": "reject", "💬 Explain": "explain" };
 
-function buttons(id) {
+function normalizeOptions(options) {
+  if (!Array.isArray(options) || options.length < 2 || options.length > 6) throw new Error("A choice needs two to six named options");
+  const seen = new Set();
+  const normalized = options.map((o, i) => {
+    if (!o || typeof o.label !== "string" || !o.label.trim() || o.label.length > 70 || o.detail && (typeof o.detail !== "string" || o.detail.length > 180)) throw new Error("Choice labels must be 1 to 70 characters; details at most 180");
+    const label = clean(o.label).replace(/\n/g, " ");
+    if (seen.has(label.toLowerCase())) throw new Error("Choice labels must be distinct");
+    seen.add(label.toLowerCase());
+    return { id: String(i + 1), label, detail: clean(o.detail), recommended: o.recommended === true };
+  });
+  if (normalized.reduce((n, o) => n + o.label.length + o.detail.length, 0) > 950) throw new Error("Keep choice options concise: total labels and details at most 950 characters");
+  return normalized;
+}
+function binding(action, binds) { return crypto.createHash("sha256").update(JSON.stringify(action ? {kind: action.kind, args: action.args} : binds)).digest("hex"); }
+function actionReview(action, binds) {
+  const a = action?.args || {};
+  const {summary: _summary, ...operation} = a;
+  const title = action?.kind === "github" ? `${a.action || "GitHub operation"} ${a.repository || "AHDGame"}${a.number ? ` PR #${a.number}` : ""}${a.from ? ` from ${a.from}` : ""}${a.to ? ` to ${a.to}` : ""}` : action?.kind === "heal" ? "Change live game data" : action?.kind ? action.kind.replace(/_/g, " ") : binds ? `Merge AHDGame PR #${binds.number}` : "Review proposal";
+  const scope = musePolicy.logInput(action?.ownerMuse?.scope || (action?.kind === "heal" ? a.spec || a : action ? operation : binds || {}));
+  return { title: clean(title).slice(0, 100), scope, digest: action?.ownerMuse?.digest || action?.digest || null };
+}
+function buttons(id, options = null, review = null) {
+  if (review && JSON.stringify(review.scope).length > 850) return [{type:1, components:[{type:2, style:2, label:"Ask for a narrower proposal", custom_id:`keir_decision:explain:${id}`}]}];
+  if (options) {
+    const rows = [];
+    for (let i = 0; i < options.length; i += 3) rows.push({ type: 1, components: options.slice(i, i + 3).map(o => ({type: 2, style: 2, label: o.label, custom_id: `keir_decision:choose${o.id}:${id}`})) });
+    rows.push({type:1, components:[{type:2, style:2, label:"Ask a question / other answer", custom_id:`keir_decision:explain:${id}`}]});
+    return rows;
+  }
   return [{ type: 1, components: [
-    { type: 2, style: 3, label: "Approve", custom_id: `keir_decision:approve:${id}` },
-    { type: 2, style: 4, label: "Reject", custom_id: `keir_decision:reject:${id}` },
-    { type: 2, style: 2, label: "Explain", custom_id: `keir_decision:explain:${id}` },
+    { type: 2, style: 3, label: "Approve this action", custom_id: `keir_decision:approve:${id}` },
+    { type: 2, style: 4, label: "Decline this action", custom_id: `keir_decision:reject:${id}` },
+    { type: 2, style: 2, label: "Ask a question", custom_id: `keir_decision:explain:${id}` },
   ] }];
 }
 
 // Model-written text must never be able to forge a verdict line.
 const clean = (t) => String(t || "").replace(/\*\*Decision:\*\*/gi, "Decision:").replace(/[\u2013\u2014]/g, ",").trim().slice(0, 1500);
 
-function render(question, { onBehalf, signoff } = {}) {
+function render(question, { onBehalf, signoff, options, review } = {}) {
+  if (options) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Choose one**\n${question.slice(0, 450)}\n\n${options.map(o => `${o.id}. **${o.label}**${o.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`).join("\n")}\n\nYour choice sets the direction. Any action requiring approval gets a separate proposal.`;
+  if (review) {
+    const scope = JSON.stringify(review.scope).replace(/\*\*Decision:\*\*/gi, "Decision:");
+    return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Approval required: ${review.title}**\n${question.slice(0, 300)}\n\n**Exact scope:** ${scope.length <= 850 ? scope : "Full scope exceeds this message. Review it in the Keir app before approving."}${review.digest ? `\nProposal: ${review.digest.slice(0, 16)}` : ""}\n\n**Approve this action:** authorize the operation above, subject to its existing checks.\n**Decline:** do not run this operation.\n**Ask a question:** return it to Keir without approval.`;
+  }
   const head = signoff ? `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to sign off on Egg's behalf.\n\n" : ""}**Sign-off to ship**\n` : `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to decide on Egg's behalf.\n\n" : ""}**Decision needed**\n`;
   return `${head}${question}`;
 }
@@ -60,21 +93,29 @@ function firstSentence(text) { const m = /^[\s\S]{20,220}?[.!?](\s|$)/.exec(Stri
 // binds: { number, head } of an AHDGame PR the question asks the owner to
 // merge. An approval then records an exact merge approval at that head
 // (Keir 5.1.1), so later promotions carrying it chain instead of re-asking.
-function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null, decisionKey = null }) {
+function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null, decisionKey = null, options = null }) {
+  const choices = options == null ? null : normalizeOptions(options);
+  if (choices && (actionId || signoff || binds)) throw new Error("A choice cannot be bound to an action approval");
   if (signoff && !actionId && !binds) throw new Error("Sign-off requires a bound action or exact PR head");
   if (actionId && (!ledger.data.actions?.[actionId] || ledger.data.actions[actionId].jobId !== jobId || ledger.data.actions[actionId].state !== "pending")) throw new Error("Approval requires a pending bound action owned by this task");
   if (!actionId && !signoff && !binds) require("./decisionpolicy").requireRealDecision(question);
   const d = ledger.data;
   d.decisions ||= {};
   const existing = Object.values(d.decisions).find((x) => x.state === "pending" && x.jobId === jobId && (x.actionId || null) === actionId && (x.decisionKey || null) === decisionKey);
-  if (existing) return existing;
+  if (existing) {
+    if (choices && (existing.question !== clean(question) || JSON.stringify(existing.options) !== JSON.stringify(choices))) throw new Error("This task already has a different unanswered choice. Wait for its answer or withdraw it before replacing it.");
+    return existing;
+  }
   const id = crypto.randomBytes(6).toString("hex");
   const text = clean(question);
-  const decision = { id, jobId, actionId, question: text, state: "pending", at: Date.now(), sent: {}, ...(decisionKey ? { decisionKey } : {}), ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
+  if (choices && text.length > 450) throw new Error("Keep the choice question at most 450 characters; put each outcome in its option detail");
+  const action = actionId && d.actions[actionId];
+  const review = action || binds ? actionReview(action, binds) : null;
+  const decision = { id, jobId, actionId, ...(choices ? { options: choices, type: "choice" } : {}), ...(review ? { review, approvalBinding: binding(action, binds), type: "approval" } : {}), question: text, state: "pending", at: Date.now(), sent: {}, ...(decisionKey ? { decisionKey } : {}), ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
   d.decisions[id] = decision;
   // The durable decision is already exposed by the authenticated app API and
   // app push collector. App-only delivery does not mint an approval receipt.
-  if (!require("./decisionpolicy").appDecisions(config)) ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, { signoff }), { components: buttons(id), decision: id, recipient: config.ownerId });
+  if (!require("./decisionpolicy").appDecisions(config)) ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, decision), { components: buttons(id, choices, review), decision: id, recipient: config.ownerId });
   ledger.audit("decision_opened", { decision: id, job: jobId, action: actionId, signoff: Boolean(signoff) });
   return decision;
 }
@@ -98,6 +139,13 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     if (require("./decisionpolicy").obsoleteReason(x, d)) throw new Error("This obsolete synthetic approval cannot authorize work; its existing hold is preserved");
     const job = d.jobs[x.jobId];
     const action = x.actionId && d.actions[x.actionId];
+    const selected = x.options?.find(o => verdict === `choose:${o.id}`);
+    if (x.options && !selected && verdict !== "explain") throw new Error("Choose a named choice; approval and rejection cannot answer this question");
+    if (!x.options && !["approve", "reject", "explain"].includes(verdict)) throw new Error("Invalid decision verdict");
+    if (selected && proof !== authenticated) throw new Error("Choice requires authenticated human ingress");
+    if (!job || ["done", "dismissed", "cancelled"].includes(job.state) || require("./ticketpause").pauseFor(d, job) || d.paused || job.appPaused) throw new Error("Decision task is ended or paused");
+    if (x.approvalBinding && binding(action, x.binds) !== x.approvalBinding) throw new Error("Approval scope changed; request a fresh proposal");
+    if (action && (action.state !== "pending" || action.expiresAt && action.expiresAt <= now())) throw new Error("Approval action changed or expired");
     const ownerMuse = musePolicy.origin(d, job).scoped || Boolean(action?.ownerMuse);
     if (ownerMuse) {
       if (proof !== authenticated || ![config.ownerId, config.ownerMuseDelegateId].filter(Boolean).includes(actor)) throw new Error("Owner Muse requires an authenticated Mason or explicitly configured Ariane decision");
@@ -107,7 +155,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
         if (action.state !== "pending" || action.ownerMuseDecision !== x.id) throw new Error("Owner Muse action is not awaiting this decision");
       } else if (verdict === "approve") throw new Error("A generic question cannot approve an owner Muse action; request an exact proposal");
     }
-    x.state = verdict; x.answeredBy = actor; x.answeredAt = now(); x.answer = text || null;
+    x.state = selected ? "selected" : verdict; if (selected) x.selectedOption = { ...selected }; x.answeredBy = actor; x.answeredAt = now(); x.answer = text || null;
     const onBehalf = actor !== config.ownerId;
     const who = onBehalf ? "Ariane, answering for the owner," : "The owner";
     if (action && action.state === "pending") {
@@ -137,7 +185,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       if (a.approvalMessage) { d.actions[a.id] = a; x.actionId = a.id; ledger.audit("decision_bound_approval", { decision: x.id, action: a.id, pr: args.number, head: args.head }); }
     }
     if (job && !["done", "dismissed", "cancelled"].includes(job.state)) {
-      const line = verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
+      const line = selected ? `${who} chose: ${selected.label}${selected.detail ? `. ${selected.detail}` : ""}. This is direction, not execution approval.` : verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
       (job.inbox ||= []).push({ authorId: actor, role: actor === config.ownerId ? "owner" : "support", content: line, at: new Date(now()).toISOString(), decision: x.id });
       delete job.ownerDecisionPending;
       delete job.recoveryReviewRequired;
@@ -173,7 +221,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       if (!v) continue;
       const actor = v[2];
       if (!(musePolicy.origin(d, d.jobs[x.jobId]).scoped ? [config.ownerId, config.ownerMuseDelegateId].filter(Boolean) : [config.ownerId, ...delegates()]).includes(actor) || (actor !== recipient && actor !== config.ownerId)) continue;
-      try { await apply(x, KIND[v[1]], actor, (v[3] || "").trim().slice(0, 2000), authenticated, "authenticated-discord"); }
+      try { await apply(x, (v[1].startsWith("🔹 Selected ") ? `choose:${v[1].slice(-1)}` : KIND[v[1]]), actor, (v[3] || "").trim().slice(0, 2000), authenticated, "authenticated-discord"); }
       catch (error) {
         if (!musePolicy.origin(d, d.jobs[x.jobId]).scoped) throw error;
         ledger.audit("owner_muse_decision_refused", { decision: x.id, actor, reason: error.message }); ledger.save();
@@ -203,7 +251,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
 
   async function tick() {
     // A decision the task moved past (or whose action resolved) stops asking.
-    const obsolete = Object.values(d.decisions || {}).filter(x => ["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain"].includes(x.state) && (!x.closedOut || Object.values(x.sent || {}).some(s => s.messageId && !s.deleted)));
+    const obsolete = Object.values(d.decisions || {}).filter(x => ["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain", "selected"].includes(x.state) && (!x.closedOut || Object.values(x.sent || {}).some(s => s.messageId && !s.deleted)));
     // Bound legacy cleanup and rotate failures so old copies cannot monopolize
     // the operator loop or starve newer decisions.
     for (const x of obsolete.sort((a, b) => (a.cleanupAttemptAt || 0) - (b.cleanupAttemptAt || 0)).slice(0, 6)) { x.cleanupAttemptAt = now(); await closeOut(x); }
@@ -230,7 +278,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       if ((action && action.expiresAt && action.expiresAt < now()) || (!action && now() - x.at > PLAIN_EXPIRY_MS)) { expire(x, action); await closeOut(x); continue; }
       const ownerKey = `ask:${x.id}:${config.ownerId}`;
       if (!require("./decisionpolicy").appDecisions(config) && !x.sent[config.ownerId] && !d.outbox[ownerKey]) {
-        ledger.notify(ownerKey, "owner", render(x.question, { tldr: x.tldr, signoff: x.signoff }), { components: buttons(x.id), decision: x.id, recipient: config.ownerId });
+        ledger.notify(ownerKey, "owner", render(x.question, x), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
         ledger.save();
       }
       // Game repairs (heals, compensation) the owner started are still issue work and may escalate.
@@ -241,7 +289,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       }
       if (!x.escalatedAt && now() - x.at > ESCALATE_MS) {
         x.escalatedAt = now();
-        for (const delegate of (musePolicy.origin(d, job).scoped ? [config.ownerMuseDelegateId].filter(Boolean) : delegates())) ledger.notify(`ask:${x.id}:${delegate}`, delegate, render(x.question, { onBehalf: true, signoff: x.signoff }), { components: buttons(x.id), decision: x.id, recipient: delegate });
+        for (const delegate of (musePolicy.origin(d, job).scoped ? [config.ownerMuseDelegateId].filter(Boolean) : delegates())) ledger.notify(`ask:${x.id}:${delegate}`, delegate, render(x.question, { ...x, onBehalf: true }), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: delegate });
         ledger.audit("decision_escalated", { decision: x.id, to: musePolicy.origin(d, job).scoped ? [config.ownerMuseDelegateId].filter(Boolean) : delegates() });
         ledger.save();
       }
@@ -261,4 +309,4 @@ function withdrawDecisions(ledger, jobId, reason) {
   }
 }
 
-module.exports = { ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
+module.exports = { normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };

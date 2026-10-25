@@ -210,3 +210,13 @@ test("asking permission to explain cannot create a Needs you panel", async t => 
   await assert.rejects(broker.tool(job, "present_choices", { title: "Explain?", questions: [{ prompt: "Would you like me to explain the result?", options: [{ label: "Yes" }, { label: "Later" }] }] }), /No owner decision/);
   assert.equal(Object.values(ledger.data.appThread.questions || {}).filter(q => q.state === "pending").length, 0);
 });
+
+test("Discord owner questions use named choices without an app-only tool error", async t => {
+  const {ledger, broker} = fixture(t);
+  const job=ledger.createJob("discord-choices",{kind:"command", role:"owner", actorId:"owner", source:{authorId:"owner",channelId:"discord-channel"}, deadline:Date.now()+86400000}); job.state="running";
+  const asked=await broker.tool(job,"present_choices", {questions:[{prompt:"Which display policy?",options:[{label:"Round totals"},{label:"Show decimals"}]}]});
+  const x=ledger.data.decisions[asked.id];
+  assert.equal(x.type,"choice"); assert.equal(x.options[1].label,"Show decimals");
+  assert.equal(job.ownerDecisionPending,true);
+  assert.equal(Object.values(ledger.data.actions).length,0);
+});
