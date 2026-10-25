@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.10.3 (2026-10-24)
+
 - Let a ticket task end its activation quietly after another operator takes ownership, preserving its checkpoint and the ownership fence instead of retrying a refused finish.
 
 - Refresh shared ticket evidence before public replies, progress cards and waits when another investigation adds findings. Wake reply waits on internal evidence without creating a player reply debt.
