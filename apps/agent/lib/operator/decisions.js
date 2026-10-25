@@ -1,6 +1,6 @@
 "use strict";
 // Owner decisions (owner policy 2026-10-12). A genuine decision is DMed to the
-// owner with Approve / Reject / Explain buttons. Unanswered after three hours it
+// owner with named preference choices or exact action approval buttons. After three hours it
 // also goes to the delegate (Ariane), who may answer on the owner's behalf.
 //
 // Keir 4.0 (owner, 2026-10-14): nothing ships to the live server without a

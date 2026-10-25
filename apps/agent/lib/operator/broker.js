@@ -1270,8 +1270,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       }
       if (title.length < 8 || detail.length < 40) throw new Error("give a short title and the evidence: what happens, where in the code or data, and the question for the developers");
       if (DECISION_WORDS.test(`${title} ${detail}`) && input.kind !== "decision" && input.kind !== "bug")
-        throw new Error("This asks for an owner decision (compensation, refund, approval or a ruling). Call again with kind: \"decision\" and question: one line with two or three concrete options, your recommendation first. The owner gets it as a decision DM.");
-      if (input.kind === "decision" && String(input.question || "").trim().length < 15) throw new Error("a decision needs question: one line with two or three concrete options, your recommendation first");
+        throw new Error("This asks for an owner decision (compensation, refund, approval or a ruling). Call again with kind: \"decision\" and a concise question plus options: two to six named choices with the outcome of each in its detail. Preference selection is not execution approval.");
+      if (input.kind === "decision" && String(input.question || "").trim().length < 15) throw new Error("a decision needs a concise question and two to six named options, each explaining its outcome");
       const prior = (job.raisedToDevelopers || []).find((r) => similarity(r.title, title) > 0.6);
       if (prior) return { raised: true, id: prior.id, duplicate: true };
       if (!input.force && !filedIssue) {
