@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- A refused read of a closed account, auth or audit collection now names the supported next step (`reporter_state` for the reporter, `raise_to_developers` with kind question and needsHuman true when the account record itself is needed) instead of the bare "read game records only", which sent the operator probing neighbouring collection names.
+
 ## 5.10.5 (2026-10-25)
 
 - Treat owner ticket pauses as durable controls: stop execution, typing and queued replies until an explicit owner resume, with one short acknowledgement.

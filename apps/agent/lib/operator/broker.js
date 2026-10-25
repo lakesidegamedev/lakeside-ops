@@ -65,6 +65,12 @@ const META_SUMMARY = /\b(no (further|new|additional) (post|reply|response|messag
 // audit collections stay closed, and so do fields that hold contact details or
 // credentials, so nothing private reaches a public ticket channel.
 const RAW_READ_CLOSED = /^(users?|accounts?|sessions?|auth.*|.*tokens?|.*secrets?|.*keys?|.*credentials?|.*emails?|.*passwords?|tickets?|ticket.*|suggestions?|support.*|discord.*|payments?|purchases?|subscriptions?|.*audit.*|access.*log.*|request.*log.*|ip.*|devices?|notifications?|messages?|inbox.*|keir.*|admin.*)$/i;
+// A refusal has to name the way forward. "read game records
+// only" was not one: these collections are game records too, so sign-in
+// tickets kept probing users, adminLogs, actionAuditLog and discord_messages
+// instead of asking for the account state or escalating it (18 refusals
+// across six tasks, 2026-10-25).
+const RAW_READ_CLOSED_NOTE = "it holds account, sign-in, contact or audit data. On a ticket, read the reporter's character with reporter_state; when the task needs the account record itself, file the exact read with raise_to_developers, kind question and needsHuman true";
 // Anchored where a bare substring would hit game fields: "ip" ends ownership,
 // membership and leadership; "address" is too broad to match anywhere.
 const RAW_FIELD_CLOSED = /(email|password|passhash|hash$|token|secret|apikey|api_key|^ip$|ip_?addr|^lastip|discord|session|phone|^address$|street|postal|mailing)/i;
@@ -91,7 +97,8 @@ function oidFilter(filter) {
 function rawReadArgs(tool, args) {
   if (tool === "heal_collections") return { env: "prod" };
   const collection = String(args.collection || "");
-  if (!collection || RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads; read game records only`);
+  if (!collection) throw new Error("collection: name the game collection to read; heal_collections lists them");
+  if (RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads: ${RAW_READ_CLOSED_NOTE}`);
   const walk = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_FIELD_CLOSED.test(k) || walk(x));
   if (walk(args.filter) || walk(args.projection)) throw new Error("contact, credential and session fields are closed to support reads");
   // Server-side JavaScript is never a read a support task needs.
