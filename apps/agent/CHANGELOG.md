@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Treat owner ticket pauses as durable controls: stop execution, typing and queued replies until an explicit owner resume, with one short acknowledgement.
+- Require current evidence before public findings from an internally woken conversation; tool discovery alone cannot support a repeated conclusion. Keep intake bookkeeping out of public acknowledgements.
+
 ## 5.10.4 (2026-10-24)
 
 - Finish taken-over owner commands as dismissed so a completed stand-down cannot keep blocking the ticket coordinator from answering its player.

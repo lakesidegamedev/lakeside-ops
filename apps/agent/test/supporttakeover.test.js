@@ -141,3 +141,24 @@ test("a taken-over owner command finishes terminal so it cannot fence later tick
   assert.equal(f.job.state,"dismissed");
   assert.equal(Object.keys(f.ledger.data.outbox).length,0);
 });
+
+test("owner ticket pause suppresses old public replies but permits its single control acknowledgement", t => {
+ const f=fixture(t),{setPause}=require("../lib/operator/ticketpause"),{suppressOutbox}=require("../lib/operator/supporttakeover");
+ const child=f.ledger.createJob("pause-child",{kind:"coding",role:"support",codingParent:f.job.id,state:"running"});
+ setPause(f.ledger,"channel",1558,true,{authorId:"owner",messageId:"pause"},123);
+ assert.equal(child.state,"paused");assert.ok(child.ticketPaused);
+ const stale={destination:`channel:${f.job.id}`,content:"Still investigating"};assert.equal(suppressOutbox(f.ledger,"stale",stale,124),true);
+ const ack=f.ledger.createJob("pause-ack",{kind:"notice",role:"owner",ticket:1558,channelId:"channel",ticketPauseControl:true,state:"done"});
+ assert.equal(suppressOutbox(f.ledger,"ack",{destination:`channel:${ack.id}`,content:"Paused."},124),false);
+ assert.equal(require("../lib/operator/admission").hold(child),"owner-ticket-pause");
+ setPause(f.ledger,"channel",1558,false,{authorId:"owner",messageId:"resume"},125);
+ assert.equal(child.state,"queued");assert.equal(stale.skipped,"ticket takeover: stale automatic reply suppressed");
+});
+
+test("pause and resume preserve an uncertain external write without treating resume as permission to replay it", t => {
+ const f=fixture(t),{setPause}=require("../lib/operator/ticketpause");f.job.effects.write={state:"started",at:100};
+ setPause(f.ledger,"channel",1558,true,{authorId:"owner",messageId:"pause"},123);
+ assert.equal(f.job.state,"paused");
+ setPause(f.ledger,"channel",1558,false,{authorId:"owner",messageId:"resume"},124);
+ assert.equal(f.job.state,"blocked");assert.equal(f.job.effects.write.state,"started");
+});

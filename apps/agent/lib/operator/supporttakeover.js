@@ -23,6 +23,7 @@ function held(data, job) {
   return null;
 }
 function assertCanAct(data, job) {
+  require("./ticketpause").assertCanAct(data, job);
   const hold = held(data, job);
   if (hold) throw Object.assign(new Error(`Ticket ${hold.ticket} is owned by ${hold.owner}; Keir must stand down until an explicit handback.`), { code: "TICKET_TAKEOVER_HELD" });
 }
@@ -31,7 +32,8 @@ function suppressOutbox(ledger, key, entry, at) {
   if (!entry.destination?.startsWith("channel:")) return false;
   const job = ledger.data.jobs[entry.destination.slice(8)];
   if (!job || job.replyChannel === "app" && job.source?.channelId === "app") return false;
-  const hold = held(ledger.data, job);
+  const pause = require("./ticketpause").pauseFor(ledger.data, job);
+  const hold = held(ledger.data, job) || (pause && { ticket: pause.ticket, owner: "owner pause" });
   if (!hold) return false;
   entry.deliveredAt = at;
   entry.skipped = "ticket takeover: stale automatic reply suppressed";

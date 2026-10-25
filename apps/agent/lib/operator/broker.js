@@ -1005,6 +1005,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
       throw e;
     }
+    if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v); } catch {}
@@ -1028,6 +1029,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     active(job);
     if (["channel_reply", "progress_update", "status_card", "support_action", "finish"].includes(name)) knowledge.requireCurrentTicketRecord(ledger, job);
     musePolicy.guard(ledger, config, job, name, input);
+    const publicReply = job.replyChannel !== "app" && Boolean(job.ticket || job.source?.channelName) && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input.tool === "support_public_update");
+    if (publicReply && job.activationInternalWake && !job.activationFreshRead)
+      throw new Error("This activation was woken internally without a new human request. Do not repeat earlier findings. Read current evidence for a changed result, or finish quietly.");
     if (name === "release_efficiency") {
       if (job.role !== "owner") throw new Error("release efficiency requires an owner task");
       const days = input.days ?? 30, until = now();
@@ -1384,6 +1388,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
       if (require("./toolmarkup").leaked(input.message)) throw new Error("This message contains tool-call markup. Call the tool through the tool interface instead of writing it out, then reply with the result.");
       let message = publicText(input.message);
+      if (job.replyChannel !== "app" && Boolean(job.ticket || job.source?.channelName) && /\bintake\s+persisted|\b(?:support|ticket['’]s own)\s+task\b|receipt and intake card|intake card delivered/i.test(message))
+        throw new Error("Public ticket acknowledgements should give the ticket link in one short sentence. Keep intake bookkeeping and task handoffs private.");
       require("./advicerouting").guard(job, d, message);
       if (/^(?:i['’]m on it|on it|looking into it|will do)[.!]*$/i.test(message.trim())) return { skipped: "generic acknowledgment suppressed; use progress_update with a specific line" };
       const ticketNo = job.ticket || ticketNumberOf(job.source?.channelName);

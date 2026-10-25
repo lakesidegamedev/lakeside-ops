@@ -258,6 +258,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     }
     const contextProfile = chatContext.profile(job), compact = contextProfile !== "full";
     const requestInbox = [...(job.requestInbox || []), ...(job.inbox || [])].slice(-20);
+    const internalWake = row => row.role === "system" || row.investigationResult || row.codingResult;
+    job.activationInternalWake = Boolean(job.lastPublishedAt && requestInbox.length && requestInbox.every(internalWake) &&
+      (Date.parse(job.source?.at || "") || 0) <= job.lastPublishedAt);
+    job.activationFreshRead = false;
     const context = { taskId: job.id, kind: job.kind, authority: job.role, replyInChannel: Boolean(job.replyChannel), availableReadServers: broker.servers?.(job), ticket: job.ticket, ticketCategory: job.ticket ? (ledger.data.channels?.[job.channelId || job.replyChannel]?.category || null) : undefined, ticketReceipts: Object.values(job.openedTickets || {}), summary: job.summary, source: job.source,
       ...(job.replyChannel === "app" ? { surface: "The owner's private Keir app on their phone, not Discord. Nobody else can read it. Talk directly and conversationally. Use present_choices for owner questions rather than A/B/C prose. Use native markdown tables and mermaid xy/pie charts for comparisons, or chart for sourced graphs. Use computer for visual work and artifact_save for durable reports. channel_reply posts into the app; progress_update is a specific short status. Other tasks run concurrently; stay focused on this task and thread." } : {}),
       ownerApp: compact ? undefined : broker.appContext?.(job), sharedConversation: compact ? undefined : broker.context?.(job), ticketWork: compact ? undefined : broker.ticketWork?.(job), publicWorkInChannel: compact ? undefined : broker.progress?.(job), lane: quick ? "quick" : "worker",
