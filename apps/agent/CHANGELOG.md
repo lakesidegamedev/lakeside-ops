@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Finish taken-over owner commands as dismissed so a completed stand-down cannot keep blocking the ticket coordinator from answering its player.
+
 - After three malformed DeepSeek tool-call activations, continue once on the established worker fallback with the same checkpoint and authority. Preserve uncertain-write fences and stop if the fallback also fails.
 
 ## 5.10.3 (2026-10-24)
