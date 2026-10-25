@@ -266,10 +266,12 @@ test("a compensation filing reaches the owner as a decision DM, not only the kan
   const detail = "Reporter asks whether the period when funded laws failed to affect Japan's metrics can be compensated by returning money.";
   await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail }), /kind: "decision"/);
   assert.equal(calls.filter((c) => c[1] === "kanban_add").length, 0, "nothing filed without the question");
-  const r = await f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail, kind: "decision", question: "Deny compensation (recommended), refund funded law costs for the affected turns, or replay missed metric progress?" });
+  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", {title:"Choose compensation", detail, kind:"decision", question:"x".repeat(500), options:[{label:"Use A"},{label:"Use B"}]}), /450 characters/);
+  assert.equal(calls.filter(c=>c[1]==="kanban_add").length,0,"invalid choices cannot leave a filed card behind");
+  const r = await f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail, kind: "decision", question: "How should we handle compensation for the missed effects?", options: [{label:"Deny compensation", detail:"No compensation is proposed.", recommended:true}, {label:"Refund law costs", detail:"Prepare a scoped refund proposal for separate approval."}, {label:"Replay missed progress", detail:"Prepare an exact replay plan for separate approval."}] });
   assert.equal(r.id, 888); assert.ok(r.decision);
   const x = f.ledger.data.decisions[r.decision];
-  assert.equal(x.state, "pending"); assert.equal(x.actionId, null); assert.equal(x.decisionKey, "kanban:888"); assert.match(x.question, /^Ticket 1522: Compensation for missed metric effects\. Deny compensation/);
+  assert.equal(x.state, "pending"); assert.equal(x.actionId, null); assert.equal(x.decisionKey, "kanban:888"); assert.match(x.question, /^Ticket 1522: Compensation for missed metric effects\. How should/); assert.equal(x.options.length, 3); assert.equal(x.type, "choice");
   assert.ok(Object.values(f.ledger.data.outbox).some((o) => o.decision === r.decision && o.destination === "owner"), "the DM is queued");
   assert.equal(f.job.ownerDecisionPending, true);
 });

@@ -466,16 +466,22 @@ struct DecisionCard: View {
         else {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                OpsStatusBadge(status: .waiting, label: decision["signoff"].bool ? "Sign-off" : "Decision")
+                OpsStatusBadge(status: .waiting, label: decision["type"].string == "choice" ? "Choose one" : "Approval")
                 if let n = decision["ticket"].number { Text("Ticket \(Int(n))").font(.caption).foregroundStyle(OpsTheme.muted) }
                 Spacer()
                 Text(OpsFormat.ago(decision["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
+            }
+            if !decision["review"]["title"].string.isEmpty {
+                Text(decision["review"]["title"].string).font(.headline)
             }
             Text(OpsText.decisionTitle(decision)).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
             let question = OpsText.scrub(decision["question"].string)
             if !question.isEmpty && question != OpsText.decisionTitle(decision) {
                 Text(question).font(.callout).foregroundStyle(decision["tldr"].string.isEmpty ? OpsTheme.ink : OpsTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if decision["type"].string != "choice" && decision["review"]["scope"] != .null {
+                Text(decision["review"]["scope"].pretty).font(.caption.monospaced()).textSelection(.enabled)
             }
             if question.count > 300 || decision["scope"] != .null {
                 DisclosureGroup("Review full action and scope") {
@@ -491,15 +497,29 @@ struct DecisionCard: View {
             }
             if !decision["reason"].string.isEmpty { Text(decision["reason"].string).font(.caption).foregroundStyle(OpsTheme.warn) }
             if let actionError { Text(actionError).font(.caption).foregroundStyle(OpsTheme.warn) }
+            if decision["type"].string == "choice" {
+                ForEach(decision["options"].array, id: \.["id"].string) { option in
+                    Button { act("choose:" + option["id"].string) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(option["label"].string + (option["recommended"].bool ? " (recommended)" : "")).fontWeight(.semibold)
+                            if !option["detail"].string.isEmpty { Text(option["detail"].string).font(.caption) }
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
+                    }.background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 10)).disabled(busy || decision["canAnswer"] == .bool(false))
+                }
+                Text("Your choice gives direction. Actions needing permission get a separate approval.").font(.caption).foregroundStyle(OpsTheme.muted)
+                Button("Ask a question or give another answer") { explaining = true }.disabled(busy)
+            } else {
+            Text("Approve authorizes this operation. Decline prevents it. Asking a question gives no approval.").font(.caption).foregroundStyle(OpsTheme.muted)
             HStack(spacing: 10) {
-                Button { act("approve") } label: { Text("Approve").fontWeight(.semibold).frame(maxWidth: .infinity).padding(.vertical, 9) }
+                Button { act("approve") } label: { Text("Approve this action").fontWeight(.semibold).frame(maxWidth: .infinity).padding(.vertical, 9) }
                     .background(OpsTheme.sky, in: RoundedRectangle(cornerRadius: 10)).foregroundStyle(OpsTheme.onAccent)
                     .disabled(decision["canApprove"] == .bool(false)).accessibilityIdentifier("decision-approve")
-                Button { act("reject") } label: { Text("Reject").frame(maxWidth: .infinity).padding(.vertical, 9) }
+                Button { act("reject") } label: { Text("Decline").frame(maxWidth: .infinity).padding(.vertical, 9) }
                     .background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
                 Button { explaining = true } label: { Image(systemName: "text.bubble").padding(.vertical, 9).padding(.horizontal, 12) }
                     .background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 10)).accessibilityLabel("Reply or ask why")
             }.buttonStyle(.plain).disabled(busy || decision["canAnswer"] == .bool(false))
+            }
             if decision["canRefresh"].bool { Button("Request a fresh proposal") { act("refresh") }.disabled(busy) }
             if decision["canAnswer"] == .bool(false) {
                 OwnerDirectionButton(title: "Ask Keir to recover this work", context: "Decision \(decision["id"].string) for task \(decision["jobId"].string): \(decision["question"].string)")
@@ -522,7 +542,7 @@ struct DecisionCard: View {
         busy = true
         Task {
             if await ops.answer(decision["id"].string, verdict: verdict, text: text, session) {
-                outcome = verdict == "approve" ? "Approval saved. Keir will report the execution result." : verdict == "reject" ? "Rejection saved" : verdict == "refresh" ? "Fresh review requested. No action was approved." : "Reply sent"
+                outcome = verdict == "approve" ? "Approval saved. Keir will report the execution result." : verdict == "reject" ? "Rejection saved" : verdict == "refresh" ? "Fresh review requested. No action was approved." : verdict.hasPrefix("choose:") ? "Choice saved. Keir will continue with your selection." : "Reply sent"
                 await changed()
             } else { actionError = ops.error ?? "The decision could not be saved. Refresh and try again." }
             busy = false

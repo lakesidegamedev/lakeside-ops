@@ -1051,8 +1051,16 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (supportDirectives.held(job)) throw new Error("Support directive is held by an existing approval, staff, category or conversation hold; no tool may bypass it.");
     if ((job.inbox || []).some((r)=>r.directiveId)) throw new Error("New owner guidance arrived from the app. Read support_updates before your next tool or external action.");
     if (name === "present_choices") {
-      if (!appQuestions) throw new Error("structured questions unavailable");
-      return appQuestions.ask(job, input);
+      if (job.role !== "owner") throw new Error("Owner task required for choices");
+      if (job.replyChannel === "app") {
+        if (!appQuestions) throw new Error("structured questions unavailable");
+        return appQuestions.ask(job, input);
+      }
+      if (!Array.isArray(input.questions) || input.questions.length !== 1 || input.questions[0].multiple) throw new Error("Discord choices require one single-select question at a time");
+      const q = input.questions[0];
+      const decision = openDecision(ledger, config, {jobId: job.id, question: q.prompt, options: q.options, decisionKey: "owner-preference"});
+      job.ownerDecisionPending = true; ledger.save();
+      return {id: decision.id, instruction: "Named choice buttons were sent privately to the owner. Finish waiting. Selection gives direction, never action approval."};
     }
     if (name === "computer") {
       if (!appComputer || !ownerDirected(job) || !isAppJob(job)) throw new Error("computer use requires an authenticated owner app work task");
@@ -1120,7 +1128,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return { merged: true, source, target, steps: r?.steps || [], instruction: source === job.ticket ? "This ticket is merged and its channel is closed. Finish done; do not post again." : "Merged. Carry on with your task." };
     }
     if (name === "raise_to_developers") {
-      if (input.kind === "decision") require("./decisionpolicy").requireRealDecision(`${input.title || ""}. ${input.question || input.detail || ""}`);
+      if (input.kind === "decision") {
+        require("./decisionpolicy").requireRealDecision(`${input.title || ""}. ${input.question || input.detail || ""}`);
+        require("./decisions").normalizeOptions(input.options);
+        const prompt = `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${String(input.title || "").trim().slice(0, 200)}. ${String(input.question || input.detail || "")}`;
+        if (require("./decisions").clean(prompt).length > 450) throw new Error("Keep the decision title and question concise: at most 450 characters together, including the ticket prefix. Put outcomes in the option details.");
+      }
       // One broker owns the ledger. Serialize duplicate checks and writes so
       // concurrent findings cannot both search an empty index and file twice.
       const previous = issueFlight;
@@ -1133,7 +1146,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // refund, a design or balance ruling) also opens a decision DM, so it
       // shows on the hub as waiting on him instead of sitting on the kanban.
       const askOwner = (id, t, why) => {
-        const decision = openDecision(ledger, config, { jobId: job.id, decisionKey: `kanban:${id || t}`, question: `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${t}. ${why}`.slice(0, 900) });
+        const decision = openDecision(ledger, config, { jobId: job.id, decisionKey: `kanban:${id || t}`, options: input.options, question: `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${t}. ${why}`.slice(0, 900) });
         job.ownerDecisionPending = true; ledger.save();
         return decision.id;
       };
@@ -2891,6 +2904,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const to = job.noOwnerDm ? null : job.role === "owner" && job.replyChannel ? null : job.kind === "command" && job.role !== "owner" ? job.actorId : job.replyChannel && state !== "blocked" ? null : "owner";
         // Automatic and ticket work never DMs the owner; it raises a quiet alert.
         // A genuine owner decision is a DM with Approve / Reject / Explain buttons.
+        if (to === "owner" && state === "blocked" && pendingDecision) { ledger.save(); return {state: job.state}; }
         if (to === "owner" && state === "blocked") {
           // Keir 5.1.1: when the question is about one of this task's own PRs,
           // the yes binds to that PR's current head (chain consent can use it).
@@ -2902,6 +2916,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
             if (pr?.state === "open" && pr.head?.sha) binds = { number: named[0], head: pr.head.sha };
           }
           const prefix = job.ticket && !String(job.summary || "").startsWith(`Ticket ${job.ticket}`) ? `Ticket ${job.ticket}: ` : "";
+          if (!binds) throw new Error("An owner choice needs named options: use present_choices or raise_to_developers kind decision with options. For execution approval, request the exact action first.");
           openDecision(ledger, config, { jobId: job.id, binds, question: `${prefix}${job.summary}${binds ? `\n\nApproving covers PR ${binds.number} at ${binds.head.slice(0, 10)} and its promotions; a later change asks again.` : ""}` });
         }
         else if (to && !(to === "owner" && job.kind !== "command")) ledger.notify(`finish:${job.id}:${job.rounds}`, to, job.summary);

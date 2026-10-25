@@ -64,7 +64,7 @@ function duePushes(d, { now = Date.now() } = {}) {
   }
   for (const x of Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !state.decisions[x.id] && x.at >= state.since - 3600000)) {
     out.push({ key: `decision:${x.id}`, pref: "decisions", mark: () => { state.decisions[x.id] = now; },
-      payload: { aps: { alert: { title: "Keir needs a decision", body: clip(x.tldr || x.question, 240) }, sound: "default", "thread-id": "decisions", "interruption-level": "time-sensitive", category: "KEIR_DECISION" }, route: "decision", decision: x.id } });
+      payload: { aps: { alert: { title: x.options ? "Keir: choose an option" : "Keir: action approval", body: clip(x.review?.title ? `${x.review.title}: ${x.question}` : x.question, 240) }, sound: "default", "thread-id": "decisions", "interruption-level": "time-sensitive", category: x.options ? "KEIR_CHOICE" : "KEIR_DECISION" }, route: "decision", decision: x.id } });
   }
   for (const a of (d.alerts || []).filter((a) => alertKind(a.key) === "incident" && a.at > state.since && !state.alerts[`${a.key}@${a.at}`])) {
     const notice = describeAlert(a, d, now);

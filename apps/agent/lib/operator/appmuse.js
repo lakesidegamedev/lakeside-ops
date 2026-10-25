@@ -213,7 +213,7 @@ function createAppMuse({ ledger, config, app, starmer = null, now = () => Date.n
     return Object.values(d.decisions || {}).filter((x) => { const origin = require("./ownermuse-policy").origin(d, d.jobs[x.jobId]); return x.state === "pending" && (!origin.scoped || origin.valid); }).sort((a, b) => b.at - a.at).map((x) => {
       const a = x.actionId && d.actions?.[x.actionId];
       const job = d.jobs[x.jobId];
-      return { id: x.id, question: x.question, tldr: x.tldr || null, at: x.at, signoff: Boolean(x.signoff), ticket: job?.ticket || null, task: x.jobId,
+      return { id: x.id, type: x.type || (x.actionId || x.binds ? "approval" : "question"), options: x.options || null, review: x.review || null, question: x.question, tldr: x.tldr || null, at: x.at, signoff: Boolean(x.signoff), ticket: job?.ticket || null, task: x.jobId,
         taskTitle: clip(job?.source?.content || job?.summary, 140) || null,
         action: a ? { kind: a.kind, summary: clip(a.args?.title || a.args?.action && `${a.args.action} ${a.args.number ? `#${a.args.number}` : ""}` || JSON.stringify(a.args || {}), 200), expiresAt: a.expiresAt || null } : null,
         binds: x.binds || null };

@@ -82,7 +82,7 @@ test("an unanswered request expires with its action, wakes the task once and is 
   const t = setup();
   t.data.actions.a1.expiresAt = Date.now() + 60000;
   const x = openDecision(t.ledger, t.config, { jobId: "j1", actionId: "a1", question: "Ship to the live server.", signoff: true });
-  assert.match(Object.values(t.data.outbox)[0].content, /^\*\*Sign-off to ship\*\*/);
+  assert.match(Object.values(t.data.outbox)[0].content, /^\*\*Approval required:/);
   t.send(OWNER, "m1");
   t.tick(120000);
   await t.decisions.tick();
@@ -179,4 +179,73 @@ test("legacy closedOut bookkeeping cannot hide a still visible decision copy", a
  const t = setup(); const x = openDecision(t.ledger, t.config, { jobId: "j1", question: "Old direction" });
  t.send(OWNER, "stale"); x.state = "withdrawn"; x.closedOut = true;
  await t.decisions.tick(); assert.ok(t.messages.stale.deleted);
+});
+
+test("named options render as choices and never authorize an action", async () => {
+  const t = setup();
+  const x = openDecision(t.ledger, t.config, { jobId: "j1", question: "Which support policy?", options: [{ label: "Refund missing items", detail: "Prepare a refund proposal." }, { label: "Replace missing items", detail: "Prepare an item repair proposal." }, { label: "Leave unchanged", detail: "Keep the existing policy." }] });
+  const entry = Object.values(t.data.outbox)[0];
+  assert.match(entry.content, /Choose one/);
+  assert.deepEqual(entry.components[0].components.map(b => b.label), ["Refund missing items", "Replace missing items", "Leave unchanged"]);
+  t.send(OWNER, "m1");
+  t.messages.m1.content += `\n\n**Decision:** 🔹 Selected 2 by <@${OWNER}>`;
+  assert.equal(await t.decisions.check(x), true);
+  assert.equal(x.state, "selected");
+  assert.equal(x.selectedOption.label, "Replace missing items");
+  assert.equal(t.data.actions.a1.state, "pending");
+  assert.match(t.data.jobs.j1.inbox[0].content, /Replace missing items/);
+});
+
+test("choice requests reject generic approval, invalid choices and bound action options", async () => {
+  const t = setup(), options = [{label:"Use A"}, {label:"Use B"}];
+  const x = openDecision(t.ledger, t.config, { jobId:"j1", question:"Which policy?", options });
+  await assert.rejects(async () => t.decisions.applyAuthenticatedApp(x, "approve", OWNER), /choice/i);
+  await assert.rejects(async () => t.decisions.applyAuthenticatedApp(x, "choose:9", OWNER), /choice/i);
+  assert.throws(() => openDecision(t.ledger, t.config, { jobId:"j1", actionId:"a1", question:"Which repair?", options }), /choice/i);
+  assert.equal(x.state,"pending");
+});
+
+test("approval cards identify the bound operation and explain both outcomes", () => {
+  const t = setup();
+  Object.assign(t.data.actions.a1, {kind:"github", args:{action:"merge", repository:"AHDGame", number:42, head:"abcdef123456"}, digest:"exact-digest"});
+  openDecision(t.ledger, t.config, {jobId:"j1", actionId:"a1", question:"Fix the login redirect."});
+  const entry = Object.values(t.data.outbox)[0];
+  assert.match(entry.content, /AHDGame/); assert.match(entry.content, /42/); assert.match(entry.content, /abcdef123456/);
+  assert.match(entry.content, /Approve this action/); assert.match(entry.content, /Decline/);
+});
+
+test("a changed bound scope cannot consume an approval", async () => {
+  const t = setup();
+  Object.assign(t.data.actions.a1, {kind:"github", args:{action:"merge", number:42, head:"aaa"}});
+  const x = openDecision(t.ledger,t.config,{jobId:"j1",actionId:"a1",question:"Merge the login fix"});
+  t.data.actions.a1.args.head="bbb";
+  await assert.rejects(async () => t.decisions.applyAuthenticatedApp(x,"approve",OWNER), /scope changed/);
+  assert.equal(x.state,"pending"); assert.equal(t.data.actions.a1.state,"pending");
+});
+
+test("selection is authenticated, recorded once, and stale cards cannot wake paused work", async () => {
+  const t = setup();
+  const x = openDecision(t.ledger,t.config,{jobId:"j1",question:"Which policy?",options:[{label:"Use A"},{label:"Use B"}]});
+  await assert.rejects(async () => t.decisions.apply(x,"choose:1",OWNER), /authenticated/);
+  await assert.rejects(async () => t.decisions.applyAuthenticatedApp(x,"choose:1","stranger"), /Owner-only/);
+  t.data.jobs.j1.appPaused=true;
+  await assert.rejects(async () => t.decisions.applyAuthenticatedApp(x,"choose:1",OWNER), /paused/);
+  delete t.data.jobs.j1.appPaused;
+  await t.decisions.applyAuthenticatedApp(x,"choose:2",OWNER);
+  await assert.rejects(async () => t.decisions.applyAuthenticatedApp(x,"choose:1",OWNER), /stale/);
+  assert.equal(t.data.jobs.j1.inbox.length,1);
+  assert.equal(Object.values(t.data.actions).filter(a=>a.state==="approved").length,0);
+});
+
+test("large scopes require full review and choices stay below Discord's receipt budget", () => {
+  const t=setup();
+  Object.assign(t.data.actions.a1,{kind:"heal",args:{spec:{description:"x".repeat(1000)}}});
+  openDecision(t.ledger,t.config,{jobId:"j1",actionId:"a1",question:"Apply the exact repair"});
+  const entry=Object.values(t.data.outbox)[0];
+  assert.equal(entry.components[0].components.some(b=>b.custom_id.includes(":approve:")),false);
+  assert.match(entry.content,/Review it in the Keir app/);
+  const options=Array.from({length:6},(_,i)=>({label:`Option ${i+1}`,detail:"x".repeat(140)}));
+  const x=openDecision(t.ledger,t.config,{jobId:"j1",question:"q".repeat(450),options});
+  const choice=Object.values(t.data.outbox).find(e=>e.decision===x.id);
+  assert.ok(choice.content.length<=1750,choice.content.length);
 });
