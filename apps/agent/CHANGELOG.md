@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- After three malformed DeepSeek tool-call activations, continue once on the established worker fallback with the same checkpoint and authority. Preserve uncertain-write fences and stop if the fallback also fails.
+
 ## 5.10.3 (2026-10-24)
 
 - Let a ticket task end its activation quietly after another operator takes ownership, preserving its checkpoint and the ownership fence instead of retrying a refused finish.

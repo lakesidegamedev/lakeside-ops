@@ -188,7 +188,7 @@ function emptyActivation(result, session) {
   if (typeof u.input_tokens !== "number" || typeof u.output_tokens !== "number") return false;
   return u.input_tokens + u.output_tokens + (u.cache_read_input_tokens || 0) === 0 && !(session?.calls > 0) && !String(result?.result || "").trim();
 }
-function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
+function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = invokeCli }) {
   const usageFile = config.usageFile || path.join(config.stateDir, "usage.jsonl");
   // Capture the running build once, never reread a mutable current symlink
   // during an activation. Failure paths get the same process identity.
@@ -397,7 +397,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       job.contextBudget = { profile: contextProfile, preflightMs: Date.now() - preflightAt, briefChars: runnerBrief.length, contextChars: common.prompt.length, toolSchemaChars: JSON.stringify(session.tools).length, initialTools: session.tools.length, ...(leanCtx ? { lean: leanCtx.profile, omittedSections: leanCtx.omitted.length, deferredTools: leanCtx.deferredNames.length } : {}) };
       ledger.audit("activation_context", { job: job.id, ...job.contextBudget }); ledger.save();
       const providerAt = Date.now();
-      result = await invokeCli({ ...common, brief: runnerBrief, runner: p, job, lane,
+      result = await invokeImpl({ ...common, brief: runnerBrief, runner: p, job, lane,
         viaRust, rustBin: config.rustRunnerBin, claudeBin: config.claudeBin });
       job.contextBudget.providerMs = Date.now() - providerAt;
       ledger.audit("cli_activation", { job: job.id, ticket: job.ticket, lane,
@@ -451,6 +451,22 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
       job.toolMarkupFailures = (job.toolMarkupFailures || 0) + 1;
       job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "refused", summary: "The previous activation wrote tool calls as text. Call tools through the tool interface; never print tool-call markup." }].slice(-20);
       if (job.toolMarkupFailures >= 3) {
+        // A bounded retry budget must lead to progress, not strand the ticket
+        // on a provider that keeps printing its native tool syntax as text.
+        // Retain authority, checkpoint, pending actions and effect fences.
+        if (job.provider?.runner === "deepseek" && !job.toolMarkupFallback &&
+            !Object.values(job.effects || {}).some(effect => effect.state === "started")) {
+          const from = { ...job.provider };
+          const [spec, effort] = require("./routing").FALLBACK.worker.split("@");
+          const [runner, model] = spec.split(":");
+          job.provider = { lane: "worker", runner, model, effort, at: Date.now(), assignedBy: "malformed-tool-fallback" };
+          job.toolMarkupFallback = { from, to: { ...job.provider }, at: Date.now(), attempts: job.toolMarkupFailures };
+          job.history.push({ at: new Date().toISOString(), kind: "provider-fallback",
+            summary: "DeepSeek repeatedly printed tool calls as text. Continue from the verified checkpoint on the worker fallback; existing approvals and ownership still apply." });
+          job.state = "queued"; delete job.wakeAt;
+          ledger.audit("tool_markup_provider_fallback", { job: job.id, ticket: job.ticket, from: from.runner, to: runner, attempts: job.toolMarkupFailures });
+          ledger.save(); return;
+        }
         job.state = "blocked"; delete job.wakeAt;
         ledger.audit("tool_markup_budget_exhausted", { job: job.id, ticket: job.ticket, attempts: job.toolMarkupFailures });
         ledger.save(); return;
