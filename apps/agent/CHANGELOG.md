@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.10.4 (2026-10-24)
+
 - After three malformed DeepSeek tool-call activations, continue once on the established worker fallback with the same checkpoint and authority. Preserve uncertain-write fences and stop if the fallback also fails.
 
 ## 5.10.3 (2026-10-24)
