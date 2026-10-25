@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.10.6 (2026-10-25)
+
 - Give owner policy questions two to six named choices with clear outcomes in Discord and the app. Keep selections separate from permission to execute.
 - Show approval cards with their saved operation, exact scope and explicit Approve, Decline and Ask a question outcomes. Refuse changed proposals and preserve ticket pauses.
 
