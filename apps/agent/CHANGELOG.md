@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.10.1 (2026-10-24)
+
 - Recognize DeepSeek's doubled DSML delimiters, recover corrupted summaries from the last valid checkpoint, reject tool markup in saved checkpoints and finish summaries, and stop malformed-answer retries after three attempts while retaining the last verified checkpoint.
 
 - Preserve player and developer reply safety deadlines during hourly wait reviews, including after status updates, so unchanged tickets do not trigger premature investigations.
