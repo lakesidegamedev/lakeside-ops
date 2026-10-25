@@ -140,6 +140,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       const line = verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
       (job.inbox ||= []).push({ authorId: actor, role: actor === config.ownerId ? "owner" : "support", content: line, at: new Date(now()).toISOString(), decision: x.id });
       delete job.ownerDecisionPending;
+      delete job.recoveryReviewRequired;
       job.state = "queued"; job.wakeAt = 0;
     }
     ledger.audit("decision_answered", { decision: x.id, verdict, actor });

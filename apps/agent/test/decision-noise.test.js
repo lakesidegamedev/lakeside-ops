@@ -39,11 +39,13 @@ test("obsolete synthetic cards are withdrawn and removed without changing their 
  assert.equal(ledger.data.jobs.j.ownerDecisionPending, true);
  assert.equal(ledger.data.jobs.j.state, "blocked");
 });
-test("a real pending action retains its exact authorization and a single plain question", () => {
- const ledger = fixture();ledger.data.actions.a = { id: "a", jobId: "j", state: "pending", kind: "host", args: { argv: ["true"] } };
+test("a real pending action retains its exact authorization and a single plain question", async () => {
+ const ledger = fixture({ recoveryReviewRequired: "Earlier synthetic request was withdrawn" });ledger.data.actions.a = { id: "a", jobId: "j", state: "pending", kind: "host", args: { argv: ["true"] } };
  const x = openDecision(ledger, { ownerId: "owner" }, { jobId: "j", actionId: "a", question: "Restart the verified service?" });
  assert.equal(x.actionId, "a"); assert.equal(ledger.data.actions.a.state, "pending");
  const text = render(x.question, { tldr: "Invented pros, cons and recommendation." });
  assert.equal(text.includes("Invented"), false); assert.equal(text.includes("Details:"), false);
  assert.equal(text.split(x.question).length - 1, 1);
+ await createDecisions({ ledger, config: { ownerId: "owner", staffIds: [] }, discord: async () => {} }).applyAuthenticatedApp(x, "approve", "owner");
+ assert.equal(ledger.data.actions.a.state, "approved"); assert.equal(ledger.data.jobs.j.recoveryReviewRequired, undefined);
 });
