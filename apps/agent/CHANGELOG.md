@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Recognize DeepSeek's doubled DSML delimiters, recover corrupted summaries from the last valid checkpoint, reject tool markup in saved checkpoints and finish summaries, and stop malformed-answer retries after three attempts while retaining the last verified checkpoint.
+
+- Preserve player and developer reply safety deadlines during hourly wait reviews, including after status updates, so unchanged tickets do not trigger premature investigations.
+
 - Keep the operator responsive during periodic notebook freshness scans by yielding between notes. Source hashes, stale-note quarantine and exact verification evidence still apply.
 
 - Give the independent Watchkeeper half a CPU so cold HTTP-client startup has headroom within its existing five-second read deadlines. Memory limits, deadlines and permissions stay unchanged.

@@ -2361,3 +2361,36 @@ test("newer player input removes the old developer sibling wake delay", async ()
   await f.broker.tool(t, "finish", { state: "waiting", summary: "Waiting briefly for an independent check", wakeAfterMinutes: 1 });
   assert.ok(t.wakeAt < 5000 + 30 * 60000);
 });
+
+test("repeated malformed DeepSeek activations stop without replacing the verified checkpoint", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123,
+  summary: "Verified: the fix is live; awaiting the reporter." });
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+  spawnImpl: fakeClaude(async () => ({ result: '<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="keir_read_tools">support</｜｜DSML｜｜ invoke>' })) });
+ for (let i = 0; i < 3; i++) {
+  j.state = "queued"; await agent.run(j, new AbortController().signal);
+  assert.equal(j.summary, "Verified: the fix is live; awaiting the reporter.");
+  assert.equal(j.state, i < 2 ? "waiting" : "blocked");
+ }
+ assert.equal(j.toolMarkupFailures, 3);
+ assert.equal(j.wakeAt || 0, 0);
+ assert.equal(f.calls.filter(c => c[1] === "support_public_update").length, 0);
+});
+
+test("activation repairs a malformed legacy summary from the last saved conclusion", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123,
+  summary: '<｜｜DSML｜｜ calls>', history: [
+   { kind: "checkpoint", summary: "Verified: shipped; awaiting reporter confirmation." },
+   { kind: "finish", summary: '<｜｜DSML｜｜ calls>' },
+  ] });
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+  spawnImpl: fakeClaude(async () => {
+   assert.equal(j.summary, "Verified: shipped; awaiting reporter confirmation.");
+   return { result: '<｜｜DSML｜｜ calls>' };
+  }) });
+ await agent.run(j, new AbortController().signal);
+ assert.equal(j.summary, "Verified: shipped; awaiting reporter confirmation.");
+ assert.ok(f.ledger.data.audit.some(a => a.kind === "checkpoint_recovered"));
+});

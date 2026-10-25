@@ -57,3 +57,36 @@ test("waiting on a player is never overdue for the owner, even past Keir's revie
  const own = make({ id: "b", wakeAt: 0, waitingFor: { kind: "developer_reply" }, waitReview: { since: 100, reviewAt: 300 } });
  assert.equal(workStatus(data([own]), own, { now: 10000 }).overdue, true);
 });
+
+test("external reply waits keep their safety deadline across overdue reviews and status updates", () => {
+ const hour = 3600000, now = 10 * hour;
+ for (const kind of ["player_reply", "developer_reply"]) {
+  const deadline = now + 5 * hour;
+  const j = make({ updatedAt: now - hour - 1, wakeAt: deadline,
+   waitingFor: { kind, since: now - hour, deadline },
+   completionForecast: { kind: "worker-estimate", at: now - 2 * hour, expectedAt: now - hour } });
+  const ledger = { data: data([j]), save(){}, audit(){} };
+  reviewWaits(ledger, {}, now);
+  assert.equal(j.wakeAt, deadline, kind);
+  assert.equal(j.inbox, undefined, kind);
+  assert.equal(j.waitReview.notifiedAt, undefined, kind);
+  // Updating a status receipt cannot turn an external dependency into work.
+  j.effects.card = { state: "done" }; j.updatedAt = now;
+  reviewWaits(ledger, {}, now + hour + 1);
+  assert.equal(j.wakeAt, deadline, kind);
+  assert.equal(j.inbox, undefined, kind);
+  // The bounded safety check still runs when the dependency is overdue.
+  reviewWaits(ledger, {}, deadline);
+  assert.equal(j.inbox.length, 1, kind);
+  assert.equal(j.inbox[0].authorId, "wait-review", kind);
+ }
+});
+
+test("an incomplete reply gate does not suppress a bounded diagnostic review", () => {
+ for (const waitingFor of [{ kind: "player_reply" }, { kind: "developer_reply", deadline: "invalid" }]) {
+  const j = make({ updatedAt: 1, wakeAt: 9000000, waitingFor });
+  const ledger = { data: data([j]), save(){}, audit(){} };
+  reviewWaits(ledger, {}, 4000000);
+  assert.equal(j.inbox.length, 1);
+ }
+});

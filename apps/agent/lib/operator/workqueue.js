@@ -64,6 +64,11 @@ function reviewWaits(ledger, config = {}, now = Date.now()) {
       job.waitReview = { since, reviewAt: since + 3600000, progress: key }; changed.push(job.id);
     }
     if (timestamp(job.completionForecast?.expectedAt)) job.waitReview.reviewAt = Math.min(job.waitReview.reviewAt, job.completionForecast.expectedAt + 5 * 60000);
+    // An external reply already has a bounded safety check. The hourly
+    // diagnostic must not replace it, including after a status receipt changes
+    // the progress key. Human messages still wake through the normal inbox.
+    const replyDeadline = ["player_reply", "developer_reply"].includes(job.waitingFor?.kind) && timestamp(job.waitingFor.deadline);
+    if (replyDeadline && now < replyDeadline) continue;
     if (now < job.waitReview.reviewAt || job.waitReview.notifiedAt) continue;
     job.waitReview.notifiedAt = now;
     const status = workStatus(ledger.data, job, { now, config });

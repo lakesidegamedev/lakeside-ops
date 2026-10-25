@@ -236,6 +236,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     // A ticket whose channel was closed by hand has nothing left to do; never
     // spend a model run rediscovering that (tickets 1512 and 1518 looped).
     if (job.channelClosed) { job.state = "done"; ledger.save(); return; }
+    if (require("./toolmarkup").hasToolMarkup(job.summary)) {
+      const checkpoint = [...(job.history || [])].reverse().find(h => ["checkpoint", "finish"].includes(h.kind) && h.summary && !require("./toolmarkup").hasToolMarkup(h.summary));
+      job.summary = checkpoint?.summary || "The previous summary contained tool-call markup. No valid checkpoint was retained; re-read the ticket evidence before continuing.";
+      ledger.audit("checkpoint_recovered", { job: job.id, ticket: job.ticket, restored: Boolean(checkpoint) });
+    }
     job.state = "running"; job.startedAt = Date.now(); ledger.save();
     // Activation timestamps feed self-recovery's hot-loop guard: short
     // activations that repeat every minute never reach its round threshold.
@@ -443,7 +448,13 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn }) {
     if (require("./toolmarkup").leaked(text)) {
       ledger.audit("tool_markup_leaked", { job: job.id, lane: quick ? "quick" : "worker", model: job.provider?.model });
       if (quick && job.role !== "player") { await broker.tool(job, "handoff", {}, signal); return; }
+      job.toolMarkupFailures = (job.toolMarkupFailures || 0) + 1;
       job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "refused", summary: "The previous activation wrote tool calls as text. Call tools through the tool interface; never print tool-call markup." }].slice(-20);
+      if (job.toolMarkupFailures >= 3) {
+        job.state = "blocked"; delete job.wakeAt;
+        ledger.audit("tool_markup_budget_exhausted", { job: job.id, ticket: job.ticket, attempts: job.toolMarkupFailures });
+        ledger.save(); return;
+      }
       job.state = "waiting"; job.wakeAt = Date.now() + 30000; ledger.save(); return;
     }
     job.summary = text.slice(0, 4000);
