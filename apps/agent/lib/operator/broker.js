@@ -2902,6 +2902,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const to = job.noOwnerDm ? null : job.role === "owner" && job.replyChannel ? null : job.kind === "command" && job.role !== "owner" ? job.actorId : job.replyChannel && state !== "blocked" ? null : "owner";
         // Automatic and ticket work never DMs the owner; it raises a quiet alert.
         // A genuine owner decision is a DM with Approve / Reject / Explain buttons.
+        if (to === "owner" && state === "blocked" && pendingDecision) { ledger.save(); return {state: job.state}; }
         if (to === "owner" && state === "blocked") {
           // Keir 5.1.1: when the question is about one of this task's own PRs,
           // the yes binds to that PR's current head (chain consent can use it).

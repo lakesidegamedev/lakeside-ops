@@ -219,4 +219,7 @@ test("Discord owner questions use named choices without an app-only tool error",
   assert.equal(x.type,"choice"); assert.equal(x.options[1].label,"Show decimals");
   assert.equal(job.ownerDecisionPending,true);
   assert.equal(Object.values(ledger.data.actions).length,0);
+  await broker.tool(job,"finish",{state:"blocked", needsOwner:true, summary:"Waiting for the named display policy choice."});
+  assert.equal(Object.values(ledger.data.decisions).length,1);
+  assert.equal(Object.values(ledger.data.outbox).filter(e=>e.decision).length,1);
 });
