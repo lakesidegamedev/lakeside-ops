@@ -266,6 +266,8 @@ test("a compensation filing reaches the owner as a decision DM, not only the kan
   const detail = "Reporter asks whether the period when funded laws failed to affect Japan's metrics can be compensated by returning money.";
   await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail }), /kind: "decision"/);
   assert.equal(calls.filter((c) => c[1] === "kanban_add").length, 0, "nothing filed without the question");
+  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", {title:"Choose compensation", detail, kind:"decision", question:"x".repeat(500), options:[{label:"Use A"},{label:"Use B"}]}), /450 characters/);
+  assert.equal(calls.filter(c=>c[1]==="kanban_add").length,0,"invalid choices cannot leave a filed card behind");
   const r = await f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail, kind: "decision", question: "How should we handle compensation for the missed effects?", options: [{label:"Deny compensation", detail:"No compensation is proposed.", recommended:true}, {label:"Refund law costs", detail:"Prepare a scoped refund proposal for separate approval."}, {label:"Replay missed progress", detail:"Prepare an exact replay plan for separate approval."}] });
   assert.equal(r.id, 888); assert.ok(r.decision);
   const x = f.ledger.data.decisions[r.decision];

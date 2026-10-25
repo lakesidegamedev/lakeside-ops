@@ -1131,6 +1131,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.kind === "decision") {
         require("./decisionpolicy").requireRealDecision(`${input.title || ""}. ${input.question || input.detail || ""}`);
         require("./decisions").normalizeOptions(input.options);
+        const prompt = `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${String(input.title || "").trim().slice(0, 200)}. ${String(input.question || input.detail || "")}`;
+        if (require("./decisions").clean(prompt).length > 450) throw new Error("Keep the decision title and question concise: at most 450 characters together, including the ticket prefix. Put outcomes in the option details.");
       }
       // One broker owns the ledger. Serialize duplicate checks and writes so
       // concurrent findings cannot both search an empty index and file twice.
