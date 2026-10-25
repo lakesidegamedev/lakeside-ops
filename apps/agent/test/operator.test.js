@@ -2422,3 +2422,44 @@ test("new shared evidence wakes an external-reply wait without creating player r
   assert.match(coordinator.inbox.at(-1).content, /ticket_record/);
   assert.equal(coordinator.observedPlayerAt, undefined);
 });
+
+test("DeepSeek malformed-tool exhaustion falls back once with the same checkpoint and authority", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123,
+  summary: "Verified regional workforce decline; allocation still needs checking.",
+  provider: { lane: "worker", runner: "deepseek", model: "deepseek-flash" } });
+ const attempts = [];
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+  invokeImpl: async ({ runner, prompt }) => {
+   attempts.push({runner,context:JSON.parse(prompt)});
+   if (runner === "deepseek") return { subtype: "success", result: '<｜｜DSML｜｜ calls>', num_turns: 1 };
+   await f.broker.tool(j, "finish", { state: "done", summary: "Allocation verified from current evidence." });
+   return { subtype: "success", result: "", num_turns: 1 };
+  } });
+ for (let i=0; i<3; i++) { j.state="queued"; await agent.run(j,new AbortController().signal); }
+ assert.equal(j.state,"queued");
+ assert.equal(j.provider.runner,"claude");
+ assert.equal(j.summary,"Verified regional workforce decline; allocation still needs checking.");
+ assert.equal(j.role,"support"); assert.equal(j.ticket,123);
+ assert.equal(Object.keys(f.ledger.data.actions).length,0);
+ await agent.run(j,new AbortController().signal);
+ assert.equal(j.state,"waiting");
+ assert.equal(j.summary,"Allocation verified from current evidence.");
+ assert.deepEqual(attempts.map(x=>x.runner),["deepseek","deepseek","deepseek","claude"]);
+ assert.match(attempts.at(-1).context.summary,/Verified regional workforce/);
+ assert.equal(j.toolMarkupFallback.from.runner,"deepseek");
+});
+
+for (const reason of ["fallback already used", "uncertain effect"]) test(`malformed provider fallback stays bounded with ${reason}`, async () => {
+ const f=fixture(), j=running(f,{kind:"ticket",role:"support",ticket:123,summary:"Verified checkpoint",
+  toolMarkupFailures:2,provider:{lane:"worker",runner:"deepseek",model:"deepseek-flash"}});
+ if(reason==="fallback already used")j.toolMarkupFallback={from:{runner:"deepseek"},to:{runner:"claude"}};
+ else j.effects.uncertain={state:"started"};
+ const original=JSON.stringify(j.effects);
+ const agent=createAgent({ledger:f.ledger,broker:f.broker,
+  config:{briefFile:path.join(__dirname,"../KEIR.md"),model:"claude-opus-5-5",maxRounds:2,maxTurnMs:10000,stateDir:f.dir},
+  invokeImpl:async()=>({subtype:"success",result:'<｜｜DSML｜｜ calls>',num_turns:1})});
+ await agent.run(j,new AbortController().signal);
+ assert.equal(j.state,"blocked");assert.equal(j.wakeAt,undefined);
+ assert.equal(j.summary,"Verified checkpoint");assert.equal(JSON.stringify(j.effects),original);
+});
