@@ -28,8 +28,9 @@ function workStatus(data, job, { now = Date.now(), config = {} } = {}) {
   if (hold) { reason = "Another person or agent owns the next move."; next = "Waiting for the current owner; Keir will preserve the claim."; }
   else if (uncertain) { state = "stuck"; reason = "An earlier action has an unverified outcome."; next = "Verify its receipt before any retry."; }
   else if (origin.scoped && !origin.valid && !CLOSED.has(job.state)) { state = "stuck"; reason = "The saved request needs an authenticated restart."; next = "Open the task to restart from its saved evidence."; }
-  else if (decisions.length || questions.length || job.ownerDecisionPending) { state = "needs-you"; reason = clip(decisions[0]?.question || questions[0]?.title || "An owner decision is pending."); next = "Open the task or ticket to answer the pending decision."; }
+  else if (decisions.length || questions.length) { state = "needs-you"; reason = clip(decisions[0]?.question || questions[0]?.title); next = "Open the task or ticket to answer the pending decision."; }
   else if (orphanApproval) { state = "stuck"; reason = "An action is pending without a reviewable decision."; next = "Keir must reconcile the approval request and its original authority."; }
+  else if (job.ownerDecisionPending || job.recoveryReviewRequired) { state = "stuck"; reason = "Keir must review this hold; no owner approval is pending."; next = "Recover the original instruction and establish the exact next action before asking for approval."; }
   else if (live.some(j => Object.keys(j.ciWatch || {}).length)) { reason = "Waiting for repository checks."; next = "Recheck the current PR head and act on its result."; }
   else if (waiting.waitingFor) { reason = `Waiting for ${clip(waiting.waitingFor.kind || "an external update", 80)}.`; next = clip(waiting.summary) || "Check the dependency at the next scheduled wakeup."; }
   else if (live.some(j => j.codingParent) && !worker) { reason = "Waiting for delegated work."; next = "Incorporate the worker's result before continuing."; }

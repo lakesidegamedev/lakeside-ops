@@ -3,6 +3,13 @@ const test=require("node:test"), assert=require("node:assert/strict");
 const { workStatus, reviewWaits, createWorkQueue }=require("../lib/operator/workqueue");
 const make=(extra={})=>({id:"a",kind:"ticket",role:"support",ticket:1560,state:"waiting",at:100,updatedAt:200,wakeAt:1000,effects:{},...extra});
 const data=jobs=>({jobs:Object.fromEntries(jobs.map(j=>[j.id,j])),channels:{},actions:{},decisions:{}});
+test("a hold without a reviewable proposal is Keir's blocker, not an owner permission check",()=>{
+ const j=make({state:"blocked",ownerDecisionPending:true,recoveryReviewRequired:"Synthetic approval withdrawn"});
+ const d=data([j]),s=workStatus(d,j,{now:500});
+ assert.equal(s.state,"stuck");assert.match(s.reason,/no owner approval/);
+ d.decisions.real={jobId:j.id,state:"pending",question:"Approve the exact repair?"};
+ assert.equal(workStatus(d,j,{now:500}).state,"needs-you");
+});
 test("a delegated running worker means actual work, not a waiting parent",()=>{
  const parent=make(), child=make({id:"c",ticket:null,kind:"coding",codingParent:"a",state:"running"});
  const s=workStatus(data([parent,child]),parent,{now:500});
