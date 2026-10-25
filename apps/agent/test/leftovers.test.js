@@ -21,7 +21,7 @@ test("discord_search is a read for owner app tasks, not a blocked mutation", () 
   assert.match(src, /const READS = new Set\(\["discord_search",/);
 });
 
-test("wait contract: legit waits stay, unknown waits are capped, woken, then asked of the owner", () => {
+test("wait contract: legit waits stay, unknown waits are capped, woken, then blocked for evidence review", () => {
   let t = 10 * 3600000;
   const decided = { id: "d", kind: "ticket", ticket: 1, state: "blocked", ownerDecisionPending: true };
   const player = { id: "p", kind: "ticket", ticket: 2, state: "waiting", waitingFor: { kind: "player_reply" }, lastPublishedAt: t - 3600000, lastPlayerAt: t - 7200000, wakeAt: t + 6 * 3600000 };
@@ -37,8 +37,8 @@ test("wait contract: legit waits stay, unknown waits are capped, woken, then ask
   unknown.state = "waiting"; unknown.wakeAt = t + 7 * 3600000;
   t += 46 * 60000; r.tick({});
   const asked = Object.values(ledger.data.decisions).filter((x) => x.jobId === "u");
-  assert.equal(asked.length, 1); assert.match(asked[0].question, /Ticket 1578: Keir has stalled twice/);
-  assert.equal(unknown.ownerDecisionPending, true);
+  assert.equal(asked.length, 0); assert.equal(unknown.state, "blocked");
+  assert.equal(unknown.ownerDecisionPending, undefined); assert.ok(unknown.recoveryReviewRequired);
 });
 
 test("wait contract: a player silent for 24 hours after an answer triggers an offer to resolve", () => {
@@ -49,30 +49,26 @@ test("wait contract: a player silent for 24 hours after an answer triggers an of
   assert.equal(j.state, "queued"); assert.match(j.inbox.at(-1).content, /Offer to resolve/);
 });
 
-test("an uncertain non-merge action asks the owner, and the answer settles it", () => {
-  let t = 10 * 3600000;
-  const j = { id: "h", kind: "ticket", ticket: 77, state: "blocked", effects: { "heal:abc": { state: "started", at: t - 31 * 60000, error: "timeout" } } };
+test("an uncertain action retains its receipt fence without asking for an invented approval", () => {
+  const t = 10 * 3600000;
+  const j = { id: "h", kind: "ticket", ticket: 77, state: "blocked", effects: { "heal:abc": { state: "started", at: t - 31 * 60000 } } };
   const ledger = { data: { jobs: { h: j }, decisions: {}, outbox: {} }, audit() {}, save() {}, notify() {} };
   const r = createRecovery({ ledger, config: { ownerId: "o" }, now: () => t });
-  r.tick({});
-  const x = Object.values(ledger.data.decisions).find((y) => y.selfRecovery?.effect === "heal:abc");
-  assert.ok(x); assert.match(x.question, /Approve if it did NOT happen/);
-  r.tick({}); assert.equal(Object.values(ledger.data.decisions).filter((y) => y.selfRecovery).length, 1);
-  x.state = "reject"; r.tick({});
-  assert.equal(j.effects["heal:abc"].state, "done"); assert.equal(j.state, "queued"); assert.match(j.inbox.at(-1).content, /DID happen/);
+  r.tick({}); r.tick({});
+  assert.equal(Object.values(ledger.data.decisions).length, 0);
+  assert.equal(j.effects["heal:abc"].state, "started"); assert.equal(j.state, "blocked");
+  assert.equal(ledger.data.recoveries.filter(x => x.action === "receipt-inspection-needed").length, 1);
 });
 
-test("a ticket held by another operator for two hours asks the owner; approve hands it back", () => {
+test("another operator's ticket remains owned without a timer-generated handback request", () => {
   let t = 10 * 3600000; const handed = [];
   const j = { id: "x", kind: "ticket", ticket: 1558, state: "queued", updatedAt: t - 3 * 3600000 };
   const ledger = { data: { jobs: { x: j }, decisions: {}, outbox: {} }, audit() {}, save() {}, notify() {} };
   const r = createRecovery({ ledger, config: { ownerId: "o" }, now: () => t });
-  const ctx = { supportDeferred: (job) => job.ticket === 1558, setTicketOwner: (n, o) => handed.push([n, o]) };
-  r.tick({}, ctx); t += 2 * 3600000 + 1; r.tick({}, ctx);
-  const x = Object.values(ledger.data.decisions).find((y) => y.selfRecovery?.kind === "handback");
-  assert.ok(x); assert.match(x.question, /Ticket 1558 has been held by another operator/);
-  x.state = "approve"; r.tick({}, ctx);
-  assert.deepEqual(handed, [[1558, "keir"]]);
+  const ctx = { supportDeferred: () => true, setTicketOwner: (...args) => handed.push(args) };
+  r.tick({}, ctx); t += 3 * 3600000; r.tick({}, ctx); r.tick({}, ctx);
+  assert.equal(Object.values(ledger.data.decisions).length, 0); assert.deepEqual(handed, []);
+  assert.equal(ledger.data.recoveries.filter(x => x.action === "held-for-operator").length, 1);
 });
 
 test("a player silent for 6 hours triggers a find-it-yourself nudge before the 24 hour resolve offer", () => {

@@ -157,21 +157,9 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
       if (!j.ownerDecisionPending || TERMINAL.includes(j.state)) continue;
       const own = Object.values(d.decisions || {}).filter((x) => x.jobId === j.id);
       if (own.some((x) => x.state === "pending")) continue;
-      // Keir 5.7.1 (owner, 2026-10-16: "I never got requests for that
-      // approval"): a hold with no decision record showed as "Needs you" with
-      // nothing to answer. Turn it into a real owner decision instead of
-      // waiting for someone to notice. The answer is applied below.
-      if (!own.length) {
-        if (!config.ownerId) continue;
-        const where = j.ticket ? `Ticket ${j.ticket}` : `Task ${j.id}`;
-        const question = `${where}: Keir is holding for your decision, but no question was ever sent. Its state: ${String(j.summary || "").replace(/\s+/g, " ").slice(0, 500)} Approve to let Keir proceed with its best verified plan. Reject to stop work on it. Or explain what you want.`;
-        try {
-          const x = require("./decisions").openDecision(ledger, config, { jobId: j.id, actionId: `orphan-hold:${j.id}`, question });
-          x.selfRecovery = { kind: "orphan-hold" };
-          record(d, ledger, { at: now(), job: j.id, ticket: j.ticket || null, action: "asked-owner", reason: "owner hold with no decision request" });
-        } catch (err) { log(`self-recovery: orphan hold ${j.id}: ${err.message}`); }
-        continue;
-      }
+      // A missing question cannot authorize an unspecified plan. Keep the
+      // hold visible for evidence review, without paging the owner.
+      if (!own.length || j.recoveryReviewRequired) continue;
       delete j.ownerDecisionPending;
       if (j.state === "blocked") { j.state = "queued"; j.wakeAt = now(); }
       (j.inbox ||= []).push({ role: "system", authorId: "self-recovery", at: new Date(now()).toISOString(),
@@ -215,8 +203,8 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
   //      - a live subscription with an end (turn watch, CI watch, deploy hold).
   //    Anything else is an unknown: the wait is capped at 45 minutes and the
   //    task is woken with an order to find the outcome or ask. The second
-  //    unknown wait opens an owner decision naming the ticket, what it is
-  //    stuck on and the options, so it can never stall silently again.
+  //    unknown wait is blocked for evidence review, never turned into an
+  //    approval for an unspecified plan.
   function waitReason(j) {
     if (j.ownerDecisionPending || Object.values(d.decisions || {}).some((x) => x.jobId === j.id && x.state === "pending")) return "decision";
     if (j.turnWatch || Object.keys(j.ciWatch || {}).length || (j.promotionHoldUntil || 0) > now()) return "subscription";
@@ -265,11 +253,10 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
       w.count += 1; w.since = now();
       if (w.count === 1) {
         wake(j, "Self-recovery: this ticket is waiting on something unknown: no owner decision, no player question awaiting a reply, and no live turn, CI or deploy watch. Find the outcome yourself now (read GitHub, the deploy, the game records), act on it, and tell the player. If only the owner can unblock it, ask with raise_to_developers kind decision and a concrete question. Do not finish waiting on an unknown again.");
-      } else if (!w.askedAt && config.ownerId) {
-        w.askedAt = now();
-        const question = `Ticket ${j.ticket}: Keir has stalled twice waiting on an unknown outcome. Last state: ${String(j.summary || "").replace(/\s+/g, " ").slice(0, 400)} Options: approve to let Keir continue from its best verified state, reject to stop work on the ticket, or explain what it is waiting for.`;
-        try { require("./decisions").openDecision(ledger, config, { jobId: j.id, question }); j.ownerDecisionPending = true; } catch (e) { log(`self-recovery: decision for ${j.ticket}: ${e.message}`); }
-        record(d, ledger, { at: now(), job: j.id, ticket: j.ticket, action: "asked-owner", reason: "stalled twice on an unknown wait" });
+      } else if (!w.reviewRequiredAt) {
+        w.reviewRequiredAt = now(); j.state = "blocked"; delete j.wakeAt;
+        j.recoveryReviewRequired = "Repeated wait has no verified dependency";
+        record(d, ledger, { at: now(), job: j.id, ticket: j.ticket, action: "review-required", reason: j.recoveryReviewRequired });
       }
     }
   }
@@ -279,75 +266,37 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
     record(d, ledger, { at: now(), job: j.id, ticket: j.ticket || null, action: "woken", reason: content.slice(17, 120) });
   }
 
-  // 6. Uncertain actions other than merges (heals, posts, writes) older than
-  //    30 minutes: Keir cannot know whether they happened, and its retry
-  //    guard refuses to repeat them. Ask the owner a yes/no that settles it:
-  //    approve = it did NOT happen (Keir may retry), reject = it DID happen
-  //    (Keir continues from it). The answer is applied automatically below.
+  // Uncertain outcomes need receipt inspection, never an inverted
+  // Approve/Reject guess. Retain the write fence and surface it in work status.
   function uncertainEffects() {
-    const MERGE = /^merge:\d+:/;
     for (const j of Object.values(d.jobs)) {
-      if (TERMINAL.includes(j.state) || !config.ownerId) continue;
+      if (TERMINAL.includes(j.state)) continue;
       for (const [key, e] of Object.entries(j.effects || {})) {
-        if (!["started", "uncertain"].includes(e?.state) || now() - (e.at || now()) < UNCERTAIN_EFFECT_MS) continue;
-        if (MERGE.test(key) && now() - (e.at || 0) < 2 * UNCERTAIN_EFFECT_MS) continue; // GitHub reconcile gets first try
-        if (Object.values(d.decisions || {}).some((x) => x.selfRecovery?.effect === key && x.jobId === j.id && ["pending", "approve", "reject"].includes(x.state))) continue;
-        const where = j.ticket ? `Ticket ${j.ticket}` : `Task ${j.id}`;
-        const question = `${where}: Keir does not know whether this action happened: ${key}${e.error ? ` (error: ${String(e.error).slice(0, 160)})` : ""}. Approve if it did NOT happen, so Keir may retry. Reject if it DID happen, so Keir continues from it.`;
-        try {
-          const x = require("./decisions").openDecision(ledger, config, { jobId: j.id, actionId: `effect:${key}`, question });
-          x.selfRecovery = { kind: "effect", effect: key };
-          record(d, ledger, { at: now(), job: j.id, ticket: j.ticket || null, action: "asked-owner", reason: `uncertain action ${key}` });
-        } catch (err) { log(`self-recovery: effect decision ${key}: ${err.message}`); }
+        if (!["started", "uncertain"].includes(e?.state) || now() - (e.at || now()) < UNCERTAIN_EFFECT_MS || e.inspectionNotedAt) continue;
+        e.inspectionNotedAt = now();
+        record(d, ledger, { at: now(), job: j.id, ticket: j.ticket || null, action: "receipt-inspection-needed", reason: `Unverified outcome for ${key}` });
       }
     }
   }
 
-  // 7. A ticket held by another operator (or otherwise deferred) for two
-  //    hours with no progress: ask the owner whether to hand it back to Keir.
+  // An operator hold is a coordination fact, not a permission request.
   function heldTickets(supportDeferred) {
-    if (!supportDeferred || !config.ownerId) return;
+    if (!supportDeferred) return;
     for (const j of Object.values(d.jobs)) {
       if (j.kind !== "ticket" || !j.ticket || TERMINAL.includes(j.state) || j.channelClosed || j.resolved) continue;
       let held = false; try { held = Boolean(supportDeferred(j)); } catch {}
       if (!held) { delete j.heldSince; continue; }
       j.heldSince ||= now();
       const last = Math.max(j.heldSince, typeof j.updatedAt === "number" ? j.updatedAt : Date.parse(j.updatedAt || "") || 0);
-      if (now() - last < HELD_MS) continue;
-      if (Object.values(d.decisions || {}).some((x) => x.selfRecovery?.kind === "handback" && x.jobId === j.id && ["pending", "approve", "reject"].includes(x.state))) continue;
-      const question = `Ticket ${j.ticket} has been held by another operator for ${Math.round((now() - j.heldSince) / 3600000)} hours with no progress. Approve to hand it back to Keir now. Reject to leave it where it is.`;
-      try {
-        const x = require("./decisions").openDecision(ledger, config, { jobId: j.id, actionId: `handback:${j.ticket}`, question });
-        x.selfRecovery = { kind: "handback", ticket: j.ticket };
-        record(d, ledger, { at: now(), job: j.id, ticket: j.ticket, action: "asked-owner", reason: "held by another operator 2h+" });
-      } catch (err) { log(`self-recovery: handback decision ${j.ticket}: ${err.message}`); }
+      if (now() - last < HELD_MS || j.heldReviewNotedAt) continue;
+      j.heldReviewNotedAt = now();
+      record(d, ledger, { at: now(), job: j.id, ticket: j.ticket, action: "held-for-operator", reason: "Existing operator retains ownership; no automatic handback request" });
     }
   }
 
-  // Apply the owner's answers to self-recovery questions exactly once.
-  function applyAnswers(setTicketOwner) {
-    for (const x of Object.values(d.decisions || {})) {
-      if (!x.selfRecovery || x.selfRecovery.appliedAt || !["approve", "reject"].includes(x.state)) continue;
-      const j = d.jobs[x.jobId]; x.selfRecovery.appliedAt = now();
-      if (!j) continue;
-      if (x.selfRecovery.kind === "effect") {
-        const key = x.selfRecovery.effect;
-        if (x.state === "approve") delete (j.effects || {})[key];
-        else j.effects[key] = { ...(j.effects[key] || {}), state: "done", at: now(), result: { ownerConfirmed: true } };
-        wake(j, `Self-recovery: the owner says action ${key} ${x.state === "approve" ? "did NOT happen; you may retry it if still wanted" : "DID happen; continue from it and do not repeat it"}.`);
-      } else if (x.selfRecovery.kind === "orphan-hold") {
-        delete j.ownerDecisionPending;
-        wake(j, x.state === "approve" ? "Self-recovery: the owner approved. Proceed with your best verified plan now and tell the player what happens next." : "Self-recovery: the owner rejected continuing. Stop the held work, tell the player plainly, and offer to resolve.");
-      } else if (x.selfRecovery.kind === "handback" && x.state === "approve" && setTicketOwner) {
-        try { setTicketOwner(x.selfRecovery.ticket, "keir"); wake(j, "Self-recovery: the owner handed this ticket back to Keir. Re-read the ticket and continue."); } catch (err) { log(`self-recovery: handback ${x.selfRecovery.ticket}: ${err.message}`); }
-      }
-      record(d, ledger, { at: now(), job: x.jobId, ticket: j.ticket || null, action: "owner-answer-applied", reason: `${x.selfRecovery.kind}:${x.state}` });
-    }
-  }
-
-  function tick(active, { canRun, supportDeferred, setTicketOwner } = {}) {
+  function tick(active, { canRun, supportDeferred } = {}) {
     if (d.paused) return;
-    try { applyAnswers(setTicketOwner); deadAppTasks(); staleDecisions(); waitContract(); uncertainEffects(); heldTickets(supportDeferred); spin(active); starvation(active, canRun); } catch (e) { log(`self-recovery: ${e.message}`); }
+    try { deadAppTasks(); staleDecisions(); waitContract(); uncertainEffects(); heldTickets(supportDeferred); spin(active); starvation(active, canRun); } catch (e) { log(`self-recovery: ${e.message}`); }
   }
   return { tick };
 }

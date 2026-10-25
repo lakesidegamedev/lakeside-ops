@@ -1104,6 +1104,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return { merged: true, source, target, steps: r?.steps || [], instruction: source === job.ticket ? "This ticket is merged and its channel is closed. Finish done; do not post again." : "Merged. Carry on with your task." };
     }
     if (name === "raise_to_developers") {
+      if (input.kind === "decision") require("./decisionpolicy").requireRealDecision(`${input.title || ""}. ${input.question || input.detail || ""}`);
       // One broker owns the ledger. Serialize duplicate checks and writes so
       // concurrent findings cannot both search an empty index and file twice.
       const previous = issueFlight;
@@ -1116,7 +1117,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // refund, a design or balance ruling) also opens a decision DM, so it
       // shows on the hub as waiting on him instead of sitting on the kanban.
       const askOwner = (id, t, why) => {
-        const decision = openDecision(ledger, config, { jobId: job.id, actionId: `kanban:${id || t}`, question: `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${t}. ${why}`.slice(0, 900) });
+        const decision = openDecision(ledger, config, { jobId: job.id, decisionKey: `kanban:${id || t}`, question: `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${t}. ${why}`.slice(0, 900) });
         job.ownerDecisionPending = true; ledger.save();
         return decision.id;
       };

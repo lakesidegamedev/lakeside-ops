@@ -6,7 +6,7 @@ const { EventEmitter } = require("node:events");
 const { makeSpark, MODEL } = require("../lib/operator/spark");
 const { makeDistiller, makeCurator } = require("../lib/operator/knowledge");
 const { createClassifier } = require("../lib/operator/classify");
-const { makeTldr, firstSentence } = require("../lib/operator/decisions");
+const { render } = require("../lib/operator/decisions");
 
 function fake(output, { code = 0, inspect = () => {}, hang = false } = {}) {
   return (bin, args, opts) => {
@@ -47,7 +47,7 @@ test("provider failure preserves the quiet classifier, original summary and empt
   const spawnImpl = fake('{"forKeir":true}', { code: 1 });
   assert.equal(await createClassifier({ spawnImpl, jev: async () => null })({ transcript: [], message: { content: "Question" } }), false);
   const question = "Approve this specific fix. It repairs the broken action.";
-  assert.equal(await makeTldr({ spawnImpl })(question), firstSentence(question));
+  assert.equal(render(question), `**Decision needed**\n${question}`);
   assert.deepEqual(await makeDistiller({ spawnImpl })({ body: "Rules" }), []);
   assert.deepEqual(await makeCurator({ spawnImpl })([]), []);
 });

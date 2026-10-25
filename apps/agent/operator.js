@@ -159,8 +159,7 @@ const decisions = createDecisions({ ledger, config, discord, log, onAnswered: (x
   try { notebook.remember({ kind: "decision", text: `${actor === config.ownerId ? "Owner" : "Danica for the owner"} ${verdict === "approve" ? "approved" : verdict === "reject" ? "rejected" : "answered"}: ${x.tldr || x.question}${text ? ` (said: ${text})` : ""}`.slice(0, 780), ticket: d0(x) }); } catch {}
 } });
 function d0(x) { return ledger.data.jobs[x.jobId]?.ticket || null; }
-const { makeTldr, render: renderDecision } = require("./lib/operator/decisions");
-const decisionTldr = makeTldr();
+const { render: renderDecision } = require("./lib/operator/decisions");
 let checkingDecisions = false;
 async function checkDecisions() {
   if (checkingDecisions) return; checkingDecisions = true;
@@ -415,10 +414,11 @@ async function flushOutbox() {
       entry.deliveredAt = Date.now(); entry.skipped = "stale on resume"; ledger.audit("outbox_skipped_stale", { key }); ledger.save(); continue;
     }
     try {
-      // Decision DMs lead with a short TL;DR, written once per decision.
+      // Deliver the exact reviewed question once, without a second model
+      // inventing recommendations or duplicating the same request.
       if (entry.decision && !entry.tldrDone) {
         const x = ledger.data.decisions?.[entry.decision];
-        if (x) { if (!x.tldr) { const job = ledger.data.jobs[x.jobId], root = job ? (require("./lib/operator/workrecord").rootJob(job, ledger.data.jobs) || job) : null; x.tldr = await decisionTldr(x.question, { ticket: job?.ticket || root?.ticket || null, ask: root?.source?.content || job?.source?.content || "" }); } entry.content = renderDecision(x.question, { onBehalf: entry.recipient !== config.ownerId, tldr: x.tldr, signoff: x.signoff }); }
+        if (x) { entry.content = renderDecision(x.question, { onBehalf: entry.recipient !== config.ownerId, signoff: x.signoff }); }
         entry.tldrDone = true; ledger.save();
       }
       if (ledger.data.control?.stopped && !entry.controlResponse) continue;

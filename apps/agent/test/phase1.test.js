@@ -269,7 +269,7 @@ test("a compensation filing reaches the owner as a decision DM, not only the kan
   const r = await f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail, kind: "decision", question: "Deny compensation (recommended), refund funded law costs for the affected turns, or replay missed metric progress?" });
   assert.equal(r.id, 888); assert.ok(r.decision);
   const x = f.ledger.data.decisions[r.decision];
-  assert.equal(x.state, "pending"); assert.equal(x.actionId, "kanban:888"); assert.match(x.question, /^Ticket 1522: Compensation for missed metric effects\. Deny compensation/);
+  assert.equal(x.state, "pending"); assert.equal(x.actionId, null); assert.equal(x.decisionKey, "kanban:888"); assert.match(x.question, /^Ticket 1522: Compensation for missed metric effects\. Deny compensation/);
   assert.ok(Object.values(f.ledger.data.outbox).some((o) => o.decision === r.decision && o.destination === "owner"), "the DM is queued");
   assert.equal(f.job.ownerDecisionPending, true);
 });
