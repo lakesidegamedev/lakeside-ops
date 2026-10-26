@@ -69,7 +69,7 @@ test("engineering GitHub evidence passes the real broker and exposes only read e
   const issues = await h.broker.tool(h.job, "github", { action: "issues", query: "CI state:open" });
   assert.equal(issues.issues[0].body, undefined); assert.equal(issues.issues[0].number, 8);
   const before = calls.length;
-  await assert.rejects(h.broker.tool(h.job, "github", { action: "issues", query: "CI OR repo:other/repo" }), /overrides/);
+  await assert.rejects(h.broker.tool(h.job, "github", { action: "issues", query: "CI OR repo:other/repo" }), /remove repo:, org: or user:/);
   await assert.rejects(h.broker.tool(h.job, "github", { action: "merge", number: 7 }), /Engineering/);
   h.job.role = "player";
   await assert.rejects(h.broker.tool(h.job, "github", { action: "ci_runs", number: 7 }), /players can discuss/);

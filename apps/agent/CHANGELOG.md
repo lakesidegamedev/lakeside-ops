@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- `github` issues search accepts `is:` and `type:` qualifiers, so a pull request search such as `is:pr is:open promote in:title` returns the pull requests it asked for instead of a refusal that named nothing to change. Only `repo:`, `org:` and `user:` are still refused, that refusal names the exact fix, and pull request hits are labelled so they are not closed as issues.
+
 ## 5.10.7 (2026-10-25)
 
 - Explain release approvals in ordinary language: what changes for players, who notices, the risk, and whether the next step prepares a test version, updates the test server, or reaches the live game. Keep code details in the optional review section.

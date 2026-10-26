@@ -1958,9 +1958,18 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.action === "ci_runs") return require("./ciEvidence").readCiEvidence({ api, repo, number: input.number, workflow: input.workflow, runId: input.run });
       if (input.action === "issues") {
         const query = String(input.query || "").trim();
-        if (!query || query.length > 180 || /\b(?:repo|org|user|is|type):/i.test(query)) throw new Error("issues needs a bounded search without repository overrides");
-        const result = await api([`search/issues?q=${encodeURIComponent(`repo:${repo} is:issue ${query}`)}&per_page=20`]);
-        return { total: result.total_count, incomplete: Boolean(result.incomplete_results), issues: (result.items || []).slice(0, 20).map((r) => ({ number: r.number, title: r.title, state: r.state, url: r.html_url, assignees: (r.assignees || []).map((a) => a.login) })) };
+        if (!query || query.length > 180) throw new Error("issues needs a query of 1 to 180 characters, for example: promote staging in:title");
+        // Only a scope override is refused. The repository this task may read is
+        // fixed, and the search must stay bounded (2026-10-26: the guard treated
+        // is: and type: as overrides too, so a reasonable pull request search was
+        // refused twelve times across seven tasks and the refusal named nothing
+        // the model could change).
+        if (/\b(?:repo|org|user):/i.test(query)) throw new Error("issues search is already scoped to this task's repository; remove repo:, org: or user: from the query and keep the plain words with in:, is:, state: or sort:, for example: is:pr is:open promote in:title");
+        // A search that asks for pull requests decides the type itself;
+        // prefixing is:issue for it would ask for both and match nothing.
+        const wantsPr = /(?:^|\s)(?:is|type):pr\b/i.test(query);
+        const result = await api([`search/issues?q=${encodeURIComponent(`${wantsPr ? "" : "is:issue "}repo:${repo} ${query}`)}&per_page=20`]);
+        return { total: result.total_count, incomplete: Boolean(result.incomplete_results), issues: (result.items || []).slice(0, 20).map((r) => ({ number: r.number, title: r.title, state: r.state, url: r.html_url, pullRequest: Boolean(r.pull_request), assignees: (r.assignees || []).map((a) => a.login) })) };
       }
       if (input.action === "ci_failures") {
         // The actual failing output, so a red check is diagnosed, not guessed.
