@@ -416,8 +416,12 @@ async function flushOutbox() {
     try {
       // Deliver the exact reviewed question once, without a second model
       // inventing recommendations or duplicating the same request.
-      if (entry.decision && !entry.tldrDone) {
+      if (entry.decision) {
         const x = ledger.data.decisions?.[entry.decision];
+        const action = ledger.data.actions?.[x?.actionId];
+        if (x && (action?.kind === "github" || x.binds) && !x.review?.human) {
+          entry.deliveredAt=Date.now();entry.skipped="Approval needs a plain-language explanation";ledger.save();continue;
+        }
         if (x) { entry.content = renderDecision(x.question, { ...x, onBehalf: entry.recipient !== config.ownerId }); }
         entry.tldrDone = true; ledger.save();
       }

@@ -3,7 +3,7 @@ const test=require("node:test"), assert=require("node:assert/strict"), fs=requir
 const {render}=require("../lib/operator/decisions");
 // Run the real operator delivery function, not just its card renderer.
 async function deliver(decision) {
-  const entry={id:"entry",destination:"owner",recipient:"owner",decision:decision.id,content:"old wording",at:Date.now(),attempts:0};
+  const entry={id:"entry",destination:"owner",recipient:"owner",decision:decision.id,content:"old wording",tldrDone:true,at:Date.now(),attempts:0};
   const ledger={data:{jobs:{},outbox:{entry},decisions:{[decision.id]:decision}},save(){},audit(){}};
   const sent=[],errors=[];
   const source=fs.readFileSync(path.join(__dirname,"../operator.js"),"utf8");
