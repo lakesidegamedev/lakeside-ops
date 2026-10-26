@@ -3008,6 +3008,9 @@ const { makeTrackerBody } = require('./tracker-page');
 const { handleKanbanRoute } = require("./kanban-routes");
 const { handleSuggestionSwipeRoute } = require("./suggestion-swipe-routes");
 const { handleKeirInboxRoute } = require("./keir-inbox-routes");
+const { handleCwTelemetryRoute, makeLimiter: makeCwTelemetryLimiter } = require("./cw-telemetry-routes");
+const { sharedTelemetry: sharedCwTelemetry } = require("./cw-telemetry-store");
+const cwTelemetryAllow = makeCwTelemetryLimiter();
 const { handleKeirHubRoute } = require("./keir-hub-routes");
 const { handleSecurityRoute } = require("./security-routes");
 async function loadTrackerSnapshot() {
@@ -4436,6 +4439,11 @@ const server = http.createServer(async (req, res) => {
   // Blind two-person triage of unreviewed suggestions (/suggestions/swipe,
   // /api/suggestions/swipe/*). Must run before the /suggestions/<n> route.
   if (await handleSuggestionSwipeRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, getDb })) return;
+
+  // ─── CORPORATE WARFARE TELEMETRY ─────────────────────────────────
+  // Public, write-only ingest of anonymous market-balance snapshots from the game
+  // (/api/cw/telemetry). Validated, size-capped and rate-limited per address.
+  if (await handleCwTelemetryRoute(req, res, pathname, { addSecurityHeaders, store: sharedCwTelemetry, allow: cwTelemetryAllow, clientIp: getClientIP })) return;
 
   // ─── KEIR INBOX ──────────────────────────────────────────────────
   // Admin view of every DM to Keir and the itch.io reward claims (/inbox,
