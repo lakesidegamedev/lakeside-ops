@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.10.7 (2026-10-25)
+
 - Explain release approvals in ordinary language: what changes for players, who notices, the risk, and whether the next step prepares a test version, updates the test server, or reaches the live game. Keep code details in the optional review section.
 - Preserve complete approval and choice cards through Discord delivery. Require a readable explanation of the exact version before sending a new release request, and replace unanswered technical requests without granting permission or clearing existing holds.
 
