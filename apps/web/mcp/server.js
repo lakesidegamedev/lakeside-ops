@@ -22,6 +22,7 @@ const store = require("../knowledge-store");
 const tokens = require("../agent-tokens");
 const { buildGettingStarted } = require("../mcp-catalog");
 const { registerKanbanTools } = require("./kanban-tools");
+const { registerCwTelemetryTools } = require("./cw-telemetry-tools");
 const { registerFleetTools } = require("./fleet-tools");
 // Absorbed in the MCP fleet consolidation (2026-10-22). Each also answers under
 // its old name at /mcp/<old-name>, with its old server name and only its tools.
@@ -465,6 +466,7 @@ async function main() {
 
     // Product kanban (same store as the dashboard /kanban page).
     registerKanbanTools(server, { auth, jsonResult, errorResult });
+    registerCwTelemetryTools(server, { jsonResult, errorResult });
 
     // The fleet describing itself, read live from every hosted server.
     registerFleetTools(server, { jsonResult, errorResult });
