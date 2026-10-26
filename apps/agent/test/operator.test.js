@@ -2529,4 +2529,10 @@ test("a release request requires a readable explanation before anything reaches 
  const decision=f.ledger.data.decisions[card.decision];const view=require("../lib/operator/appdecision").decisionView(f.ledger.data,decision,5000);
  assert.equal(view.review.scope,undefined,"raw scope stays out of the app's main card");assert.equal(view.args.head,head,"exact review details remain available separately");
  assert.ok(!f.calls.some(c=>c.includes("-X")),"preparation is not approval or release");
+ // Asking a question is not consent; a clarified proposal gets a fresh card.
+ decision.state="explain";job.state="running";
+ const clarified=await f.rawTool(job,"github",{action:"promote",to:"staging",economy:true,explanation:{reviewedHead:head,change:"Some companies' share prices kept falling and then suddenly jumped. This corrects that error.",impact:"Affected companies can recover toward the price they should have.",risk:"The result needs checking with both affected and unaffected companies before release."}});
+ assert.equal(clarified.state,"pending");assert.notEqual(clarified.decision,decision.id);
+ assert.equal(f.ledger.data.actions[next.action].state,"pending");assert.match(f.ledger.data.decisions[clarified.decision].question,/unaffected companies/);
+
 });

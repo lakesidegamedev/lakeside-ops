@@ -1709,7 +1709,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const copy=require("./approvalcopy");
         const existing=Object.values(d.actions).find(a=>a.jobId===job.id && a.kind==="github" && JSON.stringify(musePolicy.normalized(a.args))===JSON.stringify(musePolicy.normalized(args)) && a.expiresAt>now());
         if(existing && ["approved","done","rejected"].includes(existing.state)) return request(job,"github",args,reason,existing.explanation);
-        const value=existing?.explanation || input.explanation;
+        const liveQuestion=existing && Object.values(d.decisions||{}).some(x=>x.actionId===existing.id&&x.state==="pending");
+        const value=liveQuestion && existing?.explanation ? existing.explanation : input.explanation || existing?.explanation;
         if(!value || value.reviewedHead!==copy.headOf(args)) {
           let evidence;
           if(args.action==="promote") {
@@ -1730,7 +1731,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
             instruction:"Nothing was sent for approval. Read these source changes, then call the same github action with explanation: reviewedHead exactly as returned, change (the problem and fix in ordinary language), impact (who notices and how), risk (verified risk or uncertainty). Cover every change in this version. No file paths, formulas, PR numbers, staging/development or developer jargon. Continue preparing now; do not wait for the owner or invent a recommendation."};
         }
         const human=copy.explanation(value,args);
-        if(existing?.state==="pending" && !existing.explanation) {
+        if(existing?.state==="pending" && (!existing.explanation || !liveQuestion)) {
           for(const old of Object.values(d.decisions||{})) if(old.actionId===existing.id && old.state==="pending") {old.state="withdrawn";old.withdrawnReason="Needs a plain-language explanation";}
           existing.explanation=human;
           const decision=openDecision(ledger,config,{jobId:job.id,actionId:existing.id,question:"Review this change",signoff:true});
