@@ -1220,7 +1220,14 @@ function githubFixture(routes) {
     throw new Error("unexpected route " + route);
   };
   const broker = createBroker({ ledger: f.ledger, config: f.config, mcp: f.mcp, discord: f.discord, sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => 5000, exec });
-  return { ...f, broker, calls };
+  const rawTool=broker.tool.bind(broker);
+  // These gate tests start after the worker has read the source and prepared its explanation.
+  broker.tool=async(job,name,input,...rest)=>{
+    const first=await rawTool(job,name,input,...rest);
+    if(name!=="github"||!first.needsExplanation)return first;
+    return rawTool(job,name,{...input,explanation:{reviewedHead:first.reviewedHead,change:"Fix the reported problem with a game rule and its display.",impact:"Players will see the corrected game behavior after release.",risk:"Changing a game rule can affect existing results, so it needs checking."}},...rest);
+  };
+  return { ...f, broker, calls, rawTool };
 }
 const green = [/check-runs/, { check_runs: [{ name: "verify", status: "completed", conclusion: "success" }] }];
 const files = (...names) => names.map((filename) => ({ filename }));
@@ -1303,7 +1310,7 @@ test("an owner task needs a separate explicit yes for an economy merge, bound to
   assert.equal(first.approvalRequired, true);
   assert.equal(f.ledger.data.actions[first.action].state, "pending");
   const ask = Object.values(f.ledger.data.outbox).find((o) => o.decision && f.ledger.data.decisions[o.decision].actionId === first.action);
-  assert.ok(ask && ask.destination === "owner" && /governor\.ts/.test(ask.content) && ask.components, "decision DM with buttons");
+  assert.ok(ask && ask.destination === "owner" && /game rule/.test(ask.content) && ask.components, "decision DM with buttons");
   assert.ok(!f.calls.some((c) => c.join(" ").includes("/merge")), "nothing merged before the yes");
   // The task's opening message is never the consent.
   Object.assign(f.ledger.data.actions[first.action], { state: "approved", approvedBy: owner, approvalMessage: "100000000000000001" });
@@ -2506,4 +2513,20 @@ test("public intake confirmations omit task and persistence bookkeeping", async 
  await assert.rejects(f.broker.tool(j,"channel_reply",{message:"Intake persisted, receipt and intake card delivered; its support task picks up the investigation."}),/bookkeeping.*private/i);
  await f.broker.tool(j,"channel_reply",{message:"Opened ticket #123. We will continue there."});
  assert.equal(Object.values(f.ledger.data.outbox).length,1);
+});
+
+test("a release request requires a readable explanation before anything reaches the owner",async()=>{
+ const head="6".repeat(40);
+ const f=githubFixture([[/compare\/staging\.\.\./,{files:files("src/lib/corporations/price.ts"),commits:[{sha:head,parents:[{}],commit:{message:"fix: company share prices (#4940)"}}]}],[/commits\/development$/,{sha:head}],[/commits\/.+\/pulls$/,[{number:4940,title:"Fix company share prices",body:"Some company prices keep falling and then suddenly jump because the adjustments are applied in the wrong order."}]]]);
+ const job=running(f,{role:"support",kind:"ticket",ticket:1683,pullRequests:["https://github.com/lakesidegamedev/AHDGame/pull/4940"]});
+ const first=await f.rawTool(job,"github",{action:"promote",to:"staging",economy:true});
+ assert.equal(first.needsExplanation,true);assert.equal(first.reviewedHead,head);assert.match(first.evidence.changes[0].changes[0].body,/keep falling/);
+ assert.equal(Object.keys(f.ledger.data.actions).length,0);assert.equal(Object.values(f.ledger.data.outbox).filter(o=>o.decision).length,0);
+ const next=await f.rawTool(job,"github",{action:"promote",to:"staging",economy:true,explanation:{reviewedHead:head,change:"Some companies' share prices kept falling and then suddenly jumped. This fix corrects that calculation.",impact:"Affected companies can recover toward the price they should have.",risk:"Share prices need checking before players receive the change."}});
+ assert.equal(next.approvalRequired,true);assert.equal(f.ledger.data.actions[next.action].state,"pending");
+ const card=Object.values(f.ledger.data.outbox).find(o=>o.decision);
+ assert.match(card.content,/Some companies' share prices/);assert.match(card.content,/test server only/);assert.doesNotMatch(card.content,/src\/|staging|development|high-impact|Head |Sign-off|Exact scope/);
+ const decision=f.ledger.data.decisions[card.decision];const view=require("../lib/operator/appdecision").decisionView(f.ledger.data,decision,5000);
+ assert.equal(view.review.scope,undefined,"raw scope stays out of the app's main card");assert.equal(view.args.head,head,"exact review details remain available separately");
+ assert.ok(!f.calls.some(c=>c.includes("-X")),"preparation is not approval or release");
 });

@@ -10,7 +10,7 @@ function decisionView(data, x, now = Date.now()) {
     : data.paused || job.appPaused || require("./ticketpause").pauseFor(data, job) ? "Keir is paused. Start or resume the task before answering."
     : origin.scoped && (!origin.valid || job.deadline <= now) ? "This saved proposal needs a fresh authenticated task."
     : action && (action.state !== "pending" || action.expiresAt <= now) ? "This action changed or expired. Ask Keir for a fresh proposal." : null;
-  return { id: x.id, jobId: x.jobId, question: x.question, type: x.type || (x.actionId || x.binds ? "approval" : "question"), options: x.options || null, review: x.review || null, tldr: x.tldr || null, state: x.state, at: x.at,
+  return { id: x.id, jobId: x.jobId, question: x.question, type: x.type || (x.actionId || x.binds ? "approval" : "question"), options: x.options || null, review: x.review ? (({scope, ...summary}) => summary)(x.review) : null, tldr: x.tldr || null, state: x.state, at: x.at,
     ticket: job?.ticket || null, canOpenTask: job?.role === "owner", signoff: Boolean(x.signoff), canAnswer: !unavailable,
     canRefresh: Boolean(job && x.state === "pending" && !["done", "dismissed", "cancelled"].includes(job.state) && !data.paused && !job.appPaused && (!origin.scoped || origin.valid)),
     canApprove: !x.options && !unavailable && (!origin.scoped || Boolean(action)), reason: unavailable || (origin.scoped && !action ? "Reply to this question. Approval requires an exact action proposal." : null),

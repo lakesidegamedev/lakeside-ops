@@ -268,7 +268,7 @@ test("a freeform merge yes binds to the PR head the question named, and chains",
   const data = { jobs: { j1: { id: "j1", state: "blocked", kind: "finding" } }, actions: {}, outbox: {}, audit: [], decisions: {} };
   const l = { data, save() {}, audit(kind, x) { data.audit.push({ kind, ...x }); }, notify(key, dest, content, extra = {}) { data.outbox[key] ||= { destination: dest, content, ...extra }; } };
   const config = { ownerId: OWNER, staffIds: ["565289871799746593"], botId: "1479984768194969663" };
-  const x = openDecision(l, config, { jobId: "j1", question: "All checks on PR #4153 pass; merging is your call.", binds: { number: 4153, head: "aaa111" } });
+  const x = openDecision(l, config, { jobId: "j1", question: "All checks on PR #4153 pass; merging is your call.", explanation: {reviewedHead:"aaa111",change:"Fix the reported issue with how company accounts are shown.",impact:"People will see corrected company information after release.",risk:"The company page needs checking before players receive the fix."}, binds: { number: 4153, head: "aaa111" } });
   x.sent[OWNER] = { channelId: "dm", messageId: "900000000000000001" };
   const decisions = createDecisions({ ledger: l, config, discord: async () => null, now: () => 5000 });
   decisions.apply(x, "approve", OWNER);
@@ -285,13 +285,12 @@ test("a freeform merge yes binds to the PR head the question named, and chains",
   assert.equal(y.actionId, null);
 });
 
-test("a blocked task asking about its own PR opens a decision bound to that head", async () => {
-  const f = brokerFixture([[/pulls\/4153$/, { number: 4153, state: "open", head: { sha: "aaa111bbb222" } }]]);
-  const job = f.l.createJob("finding:mnm", { kind: "finding", role: "support", repository: "AHDGame", finding: "x", deadline: 9e15, source: {}, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/4153"] }); job.state = "running";
-  await f.b.tool(job, "finish", { state: "blocked", needsOwner: true, summary: "All 24 checks on PR #4153 pass. I haven't merged it because it's turn-engine code, so merging is your call." });
-  const x = Object.values(f.l.data.decisions)[0];
-  assert.deepEqual(x.binds, { number: 4153, head: "aaa111bbb222" });
-  assert.match(x.question, /Approving covers PR 4153 at aaa111bbb2/);
+test("technical completion summaries cannot create an owner approval", async () => {
+  const f = brokerFixture([]);
+  const job=f.l.createJob("finding:plain",{kind:"finding",role:"support",source:{},deadline:9e15});job.state="running";
+  await assert.rejects(f.b.tool(job,"finish",{state:"blocked",needsOwner:true,summary:"All 24 checks pass. PR 4153 is turn-engine code."}),/readable owner request/);
+  assert.equal(Object.values(f.l.data.decisions||{}).length,0);
+  assert.equal(job.state,"running","a refused request cannot strand a running task as blocked");
 });
 
 test("the issue sweep follows merged PRs from any author that reference a Keir issue", async () => {
