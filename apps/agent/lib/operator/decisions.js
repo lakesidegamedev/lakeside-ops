@@ -50,16 +50,16 @@ function normalizeOptions(options) {
   if (normalized.reduce((n, o) => n + o.label.length + o.detail.length, 0) > 950) throw new Error("Keep choice options concise: total labels and details at most 950 characters");
   return normalized;
 }
-function binding(action, binds) { return crypto.createHash("sha256").update(JSON.stringify(action ? {kind: action.kind, args: action.args} : binds)).digest("hex"); }
-function actionReview(action, binds) {
+function binding(action, binds) { return crypto.createHash("sha256").update(JSON.stringify(action ? {kind: action.kind, args: action.args, explanation: action.explanation} : binds)).digest("hex"); }
+function actionReview(action, binds, explanation = null) {
   const a = action?.args || {};
   const {summary: _summary, ...operation} = a;
-  const title = action?.kind === "github" ? `${a.action || "GitHub operation"} ${a.repository || "AHDGame"}${a.number ? ` PR #${a.number}` : ""}${a.from ? ` from ${a.from}` : ""}${a.to ? ` to ${a.to}` : ""}` : action?.kind === "heal" ? "Change live game data" : action?.kind ? action.kind.replace(/_/g, " ") : binds ? `Merge AHDGame PR #${binds.number}` : "Review proposal";
+  const title = action?.kind === "github" ? `${a.action || "GitHub operation"} ${a.repository || "AHDGame"}${a.number ? ` PR #${a.number}` : ""}${a.from ? ` from ${a.from}` : ""}${a.to ? ` to ${a.to}` : ""}` : action?.kind === "heal" ? "Change live game data" : action?.kind ? ({heal:"Allow this game repair?",computer_input:"Allow this browser action?",host_command:"Allow this server action?",mcp_write:"Allow this change?"}[action.kind] || "Allow this change?") : binds ? `Merge AHDGame PR #${binds.number}` : "Review proposal";
   const scope = musePolicy.logInput(action?.ownerMuse?.scope || (action?.kind === "heal" ? a.spec || a : action ? operation : binds || {}));
-  return { title: clean(title).slice(0, 100), scope, digest: action?.ownerMuse?.digest || action?.digest || null };
+  return { ...((action?.kind === "github" || binds) && (action?.explanation || explanation) ? require("./approvalcopy").prepare(action?.explanation || explanation, action ? a : {action:"merge",...binds}) : {title: clean(title).slice(0, 100)}), ...(action?.kind === "heal" && a.spec?.description && !require("./approvalcopy").JARGON.test(a.spec.description) ? {description:clean(a.spec.description)} : {}), scope, digest: action?.ownerMuse?.digest || action?.digest || null };
 }
 function buttons(id, options = null, review = null) {
-  if (review && JSON.stringify(review.scope).length > 850) return [{type:1, components:[{type:2, style:2, label:"Ask for a narrower proposal", custom_id:`keir_decision:explain:${id}`}]}];
+  if (review && !review.human && JSON.stringify(review.scope).length > 850) return [{type:1, components:[{type:2, style:2, label:"Ask for a narrower proposal", custom_id:`keir_decision:explain:${id}`}]}];
   if (options) {
     const rows = [];
     for (let i = 0; i < options.length; i += 3) rows.push({ type: 1, components: options.slice(i, i + 3).map(o => ({type: 2, style: 2, label: o.label, custom_id: `keir_decision:choose${o.id}:${id}`})) });
@@ -78,11 +78,12 @@ const clean = (t) => String(t || "").replace(/\*\*Decision:\*\*/gi, "Decision:")
 
 function render(question, { onBehalf, signoff, options, review } = {}) {
   if (options) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Choose one**\n${question.slice(0, 450)}\n\n${options.map(o => `${o.id}. **${o.label}**${o.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`).join("\n")}\n\nYour choice sets the direction. Any action requiring approval gets a separate proposal.`;
+  if (review?.human) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**${review.title}**\n${require("./approvalcopy").body(review)}\n\n**Approve:** ${review.approve}\n**Decline:** ${review.decline}\n**Ask a question:** send this back to Keir without approving it.`;
   if (review) {
     const scope = JSON.stringify(review.scope).replace(/\*\*Decision:\*\*/gi, "Decision:");
-    return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Approval required: ${review.title}**\n${question.slice(0, 300)}\n\n**Exact scope:** ${scope.length <= 850 ? scope : "Full scope exceeds this message. Review it in the Keir app before approving."}${review.digest ? `\nProposal: ${review.digest.slice(0, 16)}` : ""}\n\n**Approve this action:** authorize the operation above, subject to its existing checks.\n**Decline:** do not run this operation.\n**Ask a question:** return it to Keir without approval.`;
+    return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Approval required: ${review.title}**\n${question.slice(0, 300)}${scope.length > 850 ? "\n\nThis request is too large to review here. Review it in the Keir app before deciding." : ""}\n\n**Approve this action:** authorize the operation above, subject to its existing checks.\n**Decline:** do not run this operation.\n**Ask a question:** return it to Keir without approval.`;
   }
-  const head = signoff ? `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to sign off on Egg's behalf.\n\n" : ""}**Sign-off to ship**\n` : `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to decide on Egg's behalf.\n\n" : ""}**Decision needed**\n`;
+  const head = `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to decide on Egg's behalf.\n\n" : ""}**Decision needed**\n`;
   return `${head}${question}`;
 }
 
@@ -93,7 +94,7 @@ function firstSentence(text) { const m = /^[\s\S]{20,220}?[.!?](\s|$)/.exec(Stri
 // binds: { number, head } of an AHDGame PR the question asks the owner to
 // merge. An approval then records an exact merge approval at that head
 // (Keir 5.1.1), so later promotions carrying it chain instead of re-asking.
-function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null, decisionKey = null, options = null }) {
+function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null, decisionKey = null, options = null, explanation = null }) {
   const choices = options == null ? null : normalizeOptions(options);
   if (choices && (actionId || signoff || binds)) throw new Error("A choice cannot be bound to an action approval");
   if (signoff && !actionId && !binds) throw new Error("Sign-off requires a bound action or exact PR head");
@@ -107,10 +108,12 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
     return existing;
   }
   const id = crypto.randomBytes(6).toString("hex");
-  const text = clean(question);
+  let text = clean(question);
   if (choices && text.length > 450) throw new Error("Keep the choice question at most 450 characters; put each outcome in its option detail");
   const action = actionId && d.actions[actionId];
-  const review = action || binds ? actionReview(action, binds) : null;
+  const review = action || binds ? actionReview(action, binds, explanation) : null;
+  if (review?.human) text = require("./approvalcopy").body(review);
+  else if(review?.description) text = review.description;
   const decision = { id, jobId, actionId, ...(choices ? { options: choices, type: "choice" } : {}), ...(review ? { review, approvalBinding: binding(action, binds), type: "approval" } : {}), question: text, state: "pending", at: Date.now(), sent: {}, ...(decisionKey ? { decisionKey } : {}), ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
   d.decisions[id] = decision;
   // The durable decision is already exposed by the authenticated app API and
@@ -139,6 +142,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     if (require("./decisionpolicy").obsoleteReason(x, d)) throw new Error("This obsolete synthetic approval cannot authorize work; its existing hold is preserved");
     const job = d.jobs[x.jobId];
     const action = x.actionId && d.actions[x.actionId];
+    if (verdict === "approve" && (action?.kind === "github" || x.binds) && !x.review?.human) throw new Error("This request needs a plain-language explanation before it can be approved. Ask Keir for a fresh proposal.");
     const selected = x.options?.find(o => verdict === `choose:${o.id}`);
     if (x.options && !selected && verdict !== "explain") throw new Error("Choose a named choice; approval and rejection cannot answer this question");
     if (!x.options && !["approve", "reject", "explain"].includes(verdict)) throw new Error("Invalid decision verdict");
@@ -273,6 +277,14 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
         // can never stand in for a live one.
         if (action && action.state === "pending") action.state = "withdrawn";
         x.state = "withdrawn"; ledger.save(); await closeOut(x); continue;
+      }
+      if ((action?.kind === "github" || x.binds) && !x.review?.human) {
+        x.state="withdrawn";x.withdrawnReason="Needs a plain-language explanation before approval";
+        if(action?.state==="pending" && !Object.values(job.effects||{}).some(e=>e.state==="started")) action.state="withdrawn";
+        delete job.ownerDecisionPending;
+        (job.inbox ||= []).push({role:"system",authorId:"system",at:new Date(now()).toISOString(),content:"The old technical approval request was withdrawn without approving or rejecting its action. Use github with a plain-language explanation of the player change, impact and risk to prepare a fresh request. Preserve all existing holds and earlier answered decisions."});
+        if(["waiting","blocked"].includes(job.state) && !require("./ticketpause").pauseFor(d,job) && !job.appPaused && !d.paused) {job.state="queued";job.wakeAt=0;}
+        ledger.audit("approval_explanation_required",{decision:x.id,job:job.id});ledger.save();await closeOut(x);continue;
       }
       if (await check(x)) continue;
       if ((action && action.expiresAt && action.expiresAt < now()) || (!action && now() - x.at > PLAIN_EXPIRY_MS)) { expire(x, action); await closeOut(x); continue; }

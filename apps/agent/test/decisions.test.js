@@ -207,16 +207,16 @@ test("choice requests reject generic approval, invalid choices and bound action 
 
 test("approval cards identify the bound operation and explain both outcomes", () => {
   const t = setup();
-  Object.assign(t.data.actions.a1, {kind:"github", args:{action:"merge", repository:"AHDGame", number:42, head:"abcdef123456"}, digest:"exact-digest"});
+  Object.assign(t.data.actions.a1, {kind:"github", args:{action:"merge", repository:"AHDGame", number:42, head:"abcdef123456"}, explanation:{reviewedHead:"abcdef123456",change:"Fix a login button that sends people to the wrong place.",impact:"People can use the login button to reach their account.",risk:"The login journey still needs checking before the live release."}, digest:"exact-digest"});
   openDecision(t.ledger, t.config, {jobId:"j1", actionId:"a1", question:"Fix the login redirect."});
   const entry = Object.values(t.data.outbox)[0];
-  assert.match(entry.content, /AHDGame/); assert.match(entry.content, /42/); assert.match(entry.content, /abcdef123456/);
-  assert.match(entry.content, /Approve this action/); assert.match(entry.content, /Decline/);
+  assert.match(entry.content, /login button/); assert.doesNotMatch(entry.content, /abcdef123456|AHDGame|PR #/);
+  assert.match(entry.content, /Approve/); assert.match(entry.content, /Decline/);
 });
 
 test("a changed bound scope cannot consume an approval", async () => {
   const t = setup();
-  Object.assign(t.data.actions.a1, {kind:"github", args:{action:"merge", number:42, head:"aaa"}});
+  Object.assign(t.data.actions.a1, {kind:"github", args:{action:"merge", number:42, head:"aaa"},explanation:{reviewedHead:"aaa",change:"Fix a login button that sends people to the wrong place.",impact:"People can use the login button to reach their account.",risk:"The login journey still needs checking before the live release."}});
   const x = openDecision(t.ledger,t.config,{jobId:"j1",actionId:"a1",question:"Merge the login fix"});
   t.data.actions.a1.args.head="bbb";
   await assert.rejects(async () => t.decisions.applyAuthenticatedApp(x,"approve",OWNER), /scope changed/);
@@ -248,4 +248,12 @@ test("large scopes require full review and choices stay below Discord's receipt 
   const x=openDecision(t.ledger,t.config,{jobId:"j1",question:"q".repeat(450),options});
   const choice=Object.values(t.data.outbox).find(e=>e.decision===x.id);
   assert.ok(choice.content.length<=1750,choice.content.length);
+});
+
+test("unanswered technical requests retire without losing a pause or inventing an answer",async()=>{
+ const t=setup();Object.assign(t.data.actions.a1,{kind:"github",args:{action:"promote",to:"staging",head:"old"}});
+ const x=openDecision(t.ledger,t.config,{jobId:"j1",actionId:"a1",question:"Promote development to staging: src/lib/price.ts"});
+ t.data.ticketPauses={99:{ticket:99,by:OWNER}};Object.assign(t.data.jobs.j1,{ticket:99,state:"paused"});
+ t.send(OWNER,"m1");await assert.rejects(async()=>t.decisions.applyAuthenticatedApp(x,"approve",OWNER),/plain-language/);
+ await t.decisions.tick();assert.equal(x.state,"withdrawn");assert.equal(t.data.actions.a1.state,"withdrawn");assert.equal(t.data.jobs.j1.state,"paused");assert.equal(x.answeredBy,undefined);assert.equal(t.messages.m1.deleted,true);
 });

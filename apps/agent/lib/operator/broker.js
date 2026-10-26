@@ -803,12 +803,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   }
   // Keir 3.0 shadow: the EffectGate judges every request beside this broker
   // and records agreement; the broker's own decision is what stands.
-  function request(job, kind, args, reason) {
-    const result = requestLegacy(job, kind, args, reason);
+  function request(job, kind, args, reason, explanation = null) {
+    const result = requestLegacy(job, kind, args, reason, explanation);
     if (effectShadow && result?.action) effectShadow.compare(job, kind, args, d.actions[result.action]);
     return result;
   }
-  function requestLegacy(job, kind, args, reason) {
+  function requestLegacy(job, kind, args, reason, explanation = null) {
     if (musePolicy.origin(d, job).scoped) {
       let sealed;
       try { sealed = musePolicy.seal(d, config, job, kind, args); } catch (error) { return musePolicy.fail(ledger, job, "request_heal", error.message); }
@@ -830,7 +830,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         }
         return { action: action.id, ...(action.state === "pending" ? {decision: action.ownerMuseDecision} : {}), state: action.state, digest: action.ownerMuse.digest };
       }
-      action = { id: ledger.id(), jobId: job.id, kind, args: sealed.args, digest: hash({ kind, args: sealed.args }), ownerMuse: sealed.policy, state: "pending", at: now(), expiresAt: now() + 86400000 };
+      const human = kind === "github" ? require("./approvalcopy").explanation(explanation, args) : null;
+      action = { id: ledger.id(), jobId: job.id, kind, ...(human ? {explanation:human} : {}), args: sealed.args, digest: hash({ kind, args: sealed.args }), ownerMuse: sealed.policy, state: "pending", at: now(), expiresAt: now() + 86400000 };
       d.actions[action.id] = action;
       const decision = openDecision(ledger, config, { jobId: job.id, actionId: action.id, question });
       action.ownerMuseDecision = decision.id;
@@ -854,7 +855,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (!a) {
       // Consent remains reviewable for a day. Heal tokens are short-lived,
       // but execute_action always obtains a fresh one for the exact plan.
-      a = { id: ledger.id(), jobId: job.id, kind, args, digest, state: "pending", at: now(), expiresAt: now() + 86400000 };
+      const human = kind === "github" ? require("./approvalcopy").explanation(explanation, args) : null;
+      a = { id: ledger.id(), jobId: job.id, kind, ...(human ? {explanation:human} : {}), args, digest, state: "pending", at: now(), expiresAt: now() + 86400000 };
       d.actions[a.id] = a;
       // A task's opening message is not consent to every later write in it.
       // Prod heals that move money, change world config or touch many records
@@ -1702,6 +1704,41 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const files = (await api([`repos/${repo}/compare/${base}...${head}`]).catch(() => null))?.files;
         return Array.isArray(files) && files.length < 300 ? files.flatMap((f) => details ? [f] : [f.filename, ...(f.previous_filename ? [f.previous_filename] : [])]) : null;
       }
+      // Source evidence goes to the worker, never directly into an owner card.
+      async function requestGithubApproval(args, reason) {
+        const copy=require("./approvalcopy");
+        const existing=Object.values(d.actions).find(a=>a.jobId===job.id && a.kind==="github" && JSON.stringify(musePolicy.normalized(a.args))===JSON.stringify(musePolicy.normalized(args)) && a.expiresAt>now());
+        if(existing && ["approved","done","rejected"].includes(existing.state)) return request(job,"github",args,reason,existing.explanation);
+        const value=existing?.explanation || input.explanation;
+        if(!value || value.reviewedHead!==copy.headOf(args)) {
+          let evidence;
+          if(args.action==="promote") {
+            const from=args.from || ({staging:"development",main:"staging"})[args.to];
+            const range=await api([`repos/${repo}/compare/${args.to}...${args.head}`]).catch(()=>null);
+            const commits=(range?.commits||[]).filter(c=>(c.parents||[]).length<2);
+            const sources=[];
+            for(const c of commits.slice(0,40)) {
+              const prs=await api([`repos/${repo}/commits/${c.sha}/pulls`]).catch(()=>[]);
+              sources.push({sha:c.sha,title:c.commit?.message,changes:(Array.isArray(prs)?prs:[]).map(p=>({number:p.number,title:p.title,body:String(p.body||"").slice(0,5000)}))});
+            }
+            evidence={from,to:args.to,complete:Boolean(range)&&commits.length<=40,changes:sources};
+          } else {
+            const numbers=args.prs?.map(p=>p.number) || [args.number];
+            evidence={changes:await Promise.all(numbers.map(number=>api([`repos/${repo}/pulls/${number}`]).then(p=>({number,title:p.title,body:String(p.body||"").slice(0,6000)})).catch(()=>({number,unavailable:true}))))};
+          }
+          return {needsExplanation:true,approvalRequired:false,reviewedHead:copy.headOf(args),destination:args.to||"development",evidence,
+            instruction:"Nothing was sent for approval. Read these source changes, then call the same github action with explanation: reviewedHead exactly as returned, change (the problem and fix in ordinary language), impact (who notices and how), risk (verified risk or uncertainty). Cover every change in this version. No file paths, formulas, PR numbers, staging/development or developer jargon. Continue preparing now; do not wait for the owner or invent a recommendation."};
+        }
+        const human=copy.explanation(value,args);
+        if(existing?.state==="pending" && !existing.explanation) {
+          for(const old of Object.values(d.decisions||{})) if(old.actionId===existing.id && old.state==="pending") {old.state="withdrawn";old.withdrawnReason="Needs a plain-language explanation";}
+          existing.explanation=human;
+          const decision=openDecision(ledger,config,{jobId:job.id,actionId:existing.id,question:"Review this change",signoff:true});
+          if(existing.ownerMuse) existing.ownerMuseDecision=decision.id;
+          ledger.save();return {action:existing.id,decision:decision.id,state:"pending"};
+        }
+        return request(job,"github",args,reason,human);
+      }
       const scopedOwner = musePolicy.origin(d, job).scoped;
       let scopedConsent = null;
       if (scopedOwner && ["merge", "promote"].includes(input.action)) {
@@ -1714,8 +1751,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const base = pr ? pr.base?.sha : (await api([`repos/${repo}/commits/${to}`]))?.sha;
         if (pr && pr.base?.ref !== to) throw new Error("This PR targets an unexpected branch");
         const args = { repository: repo, action: input.action, head, base, to, ...(pr ? {number:Number(input.number)} : {from}) };
-        const asked = request(job, "github", args, "Exact owner GitHub operation");
-        if (asked.state !== "approved") return { approvalRequired: true, ...asked };
+        const asked = await requestGithubApproval(args, "Exact owner GitHub operation");
+        if (asked.needsExplanation) return asked;
+        if (asked.state !== "approved") return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
         scopedConsent = d.actions[asked.action];
         musePolicy.validate(d, config, job, scopedConsent, now(), true);
       }
@@ -1758,7 +1796,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
             // Refusing outright made ticket 1519 ask the owner twice and still
             // never merge.
             const head = input.action === "merge" ? (await api([`repos/${repo}/pulls/${Number(input.number)}`])).head.sha : (await api([`repos/${repo}/commits/${from}`])).sha;
-            const args = input.action === "merge" ? { action: "merge", number: Number(input.number), head } : { action: "promote", to, head };
+            const args = input.action === "merge" ? { repository:repo, action: "merge", number: Number(input.number), head, to:desktop?"main":"development" } : { repository:repo, action: "promote", to, head };
             // Share one question across tasks for this exact step and head.
             // A pending question is only "already asked" while its decision is
             // still live in the owner's DMs and its task is still open; a dead
@@ -1813,8 +1851,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
                 if (!f || f.some(isHugePath)) prs.push({ number: n, head: pr.head.sha });
               }
               if (prs.length > 1) {
-                const asked = request(job, "github", { action: "merge-set", ticket: job.ticket, prs, summary: `Ticket ${job.ticket}: ${prs.length} related economy PRs (${prs.map((p) => "#" + p.number).join(", ")}) change the turn engine or economy, including ${list}.` }, "economy feature merge");
-                return { approvalRequired: true, ...asked };
+                const asked = await requestGithubApproval({ repository:repo, action: "merge-set", ticket: job.ticket, prs, summary: `Ticket ${job.ticket}: ${prs.length} related economy PRs (${prs.map((p) => "#" + p.number).join(", ")}) change the turn engine or economy, including ${list}.` }, "economy feature merge");
+                return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
               }
             }
             // Keir 5.1 chain consent (owner, 2026-10-15): a promotion that carries
@@ -1866,8 +1904,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
                 const titles = (range?.commits || []).filter((c) => (c.parents || []).length < 2).map((c) => String(c.commit?.message || "").split("\n")[0].slice(0, 110));
                 if (titles.length) carries = ` This promotion carries ${titles.length} change${titles.length === 1 ? "" : "s"}: ${titles.slice(0, 8).join("; ")}${titles.length > 8 ? `; and ${titles.length - 8} more` : ""}.`;
               }
-              const asked = request(job, "github", { ...args, summary: shipSignoff ? `${shipWhat}${carries}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}` }, shipSignoff ? "ship to the live server" : "economy merge or promotion");
-              return { approvalRequired: true, ...asked };
+              const asked = await requestGithubApproval({ ...args, summary: shipSignoff ? `${shipWhat}${carries}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}` }, shipSignoff ? "ship to the live server" : "economy merge or promotion");
+              return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
             }
             ledger.audit(shipSignoff ? "ship_signoff" : "economy_consent", { action: consent.id, job: job.id, approvalMessage: consent.approvalMessage, ...args });
           }
@@ -2748,6 +2786,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ledger.save(); return { saved: true };
     }
     if (name === "finish") {
+      if (input.needsOwner && !job.ownerMuseBlocker && !d.channels?.[job.channelId]?.claimedBy && !appQuestions?.list(job.appThread||"main").some(q=>q.jobId===job.id&&q.state==="pending") && !Object.values(d.decisions||{}).some(x=>x.jobId===job.id&&x.state==="pending")) throw new Error("Prepare a readable owner request first: use github merge/promote with explanation for an action, or present_choices/raise_to_developers with named policy options. A technical finish summary is not an approval request.");
       if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a completion summary. Call tools through their interface and preserve the last verified conclusion.");
       if (job.ownerMuseBlocker) {
         job.state = "blocked"; job.summary = job.ownerMuseBlocker.message;
