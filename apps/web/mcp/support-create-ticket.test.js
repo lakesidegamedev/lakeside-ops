@@ -220,6 +220,10 @@ describe("web form tickets", () => {
       assert.equal(fields.find((f) => f.name === "Product").value, "Ask");
       const edit = h.calls.find((c) => c.method === "PATCH" && c.url.endsWith("/opening-card"));
       assert.equal(edit.body.components.length, 1, "claim and close only");
+      const names = edit.body.embeds[0].fields.map((f) => f.name);
+      for (const prompt of ["Intake", "Affected page / issue", "Platform and versions", "Details needed"]) assert.ok(!names.includes(prompt), `${prompt} is hidden without a reporter`);
+      assert.ok(names.includes("Receipt"));
+      assert.equal(edit.body.embeds[0].footer.text, "ahousedividedgame.com");
       const registered = h.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/discord-bot/tickets"));
       assert.equal(registered.body.discordUserId, "bot-id");
     } finally { h.restore(); }
