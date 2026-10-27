@@ -57,7 +57,8 @@ describe("cw telemetry", () => {
   it("rejects bad shapes, big bodies and floods", async () => {
     const store = openTelemetry(":memory:");
     assert.equal(validate(envelope({ week: 11 })), "week invalid");
-    assert.equal(validate(envelope({ schema: 2 })), "unsupported snapshot schema");
+    assert.equal(validate(envelope({ schema: 4 })), null);
+    assert.equal(validate(envelope({ schema: 100 })), "unsupported snapshot schema");
     assert.equal(validate({ ...envelope(), install_id: "not-a-uuid" }), "install_id must be a uuid");
     assert.equal(validate(envelope({ goods: [{ id: "Steel!" }] })), "good id invalid");
     assert.equal((await call(null, { store, raw: "{not json" })).status, 400);
