@@ -25,7 +25,8 @@ const { registerReopen } = require("./support-reopen");
 const { registerInvestigations } = require("./support-investigations");
 
 const { registerCreateSuggestion } = require("./support-create-suggestion");
-const { registerCreateTicket } = require("./support-create-ticket");
+const { registerCreateTicket, createSupportTicket, findGuildMemberByUsername } = require("./support-create-ticket");
+const { registerWebIntake } = require("./support-web-intake");
 const { registerMerge } = require("./support-merge");
 const { isSuggestionDone, requestSuggestionAnnouncement } = require("./support-suggestion-announce");
 
@@ -526,9 +527,14 @@ async function main() {
     return server;
   }
 
-  createServer({
+  const { app } = createServer({
     name: "support-mcp", version: "1.0.0", port: PORT, bind: process.env.MCP_BIND || "127.0.0.1",
     authorize: req => tokens.validate(db, req.headers.authorization), buildServer,
+  });
+  // Public ticket form on lakesidegames.net, proxied here by Caddy.
+  registerWebIntake(app, {
+    createTicket: (options) => createSupportTicket({ ...options, ticketPublicUrl }),
+    findMember: findGuildMemberByUsername,
   });
 }
 function jsonResult(o) { return { content: [{ type: "text", text: JSON.stringify(o, null, 2) }] }; }
