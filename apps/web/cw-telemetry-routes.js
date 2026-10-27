@@ -8,7 +8,7 @@
 // ignores a repeat of the same install, seed and week. Nothing is ever read back through it.
 
 const ROUTE = "/api/cw/telemetry";
-const MAX_BODY = 32 * 1024;
+const MAX_BODY = 128 * 1024;
 const RATE_WINDOW_MS = 3_600_000;
 const RATE_LIMIT = 120;
 
@@ -24,7 +24,8 @@ function validate(envelope) {
   }
   const s = envelope.snapshot;
   if (!s || typeof s !== "object") return "snapshot required";
-  if (s.schema !== 1) return "unsupported snapshot schema";
+  // Newer games add fields; every version keeps the schema 1 core checked below.
+  if (!isInt(s.schema, 1, 99)) return "unsupported snapshot schema";
   if (typeof s.engine_version !== "string" || s.engine_version.length > 24) return "engine_version invalid";
   if (!/^[0-9a-f]{64}$/.test(String(s.dataset_hash || ""))) return "dataset_hash invalid";
   if (!/^[a-z_]{1,16}$/.test(String(s.scenario || ""))) return "scenario invalid";
