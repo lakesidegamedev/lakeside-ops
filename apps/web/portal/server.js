@@ -53,9 +53,9 @@ function createPortal({ origin, passwordHash, stateDir, runtime, email = "owner@
       }
       const token = tokenOf(req);
       const authenticated = store.has(token);
-      if (req.method === "GET" && ["/", "/keir/app", "/portal.js", "/portal.css"].includes(url.pathname)) {
-        const name = ["/", "/keir/app"].includes(url.pathname) ? "index.html" : url.pathname.slice(1);
-        res.setHeader("Content-Type", name.endsWith(".html") ? "text/html; charset=utf-8" : name.endsWith(".js") ? "text/javascript" : "text/css");
+      if (req.method === "GET" && ["/", "/keir/app", "/portal.js", "/portal.css", "/keir/keir-mark.svg", "/keir/keir-apple-touch-icon.png"].includes(url.pathname)) {
+        const name = ["/", "/keir/app"].includes(url.pathname) ? "index.html" : url.pathname.split("/").pop();
+        res.setHeader("Content-Type", name.endsWith(".html") ? "text/html; charset=utf-8" : name.endsWith(".js") ? "text/javascript" : name.endsWith(".svg") ? "image/svg+xml" : name.endsWith(".png") ? "image/png" : "text/css");
         return res.end(fs.readFileSync(path.join(__dirname, "public", name)));
       }
       if (!authenticated) return json(401, { error: "Sign in required" });

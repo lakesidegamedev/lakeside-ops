@@ -455,7 +455,7 @@ function renderCommandPalette(role, base = "") {
 }
 
 function renderShell(opts) {
-  const { title = "Ops", active = "/", role = "admin", body = "", extraCss = "", base = "" } = opts || {};
+  const { title = "Ops", active = "/", role = "admin", body = "", extraCss = "", base = "", product = "ops" } = opts || {};
   const b = (base || "").replace(/\/+$/, "");
   const asset = (h) => (b ? b + h : h);
   const brand = brandMeta();
@@ -464,7 +464,13 @@ function renderShell(opts) {
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>${escHtml(title)} · ${escHtml(brand.title)}</title>
 ${THEME_HEAD}
-<link rel="icon" href="${asset(brand.logoUrl)}" type="image/svg+xml">
+${product === "keir"
+  ? `<link rel="icon" href="${asset("/keir-mark.svg")}" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="32x32" href="${asset("/keir-favicon-32.png")}">
+<link rel="apple-touch-icon" href="${asset("/keir-apple-touch-icon.png")}">`
+  : `<link rel="icon" href="${asset(brand.logoUrl)}" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="32x32" href="${asset("/favicon-32.png")}">
+<link rel="apple-touch-icon" href="${asset("/apple-touch-icon.png")}">`}
 ${FONT_LINKS}
 <style>${BASE_CSS}${NAV_CSS}${CMDK_CSS}${extraCss}</style>
 </head><body>

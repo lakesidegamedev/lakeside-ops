@@ -72,7 +72,7 @@ async function handleKeirInboxRoute(req, res, pathname, { resolveSession, addSec
     const { extraCss, body } = makeKeirInboxBody({ configured: Boolean(token) });
     addSecurityHeaders(res);
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(req.method === "HEAD" ? "" : renderShell({ title: "Keir inbox", active: "/inbox", role: session.role, extraCss, body }));
+    res.end(req.method === "HEAD" ? "" : renderShell({ title: "Keir inbox", active: "/inbox", role: session.role, extraCss, body, product: "keir" }));
     return true;
   }
 
