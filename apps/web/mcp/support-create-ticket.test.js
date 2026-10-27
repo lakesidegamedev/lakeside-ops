@@ -2,7 +2,7 @@
 
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
-const { registerCreateTicket, sendWithRetry } = require("./support-create-ticket");
+const { registerCreateTicket, sendWithRetry, createSupportTicket, findGuildMemberByUsername } = require("./support-create-ticket");
 
 const chain = new Proxy({}, { get: () => () => chain });
 const z = { string: () => chain, enum: () => chain, array: () => chain };
@@ -197,5 +197,51 @@ describe("incident tickets", () => {
       const out = await h.run({ discord_user_id: undefined, category: "bug" });
       assert.ok(out.isError);
     } finally { h.restore(); }
+  });
+});
+
+describe("web form tickets", () => {
+  it("opens as the bot with the routing fields, a web channel name and no intake controls", async () => {
+    const h = createHarness();
+    try {
+      const out = await createSupportTicket({
+        category: "other", title: "TEST web", description: "From the site", openedVia: "Opened from lakesidegames.net",
+        channelLabel: "web", extraFields: [{ name: "Product", value: "Ask", inline: true }],
+        ticketPublicUrl: (n) => `https://ops.example/t/${n}`,
+      });
+      assert.equal(out.ticketNumber, 1439);
+      const created = h.calls.find((c) => c.method === "POST" && c.url.endsWith("/guilds/1465445442987888743/channels"));
+      assert.equal(created.body.name, "ticket-other-web-1439");
+      assert.equal(created.body.permission_overwrites.filter((o) => o.id === "bot-id").length, 1, "no duplicate bot overwrite");
+      const card = h.calls.find((c) => c.method === "POST" && c.body.embeds);
+      const fields = card.body.embeds[0].fields;
+      assert.equal(fields.find((f) => f.name === "Opened by").value, "Opened from lakesidegames.net");
+      assert.equal(fields.find((f) => f.name === "Reporter").value, "No Discord account linked");
+      assert.equal(fields.find((f) => f.name === "Product").value, "Ask");
+      const edit = h.calls.find((c) => c.method === "PATCH" && c.url.endsWith("/opening-card"));
+      assert.equal(edit.body.components.length, 1, "claim and close only");
+      const registered = h.calls.find((c) => c.method === "POST" && c.url.endsWith("/api/discord-bot/tickets"));
+      assert.equal(registered.body.discordUserId, "bot-id");
+    } finally { h.restore(); }
+  });
+
+  it("grants a matched member channel access like a normal reporter", async () => {
+    const h = createHarness();
+    try {
+      await createSupportTicket({ discordUserId: "reporter-id", category: "moderation", title: "Report", description: "x", openedVia: "Opened from lakesidegames.net" });
+      const created = h.calls.find((c) => c.method === "POST" && c.url.endsWith("/guilds/1465445442987888743/channels"));
+      assert.ok(created.body.permission_overwrites.some((o) => o.id === "reporter-id" && o.type === 1));
+      assert.match(created.body.name, /^ticket-moderation-reporter-1439$/);
+    } finally { h.restore(); }
+  });
+
+  it("matches Discord members by exact username only", async () => {
+    const send = async () => [
+      { user: { id: "1", username: "player_one", bot: false } },
+      { user: { id: "2", username: "player", bot: false } },
+    ];
+    assert.equal((await findGuildMemberByUsername("@Player", send)).user.id, "2");
+    assert.equal(await findGuildMemberByUsername("playe", send), null);
+    assert.equal(await findGuildMemberByUsername("bad name!", send), null);
   });
 });
