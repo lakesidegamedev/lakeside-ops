@@ -26,7 +26,7 @@ const { registerInvestigations } = require("./support-investigations");
 
 const { registerCreateSuggestion } = require("./support-create-suggestion");
 const { registerCreateTicket, createSupportTicket, findGuildMemberByUsername } = require("./support-create-ticket");
-const { registerWebIntake } = require("./support-web-intake");
+const { registerWebIntake, createSessionVerifier, createStandingCheck } = require("./support-web-intake");
 const { registerMerge } = require("./support-merge");
 const { isSuggestionDone, requestSuggestionAnnouncement } = require("./support-suggestion-announce");
 
@@ -535,6 +535,8 @@ async function main() {
   registerWebIntake(app, {
     createTicket: (options) => createSupportTicket({ ...options, ticketPublicUrl }),
     findMember: findGuildMemberByUsername,
+    verifySession: createSessionVerifier(),
+    checkStanding: createStandingCheck(db),
   });
 }
 function jsonResult(o) { return { content: [{ type: "text", text: JSON.stringify(o, null, 2) }] }; }
