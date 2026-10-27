@@ -1652,6 +1652,13 @@ test("Keir 2.0: the ticket record is shared across tasks and its facts count as 
   assert.equal(rec.facts.length, 1); assert.equal(rec.ruledOut[0].text, "Real estate shortage");
 });
 
+test("KBX2: ticket_record adds several entries in one call and bounds the batch", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  const rec = await f.broker.tool(j, "ticket_record", { op: "add", entries: [{ kind: "fact", text: "Iron holds the plant at 85%", source: "trace_sector" }, { kind: "ruled_out", text: "Real estate shortage" }] });
+  assert.equal(rec.facts.length, 1); assert.equal(rec.ruledOut.length, 1);
+  await assert.rejects(f.broker.tool(j, "ticket_record", { op: "add", entries: [] }), /1 to 8/);
+});
+
 test("Keir 2.1: an automatic ticket task reads player history only for the reporter", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123 });
   f.mcp.call = async (server, tool, args) => tool === "support_get" ? { reporter: { profileUrl: "https://www.ahousedividedgame.com/character/12", characterName: "Ben Harrison" } } : (f.calls.push([server, tool, args]), { ok: true });

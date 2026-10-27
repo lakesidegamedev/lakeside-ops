@@ -1359,6 +1359,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.op === "read") return knowledge.readTicketRecord(ledger, n, job);
       // Legacy app briefs used record notes as delivery. Keep that path honest:
       // accept the same original owner message in the support inbox first.
+      // KBX2: several entries in one call (each a full model round before).
+      if (input.op === "add" && Array.isArray(input.entries)) {
+        if (!input.entries.length || input.entries.length > 8) throw new Error("entries takes 1 to 8 items of {kind, text, source}");
+        for (const e of input.entries) knowledge.updateRecord(ledger, n, job, { op: "add", kind: e?.kind, text: e?.text, source: e?.source });
+        return knowledge.readTicketRecord(ledger, n, job);
+      }
       const receipt = isAppJob(job) && job.role === "owner" ? await supportDirectives.send(job, {ticket:n, context:input.text}, signal) : null;
       knowledge.updateRecord(ledger, n, job, input);
       const record = knowledge.readTicketRecord(ledger, n, job);
