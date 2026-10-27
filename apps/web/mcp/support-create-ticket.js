@@ -233,12 +233,14 @@ async function createSupportTicket({
   let platformLabel = normalizePlatformLabel(platform);
   let gameVersion = null;
   let clientVersion = null;
-  fields.push(
+  // Page and platform prompts are for a reporter in the channel. Without one
+  // (incident, web form with no matched member) nobody could answer them.
+  if (intakeControls) fields.push(
     { name: "Intake", value: "Please confirm the page and platform details", inline: false },
     { name: "Affected page / issue", value: candidatePageUrl ? `[${candidatePageUrl}](${candidatePageUrl}) · please confirm` : "No page detected · confirm or replace the suggested page", inline: false },
     { name: "Platform and versions", value: [platformLabel, "Game: version unknown", "Client: version unknown", "Status: please confirm"].join("\n"), inline: false },
-    { name: "Receipt", value: "Receipt link is being prepared", inline: false },
   );
+  fields.push({ name: "Receipt", value: "Receipt link is being prepared", inline: false });
   const embed = await discord(`/channels/${channel.id}/messages`, {
     method: "POST",
     body: JSON.stringify({
@@ -288,13 +290,13 @@ async function createSupportTicket({
   }
   const questions = (registered.contextQuestions || []).filter((q) => typeof q === "string" && q.trim()).slice(0, 4);
   const updatedFields = fields.filter((field) => !["Intake", "Affected page / issue", "Platform and versions", "Receipt", "Details needed"].includes(field.name));
-  updatedFields.push(
+  if (intakeControls) updatedFields.push(
     { name: "Intake", value: "Please confirm the page and platform details", inline: false },
     { name: "Affected page / issue", value: candidatePageUrl ? `[${candidatePageUrl}](${candidatePageUrl}) · please confirm` : "No page detected · confirm or replace the suggested page", inline: false },
     { name: "Platform and versions", value: [platformLabel, `Game: ${gameVersion || "version unknown"}`, `Client: ${clientVersion || "version unknown"}`, "Status: please confirm"].join("\n"), inline: false },
-    { name: "Receipt", value: receiptUrl ? `[View ticket receipt](${receiptUrl})` : "Receipt link unavailable", inline: false },
   );
-  if (questions.length) updatedFields.push({ name: "Details needed", value: questions.join("\n").slice(0, 1000), inline: false });
+  updatedFields.push({ name: "Receipt", value: receiptUrl ? `[View ticket receipt](${receiptUrl})` : "Receipt link unavailable", inline: false });
+  if (intakeControls && questions.length) updatedFields.push({ name: "Details needed", value: questions.join("\n").slice(0, 1000), inline: false });
   const intakePersistResponse = await fetch(`${GAME_API}/api/discord-bot/tickets`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", "X-Bot-Token": botApiKey },
@@ -309,7 +311,7 @@ async function createSupportTicket({
   });
   const intakePersisted = intakePersistResponse.ok;
   const intakeCardDelivered = await editMessageWithRetry(`/channels/${channel.id}/messages/${embed.id}`, {
-      embeds: [{ ...embed.embeds[0], fields: updatedFields, footer: { text: "✅ Correct page / issue · ❌ Wrong page / issue · ahousedividedgame.com" } }],
+      embeds: [{ ...embed.embeds[0], fields: updatedFields, footer: { text: intakeControls ? "✅ Correct page / issue · ❌ Wrong page / issue · ahousedividedgame.com" : "ahousedividedgame.com" } }],
       components: [{ type: 1, components: [
         { type: 2, custom_id: "ticket_claim", style: 2, label: "Claim", emoji: { name: "🙋" } },
         { type: 2, custom_id: "ticket_close", style: 4, label: "Close Ticket", emoji: { name: "🔒" } },
