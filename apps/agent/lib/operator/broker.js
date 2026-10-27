@@ -1463,7 +1463,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (job.role === "player" && !["support", "gamestate"].includes(input.server)) throw new Error("player conversation reads are limited to its ticket and public game state");
       if (isQuick(job) && job.role === "owner" && !QUICK_OWNER_READS[input.server]) throw new Error("server is outside quick read scope");
       const list = await mcp.list(input.server);
-      return list.filter((t) => (!musePolicy.origin(d, job).scoped || musePolicy.MCP_READS[input.server]?.includes(t.name)) && (job.role !== "player" || input.server !== "support" || t.name === "support_get") && ((job.role === "owner" || developerTask(job)) ? (!isQuick(job) || QUICK_OWNER_READS[input.server].includes(t.name)) : readScope(job)[input.server].includes(t.name))).map((t) => ({ name: t.name, description: t.description, schema: t.inputSchema }));
+      const listed = list.filter((t) => (!musePolicy.origin(d, job).scoped || musePolicy.MCP_READS[input.server]?.includes(t.name)) && (job.role !== "player" || input.server !== "support" || t.name === "support_get") && ((job.role === "owner" || developerTask(job)) ? (!isQuick(job) || QUICK_OWNER_READS[input.server].includes(t.name)) : readScope(job)[input.server].includes(t.name))).map((t) => ({ name: t.name, description: t.description, schema: t.inputSchema }));
+      // KBX2: a second listing of the same server in one activation costs a full
+      // round and repeats a large schema dump; return the names and point back.
+      job.listedTools ||= {};
+      if (job.listedTools[input.server]) return { alreadyListed: true, note: "You already have this server's tools from this activation (context.orientation.tools or your earlier read_tools result). Call read_tool directly.", names: listed.map((t) => t.name) };
+      job.listedTools[input.server] = true;
+      return listed;
     }
     if (name === "read_tool") {
       const args = { ...(input.args || {}) };
@@ -2609,7 +2615,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       sandbox.attach(job.id, await baseFor(input.repository, repository, sha));
       job.repository = input.repository; job.repositoryRef = { branch, commit: sha.slice(0, 10), committedAt: committed }; ledger.save();
       const deps = sandbox.deps?.(input.repository);
-      return { path: "/workspace/repo", ...job.repositoryRef, dependencies: deps ? "node_modules is mounted read-only; run focused checks such as `npx vitest run <file>` or `npx tsc --noEmit -p <tsconfig>`" : "dependencies unavailable for this repository",
+      // KBX2: a compact map of the tree so the model does not spend rounds on ls/find.
+      const files = String(await exec("/usr/bin/git", ["-C", repository, "ls-tree", "-r", "--name-only", sha]).catch(() => "")).split("\n").filter(Boolean);
+      const map = require("./repomap").repoMap(files);
+      return { path: "/workspace/repo", ...job.repositoryRef, ...(map ? { map } : {}), dependencies: deps ? "node_modules is mounted read-only (no need to inspect it). Focused test: `node_modules/.bin/vitest run <file> --configLoader runner`; types: `npx tsc --noEmit -p <tsconfig>`; format: `node_modules/.bin/prettier --write <files>`. The snapshot is a fresh clone of the branch: git log, remotes and branches need no checking." : "dependencies unavailable for this repository",
         instruction: "This is the live remote branch, newer than the code index. Treat it as the source of truth for what is deployed (main) or about to deploy (development). Edit here; the host is untouched." };
     }
     if (name === "request_heal") {

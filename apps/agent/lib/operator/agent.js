@@ -306,14 +306,20 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     context.capabilityQuestion = chatContext.capabilityGuidance(job, quick);
     job.evidence = require("./knowledge").numbersIn([job.source, ...requestInbox].map((m) => m?.content || "").join("\n")).map((n) => n.value);
     if (job.ticket) job.evidence.push(...require("./knowledge").numbersIn(require("./knowledge").ticketRecord(ledger, job.ticket).facts.filter((f) => !f.closedAt).map((f) => f.text).join("\n")).map((n) => n.value));
-    job.evidenceText = ""; job.reviewRefusals = 0;
+    job.evidenceText = ""; job.reviewRefusals = 0; job.listedTools = {};
     context.ticketRecord = job.ticket ? require("./knowledge").readTicketRecord(ledger, job.ticket, job) : undefined;
     context.playbook = require("./playbooks").contextFor(job, ledger.data);
+    // KBX2 orientation: the broker runs the discovery reads a support activation
+    // otherwise spends its first rounds on (KEIR_ORIENTATION=0 turns it off).
+    if (config.orientation !== false && job.kind === "ticket" && job.ticket && job.role !== "player" && !quick && !compact && !job.codingParent) {
+      context.orientation = await require("./orientation").orient((name, input) => broker.tool(job, name, input, signal));
+    }
     // Keir 3.1: every open ticket keeps one progress card. Show the current
     // card, or say plainly that it is missing so this activation creates it.
     if (job.kind === "ticket" && job.ticket && job.role !== "player" && !require("./advicerouting").requiresRedirect(job, ledger.data)) {
       const card = ledger.data.statusCards?.[job.ticket];
       context.statusCard = card ? { status: card.status, items: card.items, updatedMinutesAgo: Math.round((Date.now() - (card.at || 0)) / 60000) }
+        : job.ownerDecisionPending ? "none yet: card writes wait while the owner decision is pending; do not call status_card until it is answered"
         : "missing: create this ticket's progress card with status_card in this activation, from what is verified now";
     }
     // Keir 2.3: private notes about this ticket's reporter (never for player tasks).

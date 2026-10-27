@@ -40,7 +40,11 @@ const KIND = { "✅ Approved": "approve", "❌ Rejected": "reject", "💬 Explai
 function normalizeOptions(options) {
   if (!Array.isArray(options) || options.length < 2 || options.length > 6) throw new Error("A choice needs two to six named options");
   const seen = new Set();
-  const normalized = options.map((o, i) => {
+  // An over-long detail is trimmed rather than refused: the label carries the
+  // choice, and a refusal cost a full model round (KBX2 replay, 2026-10-27).
+  const trim = (t) => (typeof t === "string" && t.length > 180 ? t.slice(0, 177).replace(/\s+\S*$/, "") + "..." : t);
+  const normalized = options.map((o0, i) => {
+    const o = o0 && typeof o0 === "object" ? { ...o0, detail: trim(o0.detail) } : o0;
     if (!o || typeof o.label !== "string" || !o.label.trim() || o.label.length > 70 || o.detail && (typeof o.detail !== "string" || o.detail.length > 180)) throw new Error("Choice labels must be 1 to 70 characters; details at most 180");
     const label = clean(o.label).replace(/\n/g, " ");
     if (seen.has(label.toLowerCase())) throw new Error("Choice labels must be distinct");

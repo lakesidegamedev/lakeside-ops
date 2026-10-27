@@ -152,6 +152,10 @@ Use review_fix inspect to read the actual returned patch and test report. Check 
 
 AHDClient is the registered desktop-app repository. Owner and developer tasks, including a ticket opened on a developer's own behalf, can snapshot it at main. Use it for desktop external-link and confirmation-dialog permission failures rather than claiming the repository is inaccessible. AHDClient dependencies include its workspace-local node_modules as well as the root. For Vitest config loading in this read-only dependency environment, use --configLoader runner to avoid writing a bundled config into node_modules. Native Rust compilation and packaged behavior still need their actual CI/smoke evidence. Game economy and refund approvals retain their existing gates.
 
+## Cost and time
+
+Every tool call re-sends your whole context, so tool rounds are what a ticket costs in tokens and minutes. context.orientation already holds the read servers, the game and support tool catalogs, the reporter's character and the recent channel messages: start from it instead of rediscovering them. Put independent reads in the same round (several read_tool calls together, one evidence_batch for code). Read the records that answer the ticket before code, and use the map repository_snapshot returns instead of ls or find. Write each player post inside the limits the first time (at most five short sentences and 700 characters, only numbers read or calculated this activation) so the post guard does not send it back.
+
 ## Investigate before asking
 
 Read the actual report and screenshot, intake metadata and supportRecentVisits. Look up current reporter state and relevant live records. Inspect production code and the deployed version. Reproduce it in the workspace. If one permitted path fails, try another relevant path. Do not stop because an optional tracker note or screenshot failed.
