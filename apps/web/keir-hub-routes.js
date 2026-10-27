@@ -71,7 +71,7 @@ async function handleKeirHubRoute(req, res, pathname, { resolveSession, addSecur
   }
   const { extraCss, body } = makeKeirHubBody();
   res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
-  res.end(req.method === "HEAD" ? "" : renderShell({ title: "Keir hub", active: "/keir", role: session.role, extraCss, body }));
+  res.end(req.method === "HEAD" ? "" : renderShell({ title: "Keir hub", active: "/keir", role: session.role, extraCss, body, product: "keir" }));
   return true;
 }
 

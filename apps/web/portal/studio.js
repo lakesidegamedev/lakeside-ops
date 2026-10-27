@@ -8,7 +8,7 @@ const http = require("node:http");
 async function handleStudioPortal(req, res, pathname, { resolveSession, authMode, loginOrigins = [], upstream = "http://127.0.0.1:9768" }) {
   const json = (status, value) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end(JSON.stringify(value)); };
   if (req.method === "GET" && pathname === "/api/portal/config") { json(200, { mode: "lakeside", auth: authMode, loginOrigins }); return true; }
-  const assets = { "/keir/app": ["index.html", "text/html; charset=utf-8"], "/portal.js": ["portal.js", "text/javascript"], "/portal.css": ["portal.css", "text/css"] };
+  const assets = { "/keir/app": ["index.html", "text/html; charset=utf-8"], "/portal.js": ["portal.js", "text/javascript"], "/portal.css": ["portal.css", "text/css"], "/keir/keir-mark.svg": ["keir-mark.svg", "image/svg+xml"], "/keir/keir-apple-touch-icon.png": ["keir-apple-touch-icon.png", "image/png"] };
   if (req.method === "GET" && assets[pathname]) {
     res.writeHead(200, { "Content-Type": assets[pathname][1], "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'" });
     res.end(fs.readFileSync(path.join(__dirname, "public", assets[pathname][0]))); return true;

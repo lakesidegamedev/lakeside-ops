@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="42 42 236 236" role="img" aria-labelledby="keir-title">
+  <title id="keir-title">Lakeside Keir</title>
+  <!-- A lighthouse sweeping its beam. -->
+  <defs>
+    <linearGradient id="keir-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10183A"/><stop offset="0.56" stop-color="#2B336E"/><stop offset="1" stop-color="#5C5FA8"/>
+    </linearGradient>
+    <clipPath id="keir-disc"><circle cx="160" cy="160" r="116"/></clipPath>
+    <clipPath id="keir-top"><rect x="40" y="40" width="240" height="111"/></clipPath>
+  </defs>
+  <g clip-path="url(#keir-disc)">
+    <path d="M44 151 A116 116 0 0 1 276 151 Z" fill="url(#keir-sky)"/>
+    <g clip-path="url(#keir-top)">
+      <g transform="translate(203 151) scale(1.25) translate(-203 -151)">
+<path d="M203 151 L198 151 L193 151 L196 104 L210 104 L213 151 Z" fill="#FFF0C8"/><rect x="194" y="92" width="18" height="12" rx="3" fill="#FFDA83"/><path d="M196 92 L203 82 L210 92 Z" fill="#FFF0C8"/><path d="M203 98 L90 66 L90 124 Z" fill="#FFDA83" opacity=".28"/><path d="M203 98 L300 72 L300 118 Z" fill="#FFDA83" opacity=".18"/><rect x="194" y="116" width="18" height="6" fill="#2B336E"/><rect x="193" y="134" width="20" height="6" fill="#2B336E"/>
+      </g>
+    </g>
+    <rect x="31" y="163" width="193" height="15" rx="7.5" fill="#58C7CE"/>
+    <rect x="235" y="163" width="49" height="15" rx="7.5" fill="#58C7CE"/>
+    <rect x="73" y="185" width="218" height="11" rx="5.5" fill="#48B3BF"/>
+    <rect x="38" y="203" width="135" height="17" rx="8.5" fill="#399FAC"/>
+    <rect x="184" y="203" width="88" height="17" rx="8.5" fill="#399FAC"/>
+    <rect x="83" y="229" width="184" height="12" rx="6" fill="#318A9A"/>
+    <rect x="53" y="248" width="104" height="10" rx="5" fill="#277987"/>
+    <rect x="169" y="248" width="80" height="10" rx="5" fill="#277987"/>
+    <rect x="117" y="265" width="88" height="11" rx="5.5" fill="#236A77"/>
+  </g>
+</svg>

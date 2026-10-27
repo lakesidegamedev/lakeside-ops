@@ -2034,6 +2034,8 @@ const LANDING_PAGE = `<!DOCTYPE html>
 <title>${_loginBrand.title}</title>
 ${THEME_HEAD}
 <link rel="icon" type="image/svg+xml" href="${_loginBrand.logoUrl}">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 ${FONT_LINKS}
 <style>${BASE_CSS}
 .container{max-width:980px;position:relative}
@@ -4066,13 +4068,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /lakeside-mark.svg — the Lakeside Games studio mark (shell branding)
-  if ((req.method === "GET" || req.method === "HEAD") && pathname === "/lakeside-mark.svg") {
+  // Brand marks and icons (public): the studio mark, the Ops and Keir product
+  // marks, and their favicon and home-screen renders.
+  const BRAND_ASSETS = {
+    "/lakeside-mark.svg": ["lakeside-mark.svg", "image/svg+xml"],
+    "/ops-mark.svg": ["ops-mark.svg", "image/svg+xml"],
+    "/keir-mark.svg": ["keir-mark.svg", "image/svg+xml"],
+    "/favicon.ico": ["favicon.ico", "image/x-icon"],
+    "/favicon-32.png": ["favicon-32.png", "image/png"],
+    "/apple-touch-icon.png": ["apple-touch-icon.png", "image/png"],
+    "/keir-favicon-32.png": ["keir-favicon-32.png", "image/png"],
+    "/keir-apple-touch-icon.png": ["keir-apple-touch-icon.png", "image/png"],
+  };
+  if ((req.method === "GET" || req.method === "HEAD") && BRAND_ASSETS[pathname]) {
+    const [file, type] = BRAND_ASSETS[pathname];
     try {
-      const p = path.join(__dirname, "public", "lakeside-mark.svg");
+      const p = path.join(__dirname, "public", file);
       const stat = fs.statSync(p);
       addSecurityHeaders(res);
-      res.writeHead(200, { "Content-Type": "image/svg+xml", "Content-Length": stat.size, "Cache-Control": "public, max-age=86400" });
+      res.writeHead(200, { "Content-Type": type, "Content-Length": stat.size, "Cache-Control": "public, max-age=86400" });
       if (req.method === "HEAD") { res.end(); return; }
       fs.createReadStream(p).pipe(res);
     } catch {
