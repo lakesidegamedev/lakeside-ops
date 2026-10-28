@@ -1257,7 +1257,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         await mcp.call("ops-knowledge", "work_report", { id: Number(input.appendTo), event: "progress", summary: `${n ? `Ticket ${n}: ` : ""}${title ? `${title}. ` : ""}${detail}`.slice(0, 3900), actor: "keir" }, true, signal);
         record(Number(input.appendTo));
         const asked = input.kind === "decision" ? askOwner(Number(input.appendTo), title || `Item ${input.appendTo}`, String(input.question || detail).slice(0, 500)) : null;
-        return { raised: true, id: Number(input.appendTo), appended: true, ...(asked ? { decision: asked } : {}), instruction: "Added to the existing item for the developers. You can now tell the player it is with them." };
+        return { raised: true, id: Number(input.appendTo), appended: true, ...(asked ? { decision: asked } : {}), instruction: asked ? "Added to the existing item, and the owner has the decision DM. One public notice is allowed; status_card and other support writes wait until the owner answers." : "Added to the existing item for the developers. You can now tell the player it is with them." };
       }
       // Owner, 2026-10-21: MCP capability requests live on their own board.
       // kind "capability" is kanban-only on product lakeside-mcp: no public
@@ -1298,7 +1298,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (selfOwned && r?.id) { const rec = job.raisedToDevelopers.find((x) => x.id === r.id); if (rec) { rec.selfOwned = true; ledger.save(); } }
       if (input.kind === "decision") {
         const asked = askOwner(r?.id || null, title, String(input.question).trim());
-        return { raised: true, id: r?.id || null, decision: asked, instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome. Keep the ticket open: the answer wakes this task, then act on it." };
+        return { raised: true, id: r?.id || null, decision: asked, instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome (one public notice is allowed). Until the owner answers, status_card and other support writes are refused, so do not call them; finish waiting. Keep the ticket open: the answer wakes this task, then act on it." };
       }
       return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), instruction: (input.kind || "question") === "question" ? "Filed on your own board as your work item (lane now, assigned to you). Nobody else will pick it up: keep working it yourself now. Read the game records you need with the heal-ops read tools (heal_query, heal_count), keep the player updated, and add findings with raise_to_developers appendTo. The card closes with your task. Do not wait on it and do not claim filing fixed the problem." : "Filed for the developers. Filing is not a fix. Verify the reported problem is actually resolved before closing; optional feature proposals may remain on the developer queue." };
       } finally { releaseIssue(); }
