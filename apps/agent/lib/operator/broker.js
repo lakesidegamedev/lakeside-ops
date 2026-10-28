@@ -81,11 +81,36 @@ function redactRaw(value, depth = 0) {
   if (Array.isArray(value)) return value.map((x) => redactRaw(x, depth + 1));
   return Object.fromEntries(Object.entries(value).filter(([k]) => !RAW_FIELD_CLOSED.test(k)).map(([k, x]) => [k, redactRaw(x, depth + 1)]));
 }
+const oidOf = (v) => v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" ? v.$oid : null;
+// Coerce read arguments to their JSON schema: numbers to strings and numeric
+// strings to numbers where the type says so, numbers clamped to min/max.
+// Returns the coerced copy, or null when nothing changed.
+function coerceArgs(args, schema) {
+  const props = schema?.properties || {}, out = { ...args };
+  let changed = false;
+  for (const [k, v] of Object.entries(args || {})) {
+    const p = props[k]; if (!p) continue;
+    const types = [].concat(p.type || []);
+    let next = v;
+    if (types.includes("string") && !types.includes("number") && !types.includes("integer") && typeof v === "number") next = String(v);
+    else if ((types.includes("number") || types.includes("integer")) && !types.includes("string") && typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) next = Number(v);
+    if (typeof next === "number") {
+      if (types.includes("integer") && !types.includes("number")) next = Math.round(next);
+      if (typeof p.minimum === "number" && next < p.minimum) next = p.minimum;
+      if (typeof p.maximum === "number" && next > p.maximum) next = p.maximum;
+    }
+    if (next !== v) { out[k] = next; changed = true; }
+  }
+  return changed ? out : null;
+}
 function oidFilter(filter) {
   const out = {}, match = [];
   for (const [k, v] of Object.entries(filter)) {
-    const id = v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" ? v.$oid : null;
+    const id = oidOf(v);
+    // Keir 6.1: {$in: [{$oid}, ...]} failed live 13 times in a day ("cannot nest $ under $in").
+    const list = !k.startsWith("$") && v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && Array.isArray(v.$in) && v.$in.some(oidOf) ? v.$in.map((x) => oidOf(x) ?? x) : null;
     if (id && !k.startsWith("$")) match.push({ $eq: [{ $toString: "$" + k }, id] });
+    else if (list) match.push({ $in: [{ $toString: "$" + k }, list.map(String)] });
     else out[k] = v;
   }
   if (!match.length) return filter;
@@ -1573,7 +1598,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         // without it models guessed argument names until the step limit.
         if (!/-32602|Input validation error/.test(String(error.message))) throw error;
         const schema = await mcp.list(input.server, signal).then((list) => list.find((t) => t.name === input.tool)?.inputSchema).catch(() => null);
-        throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
+        // Keir 6.1: most live rejections were a number where the schema wants a
+        // string (a character id) or a size under the tool's minimum. Coerce
+        // those against the schema and retry once instead of spending a round.
+        const fixed = schema ? coerceArgs(args, schema) : null;
+        if (fixed) {
+          try { result = await mcp.call(input.server, input.tool, fixed, false, signal); }
+          catch (retry) { if (!/-32602|Input validation error/.test(String(retry.message))) throw retry; }
+        }
+        if (result === undefined) throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
       }
       if (signal?.aborted && input.server === "ops-knowledge" && input.tool.startsWith("knowledge_")) throw new Error("knowledge read cancelled");
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool)) return redactRaw(result);
@@ -2840,7 +2873,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
-      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && (job.lastAskAt || 0) < (job.lastPlayerAt || 0)) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && (job.lastAskAt || 0) < Math.max(job.lastPlayerAt || 0, job.observedPlayerAt || 0)) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
@@ -3094,4 +3127,4 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { coerceArgs, oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };

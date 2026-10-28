@@ -214,6 +214,14 @@ test("waiting on the player needs a post to them since they last wrote", async (
   assert.ok(j.lastAskAt >= j.lastPlayerAt);
 });
 
+test("a refused first reply does not let the task wait on the player (KBX3 probe-batch, Sonnet 2026-10-28)", async () => {
+  // The report is the player's only message: seen (observedPlayerAt) but never checkpointed into
+  // lastPlayerAt. A shape-refused reply posts nothing, so a player_reply wait would leave them unanswered.
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  delete j.lastPlayerAt; delete j.lastAskAt; j.observedPlayerAt = Date.now() - 1000;
+  await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." }), /nothing has been posted to them since they last wrote/);
+});
+
 test("a confirmed finding opens one bug ticket per affected player; the Discord id never reaches the model", async () => {
   const DID = String(10n ** 17n + 42n); // an 18-digit fake account id, built at runtime
   const f = fixture(), j = running(f, { kind: "finding", role: "support", finding: "fp1" });
@@ -2557,4 +2565,21 @@ test("a release request requires a readable explanation before anything reaches 
  assert.equal(clarified.state,"pending");assert.notEqual(clarified.decision,decision.id);
  assert.equal(f.ledger.data.actions[next.action].state,"pending");assert.match(f.ledger.data.decisions[clarified.decision].question,/unaffected companies/);
 
+});
+
+test("a read the schema rejects for a number-for-string or an under-minimum size is coerced and retried once (Keir 6.1)", async () => {
+  const { coerceArgs } = require("../lib/operator/broker");
+  const schema = { properties: { corporation: { type: "string" }, maxChars: { type: "integer", minimum: 2000 }, limit: { type: "number" } } };
+  assert.deepEqual(coerceArgs({ corporation: 551, maxChars: 800, limit: "5" }, schema), { corporation: "551", maxChars: 2000, limit: 5 });
+  assert.equal(coerceArgs({ corporation: "551" }, schema), null, "nothing to fix: no retry");
+  const f = fixture(), j = running(f, { role: "owner" });
+  const seen = [];
+  f.mcp.list = async () => [{ name: "trace_corp", inputSchema: { type: "object", properties: { corporation: { type: "string" } }, required: ["corporation"] } }];
+  f.mcp.call = async (server, tool, args) => {
+    seen.push(args.corporation);
+    if (typeof args.corporation !== "string") throw new Error("MCP error -32602: Input validation error: Invalid arguments for tool trace_corp: expected string, received number");
+    return { name: "Pierce & Pierce" };
+  };
+  assert.deepEqual(await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_corp", args: { corporation: 551 } }), { name: "Pierce & Pierce" });
+  assert.deepEqual(seen, [551, "551"]);
 });
