@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 6.0.0 (2026-10-27)
+
 - Keir 6: tuned on KeirBench Extreme 2, ten replays built from the worst real support failures and scored on quality, cost and time, running DeepSeek V4.1 Flash through OpenCode Go.
 - Load the read servers, compact tool catalogs (game and support first), the reporter, recent messages and the ticket record before the model starts, so activations stop rediscovering them. A repeated tool listing in one activation returns names only.
 - Return a compact repository map and the focused test, type and format commands with every snapshot, so coding work no longer explores the tree.
