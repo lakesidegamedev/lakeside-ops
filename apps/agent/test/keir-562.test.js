@@ -62,7 +62,7 @@ test("findings read raw game records through the support guard", async (t) => {
   const [, tool, args] = f.calls.at(-1);
   assert.equal(tool, "heal_query"); assert.equal(args.env, "prod"); assert.equal(args.limit, 50);
   await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_query", args: { collection: "users" } }), /closed/);
-  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_apply", args: {} }), /scope/);
+  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_apply", args: {} }), /scope|read_tool is read-only/);
 });
 
 test("engineering findings may use the raw reads but still not writes", () => {
