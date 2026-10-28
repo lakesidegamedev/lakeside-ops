@@ -90,5 +90,21 @@ describe("cw telemetry", () => {
     // $460 against a $400 reference is 15 percent over.
     assert.equal(steel.priceVsRefPct, 15);
     assert.equal(steel.made, 585);
+    assert.equal(steel.priceSalesWeighted, 0);
+  });
+
+  it("prefers the sales-weighted ask when the game sends it", async () => {
+    const store = openTelemetry(":memory:");
+    const weighted = envelope();
+    weighted.snapshot.goods = weighted.snapshot.goods.map((g) => (g.id === "steel" ? { ...g, sold_ask_cents: 42000 } : g));
+    assert.equal(validate(weighted), null);
+    await call(weighted, { store });
+    const steel = store.balance({ days: 1 }).goods.find((g) => g.id === "steel");
+    // $420 against $400 is 5 percent over; the idle sellers' $460 median is ignored.
+    assert.equal(steel.priceVsRefPct, 5);
+    assert.equal(steel.priceSalesWeighted, 1);
+    const bad = envelope();
+    bad.snapshot.goods = bad.snapshot.goods.map((g) => ({ ...g, sold_ask_cents: 1.5 }));
+    assert.equal(validate(bad), "good sold_ask_cents invalid");
   });
 });

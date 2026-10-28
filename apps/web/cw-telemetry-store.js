@@ -79,9 +79,11 @@ function openTelemetry(dbPath = defaultDbPath(), { now = () => new Date() } = {}
     },
     /**
      * Market balance across recent snapshots: per good, the median of what was made, sold,
-     * imported, exported and held, the median asking price against reference, and the share
+     * imported, exported and held, the median price against reference, and the share
      * of supply that met domestic demand; plus how many installs and player companies were
-     * losing money over their last thirteen weeks.
+     * losing money over their last thirteen weeks. The price is the sales-weighted ask
+     * (sold_ask_cents) where the game sends it, since the plain median ask counts idle
+     * sellers whose prices nobody paid; older games only send median_ask_cents.
      */
     balance(options = {}) {
       const rows = this.recent(options);
@@ -93,14 +95,19 @@ function openTelemetry(dbPath = defaultDbPath(), { now = () => new Date() } = {}
       const goods = new Map();
       for (const row of rows) {
         for (const g of row.payload.goods || []) {
-          if (!goods.has(g.id)) goods.set(g.id, { made: [], sold: [], imported: [], exported: [], stock: [], priceVsRefPct: [] });
+          if (!goods.has(g.id)) goods.set(g.id, { made: [], sold: [], imported: [], exported: [], stock: [], priceVsRefPct: [], weighted: 0 });
           const entry = goods.get(g.id);
           entry.made.push(g.made_lots);
           entry.sold.push(g.sold_lots);
           entry.imported.push(g.imported_lots);
           entry.exported.push(g.exported_lots);
           entry.stock.push(g.stock_lots);
-          if (g.reference_cents > 0) entry.priceVsRefPct.push(Math.round(((g.median_ask_cents - g.reference_cents) * 100) / g.reference_cents));
+          const weighted = Number.isInteger(g.sold_ask_cents);
+          const price = weighted ? g.sold_ask_cents : g.median_ask_cents;
+          if (g.reference_cents > 0 && Number.isInteger(price)) {
+            entry.priceVsRefPct.push(Math.round(((price - g.reference_cents) * 100) / g.reference_cents));
+            if (weighted) entry.weighted += 1;
+          }
         }
       }
       const players = rows.map((row) => row.payload.player).filter(Boolean);
@@ -119,6 +126,9 @@ function openTelemetry(dbPath = defaultDbPath(), { now = () => new Date() } = {}
           exported: median(e.exported),
           stock: median(e.stock),
           priceVsRefPct: median(e.priceVsRefPct),
+          // How many of the prices above were sales-weighted rather than the plain median ask.
+          priceSamples: e.priceVsRefPct.length,
+          priceSalesWeighted: e.weighted,
         })),
       };
     },
