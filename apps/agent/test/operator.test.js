@@ -2583,3 +2583,13 @@ test("a read the schema rejects for a number-for-string or an under-minimum size
   assert.deepEqual(await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_corp", args: { corporation: 551 } }), { name: "Pierce & Pierce" });
   assert.deepEqual(seen, [551, "551"]);
 });
+
+test("the owner's own request that ends blocked tells the owner why in its channel (KBX3 owner-merge-red)", async () => {
+  const f = fixture(), ch = "888888888888888881";
+  const j = running(f, { actorId: f.config.ownerId, channelId: ch, replyChannel: ch, source: { channelId: ch, authorId: f.config.ownerId } });
+  await f.broker.tool(j, "finish", { state: "blocked", summary: "I haven't merged PR 4530: the verify check is red and its failure output is empty, so I can't tell whether the PR caused it." });
+  const sent = Object.entries(f.ledger.data.outbox).filter(([k]) => k.startsWith(`finish:${j.id}`));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][1].destination, `channel:${j.id}`);
+  assert.match(sent[0][1].content, /haven't merged PR 4530/);
+});

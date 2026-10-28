@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- When the owner's own request ends blocked (a merge refused on a red check, say), Keir now posts why in that channel. Before, the task stopped and said nothing back.
+
 - A ticket Keir opened from a chat message no longer opens with the player's ticket count or "thank you for submitting it". The player did not file it (ticket 1708). Tickets players file keep the count (owner).
 
 - A read the tool's schema rejects because a number was passed where it wants text, or a size sits under its minimum, is coerced to the schema and retried once instead of costing the model a round (seven live rejections this week).

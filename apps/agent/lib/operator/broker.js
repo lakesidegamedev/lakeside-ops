@@ -3003,6 +3003,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
             const safe = await finishPublicText(job);
             if (safe || !ticketOf(job)) ledger.notify(`finish:${job.id}:${job.rounds}`, safe ? `channel:${job.id}` : job.actorId, safe || job.summary);
           }
+        } else if (job.kind === "command" && !job.channelReplyQueued && !job.internalProbe) {
+          // Keir 6.1: the owner's own request that ends blocked said nothing back
+          // (KBX3 owner-merge-red: "merge it" against a red check went silent).
+          const safe = await finishPublicText(job);
+          if (safe) ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe);
         } else if (job.kind !== "command") { job.state = "waiting"; job.wakeAt = now() + (pendingHandoffs(job).length ? 6 : 1) * 3600000; }
       } else if (!job.internalProbe && job.role !== "player" && ((state === "done" && !job.channelReplyQueued) || state === "blocked")) {
         const safe = job.role === "owner" && !job.channelReplyQueued ? await finishPublicText(job) : null;
