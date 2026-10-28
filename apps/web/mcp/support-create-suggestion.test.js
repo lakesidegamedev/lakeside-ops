@@ -74,3 +74,23 @@ test("lost API responses reconcile one canonical suggestion without a second POS
  const ambiguous=fixture({fail:true,recovered:true,ambiguous:true});await ambiguous.run();assert.match((await ambiguous.run()).error,/needs inspection/);
  assert.equal(ambiguous.calls.filter(c=>c.method==="POST").length,1);
 });
+
+test("Ask origins file under the linked Discord id or the game user id, once per action, and are not reachable from the tool", async () => {
+ const { createSuggestion } = require("./support-create-suggestion");
+ const docs = new Map(), calls = [];
+ const Intake = { insertOne: async d => { if (docs.has(d._id)) throw Object.assign(new Error("duplicate"), { code: 11000 }); docs.set(d._id, d); }, findOne: async q => docs.get(q._id), updateOne: async (q, patch) => Object.assign(docs.get(q._id), patch.$set) };
+ const fetchImpl = async (url, init) => { calls.push({ url, ...init }); return Response.json({ issueNumber: 9, detailUrl: "https://game.test/feedback/9" }); };
+ const deps = { Intake, fetchImpl, env: { AHD_GAME_API_URL: "https://game.test", DISCORD_BOT_API_KEY: "k" } };
+ const base = { title: "Union map", description: "Show union strength by state", category: "ui_improvement", gameSystem: "parties", ask_action_id: "abcdefghijklmnop", source_text: "file that as a suggestion" };
+ const linked = await createSuggestion({ ...base, discord_user_id: user }, deps);
+ assert.equal(linked.number, 9); assert.equal(linked.source, "ask:abcdefghijklmnop"); assert.equal(JSON.parse(calls[0].body).discordUserId, user);
+ assert.equal((await createSuggestion({ ...base, discord_user_id: user }, deps)).duplicate, true); assert.equal(calls.length, 1);
+ const unlinked = await createSuggestion({ ...base, ask_action_id: "qrstuvwxyz012345", ahd_user_id: "a".repeat(24) }, deps);
+ assert.equal(unlinked.reporterId, `user:${"a".repeat(24)}`); const body = JSON.parse(calls[1].body); assert.equal(body.userId, "a".repeat(24)); assert.equal(body.discordUserId, undefined);
+ assert.equal([...docs.values()][1].sourceText, "file that as a suggestion");
+ await assert.rejects(createSuggestion({ ...base, ask_action_id: "short" , discord_user_id: user }, deps), /Invalid Ask action id/);
+ await assert.rejects(createSuggestion({ ...base, discord_user_id: user, source_message_id: message }, deps), /mixed/);
+ await assert.rejects(createSuggestion({ ...base, discord_user_id: user, ahd_user_id: "a".repeat(24) }, deps), /one submitter/);
+ // The tool schema has no Ask fields, so a tool caller cannot claim an Ask origin.
+ const f = fixture(); assert.throws(() => f.run({ ask_action_id: "abcdefghijklmnop", source_channel_id: undefined, source_message_id: undefined }), /ask_action_id/); assert.equal(f.docs.size, 0);
+});

@@ -157,6 +157,13 @@ async function findGuildMemberByUsername(name, send = discord) {
   return (Array.isArray(results) ? results : []).find((m) => m.user && !m.user.bot && String(m.user.username).toLowerCase() === query) || null;
 }
 
+// Find a guild member by Discord id, or null when they are not in the server.
+async function findGuildMember(discordUserId, send = discord) {
+  if (!/^\d{15,22}$/.test(String(discordUserId || ""))) return null;
+  const member = await send(`/guilds/${GUILD_ID}/members/${discordUserId}`, { allow404: true });
+  return member?.user && !member.user.bot ? member : null;
+}
+
 /**
  * Open a ticket: reserve the number, create the channel, post the intake card
  * and staff ping, register with the game and persist the intake details.
@@ -362,6 +369,6 @@ function registerCreateTicket(server, { auth, Tickets, z, jsonResult, errorResul
 }
 
 module.exports = {
-  registerCreateTicket, createSupportTicket, findGuildMemberByUsername, TicketCreateError,
+  registerCreateTicket, createSupportTicket, findGuildMemberByUsername, findGuildMember, TicketCreateError,
   sendWithRetry, ticketPageCandidate, discord, CATEGORY, channelSlug,
 };

@@ -8122,6 +8122,40 @@ loadDeadLetters();
     }
   }
 
+  // POST /internal/ask-action: file a suggestion or open a ticket the player
+  // confirmed in Ask Keir. Same loopback + shared secret gate as
+  // player-context; ask-action.js holds the validation and the shared cores.
+  if (req.method === "POST" && pathname === "/internal/ask-action") {
+    const remote = req.socket.remoteAddress || "";
+    const isLoopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+    if (!isLoopback) return json(res, 403, { error: "Forbidden" });
+    if (!ASK_API_SECRET || req.headers["x-ask-secret"] !== ASK_API_SECRET) {
+      return json(res, 403, { error: "Forbidden" });
+    }
+    let raw = "", tooLarge = false;
+    req.on("data", c => { raw += c; if (raw.length > 16384) { tooLarge = true; raw = ""; } });
+    await new Promise(r => req.on("end", r));
+    if (tooLarge) return json(res, 413, { error: "Body too large" });
+    let p; try { p = JSON.parse(raw || "{}"); } catch { return json(res, 400, { error: "Invalid JSON" }); }
+    try {
+      const db = await getDb();
+      const { handleAskAction } = require("./ask-action");
+      const { createSuggestion } = require("./mcp/support-create-suggestion");
+      const { createSupportTicket, findGuildMember } = require("./mcp/support-create-ticket");
+      const { ticketPublicUrl } = require("./ticket-ship-notify");
+      const result = await handleAskAction(p, {
+        Users: db.collection("users"), Tickets: db.collection("tickets"), Suggestions: db.collection("suggestions"),
+        Intake: db.collection("agentSuggestionIntake"), createSuggestion,
+        createTicket: (options) => createSupportTicket({ ...options, ticketPublicUrl }),
+        findMember: findGuildMember, logger: console,
+      });
+      return json(res, result.status, result.body);
+    } catch (e) {
+      console.error("[ask-action]", e?.message || e);
+      return json(res, 500, { error: "Action failed" });
+    }
+  }
+
   // Exchange a freshly authenticated web login for a device session. Browser
   // sessions keep their one-day lifetime; device sessions retain role/ban and
   // revocation checks, are capped at 30 days and can be logged out normally.
