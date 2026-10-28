@@ -468,6 +468,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const introduced = (d.introduced ||= {})[uid] || (prior?.docs || []).some((x) => d.disclosed?.[x.ticketNumber]?.posted);
     const name = String(t.discordDisplayName || t.discordUsername || "").replace(/[*_`~|<>@#]/g, "").trim().slice(0, 40);
     d.introduced[uid] = d.introduced[uid] || now();
+    // Owner, 2026-10-29 (ticket 1708): a ticket Keir opened from a chat message
+    // was not filed by the player. "This is your 23rd ticket, thank you for
+    // submitting it" read as shaming there, so it gets no count and no thanks.
+    const keirOpened = Object.values(d.jobs).some((j) => Object.values(j.openedTickets || {}).some((r) => Number(r?.number) === n));
+    if (keirOpened) return { text: introduced ? `Welcome back${name ? `, ${name}` : ""}. I opened this ticket from your message so it can be tracked here. I'm looking into it now.` : `${DISCLOSURE} I opened this ticket from your message so it can be tracked here.` };
     if (!introduced) return { text: `${DISCLOSURE}${count > 1 ? ` This is your ${ordinal(count)} ticket, thank you for submitting it.` : " Thank you for submitting your first ticket."}`, count };
     return { text: `Welcome back${name ? `, ${name}` : ""}. This is your ${ordinal(count)} ticket, thank you for submitting it. I'm looking into it now.`, count };
   }
@@ -2873,7 +2878,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
-      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && (job.lastAskAt || 0) < Math.max(job.lastPlayerAt || 0, job.observedPlayerAt || 0)) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
