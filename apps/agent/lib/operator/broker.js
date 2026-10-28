@@ -441,7 +441,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   // read this activation (or a registered calculation over such figures).
   function guardNumbers(job, message) {
     const missing = knowledge.unsupportedNumbers(message, job.evidence || []);
-    if (missing.length) throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything you read this activation. Read the figure with a tool first, or use calculate to derive it from figures you read, or leave it out.`);
+    if (missing.length) throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything you read this activation. If you worked it out from figures you read, call calculate with that expression (for example "41288610 / 312540") and post the same reply; it then passes. Otherwise read the figure with a tool first or leave it out. Never hand the arithmetic to the player instead.`);
   }
   // Keir 2.1: code-only second look (owner, 2026-10-13: no model tokens per
   // post). A draft may not re-assert an idea the ticket record ruled out.
@@ -815,7 +815,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
     }
-    if (String(message || "").trim() && !/^\[status card\]/.test(message)) job.lastAskAt = now();
+    if (String(message || "").trim() && !/^\[status card\]/.test(message)) { job.lastAskAt = now(); delete job.replyRefusedPending; }
     if (!/^\[status card\]/.test(message) && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
@@ -1047,6 +1047,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
       // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
       try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
+      // Keir 6.1: a refused answer to the player is owed until one is posted
+      // (KBX3: Sonnet's reply was refused for length, then it finished done).
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
@@ -2894,6 +2897,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
+      if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
       if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo

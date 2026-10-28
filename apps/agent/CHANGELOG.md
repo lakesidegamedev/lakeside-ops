@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- After a refused answer to the player (too long, an unread figure), a ticket task cannot finish until a fixed answer is posted. KBX3 found Sonnet finishing done with the player unanswered.
+
+- The unread-figure refusal tells the model to run the same expression through calculate and repost, and never to hand the arithmetic to the player (KBX3: "divide the second by the first" instead of the answer).
+
 - A refused read of a closed account, sign-in or audit collection names the next step (`reporter_state`, or `raise_to_developers` kind question with needsHuman) instead of "read game records only" (self-review #236, 18 refusals in a day).
 
 - `github` issues search accepts `is:` and `type:` qualifiers, so `is:pr is:open promote in:title` returns pull requests instead of a refusal; only `repo:`, `org:` and `user:` are refused, with the exact fix (self-review #241, 12 refusals in a day).

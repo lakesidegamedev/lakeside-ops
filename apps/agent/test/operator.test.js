@@ -2593,3 +2593,13 @@ test("the owner's own request that ends blocked tells the owner why in its chann
   assert.equal(sent[0][1].destination, `channel:${j.id}`);
   assert.match(sent[0][1].content, /haven't merged PR 4530/);
 });
+
+test("a refused answer blocks finishing done or waiting until an answer is posted (KBX3 probe-batch, Keir 6.1)", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  const long = "Coal is short. Your contract ended. Supply is 80%. Coal is up. Iron is down. Steel is flat. Renew the contract.";
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: long } }));
+  assert.equal(j.replyRefusedPending, true);
+  await assert.rejects(f.broker.tool(j, "finish", { state: "done", summary: "Answered." }), /last answer to the player was refused/);
+  await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Coal is the short input: your coal contract ended, so supply is at 80%. Renewing it restores full output." } });
+  assert.equal(j.replyRefusedPending, undefined);
+});
