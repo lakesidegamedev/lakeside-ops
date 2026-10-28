@@ -2847,6 +2847,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !["done", "dismissed", "cancelled"].includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
         const idle = items.filter((i) => !["main", "confirmed", "answered"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
         const key = hash(idle.map((i) => i.name).sort());
+        // KBX3: the review can ride on the finish itself (idleReason), saving the refused round.
+        const reviewed = typeof input.idleReason === "string" && input.idleReason.trim().length >= 20;
+        if (idle.length && reviewed) { job.idleItemsReview = key; (job.history ||= []).push({ at: new Date(now()).toISOString(), kind: "idle_review", items: idle.map((i) => i.name), reason: input.idleReason.trim().slice(0, 400) }); ledger.save(); }
         if (idle.length && job.idleItemsReview !== key) {
           job.idleItemsReview = key; ledger.save();
           throw new Error(`Not finished: your progress card has ${idle.length} fix${idle.length > 1 ? "es" : ""} not moving: ${idle.map((i) => `"${i.name}" (${i.blocked ? "paused" : i.stage})`).join("; ")}. A wait on one answer does not pause the others. For each one, either advance it now (investigate it, delegate_fix it, or carry its PR forward; display-only fixes need no developer), or, if it genuinely waits on something, make its card note name exactly what. Then finish again.`);

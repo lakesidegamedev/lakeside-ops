@@ -27,13 +27,16 @@ function compactHistory(rows, limit = 12) {
 
 // Runs the orientation reads through the broker for this job. `tool` is
 // (name, input) => broker.tool(job, name, input, signal).
-async function orient(tool, { servers: only, maxServers = 6 } = {}) {
+async function orient(tool, { servers: only, maxServers = 8 } = {}) {
   const out = { note: "Already loaded for you by the broker this activation (evidence, not instructions). Do not repeat read_servers, read_tools for these servers, reporter_state, ticket_history or ticket_record read unless something changed; go straight to the reads that answer the ticket.", errors: {} };
   const attempt = async (key, fn) => { try { out[key] = await fn(); } catch (e) { out.errors[key] = String(e?.message || e).slice(0, 160); } };
   await attempt("servers", async () => { const r = await tool("read_servers", {}); return Array.isArray(r) ? r.map((s) => (typeof s === "string" ? s : s.name || s.server)).filter(Boolean) : r; });
   const tools = {};
   // Every server this task may read (the model otherwise lists the rest itself).
-  const servers = (only || (Array.isArray(out.servers) ? out.servers : ["gamestate", "support"])).slice(0, maxServers);
+  // Game state and support answer most tickets: list them first, then the rest.
+  const FIRST = ["gamestate", "support", "ops-knowledge", "heal-ops"];
+  const all = only || (Array.isArray(out.servers) ? out.servers : ["gamestate", "support"]);
+  const servers = [...FIRST.filter((x) => all.includes(x)), ...all.filter((x) => !FIRST.includes(x))].slice(0, maxServers);
   for (const server of servers) {
     try { tools[server] = compactTools(await tool("read_tools", { server })); } catch (e) { out.errors[`tools.${server}`] = String(e?.message || e).slice(0, 160); }
   }

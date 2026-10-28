@@ -1652,6 +1652,14 @@ test("Keir 2.0: the ticket record is shared across tasks and its facts count as 
   assert.equal(rec.facts.length, 1); assert.equal(rec.ruledOut[0].text, "Real estate shortage");
 });
 
+test("KBX3: finish accepts idleReason as the idle-fix review", async () => {
+  const f = fixture(), j = running(f, { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777" });
+  f.ledger.data.statusCards = { 123: { items: [{ name: "Slow groups", stage: "found" }] } };
+  const r = await f.broker.tool(j, "finish", { state: "waiting", summary: "Asked the developers; waiting on their review of the found fix.", idleReason: "Slow groups waits on a developer review of the raised fix." }).catch((e) => e);
+  assert.doesNotMatch(String(r?.message || ""), /not moving/);
+  assert.ok(j.history.some((h) => h.kind === "idle_review"));
+});
+
 test("KBX3: read_tool refuses write-like tools for every role, including the owner", async () => {
   const f = fixture(), j = running(f, { role: "owner", kind: "command" });
   await assert.rejects(f.broker.tool(j, "read_tool", { server: "heal-ops", tool: "heal_adhoc_apply", args: { token: "t", env: "prod" } }), /read-only/);
