@@ -232,7 +232,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     delete job.waitingFor;
     const ownerMuse = musePolicy.origin(ledger.data, job);
     const ownerBrief = ownerMuse.valid && ownerMuse.scoped ? OWNER_MUSE_BRIEF : "";
-    const quick = isQuick(job), maxRounds = quick ? Math.min(config.quickMaxRounds || 6, job.voiceMode ? 4 : Infinity) : config.maxRounds;
+    // Keir 6 (KBX2 2026-10-28): a support ticket activation gets its own, tighter round
+    // budget (16 scored 72 vs 61-67 at 20-24 on DeepSeek V4.1 Flash low effort); coding,
+    // investigation and owner work keep the general budget.
+    const ticketLane = job.kind === "ticket" && !job.codingParent && job.role !== "owner";
+    const quick = isQuick(job), maxRounds = quick ? Math.min(config.quickMaxRounds || 6, job.voiceMode ? 4 : Infinity) : ticketLane ? Math.min(config.maxRounds, config.ticketMaxRounds || 16) : config.maxRounds;
     // A ticket whose channel was closed by hand has nothing left to do; never
     // spend a model run rediscovering that (tickets 1512 and 1518 looped).
     if (job.channelClosed) { job.state = "done"; ledger.save(); return; }
