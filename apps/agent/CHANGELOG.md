@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 6.1.0 (2026-10-29)
+
 - After a refused answer to the player (too long, an unread figure), a ticket task cannot finish until a fixed answer is posted. KBX3 found Sonnet finishing done with the player unanswered.
 
 - The unread-figure refusal tells the model to run the same expression through calculate and repost, and never to hand the arithmetic to the player (KBX3: "divide the second by the first" instead of the answer).
