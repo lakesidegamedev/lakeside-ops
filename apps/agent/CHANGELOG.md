@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A refused read of a closed account, sign-in or audit collection names the next step (`reporter_state`, or `raise_to_developers` kind question with needsHuman) instead of "read game records only" (self-review #236, 18 refusals in a day).
+
+- `github` issues search accepts `is:` and `type:` qualifiers, so `is:pr is:open promote in:title` returns pull requests instead of a refusal; only `repo:`, `org:` and `user:` are refused, with the exact fix (self-review #241, 12 refusals in a day).
+
 - When the owner's own request ends blocked (a merge refused on a red check, say), Keir now posts why in that channel. Before, the task stopped and said nothing back.
 
 - A ticket Keir opened from a chat message no longer opens with the player's ticket count or "thank you for submitting it". The player did not file it (ticket 1708). Tickets players file keep the count (owner).

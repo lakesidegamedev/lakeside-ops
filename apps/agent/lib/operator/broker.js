@@ -70,6 +70,12 @@ const META_SUMMARY = /\b(no (further|new|additional) (post|reply|response|messag
 // audit collections stay closed, and so do fields that hold contact details or
 // credentials, so nothing private reaches a public ticket channel.
 const RAW_READ_CLOSED = /^(users?|accounts?|sessions?|auth.*|.*tokens?|.*secrets?|.*keys?|.*credentials?|.*emails?|.*passwords?|tickets?|ticket.*|suggestions?|support.*|discord.*|payments?|purchases?|subscriptions?|.*audit.*|access.*log.*|request.*log.*|ip.*|devices?|notifications?|messages?|inbox.*|keir.*|admin.*)$/i;
+// A refusal has to name the way forward. "read game records
+// only" was not one: these collections are game records too, so sign-in
+// tickets kept probing users, adminLogs, actionAuditLog and discord_messages
+// instead of asking for the account state or escalating it (18 refusals
+// across six tasks, 2026-10-25).
+const RAW_READ_CLOSED_NOTE = "it holds account, sign-in, contact or audit data. On a ticket, read the reporter's character with reporter_state; when the task needs the account record itself, file the exact read with raise_to_developers, kind question and needsHuman true";
 // Anchored where a bare substring would hit game fields: "ip" ends ownership,
 // membership and leadership; "address" is too broad to match anywhere.
 const RAW_FIELD_CLOSED = /(email|password|passhash|hash$|token|secret|apikey|api_key|^ip$|ip_?addr|^lastip|discord|session|phone|^address$|street|postal|mailing)/i;
@@ -121,7 +127,8 @@ function oidFilter(filter) {
 function rawReadArgs(tool, args) {
   if (tool === "heal_collections") return { env: "prod" };
   const collection = String(args.collection || "");
-  if (!collection || RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads; read game records only`);
+  if (!collection) throw new Error("collection: name the game collection to read; heal_collections lists them");
+  if (RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads: ${RAW_READ_CLOSED_NOTE}`);
   const walk = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_FIELD_CLOSED.test(k) || walk(x));
   if (walk(args.filter) || walk(args.projection)) throw new Error("contact, credential and session fields are closed to support reads");
   // Server-side JavaScript is never a read a support task needs.
@@ -2019,9 +2026,18 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.action === "ci_runs") return require("./ciEvidence").readCiEvidence({ api, repo, number: input.number, workflow: input.workflow, runId: input.run });
       if (input.action === "issues") {
         const query = String(input.query || "").trim();
-        if (!query || query.length > 180 || /\b(?:repo|org|user|is|type):/i.test(query)) throw new Error("issues needs a bounded search without repository overrides");
-        const result = await api([`search/issues?q=${encodeURIComponent(`repo:${repo} is:issue ${query}`)}&per_page=20`]);
-        return { total: result.total_count, incomplete: Boolean(result.incomplete_results), issues: (result.items || []).slice(0, 20).map((r) => ({ number: r.number, title: r.title, state: r.state, url: r.html_url, assignees: (r.assignees || []).map((a) => a.login) })) };
+        if (!query || query.length > 180) throw new Error("issues needs a query of 1 to 180 characters, for example: promote staging in:title");
+        // Only a scope override is refused. The repository this task may read is
+        // fixed, and the search must stay bounded (2026-10-26: the guard treated
+        // is: and type: as overrides too, so a reasonable pull request search was
+        // refused twelve times across seven tasks and the refusal named nothing
+        // the model could change).
+        if (/\b(?:repo|org|user):/i.test(query)) throw new Error("issues search is already scoped to this task's repository; remove repo:, org: or user: from the query and keep the plain words with in:, is:, state: or sort:, for example: is:pr is:open promote in:title");
+        // A search that asks for pull requests decides the type itself;
+        // prefixing is:issue for it would ask for both and match nothing.
+        const wantsPr = /(?:^|\s)(?:is|type):pr\b/i.test(query);
+        const result = await api([`search/issues?q=${encodeURIComponent(`${wantsPr ? "" : "is:issue "}repo:${repo} ${query}`)}&per_page=20`]);
+        return { total: result.total_count, incomplete: Boolean(result.incomplete_results), issues: (result.items || []).slice(0, 20).map((r) => ({ number: r.number, title: r.title, state: r.state, url: r.html_url, pullRequest: Boolean(r.pull_request), assignees: (r.assignees || []).map((a) => a.login) })) };
       }
       if (input.action === "ci_failures") {
         // The actual failing output, so a red check is diagnosed, not guessed.

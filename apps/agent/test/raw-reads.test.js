@@ -11,8 +11,17 @@ test("raw game-record reads are forced to prod and capped", () => {
 });
 
 test("account, ticket and credential collections stay closed", () => {
-  for (const c of ["users", "sessions", "tickets", "ticketMessages", "apiKeys", "authTokens", "payments", "actionAuditLog", "discordLinks", "keirLedger", ""])
+  for (const c of ["users", "sessions", "tickets", "ticketMessages", "apiKeys", "authTokens", "payments", "actionAuditLog", "discordLinks", "keirLedger"])
     assert.throws(() => rawReadArgs("heal_query", { collection: c }), /closed|game records/);
+  assert.throws(() => rawReadArgs("heal_query", {}), /heal_collections lists them/);
+});
+
+test("a closed collection refusal names the supported next step", () => {
+  for (const collection of ["users", "actionAuditLog"])
+    assert.throws(() => rawReadArgs("heal_query", { collection }), (error) =>
+      /is closed to support reads/.test(error.message) &&
+      /reporter_state/.test(error.message) &&
+      /raise_to_developers, kind question and needsHuman true/.test(error.message));
 });
 
 test("contact and credential fields cannot be filtered or projected", () => {
