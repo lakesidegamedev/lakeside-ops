@@ -1478,6 +1478,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return listed;
     }
     if (name === "read_tool") {
+      // read_tool is a read path for every role, owner included: write-like tools
+      // (heal applies, creates, deletes, sends, merges) go through their own gated
+      // tools (request_heal, github, support_action). KBX3 2026-10-28: an owner task
+      // replayed a heal confirm token through read_tool heal_adhoc_apply.
+      if (/(?:^|_)(?:apply|delete|remove|drop|update|set|create|insert|send|post|merge|promote|publish|rollback|reset|write|compensate)(?:_|$)/i.test(String(input.tool || "")) && !/^(?:heal_plan|heal_adhoc_plan|heal_compensate_plan)$/.test(input.tool))
+        throw new Error(`read_tool is read-only; ${input.tool} changes state. Use the gated tool for it (request_heal for repairs, github for merges, support_action for support writes).`);
       const args = { ...(input.args || {}) };
       // knowledge_query takes `text`; models reach for query or question, and
       // every such read failed schema validation (2026-10-23 DeepSeek trace).
