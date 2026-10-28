@@ -9,7 +9,7 @@ const { sharedTelemetry } = require("../cw-telemetry-store");
 function registerCwTelemetryTools(server, { jsonResult, errorResult, store = sharedTelemetry }) {
   server.tool(
     "cw_market_balance",
-    "Corporate Warfare market balance from anonymous player snapshots: per good the median made, sold, imported, exported and held lots and asking price against reference; installs and snapshots counted; how many player companies lost money over their last 13 weeks. Filter by days, scenario (guided, founder) and engine version.",
+    "Corporate Warfare market balance from anonymous player snapshots: per good the median made, sold, imported, exported and held lots and price against reference (sales-weighted ask where the game sends it, else the median ask; priceSalesWeighted says how many); installs and snapshots counted; how many player companies lost money over their last 13 weeks. Filter by days, scenario (guided, founder) and engine version.",
     {
       days: z.number().int().min(1).max(90).optional().default(7),
       scenario: z.string().optional(),

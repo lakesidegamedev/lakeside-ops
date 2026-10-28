@@ -37,6 +37,8 @@ function validate(envelope) {
     for (const key of ["made_lots", "sold_lots", "imported_lots", "exported_lots", "stock_lots", "median_ask_cents", "reference_cents", "household_spend_cents"]) {
       if (!isInt(g[key], -BIG, BIG)) return `good ${key} invalid`;
     }
+    // Added by newer games: the asking price weighted by what each seller actually sold.
+    if (g.sold_ask_cents != null && !isInt(g.sold_ask_cents, -BIG, BIG)) return "good sold_ask_cents invalid";
   }
   const c = s.corridor;
   if (!c || !["firms_operating", "firms_dissolved", "raids"].every((k) => isInt(c[k], 0, 1e6)) || !isInt(c.outside_cash_cents, -BIG, BIG)) {
