@@ -5,6 +5,24 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- After a refused answer to the player (too long, an unread figure), a ticket task cannot finish until a fixed answer is posted. KBX3 found Sonnet finishing done with the player unanswered.
+
+- The unread-figure refusal tells the model to run the same expression through calculate and repost, and never to hand the arithmetic to the player (KBX3: "divide the second by the first" instead of the answer).
+
+- A refused read of a closed account, sign-in or audit collection names the next step (`reporter_state`, or `raise_to_developers` kind question with needsHuman) instead of "read game records only" (self-review #236, 18 refusals in a day).
+
+- `github` issues search accepts `is:` and `type:` qualifiers, so `is:pr is:open promote in:title` returns pull requests instead of a refusal; only `repo:`, `org:` and `user:` are refused, with the exact fix (self-review #241, 12 refusals in a day).
+
+- When the owner's own request ends blocked (a merge refused on a red check, say), Keir now posts why in that channel. Before, the task stopped and said nothing back.
+
+- A ticket Keir opened from a chat message no longer opens with the player's ticket count or "thank you for submitting it". The player did not file it (ticket 1708). Tickets players file keep the count (owner).
+
+- A read the tool's schema rejects because a number was passed where it wants text, or a size sits under its minimum, is coerced to the schema and retried once instead of costing the model a round (seven live rejections this week).
+
+- Database id lists (`{"$in": [{"$oid": ...}]}`) match ids stored as text or ObjectId, like single ids already did. They failed 13 times in a day with "cannot nest $ under $in".
+
+- A ticket task cannot finish waiting on the player when nothing has been posted to them at all, for example after its only reply was refused for length. KBX3 found Sonnet ending a ticket that way with the player unanswered.
+
 ## 6.0.0 (2026-10-27)
 
 - Keir 6: tuned on KeirBench Extreme 2, ten replays built from the worst real support failures and scored on quality, cost and time, running DeepSeek V4.1 Flash through OpenCode Go.

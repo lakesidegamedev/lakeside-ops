@@ -289,8 +289,9 @@ test("Keir does not ask the player which bank when the ticket already names thei
 });
 
 test("Keir introduces itself once per player, welcomes returning players with their ticket count, and never introduces itself to staff", async () => {
-  const run = async ({ uid, prior, introduced = false, priorDisclosed = false, fail = false, answered = false }) => {
+  const run = async ({ uid, prior, introduced = false, priorDisclosed = false, fail = false, answered = false, keirOpened = false }) => {
     const f = fixture(), posted = [];
+    if (keirOpened) f.ledger.createJob("intake:chat", { kind: "command", role: "support", source: {} }).openedTickets = { m1: { number: 1522, channelId: "c" } };
     for (const j of Object.values(f.ledger.data.jobs)) { delete j.lastPublishedAt; delete j.progressMessageId; delete j.channelReplyQueued; }
     delete f.ledger.data.statusCards; delete f.ledger.data.disclosed;
     if (introduced) (f.ledger.data.introduced ||= {})[uid] = 1;
@@ -313,6 +314,8 @@ test("Keir introduces itself once per player, welcomes returning players with th
   assert.equal(await run({ uid: "888888888888888888", prior: 4, introduced: true }), "Welcome back, Simonella. This is your 5th ticket, thank you for submitting it. I'm looking into it now.");
   assert.match(await run({ uid: "888888888888888888", prior: 2, priorDisclosed: true }), /^Welcome back, Simonella\. This is your 3rd ticket/);
   assert.match(await run({ uid: "888888888888888888", prior: 10 }), /^Hi, I'm Keir.*This is your 11th ticket/, "never introduced before: the introduction, once, with the count");
+  assert.equal(await run({ uid: "888888888888888888", prior: 22, introduced: true, keirOpened: true }), "Welcome back, Simonella. I opened this ticket from your message so it can be tracked here. I'm looking into it now.", "a ticket Keir opened from chat: no count, no thanks for submitting (ticket 1708)");
+  assert.doesNotMatch(await run({ uid: "888888888888888888", prior: 22, keirOpened: true }), /ticket, thank you|th ticket/);
   const f = fixture();
   assert.equal(await run({ uid: f.config.ownerId, prior: 3 }), "The fund buys only Austrian bonds because candidates are sorted by country code.", "staff: no introduction, the reply is the first post");
   assert.match(await run({ uid: "888888888888888888", prior: 0, fail: true }), /^Hi, I'm Keir/, "lookup failure falls back to the introduction");

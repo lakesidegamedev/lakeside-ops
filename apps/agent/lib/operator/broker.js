@@ -70,6 +70,12 @@ const META_SUMMARY = /\b(no (further|new|additional) (post|reply|response|messag
 // audit collections stay closed, and so do fields that hold contact details or
 // credentials, so nothing private reaches a public ticket channel.
 const RAW_READ_CLOSED = /^(users?|accounts?|sessions?|auth.*|.*tokens?|.*secrets?|.*keys?|.*credentials?|.*emails?|.*passwords?|tickets?|ticket.*|suggestions?|support.*|discord.*|payments?|purchases?|subscriptions?|.*audit.*|access.*log.*|request.*log.*|ip.*|devices?|notifications?|messages?|inbox.*|keir.*|admin.*)$/i;
+// A refusal has to name the way forward. "read game records
+// only" was not one: these collections are game records too, so sign-in
+// tickets kept probing users, adminLogs, actionAuditLog and discord_messages
+// instead of asking for the account state or escalating it (18 refusals
+// across six tasks, 2026-10-25).
+const RAW_READ_CLOSED_NOTE = "it holds account, sign-in, contact or audit data. On a ticket, read the reporter's character with reporter_state; when the task needs the account record itself, file the exact read with raise_to_developers, kind question and needsHuman true";
 // Anchored where a bare substring would hit game fields: "ip" ends ownership,
 // membership and leadership; "address" is too broad to match anywhere.
 const RAW_FIELD_CLOSED = /(email|password|passhash|hash$|token|secret|apikey|api_key|^ip$|ip_?addr|^lastip|discord|session|phone|^address$|street|postal|mailing)/i;
@@ -81,11 +87,36 @@ function redactRaw(value, depth = 0) {
   if (Array.isArray(value)) return value.map((x) => redactRaw(x, depth + 1));
   return Object.fromEntries(Object.entries(value).filter(([k]) => !RAW_FIELD_CLOSED.test(k)).map(([k, x]) => [k, redactRaw(x, depth + 1)]));
 }
+const oidOf = (v) => v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" ? v.$oid : null;
+// Coerce read arguments to their JSON schema: numbers to strings and numeric
+// strings to numbers where the type says so, numbers clamped to min/max.
+// Returns the coerced copy, or null when nothing changed.
+function coerceArgs(args, schema) {
+  const props = schema?.properties || {}, out = { ...args };
+  let changed = false;
+  for (const [k, v] of Object.entries(args || {})) {
+    const p = props[k]; if (!p) continue;
+    const types = [].concat(p.type || []);
+    let next = v;
+    if (types.includes("string") && !types.includes("number") && !types.includes("integer") && typeof v === "number") next = String(v);
+    else if ((types.includes("number") || types.includes("integer")) && !types.includes("string") && typeof v === "string" && v.trim() !== "" && Number.isFinite(Number(v))) next = Number(v);
+    if (typeof next === "number") {
+      if (types.includes("integer") && !types.includes("number")) next = Math.round(next);
+      if (typeof p.minimum === "number" && next < p.minimum) next = p.minimum;
+      if (typeof p.maximum === "number" && next > p.maximum) next = p.maximum;
+    }
+    if (next !== v) { out[k] = next; changed = true; }
+  }
+  return changed ? out : null;
+}
 function oidFilter(filter) {
   const out = {}, match = [];
   for (const [k, v] of Object.entries(filter)) {
-    const id = v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" ? v.$oid : null;
+    const id = oidOf(v);
+    // Keir 6.1: {$in: [{$oid}, ...]} failed live 13 times in a day ("cannot nest $ under $in").
+    const list = !k.startsWith("$") && v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && Array.isArray(v.$in) && v.$in.some(oidOf) ? v.$in.map((x) => oidOf(x) ?? x) : null;
     if (id && !k.startsWith("$")) match.push({ $eq: [{ $toString: "$" + k }, id] });
+    else if (list) match.push({ $in: [{ $toString: "$" + k }, list.map(String)] });
     else out[k] = v;
   }
   if (!match.length) return filter;
@@ -96,7 +127,8 @@ function oidFilter(filter) {
 function rawReadArgs(tool, args) {
   if (tool === "heal_collections") return { env: "prod" };
   const collection = String(args.collection || "");
-  if (!collection || RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads; read game records only`);
+  if (!collection) throw new Error("collection: name the game collection to read; heal_collections lists them");
+  if (RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads: ${RAW_READ_CLOSED_NOTE}`);
   const walk = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_FIELD_CLOSED.test(k) || walk(x));
   if (walk(args.filter) || walk(args.projection)) throw new Error("contact, credential and session fields are closed to support reads");
   // Server-side JavaScript is never a read a support task needs.
@@ -409,7 +441,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   // read this activation (or a registered calculation over such figures).
   function guardNumbers(job, message) {
     const missing = knowledge.unsupportedNumbers(message, job.evidence || []);
-    if (missing.length) throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything you read this activation. Read the figure with a tool first, or use calculate to derive it from figures you read, or leave it out.`);
+    if (missing.length) throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything you read this activation. If you worked it out from figures you read, call calculate with that expression (for example "41288610 / 312540") and post the same reply; it then passes. Otherwise read the figure with a tool first or leave it out. Never hand the arithmetic to the player instead.`);
   }
   // Keir 2.1: code-only second look (owner, 2026-10-13: no model tokens per
   // post). A draft may not re-assert an idea the ticket record ruled out.
@@ -443,6 +475,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const introduced = (d.introduced ||= {})[uid] || (prior?.docs || []).some((x) => d.disclosed?.[x.ticketNumber]?.posted);
     const name = String(t.discordDisplayName || t.discordUsername || "").replace(/[*_`~|<>@#]/g, "").trim().slice(0, 40);
     d.introduced[uid] = d.introduced[uid] || now();
+    // Owner, 2026-10-29 (ticket 1708): a ticket Keir opened from a chat message
+    // was not filed by the player. "This is your 23rd ticket, thank you for
+    // submitting it" read as shaming there, so it gets no count and no thanks.
+    const keirOpened = Object.values(d.jobs).some((j) => Object.values(j.openedTickets || {}).some((r) => Number(r?.number) === n));
+    if (keirOpened) return { text: introduced ? `Welcome back${name ? `, ${name}` : ""}. I opened this ticket from your message so it can be tracked here. I'm looking into it now.` : `${DISCLOSURE} I opened this ticket from your message so it can be tracked here.` };
     if (!introduced) return { text: `${DISCLOSURE}${count > 1 ? ` This is your ${ordinal(count)} ticket, thank you for submitting it.` : " Thank you for submitting your first ticket."}`, count };
     return { text: `Welcome back${name ? `, ${name}` : ""}. This is your ${ordinal(count)} ticket, thank you for submitting it. I'm looking into it now.`, count };
   }
@@ -778,7 +815,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
     }
-    if (String(message || "").trim() && !/^\[status card\]/.test(message)) job.lastAskAt = now();
+    if (String(message || "").trim() && !/^\[status card\]/.test(message)) { job.lastAskAt = now(); delete job.replyRefusedPending; }
     if (!/^\[status card\]/.test(message) && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
@@ -1010,6 +1047,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
       // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
       try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
+      // Keir 6.1: a refused answer to the player is owed until one is posted
+      // (KBX3: Sonnet's reply was refused for length, then it finished done).
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
@@ -1573,7 +1613,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         // without it models guessed argument names until the step limit.
         if (!/-32602|Input validation error/.test(String(error.message))) throw error;
         const schema = await mcp.list(input.server, signal).then((list) => list.find((t) => t.name === input.tool)?.inputSchema).catch(() => null);
-        throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
+        // Keir 6.1: most live rejections were a number where the schema wants a
+        // string (a character id) or a size under the tool's minimum. Coerce
+        // those against the schema and retry once instead of spending a round.
+        const fixed = schema ? coerceArgs(args, schema) : null;
+        if (fixed) {
+          try { result = await mcp.call(input.server, input.tool, fixed, false, signal); }
+          catch (retry) { if (!/-32602|Input validation error/.test(String(retry.message))) throw retry; }
+        }
+        if (result === undefined) throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
       }
       if (signal?.aborted && input.server === "ops-knowledge" && input.tool.startsWith("knowledge_")) throw new Error("knowledge read cancelled");
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool)) return redactRaw(result);
@@ -1981,9 +2029,18 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.action === "ci_runs") return require("./ciEvidence").readCiEvidence({ api, repo, number: input.number, workflow: input.workflow, runId: input.run });
       if (input.action === "issues") {
         const query = String(input.query || "").trim();
-        if (!query || query.length > 180 || /\b(?:repo|org|user|is|type):/i.test(query)) throw new Error("issues needs a bounded search without repository overrides");
-        const result = await api([`search/issues?q=${encodeURIComponent(`repo:${repo} is:issue ${query}`)}&per_page=20`]);
-        return { total: result.total_count, incomplete: Boolean(result.incomplete_results), issues: (result.items || []).slice(0, 20).map((r) => ({ number: r.number, title: r.title, state: r.state, url: r.html_url, assignees: (r.assignees || []).map((a) => a.login) })) };
+        if (!query || query.length > 180) throw new Error("issues needs a query of 1 to 180 characters, for example: promote staging in:title");
+        // Only a scope override is refused. The repository this task may read is
+        // fixed, and the search must stay bounded (2026-10-26: the guard treated
+        // is: and type: as overrides too, so a reasonable pull request search was
+        // refused twelve times across seven tasks and the refusal named nothing
+        // the model could change).
+        if (/\b(?:repo|org|user):/i.test(query)) throw new Error("issues search is already scoped to this task's repository; remove repo:, org: or user: from the query and keep the plain words with in:, is:, state: or sort:, for example: is:pr is:open promote in:title");
+        // A search that asks for pull requests decides the type itself;
+        // prefixing is:issue for it would ask for both and match nothing.
+        const wantsPr = /(?:^|\s)(?:is|type):pr\b/i.test(query);
+        const result = await api([`search/issues?q=${encodeURIComponent(`${wantsPr ? "" : "is:issue "}repo:${repo} ${query}`)}&per_page=20`]);
+        return { total: result.total_count, incomplete: Boolean(result.incomplete_results), issues: (result.items || []).slice(0, 20).map((r) => ({ number: r.number, title: r.title, state: r.state, url: r.html_url, pullRequest: Boolean(r.pull_request), assignees: (r.assignees || []).map((a) => a.login) })) };
       }
       if (input.action === "ci_failures") {
         // The actual failing output, so a red check is diagnosed, not guessed.
@@ -2840,7 +2897,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
-      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && (job.lastAskAt || 0) < (job.lastPlayerAt || 0)) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
+      if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
@@ -2965,6 +3023,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
             const safe = await finishPublicText(job);
             if (safe || !ticketOf(job)) ledger.notify(`finish:${job.id}:${job.rounds}`, safe ? `channel:${job.id}` : job.actorId, safe || job.summary);
           }
+        } else if (job.kind === "command" && !job.channelReplyQueued && !job.internalProbe) {
+          // Keir 6.1: the owner's own request that ends blocked said nothing back
+          // (KBX3 owner-merge-red: "merge it" against a red check went silent).
+          const safe = await finishPublicText(job);
+          if (safe) ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe);
         } else if (job.kind !== "command") { job.state = "waiting"; job.wakeAt = now() + (pendingHandoffs(job).length ? 6 : 1) * 3600000; }
       } else if (!job.internalProbe && job.role !== "player" && ((state === "done" && !job.channelReplyQueued) || state === "blocked")) {
         const safe = job.role === "owner" && !job.channelReplyQueued ? await finishPublicText(job) : null;
@@ -3094,4 +3157,4 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { coerceArgs, oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };

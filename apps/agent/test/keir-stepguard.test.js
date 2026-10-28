@@ -44,4 +44,8 @@ test("$oid filter values match ids stored as text or ObjectId", () => {
   assert.deepEqual(both.$expr, { $and: [{ $gt: ["$x", 1] }, { $eq: [{ $toString: "$_id" }, "a"] }] });
   const plain = { name: "x" };
   assert.equal(oidFilter(plain), plain);
+  // Keir 6.1: an $in list of $oid values (13 live failures on 2026-10-28).
+  assert.deepEqual(oidFilter({ ownerId: { $in: [{ $oid: "a" }, "b"] } }), { $expr: { $in: [{ $toString: "$ownerId" }, ["a", "b"]] } });
+  const ints = { turn: { $in: [1, 2] } };
+  assert.equal(oidFilter(ints), ints);
 });
