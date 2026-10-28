@@ -602,7 +602,7 @@ test("even owner quick tasks cannot write or discover mutation tools", async () 
   f.mcp.list = async () => [{ name: "game_overview" }, { name: "world_reset" }];
   assert.deepEqual((await f.broker.tool(j, "read_tools", { server: "gamestate" })).map((t) => t.name), ["game_overview"]);
   for (const name of ["shell", "request_action", "execute_action", "open_ticket", "support_action", "publish_patch"]) await assert.rejects(f.broker.tool(j, name, {}), /quick conversations/);
-  await assert.rejects(f.broker.tool(j, "read_tool", { server: "gamestate", tool: "world_reset", args: {} }), /quick read scope/);
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "gamestate", tool: "world_reset", args: {} }), /quick read scope|read_tool is read-only/);
   await f.broker.tool(j, "read_tool", { server: "engine", tool: "engine_health", args: {} });
   assert.equal(f.calls.length, 1); assert.equal(f.calls[0][3], false);
 });

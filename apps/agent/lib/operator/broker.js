@@ -58,7 +58,12 @@ const SUPPORT_READS = {
   gamestate: ["entity_search", "legislation_catalog", "elections", "game_overview", "countries", "analytics_catalog", "analytics_query", "fx_quote", "player_wealth_statistics",
     "trace_corp", "trace_sector", "corporation_rankings", "extraction_market",
     // Keir 2.1: the reporter's own history (scoped below), and public approval.
-    "trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_approval"],
+    "trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_approval",
+    // Keir 6 (KBX2/KBX3, 2026-10-28): records the worst real tickets needed but support
+    // could not read: corporation ledgers (double charges, 1558), regional workforce
+    // and migration (1677), parties and races (1488, 1527), fiscal and map context,
+    // and the reporter's own action timings (1658, reporter-scoped below).
+    "trace_ledger", "macro_history", "parties", "trace_election", "trace_race", "country_fiscal", "wars", "map_snapshot", "geo_aggregate", "top_players", "trace_actions"],
 };
 const META_SUMMARY = /\b(no (further|new|additional) (post|reply|response|message)s? (is |was )?(needed|required|necessary)|nothing (further |more )?to (post|add|say)|already (answered|replied|posted|addressed|handled)\b|source channel|the (player|reporter|owner|developer) (was|has been|is) (told|answered|updated)|(task|activation|job) (finished|complete|completed|done))/i;
 // Raw game-record reads for support tasks. Account, auth, ticket, payment and
@@ -123,7 +128,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 };
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
-const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"]);
+const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions"]);
 const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
