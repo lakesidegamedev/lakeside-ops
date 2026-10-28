@@ -58,7 +58,12 @@ const SUPPORT_READS = {
   gamestate: ["entity_search", "legislation_catalog", "elections", "game_overview", "countries", "analytics_catalog", "analytics_query", "fx_quote", "player_wealth_statistics",
     "trace_corp", "trace_sector", "corporation_rankings", "extraction_market",
     // Keir 2.1: the reporter's own history (scoped below), and public approval.
-    "trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_approval"],
+    "trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_approval",
+    // Keir 6 (KBX2/KBX3, 2026-10-28): records the worst real tickets needed but support
+    // could not read: corporation ledgers (double charges, 1558), regional workforce
+    // and migration (1677), parties and races (1488, 1527), fiscal and map context,
+    // and the reporter's own action timings (1658, reporter-scoped below).
+    "trace_ledger", "macro_history", "parties", "trace_election", "trace_race", "country_fiscal", "wars", "map_snapshot", "geo_aggregate", "top_players", "trace_actions"],
 };
 const META_SUMMARY = /\b(no (further|new|additional) (post|reply|response|message)s? (is |was )?(needed|required|necessary)|nothing (further |more )?to (post|add|say)|already (answered|replied|posted|addressed|handled)\b|source channel|the (player|reporter|owner|developer) (was|has been|is) (told|answered|updated)|(task|activation|job) (finished|complete|completed|done))/i;
 // Raw game-record reads for support tasks. Account, auth, ticket, payment and
@@ -123,7 +128,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 };
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
-const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"]);
+const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions"]);
 const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
@@ -1252,7 +1257,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         await mcp.call("ops-knowledge", "work_report", { id: Number(input.appendTo), event: "progress", summary: `${n ? `Ticket ${n}: ` : ""}${title ? `${title}. ` : ""}${detail}`.slice(0, 3900), actor: "keir" }, true, signal);
         record(Number(input.appendTo));
         const asked = input.kind === "decision" ? askOwner(Number(input.appendTo), title || `Item ${input.appendTo}`, String(input.question || detail).slice(0, 500)) : null;
-        return { raised: true, id: Number(input.appendTo), appended: true, ...(asked ? { decision: asked } : {}), instruction: "Added to the existing item for the developers. You can now tell the player it is with them." };
+        return { raised: true, id: Number(input.appendTo), appended: true, ...(asked ? { decision: asked } : {}), instruction: asked ? "Added to the existing item, and the owner has the decision DM. One public notice is allowed; status_card and other support writes wait until the owner answers." : "Added to the existing item for the developers. You can now tell the player it is with them." };
       }
       // Owner, 2026-10-21: MCP capability requests live on their own board.
       // kind "capability" is kanban-only on product lakeside-mcp: no public
@@ -1293,7 +1298,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (selfOwned && r?.id) { const rec = job.raisedToDevelopers.find((x) => x.id === r.id); if (rec) { rec.selfOwned = true; ledger.save(); } }
       if (input.kind === "decision") {
         const asked = askOwner(r?.id || null, title, String(input.question).trim());
-        return { raised: true, id: r?.id || null, decision: asked, instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome. Keep the ticket open: the answer wakes this task, then act on it." };
+        return { raised: true, id: r?.id || null, decision: asked, instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome (one public notice is allowed). Until the owner answers, status_card and other support writes are refused, so do not call them; finish waiting. Keep the ticket open: the answer wakes this task, then act on it." };
       }
       return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), instruction: (input.kind || "question") === "question" ? "Filed on your own board as your work item (lane now, assigned to you). Nobody else will pick it up: keep working it yourself now. Read the game records you need with the heal-ops read tools (heal_query, heal_count), keep the player updated, and add findings with raise_to_developers appendTo. The card closes with your task. Do not wait on it and do not claim filing fixed the problem." : "Filed for the developers. Filing is not a fix. Verify the reported problem is actually resolved before closing; optional feature proposals may remain on the developer queue." };
       } finally { releaseIssue(); }
@@ -1359,6 +1364,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.op === "read") return knowledge.readTicketRecord(ledger, n, job);
       // Legacy app briefs used record notes as delivery. Keep that path honest:
       // accept the same original owner message in the support inbox first.
+      // KBX2: several entries in one call (each a full model round before).
+      if (input.op === "add" && Array.isArray(input.entries)) {
+        if (!input.entries.length || input.entries.length > 8) throw new Error("entries takes 1 to 8 items of {kind, text, source}");
+        for (const e of input.entries) knowledge.updateRecord(ledger, n, job, { op: "add", kind: e?.kind, text: e?.text, source: e?.source });
+        return knowledge.readTicketRecord(ledger, n, job);
+      }
       const receipt = isAppJob(job) && job.role === "owner" ? await supportDirectives.send(job, {ticket:n, context:input.text}, signal) : null;
       knowledge.updateRecord(ledger, n, job, input);
       const record = knowledge.readTicketRecord(ledger, n, job);
@@ -1463,9 +1474,21 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (job.role === "player" && !["support", "gamestate"].includes(input.server)) throw new Error("player conversation reads are limited to its ticket and public game state");
       if (isQuick(job) && job.role === "owner" && !QUICK_OWNER_READS[input.server]) throw new Error("server is outside quick read scope");
       const list = await mcp.list(input.server);
-      return list.filter((t) => (!musePolicy.origin(d, job).scoped || musePolicy.MCP_READS[input.server]?.includes(t.name)) && (job.role !== "player" || input.server !== "support" || t.name === "support_get") && ((job.role === "owner" || developerTask(job)) ? (!isQuick(job) || QUICK_OWNER_READS[input.server].includes(t.name)) : readScope(job)[input.server].includes(t.name))).map((t) => ({ name: t.name, description: t.description, schema: t.inputSchema }));
+      const listed = list.filter((t) => (!musePolicy.origin(d, job).scoped || musePolicy.MCP_READS[input.server]?.includes(t.name)) && (job.role !== "player" || input.server !== "support" || t.name === "support_get") && ((job.role === "owner" || developerTask(job)) ? (!isQuick(job) || QUICK_OWNER_READS[input.server].includes(t.name)) : readScope(job)[input.server].includes(t.name))).map((t) => ({ name: t.name, description: t.description, schema: t.inputSchema }));
+      // KBX2: a second listing of the same server in one activation costs a full
+      // round and repeats a large schema dump; return the names and point back.
+      job.listedTools ||= {};
+      if (job.listedTools[input.server]) return { alreadyListed: true, note: "You already have this server's tools from this activation (context.orientation.tools or your earlier read_tools result). Call read_tool directly.", names: listed.map((t) => t.name) };
+      job.listedTools[input.server] = true;
+      return listed;
     }
     if (name === "read_tool") {
+      // read_tool is a read path for every role, owner included: write-like tools
+      // (heal applies, creates, deletes, sends, merges) go through their own gated
+      // tools (request_heal, github, support_action). KBX3 2026-10-28: an owner task
+      // replayed a heal confirm token through read_tool heal_adhoc_apply.
+      if (/(?:^|_)(?:apply|delete|remove|drop|update|set|create|insert|send|post|merge|promote|publish|rollback|reset|write|compensate)(?:_|$)/i.test(String(input.tool || "")) && !/^(?:heal_plan|heal_adhoc_plan|heal_compensate_plan)$/.test(input.tool))
+        throw new Error(`read_tool is read-only; ${input.tool} changes state. Use the gated tool for it (request_heal for repairs, github for merges, support_action for support writes).`);
       const args = { ...(input.args || {}) };
       // knowledge_query takes `text`; models reach for query or question, and
       // every such read failed schema validation (2026-10-23 DeepSeek trace).
@@ -2609,7 +2632,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       sandbox.attach(job.id, await baseFor(input.repository, repository, sha));
       job.repository = input.repository; job.repositoryRef = { branch, commit: sha.slice(0, 10), committedAt: committed }; ledger.save();
       const deps = sandbox.deps?.(input.repository);
-      return { path: "/workspace/repo", ...job.repositoryRef, dependencies: deps ? "node_modules is mounted read-only; run focused checks such as `npx vitest run <file>` or `npx tsc --noEmit -p <tsconfig>`" : "dependencies unavailable for this repository",
+      // KBX2: a compact map of the tree so the model does not spend rounds on ls/find.
+      const files = String(await exec("/usr/bin/git", ["-C", repository, "ls-tree", "-r", "--name-only", sha]).catch(() => "")).split("\n").filter(Boolean);
+      const map = require("./repomap").repoMap(files);
+      return { path: "/workspace/repo", ...job.repositoryRef, ...(map ? { map } : {}), dependencies: deps ? "node_modules is mounted read-only (no need to inspect it). Focused test: `node_modules/.bin/vitest run <file> --configLoader runner`; types: `npx tsc --noEmit -p <tsconfig>`; format: `node_modules/.bin/prettier --write <files>`. The snapshot is a fresh clone of the branch: git log, remotes and branches need no checking." : "dependencies unavailable for this repository",
         instruction: "This is the live remote branch, newer than the code index. Treat it as the source of truth for what is deployed (main) or about to deploy (development). Edit here; the host is untouched." };
     }
     if (name === "request_heal") {
@@ -2826,6 +2852,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !["done", "dismissed", "cancelled"].includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
         const idle = items.filter((i) => !["main", "confirmed", "answered"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
         const key = hash(idle.map((i) => i.name).sort());
+        // KBX3: the review can ride on the finish itself (idleReason), saving the refused round.
+        const reviewed = typeof input.idleReason === "string" && input.idleReason.trim().length >= 20;
+        if (idle.length && reviewed) { job.idleItemsReview = key; (job.history ||= []).push({ at: new Date(now()).toISOString(), kind: "idle_review", items: idle.map((i) => i.name), reason: input.idleReason.trim().slice(0, 400) }); ledger.save(); }
         if (idle.length && job.idleItemsReview !== key) {
           job.idleItemsReview = key; ledger.save();
           throw new Error(`Not finished: your progress card has ${idle.length} fix${idle.length > 1 ? "es" : ""} not moving: ${idle.map((i) => `"${i.name}" (${i.blocked ? "paused" : i.stage})`).join("; ")}. A wait on one answer does not pause the others. For each one, either advance it now (investigate it, delegate_fix it, or carry its PR forward; display-only fixes need no developer), or, if it genuinely waits on something, make its card note name exactly what. Then finish again.`);

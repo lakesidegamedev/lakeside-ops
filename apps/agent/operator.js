@@ -47,7 +47,7 @@ const config = {
   guildId: env.KEIR_GUILD_ID || "1465445442987888743", staffIds: (env.KEIR_SUPPORT_DELEGATES || "565289871799746593").split(",").filter(Boolean),
   scanChannels: (env.KEIR_SCAN_CHANNELS || "1470636730884427857,1483974659929145625,1495932687058206822,1488255716753019171,1488255794628788244,1523477015217443028,1474210643841122499,1490571412040188117").split(",").filter(Boolean),
   taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000, liveGraceMs: positive("KEIR_LIVE_GRACE_MINUTES", 120) * 60000,
-  maxIntakePerHour: positive("KEIR_MAX_INTAKE_PER_HOUR", 4), maxRounds: positive("KEIR_MAX_TOOL_ROUNDS", 24),
+  maxIntakePerHour: positive("KEIR_MAX_INTAKE_PER_HOUR", 4), maxRounds: positive("KEIR_MAX_TOOL_ROUNDS", 24), ticketMaxRounds: positive("KEIR_TICKET_MAX_TOOL_ROUNDS", 16),
   maxTurnMs: positive("KEIR_MAX_TURN_MINUTES", 15) * 60000, dailyBudget: positive("KEIR_DAILY_BUDGET_USD", 20),
   model: env.KEIR_MODEL || "claude-opus-5-5",
   // Model split (2026-10-12 trial): quick lane = conversation, worker lanes = coding and deep answers.
@@ -79,6 +79,7 @@ const config = {
   dynamicEffort: env.KEIR_DYNAMIC_EFFORT !== "0",
   skills: env.KEIR_SKILLS !== "0",
   knowledgeCorrections: env.KEIR_KNOWLEDGE_CORRECT === "1",
+  orientation: env.KEIR_ORIENTATION !== "0",
   knowledgePreparation: env.KEIR_KNOWLEDGE_PREPARE === "1" ? { server: env.KEIR_KNOWLEDGE_SERVER || "ops-knowledge", project: env.KEIR_KNOWLEDGE_PROJECT, timeoutMs: positive("KEIR_KNOWLEDGE_TIMEOUT_MS", 5000) } : undefined,
   briefFile: path.join(__dirname, "KEIR.md"), coreBriefFile: path.join(__dirname, "KEIR-CORE.md"), coreBrief: env.KEIR_CORE_BRIEF === "1", effectGuard: env.KEIR_EFFECT_GUARD !== "0", leanContext: env.KEIR_LEAN_CONTEXT !== "0", repositories: { AHDGame: "/root/projects/AHDGame", "lakeside-operator": env.KEIR_SOURCE_REPO || "/root/projects/lakeside-ops", AHDClient: "/root/projects/AHDClient" },
   // Every public guild text channel or thread is watched for reports, except

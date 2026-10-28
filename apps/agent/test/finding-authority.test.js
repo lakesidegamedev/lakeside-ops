@@ -29,7 +29,7 @@ test("finding evidence reads have a narrow sensor allowlist", async () => {
   await f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_detect", args: { defectId: "fixture", env: "prod" } });
   await f.broker.tool(f.job, "read_tool", { server: "gamestate", tool: "invariant_check", args: {} });
   await f.broker.tool(f.job, "read_tool", { server: "turndiag", tool: "turn_anomalies", args: {} });
-  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_apply", args: {} }), /outside support scope/);
+  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_apply", args: {} }), /outside support scope|read_tool is read-only/);
   await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "gamestate", tool: "trace_character", args: { character: "other" } }), /outside support scope/);
   assert.ok(f.calls.every((c) => c.write === false));
 });

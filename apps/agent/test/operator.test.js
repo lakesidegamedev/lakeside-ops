@@ -602,7 +602,7 @@ test("even owner quick tasks cannot write or discover mutation tools", async () 
   f.mcp.list = async () => [{ name: "game_overview" }, { name: "world_reset" }];
   assert.deepEqual((await f.broker.tool(j, "read_tools", { server: "gamestate" })).map((t) => t.name), ["game_overview"]);
   for (const name of ["shell", "request_action", "execute_action", "open_ticket", "support_action", "publish_patch"]) await assert.rejects(f.broker.tool(j, name, {}), /quick conversations/);
-  await assert.rejects(f.broker.tool(j, "read_tool", { server: "gamestate", tool: "world_reset", args: {} }), /quick read scope/);
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "gamestate", tool: "world_reset", args: {} }), /quick read scope|read_tool is read-only/);
   await f.broker.tool(j, "read_tool", { server: "engine", tool: "engine_health", args: {} });
   assert.equal(f.calls.length, 1); assert.equal(f.calls[0][3], false);
 });
@@ -1650,6 +1650,28 @@ test("Keir 2.0: the ticket record is shared across tasks and its facts count as 
   const other = f.ledger.createJob("other", { role: "support", kind: "command", ticket: 123, source: {}, deadline: 9e15 }); other.state = "running";
   const rec = await f.broker.tool(other, "ticket_record", { op: "read" });
   assert.equal(rec.facts.length, 1); assert.equal(rec.ruledOut[0].text, "Real estate shortage");
+});
+
+test("KBX3: finish accepts idleReason as the idle-fix review", async () => {
+  const f = fixture(), j = running(f, { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777" });
+  f.ledger.data.statusCards = { 123: { items: [{ name: "Slow groups", stage: "found" }] } };
+  const r = await f.broker.tool(j, "finish", { state: "waiting", summary: "Asked the developers; waiting on their review of the found fix.", idleReason: "Slow groups waits on a developer review of the raised fix." }).catch((e) => e);
+  assert.doesNotMatch(String(r?.message || ""), /not moving/);
+  assert.ok(j.history.some((h) => h.kind === "idle_review"));
+});
+
+test("KBX3: read_tool refuses write-like tools for every role, including the owner", async () => {
+  const f = fixture(), j = running(f, { role: "owner", kind: "command" });
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "heal-ops", tool: "heal_adhoc_apply", args: { token: "t", env: "prod" } }), /read-only/);
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "heal-ops", tool: "heal_compensate_apply", args: {} }), /read-only/);
+  assert.equal(f.calls.filter((c) => /apply/.test(c[1])).length, 0);
+});
+
+test("KBX2: ticket_record adds several entries in one call and bounds the batch", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  const rec = await f.broker.tool(j, "ticket_record", { op: "add", entries: [{ kind: "fact", text: "Iron holds the plant at 85%", source: "trace_sector" }, { kind: "ruled_out", text: "Real estate shortage" }] });
+  assert.equal(rec.facts.length, 1); assert.equal(rec.ruledOut.length, 1);
+  await assert.rejects(f.broker.tool(j, "ticket_record", { op: "add", entries: [] }), /1 to 8/);
 });
 
 test("Keir 2.1: an automatic ticket task reads player history only for the reporter", async () => {

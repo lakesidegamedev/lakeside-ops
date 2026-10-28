@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir 6: tuned on KeirBench Extreme 2, ten replays built from the worst real support failures and scored on quality, cost and time, running DeepSeek V4.1 Flash through OpenCode Go.
+- Load the read servers, compact tool catalogs (game and support first), the reporter, recent messages and the ticket record before the model starts, so activations stop rediscovering them. A repeated tool listing in one activation returns names only.
+- Return a compact repository map and the focused test, type and format commands with every snapshot, so coding work no longer explores the tree.
+- Support tasks can read corporation ledgers, regional history, parties, races, fiscal and map data, and the reporter's own action timings (reporter only).
+- read_tool refuses state-changing tools for every role, including the owner: repairs, merges and support writes go through their gated tools.
+- Record up to eight ticket facts in one call; let finish carry the idle-fix review; trim over-long decision option details instead of refusing them; tell the model card writes wait while an owner decision is pending.
+- Support ticket activations get their own 16-round budget (KEIR_TICKET_MAX_TOOL_ROUNDS); coding, investigation and owner work keep the general budget.
+- Brief: cost and time discipline, money claims name the verified overcharge, private data is declined once with the useful public part, account recovery names the ownership evidence, and loss explanations compare the profitable turns with now.
+
 ## 5.10.7 (2026-10-25)
 
 - Explain release approvals in ordinary language: what changes for players, who notices, the risk, and whether the next step prepares a test version, updates the test server, or reaches the live game. Keep code details in the optional review section.
