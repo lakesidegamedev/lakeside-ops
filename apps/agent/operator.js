@@ -47,7 +47,7 @@ const config = {
   guildId: env.KEIR_GUILD_ID || "1465445442987888743", staffIds: (env.KEIR_SUPPORT_DELEGATES || "565289871799746593").split(",").filter(Boolean),
   scanChannels: (env.KEIR_SCAN_CHANNELS || "1470636730884427857,1483974659929145625,1495932687058206822,1488255716753019171,1488255794628788244,1523477015217443028,1474210643841122499,1490571412040188117").split(",").filter(Boolean),
   taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000, liveGraceMs: positive("KEIR_LIVE_GRACE_MINUTES", 120) * 60000,
-  maxIntakePerHour: positive("KEIR_MAX_INTAKE_PER_HOUR", 4), maxRounds: positive("KEIR_MAX_TOOL_ROUNDS", 24), ticketMaxRounds: positive("KEIR_TICKET_MAX_TOOL_ROUNDS", 16),
+  maxIntakePerHour: positive("KEIR_MAX_INTAKE_PER_HOUR", 4), maxRounds: positive("KEIR_MAX_TOOL_ROUNDS", 24), ticketMaxRounds: positive("KEIR_TICKET_MAX_TOOL_ROUNDS", 16), stopGraceMs: positive("KEIR_STOP_GRACE_MS", 100000),
   maxTurnMs: positive("KEIR_MAX_TURN_MINUTES", 15) * 60000, dailyBudget: positive("KEIR_DAILY_BUDGET_USD", 20),
   model: env.KEIR_MODEL || "claude-opus-5-5",
   // Model split (2026-10-12 trial): quick lane = conversation, worker lanes = coding and deep answers.
@@ -76,7 +76,7 @@ const config = {
   visionProvider: env.KEIR_VISION_PROVIDER || "claude:claude-sonnet-5-5@medium",
   agyModel: env.KEIR_AGY_MODEL || "gemini-3.8-flash", museModel: env.KEIR_MUSE_MODEL || "muse-wonder-1.0",
   // Jev picks each activation's effort (low to xhigh); KEIR_DYNAMIC_EFFORT=0 pins medium.
-  dynamicEffort: env.KEIR_DYNAMIC_EFFORT !== "0",
+  dynamicEffort: env.KEIR_DYNAMIC_EFFORT !== "0", routeEffortCeiling: env.KEIR_ROUTE_EFFORT_CEILING !== "0",
   skills: env.KEIR_SKILLS !== "0",
   knowledgeCorrections: env.KEIR_KNOWLEDGE_CORRECT === "1",
   orientation: env.KEIR_ORIENTATION !== "0",
@@ -1052,8 +1052,27 @@ function housekeeping() {
     if (terminal.includes(j.state) && now - (j.updatedAt || j.at || 0) > keep) { archived.push(JSON.stringify(j)); delete d.jobs[id]; }
   }
   if (archived.length) fs.appendFileSync(path.join(config.stateDir, "jobs-archive.jsonl"), archived.join("\n") + "\n", { mode: 0o600 });
+  // Keir 6.1.1: finished tasks kept their per-activation scratch (evidence text
+  // and numbers, read keys) for up to a week, about a fifth of a 10 MB ledger
+  // that every save rewrites. A new activation resets all of it, so drop it an
+  // hour after the task finishes.
+  let compacted = 0;
+  for (const j of Object.values(d.jobs)) {
+    if (!terminal.includes(j.state) || now - (j.updatedAt || j.at || 0) <= 3600000) continue;
+    if (j.evidenceText || j.evidence?.length || j.readKeys?.length || (j.liveLog?.length || 0) > 10) {
+      delete j.evidenceText; delete j.evidence; delete j.readKeys;
+      if (j.liveLog?.length > 10) j.liveLog = j.liveLog.slice(-10);
+      compacted++;
+    }
+  }
   for (const [key, o] of Object.entries(d.outbox)) if (o.deliveredAt && now - o.deliveredAt > 7 * 86400000) delete d.outbox[key];
-  if (freed || archived.length) { ledger.audit("housekeeping", { freed, archived: archived.length }); ledger.save(); log(`housekeeping: removed ${freed} paths, archived ${archived.length} tasks`); }
+  // Transcripts of channels quiet for a week (closed tickets, mostly) are
+  // never read again; 256 of them were 1.2 MB of the ledger.
+  for (const [channel, rows] of Object.entries(d.channelContext || {})) {
+    const last = Math.max(0, ...(Array.isArray(rows) ? rows : []).map((r) => r.observedAt || Date.parse(r.at) || 0));
+    if (now - last > 7 * 86400000) { delete d.channelContext[channel]; compacted++; }
+  }
+  if (freed || archived.length || compacted) { ledger.audit("housekeeping", { freed, archived: archived.length, compacted }); ledger.save(); log(`housekeeping: removed ${freed} paths, archived ${archived.length} tasks, compacted ${compacted}`); }
 }
 setTimeout(() => { try { housekeeping(); } catch (e) { log(`housekeeping: ${e.message}`); } }, 60000);
 setInterval(() => { try { housekeeping(); } catch (e) { log(`housekeeping: ${e.message}`); } }, 3600000);
@@ -1111,8 +1130,20 @@ setInterval(() => {
       .finally(() => classifying.delete(id));
   }
 }, 1000);
+// Keir 6.1.1: a restart used to abort every running activation at once (6.0's
+// cutover interrupted five ticket activations mid-answer, each rerun from the
+// start a minute later). Stop taking new work, let running activations finish
+// within the grace period, then abort what is left. A second signal stops now.
 for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => {
+  const stopNow = () => {
+    for (const slot of Object.values(active)) slot?.controller.abort();
+    server.close(); setTimeout(() => process.exit(0), 1500);
+  };
+  if (stopping) return stopNow();
   stopping = true;
-  for (const slot of Object.values(active)) slot?.controller.abort();
-  server.close(); setTimeout(() => process.exit(0), 1500);
+  const started = Date.now();
+  const running = () => Object.values(active).filter(Boolean).length;
+  if (running()) log(`stopping: letting ${running()} running activation(s) finish (up to ${Math.round(config.stopGraceMs / 1000)}s)`);
+  const wait = () => (!running() || Date.now() - started >= config.stopGraceMs ? stopNow() : setTimeout(wait, 1000));
+  wait();
 });

@@ -51,6 +51,23 @@ async function activationEffort(job, { config, quick, runner }) {
   // voice skips the effort classifier call and runs at the lowest level.
   if (quick && job.voiceMode && !job.codingParent) return { effort: clamp("low", runner, quick), via: "voice" };
   if (config.dynamicEffort === false) return { effort: "medium", via: "fixed" };
-  return (config.chooseEffort || chooseEffort)(job, { quick, runner });
+  const chosen = await (config.chooseEffort || chooseEffort)(job, { quick, runner });
+  return capToRoute(job, chosen, { config, quick, runner });
 }
-module.exports = { chooseEffort, activationEffort, CRITERIA, clamp };
+
+// Keir 6.1.1: a route's effort (runner:model@low) is the level that route was
+// benchmarked at. Jev's tags overrode it upward, so production ran DeepSeek at
+// high where KeirBench measured low/medium: 6.0 ticket activations took twice
+// the rounds and time the bench showed. The route effort is now a ceiling.
+// Jev may still pick lower, and a task that just hit its turn limit or had a
+// completion refused may go one level above. KEIR_ROUTE_EFFORT_CEILING=0 reverts.
+function capToRoute(job, chosen, { config = {}, quick = false, runner } = {}) {
+  if (config.routeEffortCeiling === false) return chosen;
+  const route = job.provider?.routeEffort || job.effortPin;
+  if (!ORDER.includes(route) || !ORDER.includes(chosen.effort)) return chosen;
+  const struggled = (job.history || []).slice(-4).some((h) => ["turn-limit", "refused"].includes(h.kind));
+  const cap = ORDER[Math.min(ORDER.indexOf(route) + (struggled ? 1 : 0), ORDER.length - 1)];
+  if (ORDER.indexOf(chosen.effort) <= ORDER.indexOf(cap)) return chosen;
+  return { ...chosen, effort: clamp(cap, runner, quick), via: `${chosen.via}+route-cap` };
+}
+module.exports = { chooseEffort, activationEffort, capToRoute, CRITERIA, clamp };

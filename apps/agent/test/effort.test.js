@@ -33,3 +33,17 @@ test("Gemini in the conversation lane is capped at medium", async () => {
   const r = await chooseEffort(job(), { quick: true, runner: "agy", jev: async () => ({ choice: "high", confidence: 0.9 }) });
   assert.equal(r.effort, "medium");
 });
+
+test("route effort is a ceiling on dynamic effort, one level higher after a struggle", async () => {
+  const { activationEffort } = require("../lib/operator/effort");
+  const high = async () => ({ effort: "high", via: "tags", confidence: null });
+  const low = async () => ({ effort: "low", via: "tags", confidence: null });
+  const job = { provider: { routeEffort: "low" }, history: [] };
+  assert.deepEqual(await activationEffort(job, { config: { chooseEffort: high }, runner: "opencode" }), { effort: "low", via: "tags+route-cap", confidence: null });
+  assert.equal((await activationEffort(job, { config: { chooseEffort: low }, runner: "opencode" })).effort, "low");
+  const struggled = { provider: { routeEffort: "low" }, history: [{ kind: "turn-limit" }] };
+  assert.equal((await activationEffort(struggled, { config: { chooseEffort: high }, runner: "opencode" })).effort, "medium");
+  assert.equal((await activationEffort({ effortPin: "medium", history: [] }, { config: { chooseEffort: high }, runner: "ollama" })).effort, "medium");
+  assert.equal((await activationEffort(job, { config: { chooseEffort: high, routeEffortCeiling: false }, runner: "opencode" })).effort, "high");
+  assert.equal((await activationEffort({ history: [] }, { config: { chooseEffort: high }, runner: "opencode" })).effort, "high");
+});

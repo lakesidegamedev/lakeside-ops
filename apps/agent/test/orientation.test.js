@@ -20,7 +20,26 @@ test("orientation runs the discovery reads once and compacts them", async () => 
   assert.equal(o.reporter.name, "A. Player");
   assert.deepEqual(o.recentMessages.map((m) => m.text), ["first", "second"]);
   assert.equal(o.errors, undefined);
-  assert.deepEqual(calls.map((c) => c[0]), ["read_servers", "read_tools", "read_tools", "reporter_state", "ticket_history", "ticket_record"]);
+  assert.deepEqual(calls.map((c) => c[0]).sort(), ["read_servers", "read_tools", "read_tools", "reporter_state", "ticket_history", "ticket_record"].sort());
+  assert.deepEqual(Object.keys(o).filter((k) => k !== "note"), ["servers", "tools", "reporter", "recentMessages", "ticketRecordRead"]);
+  assert.ok(o.timings && typeof o.timings.tools === "number");
+  assert.equal(JSON.stringify(o).includes("timings"), false);
+});
+
+test("orientation reads run concurrently instead of one after another", async () => {
+  let inFlight = 0, peak = 0;
+  const tool = async (name) => {
+    inFlight++; peak = Math.max(peak, inFlight);
+    await new Promise((r) => setTimeout(r, 30));
+    inFlight--;
+    if (name === "read_servers") return ["gamestate", "support", "ops-knowledge"];
+    if (name === "reporter_state") return { character: {} };
+    return [];
+  };
+  const t = Date.now();
+  await orient(tool);
+  assert.ok(peak >= 4, `peak concurrency ${peak}`);
+  assert.ok(Date.now() - t < 150, "serial would take about 210 ms");
 });
 
 test("orientation records failures without throwing", async () => {

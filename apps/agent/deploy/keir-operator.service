@@ -22,7 +22,7 @@ CPUQuota=600%
 CPUWeight=500
 TasksMax=2048
 KillMode=control-group
-TimeoutStopSec=10
+TimeoutStopSec=120
 
 [Install]
 WantedBy=multi-user.target
