@@ -809,6 +809,25 @@ test("support inspects only the canonical reporter's live character without gran
   j.role="player"; await assert.rejects(broker.tool(j,"reporter_state",{}),/players/);
 });
 
+test("reporter lookups are cached per ticket and an in-flight lookup is shared (6.1.2)", async () => {
+  const f = fixture(), j = running(f, { role:"support", ticket:123, channelId:"777777777777777777" });
+  let healCalls = 0, release;
+  const gate = new Promise((r) => { release = r; });
+  f.mcp.call = async (server, tool) => {
+    if (tool === "support_get") return { reporter:{profileUrl:"https://www.ahousedividedgame.com/character/102"}, intake:{cardMessageId:"999999999999999999"} };
+    healCalls++; await gate;
+    return {docs:[{name:"Max Clarke",sequentialId:102}]};
+  };
+  const broker = createBroker({...f, sandbox:{}, discord:async (method,route) => route.includes('/guilds/') ? [{id:j.channelId,name:'ticket-bug-fixture-123'}] : {id:'999999999999999999',author:{id:f.config.botId,bot:true}}});
+  const a = broker.tool(j,"reporter_state",{}), b = broker.tool(j,"reporter_state",{});
+  await new Promise((r) => setImmediate(r)); release();
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.equal(ra.character.name, "Max Clarke"); assert.equal(rb.character.name, "Max Clarke");
+  const rc = await broker.tool(j,"reporter_state",{});
+  assert.equal(rc.cached, true); assert.equal(rc.character.name, "Max Clarke");
+  assert.equal(healCalls, 1);
+});
+
 test("native validation rejection is recoverable but a socket failure is never reclassified", async () => {
   const {validationRejected}=require('../lib/operator/broker');
   assert.equal(validationRejected({isError:true,content:[{type:'text',text:'MCP error -32602: Input validation error: Invalid arguments for tool support_tracker_note: body required'}]}),true);
