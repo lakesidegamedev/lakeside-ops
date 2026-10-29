@@ -99,7 +99,7 @@ const config = {
 if (!env.DISCORD_BOT_TOKEN || !env.KEIR_OPERATOR_ADMIN_TOKEN) throw new Error("operator credentials are incomplete");
 if (![config.ownerId, config.botId, config.guildId, ...config.staffIds, ...config.scanChannels].every(snowflake)) throw new Error("invalid Discord identity configuration");
 const ledger = createLedger(path.join(config.stateDir, "ledger.json"));
-const diary = require("./lib/operator/diary").createDiary({ stateDir: config.stateDir, ledger });
+const diary = require("./lib/operator/diary").createDiary({ stateDir: config.stateDir, ledger, ownerId: config.ownerId, botId: config.botId, staffIds: config.staffIds });
 // Keir 5.1 routing lock: lanes never run a model that measurably failed them.
 for (const c of require("./lib/operator/routing").enforce(config, { allowBlocked: env.KEIR_ALLOW_BLOCKED_ROUTES === "1" })) {
   console.log(`[keir] routing lock: ${c.lane} ${c.from} -> ${c.to} (${c.reason})`);

@@ -5,7 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
-- The private diary is a retrospective: Keir rereads its earlier entries, follows one or two threads of its own reasoning in connected prose (what it assumed, what changed its mind, what it would do differently) and leaves ids and balances out unless they were the turning point (owner). A failed entry now logs its cause instead of only "retry in 30 minutes".
+- The private diary is a retrospective that builds over time: Keir rereads its earlier entries, follows one or two threads of its own reasoning in prose, keeps a running set of ideas it grows, tests or drops across entries, and remembers the people it dealt with (who they are, how the exchange went, what to do differently with them), with they/them unless someone has said otherwise (owner). A failed entry now logs its cause instead of only "retry in 30 minutes".
 
 ## 6.1.0 (2026-10-29)
 
