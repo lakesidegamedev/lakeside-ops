@@ -1014,7 +1014,7 @@ setInterval(() => { appComputer.cleanup().catch((e) => log(`app computer cleanup
 setInterval(tick, 20000);
 // Private reflection runs independently so a provider wait cannot delay intake.
 // Keep failures generic: diary contents never enter operational logs or APIs.
-const diaryTick = () => diary.tick().catch(() => log("private diary update failed; retry in 30 minutes"));
+const diaryTick = () => diary.tick().catch((e) => log(`private diary update failed (${String(e?.message || e).slice(0, 160)}); retry in 30 minutes`));
 diaryTick();
 setInterval(diaryTick, 60000).unref();
 setInterval(drain, 1000);

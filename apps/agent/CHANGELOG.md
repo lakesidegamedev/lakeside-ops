@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- The private diary is a retrospective: Keir rereads its earlier entries, follows one or two threads of its own reasoning in connected prose (what it assumed, what changed its mind, what it would do differently) and leaves ids and balances out unless they were the turning point (owner). A failed entry now logs its cause instead of only "retry in 30 minutes".
+
 ## 6.1.0 (2026-10-29)
 
 - After a refused answer to the player (too long, an unread figure), a ticket task cannot finish until a fixed answer is posted. KBX3 found Sonnet finishing done with the player unanswered.
