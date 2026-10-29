@@ -325,6 +325,7 @@ function similarity(a, b) {
 }
 function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
   let guildChannelCache = null;
+  const reporterCache = new Map();
   const d = ledger.data;
   // Deployed-commit probes run through the broker's own exec, like gh.
   const probe = probeWith(exec);
@@ -1674,6 +1675,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!channels.some(c => c.id === job.channelId)) throw new Error("this ticket's channel no longer exists (the ticket was closed); finish without posting");
         throw new Error("ticket channel does not match");
       }
+      // Keir 6.1.2: the character read below goes through heal-ops, which starts
+      // a TypeScript CLI per query (8-11s in production; 6.1.1 ticket preflight
+      // was 11.6s, 11.3s of it here). A ticket's reporter identity is stable, so
+      // reuse a lookup for 30 minutes and share one that is still in flight.
+      const reporterKey = input.ticket || job.ticket, hit = reporterCache.get(reporterKey);
+      if (hit?.result && now() - hit.at < 30 * 60000) { job.reporterInspection = { ...hit.inspection }; return { ...hit.result, cached: true }; }
+      if (hit?.pending) return hit.pending;
+      const pending = (async () => {
       let ticket = await mcp.call("support", "support_get", {kind:"ticket", number:job.ticket}, false, signal);
       const cardId = ticket.intake?.cardMessageId;
       if (!snowflake(cardId)) throw new Error("canonical reporter identity is unconfirmed");
@@ -1692,6 +1701,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const character = Object.fromEntries(fields.filter(k => result.docs[0][k] !== undefined).map(k => [k,result.docs[0][k]]));
       job.reporterInspection = {at:now(), ticket:inspectedTicket, characterId, character}; ledger.save();
       return {environment:"prod", ticket:inspectedTicket, checkedAt:now(), character, instruction:"Use this actual server state with production code. Ask the player only for remaining client observations; no game data was changed."};
+      })();
+      reporterCache.set(reporterKey, { pending });
+      try { const result = await pending; reporterCache.set(reporterKey, { at: now(), result, inspection: job.reporterInspection }); return result; }
+      catch (e) { reporterCache.delete(reporterKey); throw e; }
     }
     if (name === "ticket_history") {
       if (!job.ticket) throw new Error("task has no ticket");

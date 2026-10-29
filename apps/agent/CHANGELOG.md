@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Ticket orientation waits at most three seconds for the reporter lookup and lets it finish in the background, and a ticket's reporter lookup is reused for 30 minutes (one in flight is shared). The character read goes through heal-ops, which starts a TypeScript CLI per query: 8 to 11 seconds in production. After 6.1.1 it was 11.3 of a ticket's 11.6 second preflight.
 ## 6.1.1 (2026-10-29)
 
 - Ticket orientation runs its reads together instead of one after another, and MCP tool catalogs are cached for five minutes. In production 6.0 spent a median 11 seconds of every ticket activation here, up from half a second in 5.10.7; KeirBench never saw it because its ledger is tiny. Each activation's usage row now carries `preflightParts`, the time spent per preflight step.

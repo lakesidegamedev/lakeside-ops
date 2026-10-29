@@ -61,3 +61,18 @@ test("repoMap lists small trees fully and summarises large ones within budget", 
   assert.ok(m.directories.includes("src/ (500)"));
   assert.equal(repoMap([]), null);
 });
+
+test("a slow reporter lookup does not hold up orientation", async () => {
+  let resolveReporter;
+  const tool = async (name) => {
+    if (name === "read_servers") return ["gamestate"];
+    if (name === "reporter_state") return new Promise((r) => { resolveReporter = r; });
+    return [];
+  };
+  const t = Date.now();
+  const o = await orient(tool, { reporterWaitMs: 50 });
+  assert.ok(Date.now() - t < 500);
+  assert.equal(o.reporter, undefined);
+  assert.match(o.errors.reporter, /still loading; call reporter_state/);
+  resolveReporter({ character: { name: "Late" } });
+});
