@@ -8046,7 +8046,7 @@ loadDeadLetters();
       const db = await getDb();
       const projection = {
         username: 1, displayName: 1, role: 1, isAdmin: 1, isBanned: 1,
-        patreonTier: 1, patreonExpiresAt: 1, activeCharacterId: 1,
+        patreonTier: 1, patreonExpiresAt: 1, activeCharacterId: 1, theme: 1,
       };
       let user;
       if (userId) {
@@ -8110,6 +8110,8 @@ loadDeadLetters();
         userId: String(user._id),
         username: user.username || user.displayName || null,
         role: user.role || "player",
+        // The game theme the player chose, so Ask can match it.
+        theme: typeof user.theme === "string" ? user.theme.slice(0, 32) : null,
         isAdmin: user.isAdmin === true || user.role === "admin",
         isModerator: user.role === "moderator",
         isBanned: user.isBanned === true,
