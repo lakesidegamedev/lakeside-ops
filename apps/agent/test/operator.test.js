@@ -2487,6 +2487,18 @@ test("DeepSeek malformed-tool exhaustion falls back once with the same checkpoin
  assert.equal(j.toolMarkupFallback.from.runner,"deepseek");
 });
 
+test("malformed tool markup falls back for DeepSeek on the opencode runner too (ticket 1713)", async () => {
+ const f=fixture(), j=running(f,{kind:"ticket",role:"support",ticket:123,summary:"Verified checkpoint",
+  toolMarkupFailures:2,provider:{lane:"worker",runner:"opencode",model:"opencode-go/deepseek-v4.1-flash"}});
+ const agent=createAgent({ledger:f.ledger,broker:f.broker,
+  config:{briefFile:path.join(__dirname,"../KEIR.md"),model:"claude-opus-5-5",maxRounds:2,maxTurnMs:10000,stateDir:f.dir},
+  invokeImpl:async()=>({subtype:"success",result:'<｜｜DSML｜｜ calls>',num_turns:1})});
+ await agent.run(j,new AbortController().signal);
+ assert.equal(j.state,"queued");
+ assert.equal(j.provider.runner,"claude");
+ assert.equal(j.toolMarkupFallback.from.runner,"opencode");
+});
+
 for (const reason of ["fallback already used", "uncertain effect"]) test(`malformed provider fallback stays bounded with ${reason}`, async () => {
  const f=fixture(), j=running(f,{kind:"ticket",role:"support",ticket:123,summary:"Verified checkpoint",
   toolMarkupFailures:2,provider:{lane:"worker",runner:"deepseek",model:"deepseek-flash"}});

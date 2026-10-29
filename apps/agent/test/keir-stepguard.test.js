@@ -39,13 +39,15 @@ test("the step budget warns near the limit only", () => {
 });
 
 test("$oid filter values match ids stored as text or ObjectId", () => {
-  assert.deepEqual(oidFilter({ corporationId: { $oid: "abc" }, turn: 3 }), { turn: 3, $expr: { $eq: [{ $toString: "$corporationId" }, "abc"] } });
+  const txt = (input) => ({ $convert: { input, to: "string", onError: null, onNull: null } });
+  const m = (f, ids) => ({ $cond: [{ $isArray: "$" + f }, { $gt: [{ $size: { $filter: { input: "$" + f, cond: { $in: [txt("$$this"), ids] } } } }, 0] }, { $in: [txt("$" + f), ids] }] });
+  assert.deepEqual(oidFilter({ corporationId: { $oid: "abc" }, turn: 3 }), { turn: 3, $expr: m("corporationId", ["abc"]) });
   const both = oidFilter({ _id: { $oid: "a" }, $expr: { $gt: ["$x", 1] } });
-  assert.deepEqual(both.$expr, { $and: [{ $gt: ["$x", 1] }, { $eq: [{ $toString: "$_id" }, "a"] }] });
+  assert.deepEqual(both.$expr, { $and: [{ $gt: ["$x", 1] }, m("_id", ["a"])] });
   const plain = { name: "x" };
   assert.equal(oidFilter(plain), plain);
   // Keir 6.1: an $in list of $oid values (13 live failures on 2026-10-28).
-  assert.deepEqual(oidFilter({ ownerId: { $in: [{ $oid: "a" }, "b"] } }), { $expr: { $in: [{ $toString: "$ownerId" }, ["a", "b"]] } });
+  assert.deepEqual(oidFilter({ ownerId: { $in: [{ $oid: "a" }, "b"] } }), { $expr: m("ownerId", ["a", "b"]) });
   const ints = { turn: { $in: [1, 2] } };
   assert.equal(oidFilter(ints), ints);
 });

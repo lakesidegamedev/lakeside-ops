@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Ticket orientation runs its reads together instead of one after another, and MCP tool catalogs are cached for five minutes. In production 6.0 spent a median 11 seconds of every ticket activation here, up from half a second in 5.10.7; KeirBench never saw it because its ledger is tiny. Each activation's usage row now carries `preflightParts`, the time spent per preflight step.
+- A route's effort (`runner:model@low`) is now a ceiling on dynamic effort. Jev's tags pushed DeepSeek to high, so live 6.0 ticket activations ran about twice the rounds and time KeirBench measured at low and medium. Jev can still pick lower; a task that just hit its turn limit or had a completion refused may go one level above. `KEIR_ROUTE_EFFORT_CEILING=0` reverts.
+- DeepSeek on the opencode and ollama runners now gets the malformed-tool fallback after three activations that printed tool calls as text. The check only knew the old `deepseek` runner, so since 6.0 those tickets went blocked instead (ticket 1713).
+- A restart lets running activations finish for up to 100 seconds (`KEIR_STOP_GRACE_MS`) before aborting what is left, instead of aborting all of them at once; the 6.0 cutover interrupted five ticket activations mid-answer. A second signal stops immediately. The operator unit's `TimeoutStopSec` is 120.
+- Housekeeping drops per-activation scratch (evidence text and numbers, read keys) from tasks finished over an hour ago and forgets transcripts of channels quiet for a week. The live ledger shrinks from 10.2 MB to about 7.9 MB, and every save rewrites the whole file.
+- Database id matches written as `{$oid}` or `{$in: [{$oid}]}` work on fields that hold lists, and a value that cannot be read as text no longer fails the read ("Unsupported conversion from array to string", seen live).
+- `reporter_state` reuses the server channel list for 20 seconds, and on a ticket whose channel was deleted says the ticket was closed and to finish, instead of "ticket channel does not match".
+- The private diary is a retrospective that builds over time: Keir rereads its earlier entries, follows one or two threads of its own reasoning in prose, keeps a running set of ideas it grows, tests or drops across entries, and remembers the people it dealt with (who they are, how the exchange went, what to do differently with them), with they/them unless someone has said otherwise (owner). A failed entry now logs its cause instead of only "retry in 30 minutes".
+
 ## 6.1.0 (2026-10-29)
 
 - After a refused answer to the player (too long, an unread figure), a ticket task cannot finish until a fixed answer is posted. KBX3 found Sonnet finishing done with the player unanswered.

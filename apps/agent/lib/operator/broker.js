@@ -109,14 +109,25 @@ function coerceArgs(args, schema) {
   }
   return changed ? out : null;
 }
+// Keir 6.1.1: $toString on an array field (holderIds, say) failed live with
+// "Unsupported conversion from array to string in $convert". Match an array
+// field when any element's text form is listed, as a plain query would, and
+// never let an unconvertible value fail the whole read.
+const asText = (input) => ({ $convert: { input, to: "string", onError: null, onNull: null } });
+function idMatch(field, ids) {
+  const path = "$" + field;
+  return { $cond: [{ $isArray: path },
+    { $gt: [{ $size: { $filter: { input: path, cond: { $in: [asText("$$this"), ids] } } } }, 0] },
+    { $in: [asText(path), ids] }] };
+}
 function oidFilter(filter) {
   const out = {}, match = [];
   for (const [k, v] of Object.entries(filter)) {
     const id = oidOf(v);
     // Keir 6.1: {$in: [{$oid}, ...]} failed live 13 times in a day ("cannot nest $ under $in").
     const list = !k.startsWith("$") && v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && Array.isArray(v.$in) && v.$in.some(oidOf) ? v.$in.map((x) => oidOf(x) ?? x) : null;
-    if (id && !k.startsWith("$")) match.push({ $eq: [{ $toString: "$" + k }, id] });
-    else if (list) match.push({ $in: [{ $toString: "$" + k }, list.map(String)] });
+    if (id && !k.startsWith("$")) match.push(idMatch(k, [id]));
+    else if (list) match.push(idMatch(k, list.map(String)));
     else out[k] = v;
   }
   if (!match.length) return filter;
@@ -221,6 +232,7 @@ function localMcpUrl(value) {
   return url.href;
 }
 function createMcp(configFile, readToken) {
+  const listCache = new Map(), LIST_TTL_MS = 5 * 60000;
   const servers = JSON.parse(fs.readFileSync(configFile, "utf8")).mcpServers;
   async function rpc(server, method, params, write = false, signal) {
     const c = servers[server];
@@ -236,7 +248,15 @@ function createMcp(configFile, readToken) {
     }
     return j.result;
   }
-  return { identity: (server) => { const c = servers[server]; const endpoint = localMcpUrl(c?.url); if (!endpoint || !c?.headers?.Authorization) throw new Error("MCP destination identity unavailable"); return { server, endpoint, credentialBinding: hash(c.headers.Authorization) }; }, servers: () => Object.entries(servers).filter(([, c]) => localMcpUrl(c.url)).map(([name]) => name), list: async (s, signal) => (await rpc(s, "tools/list", {}, false, signal)).tools, call: async (s, t, a, write, signal) => {
+  return { identity: (server) => { const c = servers[server]; const endpoint = localMcpUrl(c?.url); if (!endpoint || !c?.headers?.Authorization) throw new Error("MCP destination identity unavailable"); return { server, endpoint, credentialBinding: hash(c.headers.Authorization) }; }, servers: () => Object.entries(servers).filter(([, c]) => localMcpUrl(c.url)).map(([name]) => name), list: async (s, signal) => {
+    // Keir 6.1.1: tool catalogs change only on an MCP deploy, yet every ticket
+    // activation listed up to eight servers. A short cache keeps them fresh enough.
+    const hit = listCache.get(s);
+    if (hit && Date.now() - hit.at < LIST_TTL_MS) return hit.tools;
+    const tools = (await rpc(s, "tools/list", {}, false, signal)).tools;
+    if (Array.isArray(tools)) listCache.set(s, { at: Date.now(), tools });
+    return tools;
+  }, call: async (s, t, a, write, signal) => {
     const r = await rpc(s, "tools/call", { name: t, arguments: a }, write, signal);
     const text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
     let parsed; try { parsed = JSON.parse(text); } catch { return { text }; }
@@ -304,6 +324,7 @@ function similarity(a, b) {
   return both / (x.size + y.size - both);
 }
 function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
+  let guildChannelCache = null;
   const d = ledger.data;
   // Deployed-commit probes run through the broker's own exec, like gh.
   const probe = probeWith(exec);
@@ -1645,8 +1666,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (Object.keys(input).some(k => k !== "ticket") || (input.ticket !== undefined && (!Number.isSafeInteger(input.ticket) || input.ticket <= 0))) throw new Error("invalid reporter_state arguments");
       if (input.ticket !== undefined && input.ticket !== job.ticket && !developerTask(job)) throw new Error("reporter_state arguments cannot select another ticket outside a developer task");
       if (!job.ticket) throw new Error("task has no assigned ticket");
-      const channels = await discord("GET", `/guilds/${config.guildId}/channels`);
-      if (!channels.some(c => c.id === job.channelId && c.name.endsWith(`-${job.ticket}`))) throw new Error("ticket channel does not match");
+      // Keir 6.1.1: orientation calls this on every ticket activation. A read
+      // can use a channel list up to 20s old; writes still fetch it fresh.
+      if (!guildChannelCache || now() - guildChannelCache.at > 20000) guildChannelCache = { at: now(), channels: await discord("GET", `/guilds/${config.guildId}/channels`) };
+      const channels = guildChannelCache.channels;
+      if (!channels.some(c => c.id === job.channelId && c.name.endsWith(`-${job.ticket}`))) {
+        if (!channels.some(c => c.id === job.channelId)) throw new Error("this ticket's channel no longer exists (the ticket was closed); finish without posting");
+        throw new Error("ticket channel does not match");
+      }
       let ticket = await mcp.call("support", "support_get", {kind:"ticket", number:job.ticket}, false, signal);
       const cardId = ticket.intake?.cardMessageId;
       if (!snowflake(cardId)) throw new Error("canonical reporter identity is unconfirmed");

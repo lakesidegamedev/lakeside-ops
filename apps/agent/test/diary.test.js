@@ -74,10 +74,10 @@ test("empty model output does not become a diary entry", async t => {
 test("DeepSeek reflection uses the common CLI with no tools and rejects incomplete output", async () => {
   let request;
   const invoke = async input => { request = input; return { result: "I learned something.", usage: {} }; };
-  assert.equal(await reflect({ work: [] }, { invoke }), "I learned something.");
+  assert.equal((await reflect({ work: [] }, { invoke })).entry, "I learned something.");
   assert.equal(request.runner, "ollama");
   assert.equal(request.model, "deepseek-v4.1-flash");
-  assert.deepEqual(request.tools, []); assert.equal(request.maxOutputTokens, 1600);
+  assert.deepEqual(request.tools, []); assert.equal(request.maxOutputTokens, 2600);
   assert.equal(request.kind, "generation");
   assert.ok(request.stateDir.endsWith("private"));
   await assert.rejects(reflect({}, { invoke: async () => ({ is_error: true }) }), /incomplete/);
@@ -89,4 +89,45 @@ test("reflection usage records counts without private text or completion claims"
   const raw=fs.readFileSync(path.join(f.opts.stateDir,"usage.jsonl"),"utf8"), row=JSON.parse(raw.trim());
   assert.doesNotMatch(raw,/PRIVATE_DIARY_TEXT|previousEntries/);
   assert.equal(row.tokens.input,100);assert.equal(row.tokens.output,20);assert.equal(row.taskState,undefined);
+});
+
+test("ideas build across entries and people are remembered from real interactions only", async t => {
+  const f = fixture(t), contexts = [];
+  const at = () => new Date(f.opts.now()).toISOString();
+  f.opts.ledger.data.jobs.a = { updatedAt: f.opts.now(), kind: "ticket", ticket: 1706, state: "done", summary: "answered",
+    source: { authorId: "1082686076491137115", author: "Hyawii", content: "the PM tab has no cabinet member <@123456789012>", at: at() },
+    requestInbox: [{ role: "system", authorId: "wait-review", content: "This wait is overdue", at: at() },
+      { authorId: "1479984768194969663", author: "Keir", content: "my own post", at: at() }] };
+  const opts = { ...f.opts, ownerId: "333052320252297216", botId: "1479984768194969663" };
+  let reply = { entry: "I rushed Hyawii.", ideas: [{ key: "Read Visits First", text: "Check the visit history before asking.", status: "new" }],
+    people: [{ id: "1082686076491137115", note: "Writes short asides in brackets; wants a straight answer." }, { id: "999999999999", note: "invented" }] };
+  const diary = createDiary({ ...opts, generate: async c => { contexts.push(c); return reply; } });
+  await diary.tick();
+  const c0 = contexts[0];
+  assert.equal(c0.interactions.length, 1);
+  assert.equal(c0.interactions[0].name, "Hyawii"); assert.equal(c0.interactions[0].role, "player");
+  assert.deepEqual(c0.interactions[0].tickets, [1706]);
+  assert.match(c0.interactions[0].said[0], /@someone/);
+  assert.doesNotMatch(JSON.stringify(c0.interactions), /overdue|my own post/);
+  let d = f.read();
+  assert.equal(d.ideas["read-visits-first"].status, "new");
+  assert.equal(d.people["1082686076491137115"].notes.length, 1);
+  assert.equal(d.people["999999999999"], undefined);
+  f.advance(INTERVAL_MS);
+  f.opts.ledger.data.jobs.a.updatedAt = f.opts.now(); f.opts.ledger.data.jobs.a.source.at = at();
+  reply = { entry: "It worked.", ideas: [{ key: "read-visits-first", text: "Visit history first; it answered two tickets.", status: "tested" }], people: [] };
+  await diary.tick();
+  const c1 = contexts[1];
+  assert.equal(c1.ideasSoFar[0].key, "read-visits-first");
+  assert.equal(c1.peopleKnown[0].notes[0], "Writes short asides in brackets; wants a straight answer.");
+  d = f.read();
+  assert.equal(d.ideas["read-visits-first"].revisions, 2);
+  assert.equal(d.ideas["read-visits-first"].history[0].status, "new");
+  assert.equal(d.people["1082686076491137115"].interactions, 2);
+});
+
+test("a prose answer still becomes an entry and fenced JSON is parsed", () => {
+  const { parseReflection } = require("../lib/operator/diary");
+  assert.deepEqual(parseReflection("Just prose today."), { entry: "Just prose today.", ideas: [], people: [] });
+  assert.equal(parseReflection('```json\n{"entry":"Fenced.","ideas":[],"people":[]}\n```').entry, "Fenced.");
 });
