@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 6.1.1 (2026-10-29)
+
 - Ticket orientation runs its reads together instead of one after another, and MCP tool catalogs are cached for five minutes. In production 6.0 spent a median 11 seconds of every ticket activation here, up from half a second in 5.10.7; KeirBench never saw it because its ledger is tiny. Each activation's usage row now carries `preflightParts`, the time spent per preflight step.
 - A route's effort (`runner:model@low`) is now a ceiling on dynamic effort. Jev's tags pushed DeepSeek to high, so live 6.0 ticket activations ran about twice the rounds and time KeirBench measured at low and medium. Jev can still pick lower; a task that just hit its turn limit or had a completion refused may go one level above. `KEIR_ROUTE_EFFORT_CEILING=0` reverts.
 - DeepSeek on the opencode and ollama runners now gets the malformed-tool fallback after three activations that printed tool calls as text. The check only knew the old `deepseek` runner, so since 6.0 those tickets went blocked instead (ticket 1713).
