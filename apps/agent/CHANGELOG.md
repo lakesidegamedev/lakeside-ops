@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 5.9.19 (2026-10-23)
+
 ### Fixed
 - Ending or interrupting a voice call cancels its accepted task and delegated work, including a send still awaiting its receipt. Opening the task preserves it.
 - Slash-command rows have a full tappable area and stable accessibility identifiers.
