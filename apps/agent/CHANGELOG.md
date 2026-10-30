@@ -199,6 +199,7 @@ speaks every thirty minutes. Keir runs on DeepSeek V4.1 Flash.
 ### For developers
 
 - Watcher-created findings no longer wake every minute while awaiting the next game turn. They can subscribe to that turn and resume when it is processed.
+- A task that resolves its ticket keeps its own turn: the drain no longer flips it to waiting mid-activation, so its remember, checkpoint and finish calls are accepted instead of refused as "this task is waiting. Its turn is over".
 
 ## 5.9.5 (2026-10-19)
 
