@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- The owner's conversation only carries what the owner can act on (owner, 2026-11-01: "All of these I can't do shit about or there's nothing actually waiting"). A stuck task stays on the working-now board and in Ops instead of posting an urgent "stuck" line each time it flips (ticket 1730 posted three). A "needs your decision" line whose decision was answered before it went out is dropped.
+- A compensation payment interrupted after heal-ops ran it is settled by a dry run of the same payment: nobody still owed means it landed, so the effect is done and the task resumes; everyone still owed means it did not, so a later approved call may run it; a failed or unclear dry run stays held. It never pays, and an interrupted payment no longer DMs the owner.
+
 ## 7.0.2 (2026-11-01)
 
 - An approved payment is no longer refused as "plan changed" because a game turn processed between the approval and the payment (ticket 1730, 2026-11-01: the owner was asked twice for the same $1,306,621). A compensation's dry run restates each credit in the anchor currency at the current exchange rate, which moves every turn; approval now covers who is paid what in their own currency and how many records change. A different amount, payee or currency is still refused.

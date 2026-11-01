@@ -28,7 +28,10 @@ const MAX_LINES = 6;
 const MAX_PENDING = 60;
 const BOARD_ITEMS = 8;
 // Change kinds that earn a line in the conversation. The rest stay on the board.
-const CHAT_KINDS = new Set(["needs-you", "stuck", "live"]);
+// Owner, 2026-11-01: "All of these I can't do shit about." A stuck task is
+// Keir's to recover (ticket 1730 posted "stuck" three times for a payment that
+// had landed), so it stays on the board and in Ops, never in the conversation.
+const CHAT_KINDS = new Set(["needs-you", "live"]);
 const STAGE_LABEL = { found: "investigating", written: "fix written", tested: "tested on development", sandbox: "on the sandbox", main: "live on the main server", confirmed: "live and confirmed in game", answered: "answered, no fix needed" };
 const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const sentence = (s, n = 180) => { const t = clip(s, n).replace(/[–—]/g, ","); return t && !/[.!?…]$/.test(t) ? `${t}.` : t; };
@@ -166,8 +169,14 @@ function createAppUpdates({ ledger, config = {}, now = () => Date.now(), save = 
     return { baseline: false, found: found.length, posted };
   }
 
+  function pendingDecision(jobId) {
+    const ids = new Set(Object.values(d.jobs || {}).filter(j => j.id === jobId || j.codingParent === jobId || j.museParent === jobId).map(j => j.id));
+    return Object.values(d.decisions || {}).some(x => ids.has(x.jobId) && x.state === "pending") || Object.values(d.appThread?.questions || {}).some(q => ids.has(q.jobId) && q.state === "pending");
+  }
   function flush(at) {
     const u = state();
+    // A decision answered before its line went out is no longer the owner's.
+    u.pending = u.pending.filter(e => e.kind !== "needs-you" || pendingDecision(e.jobId));
     if (!u.pending.length) return null;
     const urgent = u.pending.some(e => e.urgent);
     const settled = at - Math.max(...u.pending.map(e => e.at)) >= (urgent ? 0 : COALESCE_MS);
