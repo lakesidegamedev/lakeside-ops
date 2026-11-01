@@ -51,7 +51,7 @@ const SUPPORT_READS = {
   // hours. Guarded below: prod only, game collections only, no secret fields.
   "heal-ops": ["heal_query", "heal_count", "heal_collections"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  turndiag: ["turn_phase_timings", "phase_history", "lock_status"],
+  turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_failure_detail"],
   // Corporation and sector traces are the same public game data the corp pages
   // show; without them ticket tasks asked players for screenshots of their own
   // P&L (ticket 1522).
@@ -63,7 +63,11 @@ const SUPPORT_READS = {
     // could not read: corporation ledgers (double charges, 1558), regional workforce
     // and migration (1677), parties and races (1488, 1527), fiscal and map context,
     // and the reporter's own action timings (1658, reporter-scoped below).
-    "trace_ledger", "macro_history", "parties", "trace_election", "trace_race", "country_fiscal", "wars", "map_snapshot", "geo_aggregate", "top_players", "trace_actions"],
+    "trace_ledger", "macro_history", "parties", "trace_election", "trace_race", "country_fiscal", "wars", "map_snapshot", "geo_aggregate", "top_players", "trace_actions",
+    // Keir 7 (lakeside-code #69, from Keir's own capability requests): live
+    // nominations and their vote deadlines, the reporter's shareholdings
+    // (reporter-scoped below), and the public commodity market.
+    "nomination_records", "character_holdings", "commodity_market"],
 };
 const META_SUMMARY = /\b(no (further|new|additional) (post|reply|response|message)s? (is |was )?(needed|required|necessary)|nothing (further |more )?to (post|add|say)|already (answered|replied|posted|addressed|handled)\b|source channel|the (player|reporter|owner|developer) (was|has been|is) (told|answered|updated)|(task|activation|job) (finished|complete|completed|done))/i;
 // Raw game-record reads for support tasks. Account, auth, ticket, payment and
@@ -184,18 +188,18 @@ function rawReadArgs(tool, args) {
 const FINDING_READS = {
   "heal-ops": ["heal_list", "heal_detect", ...SUPPORT_READS["heal-ops"]],
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
-  gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history"].includes(n)), "invariant_check"],
+  gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "character_holdings"].includes(n)), "invariant_check"],
   engine: SUPPORT_READS.engine,
   "ops-knowledge": SUPPORT_READS["ops-knowledge"],
 };
 const QUICK_OWNER_READS = { ...SUPPORT_READS,
   "ops-knowledge": musePolicy.MCP_READS["ops-knowledge"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  turndiag: ["turn_phase_timings", "phase_history", "phase_regressions", "turn_anomalies", "lock_status"],
+  turndiag: ["turn_phase_timings", "phase_history", "phase_regressions", "turn_anomalies", "lock_status", "turn_failure_detail"],
 };
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
-const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions"]);
+const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings"]);
 const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.

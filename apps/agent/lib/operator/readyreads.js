@@ -31,6 +31,11 @@ const SEEDS = [
   ["what does my corporation own and earn", "gamestate", "trace_corp"],
   ["my money went missing", "gamestate", "trace_account"],
   ["who won the election", "gamestate", "trace_election"],
+  ["when does the cabinet nomination vote end", "gamestate", "nomination_records"],
+  ["is my supreme court nominee confirmed", "gamestate", "nomination_records"],
+  ["what shares do I own", "gamestate", "character_holdings"],
+  ["who controls my company", "gamestate", "character_holdings"],
+  ["why did the turn fail", "turndiag", "turn_failure_detail"],
 ];
 
 const hash = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);

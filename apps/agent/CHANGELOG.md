@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Support tasks can read the new game-data tools from Keir's own capability requests (lakeside-code #69): live cabinet, Supreme Court and Senate leadership nominations with vote tallies and deadlines (`nomination_records`), the reporter's shareholdings and company control (`character_holdings`, reporter-scoped like the other player reads), stored failure messages for failed turns (`turn_failure_detail`), and the public commodity market. Ready reads are seeded with the questions they answer.
+
 ## 7.1.1 (2026-11-01)
 
 - Ready reads never make an activation wait: the index of read tools is built in the background at startup and refreshed every nine minutes, and a lookup before it is warm, or with the embedder down, returns nothing instead of failing. The first live probe after 7.1.0 spent its whole 4 s budget building the index cold; warm lookups take about 12 ms.
