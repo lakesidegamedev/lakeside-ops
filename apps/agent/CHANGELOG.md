@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.0.3 (2026-11-01)
+
 - The owner's conversation only carries what the owner can act on (owner, 2026-11-01: "All of these I can't do shit about or there's nothing actually waiting"). A stuck task stays on the working-now board and in Ops instead of posting an urgent "stuck" line each time it flips (ticket 1730 posted three). A "needs your decision" line whose decision was answered before it went out is dropped.
 - A compensation payment interrupted after heal-ops ran it is settled by a dry run of the same payment: nobody still owed means it landed, so the effect is done and the task resumes; everyone still owed means it did not, so a later approved call may run it; a failed or unclear dry run stays held. It never pays, and an interrupted payment no longer DMs the owner.
 
