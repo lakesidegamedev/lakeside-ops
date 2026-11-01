@@ -35,7 +35,7 @@ const { MUSE_TOOLS } = require("./appmuse");
 const UNANSWERED = /\?|<@!?&?\d+>|^\s*(?:how|what|why|when|where|which|who|can|could|is|are|do|does|if|help)\b/i;
 // A filing that asks for an owner call rather than a fix.
 // Asking the player which entity or page they mean, or for a link.
-const ASKS_WHICH = /\b(?:which|what)\b[^.?!]{0,50}\b(?:bank|corporation|company|corp|sector|plant|page|country|state|party|character|fund|account)\b[^.!]*\?|\b(?:send|share|post|paste|give)\b[^.?!]{0,40}\b(?:link|url|page)\b/i;
+const ASKS_WHICH = /\b(?:which|what)\b[^.?!]{0,50}\b(?:bank|corporation|company|corp|sector|plant|page|screen|tab|country|state|party|character|fund|account)\b[^.!]*\?|\b(?:tell|show|let) me (?:which|what|where)\b[^.?!]{0,50}\b(?:page|screen|tab|sector|company|corporation)\b|\b(?:send|share|post|paste|give)\b[^.?!]{0,40}\b(?:link|url|page)\b/i;
 const DECISION_WORDS = /\b(?:compensat\w*|refund\w*|reimburs\w*|restitution|make (?:them|the player) whole|owner (?:decision|ruling|approval)|please decide|decide whether|needs? (?:a|an) (?:owner |developer )?(?:decision|ruling))\b/i;
 const ordinal = (n) => { const v = n % 100; return `${n}${v >= 11 && v <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`; };
 const DISCLOSURE = "Hi, I'm Keir, the support assistant for A House Divided. I can look into this, help work out whether it's a bug and prepare a fix, but I can't promise it gets resolved until a developer or moderator steps in.";
@@ -501,9 +501,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // was not filed by the player. "This is your 23rd ticket, thank you for
     // submitting it" read as shaming there, so it gets no count and no thanks.
     const keirOpened = Object.values(d.jobs).some((j) => Object.values(j.openedTickets || {}).some((r) => Number(r?.number) === n));
-    if (keirOpened) return { text: introduced ? `Welcome back${name ? `, ${name}` : ""}. I opened this ticket from your message so it can be tracked here. I'm looking into it now.` : `${DISCLOSURE} I opened this ticket from your message so it can be tracked here.` };
-    if (!introduced) return { text: `${DISCLOSURE}${count > 1 ? ` This is your ${ordinal(count)} ticket, thank you for submitting it.` : " Thank you for submitting your first ticket."}`, count };
-    return { text: `Welcome back${name ? `, ${name}` : ""}. This is your ${ordinal(count)} ticket, thank you for submitting it. I'm looking into it now.`, count };
+    if (keirOpened) return { text: introduced ? "I opened this ticket from your message so it can be tracked here." : `${DISCLOSURE} I opened this ticket from your message so it can be tracked here.` };
+    // Review 2026-11-01 (owner): the ticket count and thanks were padding
+    // ahead of the answer ("Welcome back, Larry Fink. This is your 58th
+    // ticket"). A new player hears the introduction once; a returning player
+    // gets no opener, and Keir's first real post is the answer.
+    if (!introduced) return { text: DISCLOSURE, count };
+    return { text: null, returning: true, count };
   }
   async function ensureDisclosure(ticketNo) {
     const n = Number(ticketNo);
@@ -514,7 +518,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (spoke) return;
     let opening = { text: DISCLOSURE };
     try { opening = await openingFor(n); } catch { /* lookup failed: the full introduction is the safe default */ }
-    if (!opening.text) { d.disclosed[n] = { at: now(), posted: false, ...(opening.answered ? { answered: true } : { staff: true }) }; ledger.save(); return; }
+    if (!opening.text) { d.disclosed[n] = { at: now(), posted: false, ...(opening.answered ? { answered: true } : opening.returning ? { returning: true, count: opening.count } : { staff: true }) }; ledger.save(); return; }
     try {
       require("./supporttakeover").assertCanAct(d, { ticket: n });
       await mcp.call("support", "support_public_update", { kind: "ticket", number: n, message: opening.text, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
@@ -608,6 +612,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const ev = ticketEvidence(ticketNo);
     const missing = outcomeClaims(message).filter((c) => c.kind === "money" ? !(c.future ? ev.money.agreed : ev.money.done) : !c.future && !ev[c.kind].done);
     if (missing.length) throw new Error(`Not posted: this states an outcome Keir has no receipt for ("${missing[0].sentence}"). ${[...new Set(missing.map((c) => NEED[c.kind]))].join(" ")} Say only what is verified.`);
+    guardTicketQuality(job, ticketNo, message, ev);
     const posts = (d.ticketPosts ||= {})[ticketNo] || [];
     // A status card is edited in place and a human question deserves an answer,
     // so neither holds a reply back (ticket 1602: the owner asked twice, Keir
@@ -616,6 +621,18 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
     const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6);
     if (dup) throw new Error(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
+  }
+  // Review 2026-11-01 (tickets 1736 to 1747): apologies, third-person talk
+  // about the player, unconfirmed "nothing exists" claims, promises with
+  // nothing behind them and decisions nobody made (ticketquality.js).
+  function guardTicketQuality(job, ticketNo, message, ev = ticketEvidence(ticketNo)) {
+    const ids = new Set(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => j.id));
+    const decided = ev.money.agreed || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId) && ["approved", "selected"].includes(x.state))
+      || knowledge.ticketRecord(ledger, ticketNo).facts.some((f) => !f.closedAt && /\b(?:decided|ruled|approved|decision)\b/i.test(f.text || ""));
+    const hit = require("./ticketquality").refusal(message, { emptyReads: job?.emptyReads || [], escalated: ev.escalated.done, building: ev.building.done, decided });
+    if (!hit) return;
+    ledger.audit("ticket_quality_refused", { job: job?.id || null, ticket: ticketNo, kind: hit.kind, sentence: hit.sentence });
+    throw new Error(`Not posted: ${hit.reason}`);
   }
   async function finishPublicText(job) {
     if (!job.replyChannel) return null;
@@ -653,6 +670,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!item.name) throw new Error("every fix on the card needs a short player-facing name");
       const ok = statusCard.stageAllowed(item.stage, ev);
       if (!ok.ok) throw new Error(`Not posted: ${item.name}: ${ok.reason}.`);
+      // Review 2026-11-01: "Supply offer sides: paused" told the player
+      // nothing, and 1739's card went Live, Sandbox, Live, Investigating.
+      if (item.blocked && !item.note) throw new Error(`Not posted: ${item.name} is paused with no note. Name exactly what it waits on, in the player's words ("waiting on a developer's decision about compensation").`);
+      const was = (d.statusCards?.[ticketNo]?.items || []).find((i) => i.name === item.name);
+      const back = statusCard.regression(was, item);
+      if (back) { ledger.audit("status_card_regression_refused", { ticket: ticketNo, item: item.name, from: was.stage, to: item.stage }); throw new Error(`Not posted: ${item.name}: ${back}`); }
       for (const text of [item.name, item.note]) if (TECHNICAL.test(text)) throw new Error(`Not posted: "${text}" is technical; the card is player-facing (no PRs, CI, branches or code).`);
       for (const text of [item.name, item.note]) if (text) guardPlayerRegister(null, ticketNo, text);
       return item;
@@ -705,7 +728,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     ledger.save();
     if (stageChanged) {
       // The public receipt keeps the history the card overwrites.
-      const text = items.map((i) => `${i.name}: ${i.blocked ? "paused" : (i.stage === "confirmed" ? "Live, confirmed in game" : i.stage === "answered" ? "Answered, no fix needed" : statusCard.labelOf(i.stage))}`).join("; ");
+      const text = items.map((i) => `${i.name}: ${i.blocked ? `paused${i.note ? ` (${i.note})` : ""}` : (i.stage === "confirmed" ? "Live, confirmed in game" : i.stage === "answered" ? "Answered, no fix needed" : statusCard.labelOf(i.stage))}`).join("; ");
       mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
       recordTicketPost(effectJob, ticketNo, `[status card] ${text}`);
     }
@@ -1075,6 +1098,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
+    // Review 2026-11-01 (ticket 1742): an empty lookup asked the wrong way
+    // became "nothing is signed". Empty reads are remembered so a claim that
+    // something does not exist needs a second, differently shaped read.
+    if ((name === "read_tool" || name === "evidence_batch") && require("./ticketquality").emptyResult(result)) {
+      job.emptyReads = [...(job.emptyReads || []), { sig: hash({ name, tool: input?.tool || null, args: input?.args ?? input?.arguments ?? input?.queries ?? null }), tool: input?.tool || name, at: now() }].slice(-20);
+    }
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v); } catch {}

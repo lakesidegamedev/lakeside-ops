@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Ticket post quality checks from the 2026-11-01 review of tickets 1736 to 1747, enforced in code because the brief already forbade each one (`ticketquality.js`). Refused: apologies and stories about Keir's own mistakes ("I owe you a correction", "I'm taking this one personally"); talking about the player as "him" or "her" in their own channel; "nothing is signed" style claims backed by a single empty read (ticket 1742 said it twice while three contracts existed); promises of a screen or wording change with no filing or fix behind them (ticket 1736's promised page figure was never built); and "the developers decided" with no decision on record. Each refusal is audited as `ticket_quality_refused`. Empty `read_tool` and `evidence_batch` results are remembered per task so a second, differently shaped read can confirm absence.
+- Returning players get no opener: no ticket count, no thanks, no "welcome back". A player's first ever ticket still gets the one-line introduction. The answer leads.
+- Status card: "Fix written" needs a coding attempt or patch for the ticket (1743 said it three minutes after "not yet confirmed"); a row cannot move back a stage unless its note says it was rolled back or failed (1739 went Live, Sandbox, Live, Investigating), audited as `status_card_regression_refused`; a paused row must name what it waits on, and the receipt timeline shows that note instead of a bare "paused".
+- "Tell me which screen..." and questions about a screen or tab now count as asking the player for something the ticket's intake and page visits may already answer (ticket 1747).
+- Brief: corrections are one line starting "Correction:"; read everything a reply needs before posting a figure; approved compensation is applied by Keir through request_heal in the same pass; one problem per ticket; no posts to merged or closed tickets.
+
 ## 6.1.2 (2026-10-29)
 
 - Ticket orientation waits at most three seconds for the reporter lookup and lets it finish in the background, and a ticket's reporter lookup is reused for 30 minutes (one in flight is shared). The character read goes through heal-ops, which starts a TypeScript CLI per query: 8 to 11 seconds in production. After 6.1.1 it was 11.3 of a ticket's 11.6 second preflight.

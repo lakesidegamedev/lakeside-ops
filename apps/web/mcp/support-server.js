@@ -76,7 +76,7 @@ const ticketShape = (t) => ({
   supportRecentVisits: t.supportRecentVisits || [], description: t.description, reporter: t.reporter || t.discordDisplayName || t.discordUsername || null,
   images: t.imageUrls || [], tags: t.tags || [], messages: (t.messages || []).map((m) => (typeof m === "string" ? m : m.content || m.text)).filter(Boolean),
   statusHistory: t.statusHistory || [], createdAt: t.createdAt, updatedAt: t.updatedAt, fixSessionId: t.fixSessionId || null,
-  trackerItemId: t.trackerItemId || null, resolution: t.resolution || null, publicUpdates: t.publicUpdates || [], receiptUrl: t.category === "investigation" ? null : ticketPublicUrl(t.ticketNumber), notificationPolicy: { progressDeliveryDefault: false, receiptLinkKinds: ["opening", "resolution"] }, contextRequest: t.contextRequest || null,
+  trackerItemId: t.trackerItemId || null, copyRefusals: t.copyRefusals || [], resolution: t.resolution || null, publicUpdates: t.publicUpdates || [], receiptUrl: t.category === "investigation" ? null : ticketPublicUrl(t.ticketNumber), notificationPolicy: { progressDeliveryDefault: false, receiptLinkKinds: ["opening", "resolution"] }, contextRequest: t.contextRequest || null,
   intake: t.intake ? {
     cardMessageId: t.intake.cardMessageId || null,
     receiptUrl: t.intake.receiptUrl || null,
@@ -112,6 +112,14 @@ async function fetchImageBlock(url) {
     if (buf.length > 5 * 1024 * 1024) return null; // skip > 5MB
     return { type: "image", data: buf.toString("base64"), mimeType };
   } catch { return null; }
+}
+
+// Every refused player post is kept on the ticket, whichever agent wrote it,
+// so a support review can see what nearly reached the player (2026-11-01).
+async function logCopyRefusal(Tickets, key, entry) {
+  try {
+    await Tickets.updateOne(key, { $push: { copyRefusals: { $each: [{ at: new Date(), ...entry, match: String(entry.match || "").slice(0, 160), kind: String(entry.kind || "").slice(0, 200) }], $slice: -50 } } });
+  } catch { /* logging must never block the refusal itself */ }
 }
 
 async function main() {
@@ -269,9 +277,27 @@ async function main() {
         const key = { ticketNumber: number };
         const existing = await Tickets.findOne(key);
         if (!existing) return errorResult(`ticket #${number} not found`);
+        if (existing.category !== "investigation") {
+          const voice = require("./player-copy-guard").voiceProblem(message) || require("./player-copy-guard").internalTerm(message);
+          if (voice) {
+            await logCopyRefusal(Tickets, key, { tool: "support_resolve", by: auth.name || "agent", match: voice.match, kind: voice.kind });
+            return errorResult(`Not resolved: "${voice.match}" in the player's receipt is ${voice.kind}.`);
+          }
+        }
         const now = new Date();
-        const proposed = normalizeResolution({ message, actions, followUp, source }, { by: auth.name || "agent", now });
         const prior = getResolution(existing);
+        // Ticket 1736 (2026-11-01): a detailed resolution was replaced twelve
+        // hours later by a one-line "Closed in Discord" receipt, and its post
+        // failed because the channel was already gone. Closing a resolved
+        // ticket keeps the receipt the player already has and posts nothing.
+        if (require("./support-delivery-gate").keepsPriorReceipt(existing, prior, status)) {
+          await Tickets.updateOne(key, {
+            $set: { status, updatedAt: now, closedAt: now, closedBy: auth.name || "agent" },
+            $push: { statusHistory: { status, at: now, by: auth.name || "agent", source: "mcp", note: "closed; earlier resolution receipt kept" } },
+          });
+          return jsonResult({ ok: true, kind: "ticket", number, status, receipt: prior, receiptKept: true, notification: { status: "not_requested", reason: "the player already has the resolution receipt" } });
+        }
+        const proposed = normalizeResolution({ message, actions, followUp, source }, { by: auth.name || "agent", now });
         const receipt = nextResolutionVersion(existing.resolution, proposed);
         const sameResolution = prior && prior.receiptId === receipt.receiptId && existing.status === status;
         const update = {
@@ -421,9 +447,20 @@ async function main() {
         const key = { ticketNumber: number };
         const existing = await col.findOne(key);
         if (!existing) return errorResult(`ticket #${number} not found`);
+        // Ticket 1743 (2026-11-01): updates kept going to a ticket that staff
+        // had merged and closed, and failed against a deleted channel. Say
+        // where the conversation lives now instead of attempting the post.
+        const refusal = deliver ? require("./support-delivery-gate").deliveryRefusal(existing, number) : null;
+        if (refusal) return errorResult(refusal);
         if (deliver && existing.category !== "investigation") {
           const leak = require("./player-copy-guard").internalTerm(message);
+          if (leak) await logCopyRefusal(Tickets, key, { tool: "support_public_update", by: auth.name || "agent", match: leak.match, kind: leak.kind });
           if (leak) return errorResult(`Not delivered: "${leak.match}" is ${leak.kind}. Players see what changed and where the fix is (being built, in testing, on the sandbox, live on the main server), never PRs, issues, CI or branches.`);
+          const voice = require("./player-copy-guard").voiceProblem(message);
+          if (voice) {
+            await logCopyRefusal(Tickets, key, { tool: "support_public_update", by: auth.name || "agent", match: voice.match, kind: voice.kind });
+            return errorResult(`Not delivered: "${voice.match}" is ${voice.kind}.`);
+          }
         }
         const now = new Date();
         const updateKey = `${update_kind}:${Date.now()}`;

@@ -288,7 +288,7 @@ test("Keir does not ask the player which bank when the ticket already names thei
   assert.equal((await say(f, "Which bank's page shows the zero deposit ceiling? Please send its game link.")).published, true, "asking again after checking goes out");
 });
 
-test("Keir introduces itself once per player, welcomes returning players with their ticket count, and never introduces itself to staff", async () => {
+test("Keir introduces itself once per player, then answers returning players without an opener, and never introduces itself to staff", async () => {
   const run = async ({ uid, prior, introduced = false, priorDisclosed = false, fail = false, answered = false, keirOpened = false }) => {
     const f = fixture(), posted = [];
     if (keirOpened) f.ledger.createJob("intake:chat", { kind: "command", role: "support", source: {} }).openedTickets = { m1: { number: 1522, channelId: "c" } };
@@ -310,11 +310,14 @@ test("Keir introduces itself once per player, welcomes returning players with th
     await say(f, "The fund buys only Austrian bonds because candidates are sorted by country code.");
     return posted[0];
   };
-  assert.match(await run({ uid: "888888888888888888", prior: 0 }), /^Hi, I'm Keir.*Thank you for submitting your first ticket\.$/);
-  assert.equal(await run({ uid: "888888888888888888", prior: 4, introduced: true }), "Welcome back, Simonella. This is your 5th ticket, thank you for submitting it. I'm looking into it now.");
-  assert.match(await run({ uid: "888888888888888888", prior: 2, priorDisclosed: true }), /^Welcome back, Simonella\. This is your 3rd ticket/);
-  assert.match(await run({ uid: "888888888888888888", prior: 10 }), /^Hi, I'm Keir.*This is your 11th ticket/, "never introduced before: the introduction, once, with the count");
-  assert.equal(await run({ uid: "888888888888888888", prior: 22, introduced: true, keirOpened: true }), "Welcome back, Simonella. I opened this ticket from your message so it can be tracked here. I'm looking into it now.", "a ticket Keir opened from chat: no count, no thanks for submitting (ticket 1708)");
+  const DISCLOSURE = "Hi, I'm Keir, the support assistant for A House Divided. I can look into this, help work out whether it's a bug and prepare a fix, but I can't promise it gets resolved until a developer or moderator steps in.";
+  const REPLY = "The fund buys only Austrian bonds because candidates are sorted by country code.";
+  // Review 2026-11-01 (owner): no ticket count, no thanks; the answer leads.
+  assert.equal(await run({ uid: "888888888888888888", prior: 0 }), DISCLOSURE);
+  assert.equal(await run({ uid: "888888888888888888", prior: 4, introduced: true }), REPLY, "a returning player gets the answer first");
+  assert.equal(await run({ uid: "888888888888888888", prior: 2, priorDisclosed: true }), REPLY);
+  assert.equal(await run({ uid: "888888888888888888", prior: 10 }), DISCLOSURE, "never introduced before: the introduction once, with no count");
+  assert.equal(await run({ uid: "888888888888888888", prior: 22, introduced: true, keirOpened: true }), "I opened this ticket from your message so it can be tracked here.", "a ticket Keir opened from chat says so (ticket 1708)");
   assert.doesNotMatch(await run({ uid: "888888888888888888", prior: 22, keirOpened: true }), /ticket, thank you|th ticket/);
   const f = fixture();
   assert.equal(await run({ uid: f.config.ownerId, prior: 3 }), "The fund buys only Austrian bonds because candidates are sorted by country code.", "staff: no introduction, the reply is the first post");

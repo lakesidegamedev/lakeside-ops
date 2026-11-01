@@ -15,7 +15,9 @@
 // game, not a further step that reads as still pending.
 const STAGES = [
   { id: "found", label: "Investigating", needs: "investigated" },
-  { id: "written", label: "Fix written" },
+  // Review 2026-11-01 (ticket 1743): "Fix written" three minutes after Keir
+  // said the cause was not yet known. Written needs a coding attempt or patch.
+  { id: "written", label: "Fix written", needs: "building" },
   { id: "tested", label: "Tested", needs: "development" },
   { id: "sandbox", label: "On the sandbox", needs: "staging" },
   { id: "main", label: "Live on the main server", needs: "main" },
@@ -36,9 +38,20 @@ function stageAllowed(stage, evidence = {}) {
   const s = stageIndex(stage) < 0 ? null : stageOf(stage);
   if (!s) return { ok: false, reason: `unknown stage "${stage}"; use one of ${[...STAGES.map((x) => x.id), "confirmed", "answered"].join(", ")}` };
   if (s.needs === "investigated" && !evidence.investigated?.done) return { ok: false, reason: `"${s.label}" needs the cause investigated first: read the live game state, data or code for this ticket. Until then post no card, or say what you are checking` };
+  if (s.needs === "building" && !evidence.building?.done) return { ok: false, reason: `"${s.label}" needs a fix that exists: a coding attempt (delegate_fix) or a prepared patch for this ticket. Until then keep it at "found"` };
   if (s.needs === "verified" && !evidence.verified?.done) return { ok: false, reason: `"${s.label}" needs a turn processed after the fix (watch_turn) and a read of the player's game data after it. Until then use "main"` };
-  if (s.needs && s.needs !== "investigated" && s.needs !== "verified" && !evidence[s.needs]?.done) return { ok: false, reason: `"${s.label}" needs github where to show the fix on ${s.needs}` };
+  if (s.needs && !["investigated", "verified", "building"].includes(s.needs) && !evidence[s.needs]?.done) return { ok: false, reason: `"${s.label}" needs github where to show the fix on ${s.needs}` };
   return { ok: true };
+}
+
+// A fix only moves forward on the card. Going back (a rollback, a failed
+// release) is real but rare, so it must say why in the note.
+const REGRESSION_NOTE = /\b(?:roll(?:ed)? back|reverted|went back|pulled|failed|broke|reopened|regress)/i;
+function regression(was, item) {
+  if (!was || item.blocked || was.stage === "answered" || item.stage === "answered") return null;
+  if (stageIndex(item.stage) >= stageIndex(was.stage) || (was.stage === "confirmed" && item.stage === "main")) return null;
+  if (REGRESSION_NOTE.test(item.note || "")) return null;
+  return `the card showed "${labelOf(was.stage)}" and this moves it back to "${labelOf(item.stage)}". Stages only move forward. If the fix really was pulled or failed, say so in the note ("rolled back after it failed on the sandbox"); if it is a second problem, add it as its own row.`;
 }
 
 function stageFromEvidence(evidence = {}, fallback = "written") {
@@ -91,4 +104,4 @@ function waitNote(info = {}) {
   return `${what} ${info.queued ? "are queued" : info.running ? "are running" : "have not finished"}.`;
 }
 
-module.exports = { STAGES, stageIndex, labelOf, stageAllowed, stageFromEvidence, itemLine, rowState, render, waitNote };
+module.exports = { STAGES, stageIndex, labelOf, stageAllowed, regression, stageFromEvidence, itemLine, rowState, render, waitNote };

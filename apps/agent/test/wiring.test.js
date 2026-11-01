@@ -383,6 +383,9 @@ test("the status card is bumped below newer messages only when it has a real upd
   assert.equal(first.posted, true);
   // still the latest message: a real update edits in place
   latest = cardId;
+  // "Fix written" needs a fix that exists (review 2026-11-01, ticket 1743).
+  await assert.rejects(broker.tool(t, "status_card", { items: [{ name: "Metrics not moving", stage: "written" }] }), /needs a fix that exists/);
+  t.patchDigest = "sha256:abc";
   await broker.tool(t, "status_card", { items: [{ name: "Metrics not moving", stage: "written" }] });
   assert.equal(calls.filter((c) => c.method === "POST").length, 1);
   assert.equal(calls.filter((c) => c.method === "DELETE").length, 0);
