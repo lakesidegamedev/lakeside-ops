@@ -91,10 +91,34 @@ const oidOf = (v) => v && typeof v === "object" && !Array.isArray(v) && Object.k
 // Coerce read arguments to their JSON schema: numbers to strings and numeric
 // strings to numbers where the type says so, numbers clamped to min/max.
 // Returns the coerced copy, or null when nothing changed.
-function coerceArgs(args, schema) {
-  const props = schema?.properties || {}, out = { ...args };
+// Keir 7: argument names models reach for that a schema spells differently
+// (2026-10-25 week: trace_corp 13 and turn_anomalies 9 "unrecognized key"
+// rejections). An unknown key is renamed only when exactly one schema
+// property is its clear counterpart and that property was not already given.
+const ARG_SYNONYMS = { limit: ["turns", "count", "n", "max"], turns: ["limit", "window", "last"], since: ["from", "fromTurn", "startTurn", "sinceTurn"], from: ["since", "fromTurn", "startTurn"], until: ["to", "toTurn", "endTurn"], to: ["until", "toTurn", "endTurn"], query: ["q", "text", "question", "search"], text: ["query", "q", "question"] };
+const normKey = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
+function renameKeys(args, props) {
+  const out = { ...args }, names = Object.keys(props);
   let changed = false;
-  for (const [k, v] of Object.entries(args || {})) {
+  for (const k of Object.keys(args || {})) {
+    if (props[k]) continue;
+    const nk = normKey(k);
+    const candidates = names.filter((p) => out[p] === undefined && (() => {
+      const np = normKey(p);
+      if (np === nk || np + "id" === nk || nk + "id" === np) return true;
+      if (np.length >= 4 && nk.length >= 4 && (nk.startsWith(np) || np.startsWith(nk)) && /id$/.test(nk) === /id$/.test(np)) return true;
+      return (ARG_SYNONYMS[p] || []).map(normKey).includes(nk);
+    })());
+    if (candidates.length === 1) { out[candidates[0]] = out[k]; delete out[k]; changed = true; }
+  }
+  return changed ? out : null;
+}
+function coerceArgs(args, schema) {
+  const props = schema?.properties || {};
+  const renamed = renameKeys(args, props);
+  const out = { ...(renamed || args) };
+  let changed = Boolean(renamed);
+  for (const [k, v] of Object.entries(out)) {
     const p = props[k]; if (!p) continue;
     const types = [].concat(p.type || []);
     let next = v;
@@ -342,6 +366,19 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   // developer sources like Sentry; writes keep their usual approvals (ticket 1514).
   const developerTicket = (job) => job.kind === "ticket" && [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId;
   const readScope = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? require("./roles").WATCH_READS : job.kind === "finding" ? FINDING_READS : SUPPORT_READS;
+  // Keir 7: whether this task may read a tool through read_tool, mirroring the
+  // read_tool scope checks, so ready reads never offer a tool it cannot call.
+  const WRITE_LIKE = /(?:^|_)(?:apply|delete|remove|drop|update|set|create|insert|send|post|merge|promote|publish|rollback|reset|write|compensate)(?:_|$)/i;
+  const readable = (job, server, tool) => {
+    if (WRITE_LIKE.test(String(tool || ""))) return false;
+    const watch = require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper";
+    if (isQuick(job) && job.role === "owner") return Boolean(QUICK_OWNER_READS[server]?.includes(tool));
+    if (job.role === "player") return server === "gamestate" || (server === "support" && tool === "support_get");
+    if (job.role === "owner" || developerTask(job)) return !watch || Boolean(require("./roles").WATCH_READS[server]?.includes(tool));
+    return Boolean(readScope(job)[server]?.includes(tool));
+  };
+  if (process.env.KEIR_READY_READS === "0") config.readyReads = false;
+  const readyReads = require("./readyreads").createReadyReads({ mcp, stateDir: config.stateDir, readable, embed: config.embed || null, log: config.log || (() => {}) });
   const readServers = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? Object.keys(require("./roles").WATCH_READS) : job.kind === "finding" ? Object.keys(FINDING_READS) : (job.role === "owner" || developerTask(job)) ? (isQuick(job) ? Object.keys(QUICK_OWNER_READS).filter((s) => mcp.servers().includes(s)) : mcp.servers()) : job.role === "player" ? ["gamestate", "support"] : Object.keys(SUPPORT_READS);
   function active(job, states = ["running"]) {
     // Say why and that the turn is over: the bare phrase kept models calling
@@ -1102,7 +1139,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     catch (e) {
       appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
       // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
-      try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
+      try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, ...(name === "read_tool" && input?.server && input?.tool ? { target: `${input.server}/${input.tool}` } : {}), error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
       // Keir 6.1: a refused answer to the player is owed until one is posted
       // (KBX3: Sonnet's reply was refused for length, then it finished done).
       if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
@@ -1112,6 +1149,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // Review 2026-11-01 (ticket 1742): an empty lookup asked the wrong way
     // became "nothing is signed". Empty reads are remembered so a claim that
     // something does not exist needs a second, differently shaped read.
+    if (name === "read_tool" && config.readyReads !== false && result != null && !require("./ticketquality").emptyResult(result) && !/(?:_catalog|_tools|_servers)$/.test(input.tool || "")) {
+      try { readyReads.learn(job, input.server, input.tool); } catch {}
+    }
     if ((name === "read_tool" || name === "evidence_batch") && require("./ticketquality").emptyResult(result)) {
       job.emptyReads = [...(job.emptyReads || []), { sig: hash({ name, tool: input?.tool || null, args: input?.args ?? input?.arguments ?? input?.queries ?? null }), tool: input?.tool || name, at: now() }].slice(-20);
     }
@@ -1603,6 +1643,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // heal-ops passes filters through verbatim, so {"$oid": id} is an unknown
       // operator. Match the id as text instead: ids are stored both ways.
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool) && args.filter && typeof args.filter === "object") args.filter = oidFilter(args.filter);
+      // Keir 7: a raw database read is a workaround for a missing purpose-built
+      // read; capabilitygaps.js turns repeats into capability requests.
+      if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool) && typeof args.collection === "string") { try { ledger.audit("raw_read", { job: job.id, ticket: job.ticket || null, collection: args.collection.slice(0, 80) }); } catch {} }
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
       if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
@@ -3236,7 +3279,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     return { checked };
   }
   let watch = null;
-  return { voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

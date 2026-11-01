@@ -1000,6 +1000,9 @@ const effectRecovery = require("./lib/operator/effectrecovery").createEffectReco
   api: (endpoint) => ciApi([endpoint]),
   running: (job) => Object.values(active).some((s) => s?.job.id === job.id) });
 setInterval(() => effectRecovery.tick().catch((e) => log(`effect recovery: ${e.message}`)), 5 * 60000).unref();
+// Keir 7: repeated failed or raw-database reads become capability requests.
+const capabilityGaps = require("./lib/operator/capabilitygaps").createCapabilityGaps({ ledger, mcp, events, log });
+if (env.KEIR_CAPABILITY_GAPS !== "0") setInterval(() => capabilityGaps.tick().catch((e) => log(`capability gaps: ${e.message}`)), 3600000).unref();
 setInterval(() => { try { appAgent.tickWatches(); appMuse.tick(); } catch (e) { log(`app agent: ${e.message}`); } }, 60000).unref();
 // One widget line every thirty minutes. Failures are counted, never logged
 // with their private context.
