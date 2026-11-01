@@ -93,3 +93,9 @@ test("failed and raw reads are grouped into capability requests; policy refusals
   assert.equal(calls.filter((c) => c.tool === "kanban_add").length, 2);
   assert.ok(calls.some((c) => c.tool === "work_report" && /Now 4 hits/.test(c.args.summary)));
 });
+
+test("Keir 7 reads are open to support, and a player's holdings stay reporter-scoped", () => {
+  const src = require("node:fs").readFileSync(require.resolve("../lib/operator/broker"), "utf8");
+  for (const tool of ["nomination_records", "character_holdings", "commodity_market", "turn_failure_detail"]) assert.match(src, new RegExp(`"${tool}"`), tool);
+  assert.match(/const PLAYER_PRIVATE = new Set\(\[[^\]]*\]/.exec(src)[0], /"character_holdings"/, "holdings are read only for the ticket's reporter");
+});
