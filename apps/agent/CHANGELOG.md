@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Ready reads never make an activation wait: the index of read tools is built in the background at startup and refreshed every nine minutes, and a lookup before it is warm, or with the embedder down, returns nothing instead of failing. The first live probe after 7.1.0 spent its whole 4 s budget building the index cold; warm lookups take about 12 ms.
+- The harness-runner admission test checks that released slots can all be taken again, not that slot 1 comes back first (it flaked in CI on 2026-11-01).
+
 ## 7.1.0 (2026-11-01)
 
 - Two-call answers (owner, 2026-11-01). Before the model starts, the broker loads the read tools that match the request, with their exact input schemas (`context.readyReads`), so the first call can be the read and the second the reply. Matching is by meaning through the box's embedding proxy, over each tool's description and over questions that tool actually answered before: every successful read is remembered (`readyreads-examples.json`), so the index learns the words people use. Only tools the task may read are offered. It fails open; `KEIR_READY_READS=0` turns it off. The week of 2026-10-25 a ticket took a median 9 tool calls, and an owner's weekly-logins question spent four on discovery and ran out of steps.
