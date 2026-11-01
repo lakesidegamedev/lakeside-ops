@@ -627,9 +627,17 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   // nothing behind them and decisions nobody made (ticketquality.js).
   function guardTicketQuality(job, ticketNo, message, ev = ticketEvidence(ticketNo)) {
     const ids = new Set(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => j.id));
-    const decided = ev.money.agreed || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId) && ["approved", "selected"].includes(x.state))
-      || knowledge.ticketRecord(ledger, ticketNo).facts.some((f) => !f.closedAt && /\b(?:decided|ruled|approved|decision)\b/i.test(f.text || ""));
-    const hit = require("./ticketquality").refusal(message, { emptyReads: job?.emptyReads || [], escalated: ev.escalated.done, building: ev.building.done, decided });
+    const names = config.developerNames || {};
+    const answered = Object.values(d.decisions || {}).filter((x) => ids.has(x.jobId) && ["approved", "selected"].includes(x.state));
+    const decisionFacts = knowledge.ticketRecord(ledger, ticketNo).facts.filter((f) => !f.closedAt && /\b(?:decided|ruled|approved|decision)\b/i.test(f.text || ""));
+    const decided = ev.money.agreed || answered.length > 0 || decisionFacts.length > 0;
+    // Who approved: the person who answered the decision (Ariane answering
+    // for the owner is Ariane), then developers named in a recorded fact.
+    const approvers = [...new Set([
+      ...answered.map((x) => names[x.answeredBy]),
+      ...decisionFacts.flatMap((f) => Object.values(names).filter((n) => new RegExp(`\\b${n}\\b`, "i").test(f.text || ""))),
+    ].filter(Boolean))];
+    const hit = require("./ticketquality").refusal(message, { emptyReads: job?.emptyReads || [], escalated: ev.escalated.done, building: ev.building.done, decided, approvers, developers: [...new Set(Object.values(names))] });
     if (!hit) return;
     ledger.audit("ticket_quality_refused", { job: job?.id || null, ticket: ticketNo, kind: hit.kind, sentence: hit.sentence });
     throw new Error(`Not posted: ${hit.reason}`);

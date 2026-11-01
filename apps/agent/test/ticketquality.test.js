@@ -69,3 +69,13 @@ test("Fix written needs a fix that exists (1743)", () => {
   assert.equal(statusCard.stageAllowed("written", { investigated: { done: true } }).ok, false);
   assert.equal(statusCard.stageAllowed("written", { building: { done: true } }).ok, true);
 });
+
+test("a decision names the developer who approved it (owner, 2026-11-01)", () => {
+  const ctx = { decided: true, approvers: ["Egg"], developers: ["Egg", "Ariane"] };
+  assert.equal(kind("The developers decided to compensate everyone hit by the pricing bug.", ctx), "decision_unnamed");
+  assert.equal(kind("The credit was agreed and is being applied.", ctx), "decision_unnamed");
+  assert.equal(kind("Ariane approved compensation for this.", ctx), "decision_unnamed", "the approver on record is Egg");
+  assert.equal(kind("Egg approved compensation for everyone hit by the pricing bug.", ctx), null);
+  assert.equal(kind("Ariane approved compensation for this.", { ...ctx, approvers: [] }), null, "no approver on record: any developer name");
+  assert.equal(kind("Your price setting is approved by the market each turn.", ctx), null);
+});

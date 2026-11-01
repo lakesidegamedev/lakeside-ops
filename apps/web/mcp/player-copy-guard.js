@@ -40,4 +40,17 @@ function voiceProblem(message) {
   return null;
 }
 
-module.exports = { internalTerm, voiceProblem };
+// Owner, 2026-11-01: a decision in player copy names the developer who made
+// it ("Egg approved compensation"), never "the developers decided". Mirrors
+// NAMED_DECISION in apps/agent/lib/operator/ticketquality.js.
+const DECISION = /\b(?:developers?|devs?|owner|team|staff|moderators?) (?:have |has )?(?:decided|agreed|ruled|approved|signed off)\b|\bthe ruling (?:is|was)\b|\b(?:it|this) (?:was|has been) (?:decided|agreed|ruled)\b|\bthe decision (?:is|was) (?:to|that)\b|\b(?:approved|signed off on|ruled (?:on|that))\b(?=[^.!?]*\b(?:compensat\w*|refund\w*|credit\w*|payment|paid|reimburs\w*|exception|ruling)\b)|\b(?:compensat\w*|refund\w*|credit\w*|payment|reimburs\w*|exception)\b[^.!?]*\b(?:approved|signed off|agreed)\b/i;
+const developerNames = () => String(process.env.SUPPORT_DEVELOPER_NAMES || "Egg,Ariane").split(",").map((x) => x.trim()).filter(Boolean);
+function unnamedDecision(message, names = developerNames()) {
+  for (const sentence of String(message || "").split(/(?<=[.!?])\s+|\n+/)) {
+    if (!DECISION.test(sentence)) continue;
+    if (!names.some((n) => new RegExp(`\\b${n}\\b`, "i").test(sentence))) return { match: sentence.trim().slice(0, 160), kind: `a decision credited to nobody. Name the developer who approved it (${names.join(" or ")})` };
+  }
+  return null;
+}
+
+module.exports = { internalTerm, voiceProblem, unnamedDecision };
