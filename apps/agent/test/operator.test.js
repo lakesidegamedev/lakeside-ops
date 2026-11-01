@@ -2634,3 +2634,23 @@ test("a refused answer blocks finishing done or waiting until an answer is poste
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Coal is the short input: your coal contract ended, so supply is at 80%. Renewing it restores full output." } });
   assert.equal(j.replyRefusedPending, undefined);
 });
+
+test("a reply held by the post guards lets the turn finish waiting instead of looping (Keir 6.1)", async () => {
+  const f = fixture();
+  const fields = { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" } };
+  const j = running(f, { ...fields, lastPlayerAt: 4000, observedPlayerAt: 4000 });
+  f.ledger.data.seen["ticket:123"] = j.id;
+  // Another task answered the player a moment ago.
+  const other = f.ledger.createJob("other-ticket", fields); other.state = "running";
+  await f.broker.tool(other, "channel_reply", { message: "The display now shows the corrected total on the plant page." });
+  // The first draft quotes a figure nothing read, so it is refused for its content.
+  await assert.rejects(f.broker.tool(j, "channel_reply", { message: "Supply fell to 41,200 units on the plant page." }), /does not appear in anything you read/);
+  assert.equal(j.replyRefusedPending, true);
+  // The corrected draft is held by the one-voice guard, not refused for its wording.
+  await assert.rejects(f.broker.tool(j, "channel_reply", { message: "The display is fixed. It should show the right total from the next turn." }), /another Keir task updated ticket 123/);
+  // Finishing waiting is allowed now, and the answer is still owed next wake.
+  const done = await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answer owed once the other task's post ages out." });
+  assert.equal(done.state, "waiting");
+  assert.equal(j.replyRefusedPending, true);
+  assert.equal(j.replyHeldAt, undefined);
+});

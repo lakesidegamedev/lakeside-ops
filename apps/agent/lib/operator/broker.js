@@ -561,6 +561,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   const humanAt = (ticketNo) => Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => Math.max(j.observedPlayerAt || 0, j.lastPlayerAt || 0)));
   const MONOLOGUE_CAP = 3;
   const waitingStage = ticketNo => JSON.stringify({ evidence: Object.fromEntries(Object.entries(ticketEvidence(ticketNo)).map(([k,v])=>[k,v.done])), suggestions: Object.values(d.jobs).filter(j=>ticketOf(j)===ticketNo).flatMap(j=>Object.values(j.filedSuggestions||{}).map(s=>s.number)).sort((a,b)=>a-b) });
+  // A post the broker withholds on purpose (rate, monologue, another task's
+  // post, an owner decision, an unchanged wait) is not a draft the model can
+  // rewrite. It carries a code so finish can end the turn waiting instead of
+  // demanding a post these same rules will refuse again.
+  function postHeld(message) { return Object.assign(new Error(message), { code: "TICKET_POST_HELD" }); }
   function guardTicketPostRules(job, ticketNo, message) {
     require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
@@ -572,13 +577,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (!question && require("./supportblockers").unchangedWait(message)) {
       const old = d.supportWaitingNotices?.[ticketNo];
       if (old?.stage === waitingStage(ticketNo) && humanAt(ticketNo) <= old.humanAt)
-        throw new Error("Not posted: the player already has this waiting state. Keep working privately; post a new finding or verified milestone, not another unchanged deployment notice.");
+        throw postHeld("Not posted: the player already has this waiting state. Keep working privately; post a new finding or verified milestone, not another unchanged deployment notice.");
     }
     const pending = Object.values(d.decisions || {}).find((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo);
     if (pending) {
       const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
       if (noticed && !question && !playerSpokeAfter(noticed.at))
-        throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. No further posts until the decision lands or the player writes; update the status card if the stage changed.`);
+        throw postHeld(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. No further posts until the decision lands or the player writes; update the status card if the stage changed.`);
     }
     // Monologue cap (ticket 1514: 52 Keir messages to 4 human). After three
     // consecutive Keir posts, pause ten minutes instead of silencing the ticket indefinitely.
@@ -589,21 +594,21 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // hold back the answer it announces (ticket 1540).
     const mine = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.jobId === job.id && !String(p.text || "").startsWith("[status card]")).at(-1);
     if (mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
-      throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
+      throw postHeld(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
     // The same question again (1592 asked one question four times in 31
     // hours): asking twice is a reminder, a third time is not progress.
     const asked = repeatedQuestion(ticketNo, message);
-    if (asked >= 2) throw new Error(`Not posted: you have already asked the player this ${asked} times. Do not ask again; work with what you have, say what you will assume, or finish waiting for their reply.`);
+    if (asked >= 2) throw postHeld(`Not posted: you have already asked the player this ${asked} times. Do not ask again; work with what you have, say what you will assume, or finish waiting for their reply.`);
     if (isCorrection(message) && sentences(message).length > 2)
       throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
     if (run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
-      throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
+      throw postHeld(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
     // A developer asking Keir in the ticket gets one answer, from their own task.
     // The automatic ticket task must not answer it over them (ticket 1510).
     if (job.kind === "ticket") {
       const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
-      if (dev) throw new Error(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
+      if (dev) throw postHeld(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
     }
     const ev = ticketEvidence(ticketNo);
     const missing = outcomeClaims(message).filter((c) => c.kind === "money" ? !(c.future ? ev.money.agreed : ev.money.done) : !c.future && !ev[c.kind].done);
@@ -613,9 +618,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // so neither holds a reply back (ticket 1602: the owner asked twice, Keir
     // drafted twice and stayed silent behind the coordinator's card).
     const other = posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !String(p.text || "").startsWith("[status card]") && !playerSpokeAfter(p.at)).at(-1);
-    if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
+    if (other) throw postHeld(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
     const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6);
-    if (dup) throw new Error(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
+    if (dup) throw postHeld(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
   }
   async function finishPublicText(job) {
     if (!job.replyChannel) return null;
@@ -837,7 +842,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
     }
-    if (String(message || "").trim() && !/^\[status card\]/.test(message)) { job.lastAskAt = now(); delete job.replyRefusedPending; }
+    if (String(message || "").trim() && !/^\[status card\]/.test(message)) { job.lastAskAt = now(); delete job.replyRefusedPending; delete job.replyHeldAt; }
     if (!/^\[status card\]/.test(message) && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
@@ -1071,7 +1076,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
       // Keir 6.1: a refused answer to the player is owed until one is posted
       // (KBX3: Sonnet's reply was refused for length, then it finished done).
-      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message))) {
+        // A post the broker held on purpose is not an answer the model can fix
+        // by rewriting. Finish may end the turn waiting; the debt stays, and
+        // the next wake posts the answer once the hold has passed.
+        if (e.code === "TICKET_POST_HELD") job.replyHeldAt = now();
+        else { job.replyRefusedPending = true; delete job.replyHeldAt; }
+        try { ledger.save(); } catch {}
+      }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
@@ -2937,8 +2949,16 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
-      if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
-      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
+      // A post the broker itself withheld cannot be fixed by rewriting it now:
+      // the account moved on. Let the turn finish waiting, and keep the debt so
+      // the next wake posts the answer once the hold has passed. Without this
+      // the finish guard demanded a post the same rules refused, and the model
+      // looped between the two (2026-11-01: 17 refusals across 3 tasks).
+      const replyHeld = Boolean(job.replyHeldAt);
+      if (["done", "waiting"].includes(state) && job.replyRefusedPending && !replyHeld && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && !replyHeld && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
+      // The hold explains this turn only; a later activation must post or be refused again.
+      delete job.replyHeldAt;
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The
