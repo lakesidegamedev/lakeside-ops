@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.0.0 (2026-11-01)
+
 - Keir 7 fast lane: a ticket that only asks how the game works is answered by Ask Keir before any model runs, in the ticket, in about a minute, and the ticket then waits for the player. Gameplay advice gets the Ask redirect the same way. Anything else, a follow-up that pushes back or turns into a bug report, an attachment, or an answer Ask's own checks doubt, goes to the full agent, which starts with Ask's draft. The fast lane only reads: it posts through the same ticket update and finish guards as the agent, never draws on the player's own Ask energy, and is off with `KEIR_FAST_LANE=0` or without `KEIR_ASK_SECRET`. Each answer is logged in usage.jsonl as a `fast-lane` activation and audited as `fast_lane`.
 
 ## 6.2.2 (2026-11-01)
