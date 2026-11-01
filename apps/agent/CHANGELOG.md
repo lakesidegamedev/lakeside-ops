@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.0.1 (2026-11-01)
+
 - The owner's approval is enough to make a payment (owner, 2026-11-01: "It should allow it if I approve it"). A ticket task may now propose any repair, including a large compensation; it goes to the owner (and Ariane after three hours) as one exact approval card instead of to the reporter, and once that card is approved the ticket task applies it with execute_action. Nothing runs without that exact approval: a carried ticket yes still never covers a large repair. After the owner answers a payment question, asking again in other words ("who executes", "confirm the exact payment") is refused for two days with a pointer to request_heal (tickets 1730 and 1742 asked three times each).
 
 ## 7.0.0 (2026-11-01)
