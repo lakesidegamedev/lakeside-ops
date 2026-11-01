@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.0.4 (2026-11-01)
+
 - A run that runs out of steps never posts its "Maximum steps reached... tools are disabled" note (#mod-bot, 2026-11-01: an owner's one-line question about weekly logins got that note instead of "142"). Its last text is kept as a private checkpoint and the work continues in a full activation; finish summaries and fallback replies refuse the same wording. The last step of an activation is kept for the answer: a read on the final step is refused with "post your answer now".
 
 ## 7.0.3 (2026-11-01)
