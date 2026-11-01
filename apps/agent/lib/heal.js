@@ -159,6 +159,24 @@ function affectedOf(result) {
   return Number((result && result.plan && result.plan.affected) || 0);
 }
 
+// What an approval actually covers. A compensation plan restates its credits
+// in the anchor currency at the current exchange rate, so its summary, anchor
+// amounts and money delta move every turn while the payment itself does not.
+// Ticket 1730 (2026-11-01): an approval given after a turn processed was
+// refused as "plan changed" and the owner was asked again. A compensation is
+// identified by who is paid what in their own currency; every other plan by
+// its whole dry run.
+function planIdentity(plan) {
+  const credits = plan && plan.payload && Array.isArray(plan.payload.credits) ? plan.payload.credits : null;
+  if (!credits) return plan;
+  return {
+    kind: "compensation",
+    affected: Number(plan.affected || 0),
+    missing: plan.payload.missing || [],
+    credits: credits.map((c) => ({ corporationId: String(c.corporationId), amountLocal: Number(c.amountLocal), currencyCode: c.currencyCode || null })),
+  };
+}
+
 /** The confirmation card. Plain words; the numbers come from heal-ops' dry run. */
 function cardText({ spec, plan, requester, people }) {
   const what = spec.kind === "ledger" ? (plan.plan && plan.plan.summary) || spec.defectId : spec.description;
@@ -173,6 +191,7 @@ function cardText({ spec, plan, requester, people }) {
 }
 
 module.exports = {
+  planIdentity,
   ENV_LABEL,
   createHealOps,
   validateRequest,

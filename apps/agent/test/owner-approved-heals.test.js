@@ -19,11 +19,16 @@ function fixture(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: OWNER, staffIds: [DELEGATE], botId: BOT, stateDir: dir, repositories: {}, scanChannels: [], supportDeferred: () => false };
-  let clock = Date.now(), plans = 0;
+  let clock = Date.now(), plans = 0, amount = 26723;
   const calls = [], messages = {};
   const mcp = { servers: () => [], call: async (server, name, args, write) => {
     calls.push({ name, args, write });
-    if (name.endsWith("_plan")) return { token: { id: `fresh-${++plans}`, expiresAt: new Date(clock + 9 * 60000).toISOString() }, plan: { affected: 1, moneyDelta: 25519.72, summary: "Credit Oracle" }, guards: { ok: true } };
+    if (name.endsWith("_plan")) {
+      // Each plan restates the credit at a slightly different exchange rate, as a new turn does.
+      const fx = 1.0471508591425682 + plans * 0.0003, anchor = amount / fx;
+      return { token: { id: `fresh-${++plans}`, expiresAt: new Date(clock + 9 * 60000).toISOString() }, guards: { ok: true },
+        plan: { affected: 1, moneyDelta: anchor, summary: `credit ${Math.round(anchor)} anchor`, payload: { credits: [{ corporationId: "6ae3246e5a095b0d9e2bb254", corporationName: "Oracle", amountLocal: amount, currencyCode: "USD", fxRate: fx, amountAnchor: anchor }], totalAnchor: anchor, missing: [] } } };
+    }
     return { ok: true };
   } };
   const discord = async (method, route) => {
@@ -43,7 +48,7 @@ function fixture(t) {
     return id;
   };
   const answer = async (id, by = OWNER, verdict = "Approved") => { messages[id].content += `\n\n**Decision:** ${verdict === "Approved" ? "✅" : "❌"} ${verdict} by <@${by}>`; await decisions.tick(); };
-  return { ledger, broker, decisions, job, calls, send, answer, advance: (ms) => { clock += ms; } };
+  return { ledger, broker, decisions, job, calls, send, answer, advance: (ms) => { clock += ms; }, setAmount: (n) => { amount = n; } };
 }
 
 test("a ticket task can put a large payment in front of the owner, and his approval lets it run", async (t) => {
@@ -106,4 +111,23 @@ test("once the owner has answered a payment question, asking it again in other w
   assert.equal(answeredPayment(f.ledger.data, f.job, "How should freight be shared between states?", now), null);
   assert.equal(answeredPayment(f.ledger.data, { id: "other" }, "who executes the approved $26,723 credit?", now), null);
   assert.equal(answeredPayment(f.ledger.data, f.job, "who executes the approved $26,723 credit?", now + 72 * HOUR), null, "two days later it may ask");
+});
+
+test("an approval given after a turn moved the exchange rate still pays the same amount", async (t) => {
+  const f = fixture(t);
+  const request = await f.broker.tool(f.job, "request_heal", payment);
+  await f.answer(f.send());
+  f.job.state = "running";
+  await f.broker.tool(f.job, "execute_action", { action: request.action });
+  assert.ok(f.calls.some((c) => c.name === "heal_compensate_apply"), "the anchor restatement is not a changed payment");
+});
+
+test("a changed amount between approval and payment is still refused", async (t) => {
+  const f = fixture(t);
+  const request = await f.broker.tool(f.job, "request_heal", payment);
+  await f.answer(f.send());
+  f.setAmount(27000);
+  f.job.state = "running";
+  await assert.rejects(f.broker.tool(f.job, "execute_action", { action: request.action }), /changed since confirmation/);
+  assert.ok(!f.calls.some((c) => c.name === "heal_compensate_apply"));
 });
