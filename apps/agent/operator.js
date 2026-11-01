@@ -57,7 +57,8 @@ const config = {
   voiceProvider: env.KEIR_VOICE_PROVIDER || "agy:gemini-3.8-flash@low",
   quickProvider: env.KEIR_QUICK_PROVIDER || "claude", workerProvider: env.KEIR_WORKER_PROVIDER || "claude",
   // Keir 7 fast lane: ticket questions answered by Ask Keir before any model run.
-  fastLane: env.KEIR_FAST_LANE !== "0", askUrl: (env.KEIR_ASK_URL || "https://ask.lakesidegames.net").replace(/\/+$/, ""), askSecret: env.KEIR_ASK_SECRET || null,
+  // A deep Ask answer with live reads measured 80 s (2026-11-01), so the wait is 150 s.
+  fastLane: env.KEIR_FAST_LANE !== "0", askUrl: (env.KEIR_ASK_URL || "https://ask.lakesidegames.net").replace(/\/+$/, ""), askSecret: env.KEIR_ASK_SECRET || null, askTimeoutMs: positive("KEIR_ASK_TIMEOUT_SECONDS", 150) * 1000,
   accountAuditEnabled: env.KEIR_ACCOUNT_AUDIT !== "0",
   rolesEnabled: env.KEIR_ROLES_ENABLED === "1", engineeringEnabled: env.KEIR_ENGINEERING === "1", engineeringScoutEnabled: env.KEIR_ENGINEERING_SCOUT === "1",
   engineeringProvider: env.KEIR_ENGINEERING_PROVIDER || "codex:gpt-6.1-sol@low",

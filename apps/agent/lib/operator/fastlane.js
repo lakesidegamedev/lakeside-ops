@@ -68,7 +68,7 @@ function doneEvent(body) {
   return { done, error };
 }
 
-async function askKeir({ question, job, reporter, config, fetcher = fetch, timeoutMs = 90000, signal }) {
+async function askKeir({ question, job, reporter, config, fetcher = fetch, timeoutMs = config.askTimeoutMs || 150000, signal }) {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const onAbort = () => ac.abort();
