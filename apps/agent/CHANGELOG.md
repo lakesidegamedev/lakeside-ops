@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- A ticket reply that the post guards held back on purpose (another task posted a moment ago, an owner decision is pending, or the monologue cap is open) no longer traps finish between two refusals: the turn can end waiting, the unposted answer stays owed, and the next wake delivers it once the hold has passed.
+
 ## 6.1.2 (2026-10-29)
 
 - Ticket orientation waits at most three seconds for the reporter lookup and lets it finish in the background, and a ticket's reporter lookup is reused for 30 minutes (one in flight is shared). The character read goes through heal-ops, which starts a TypeScript CLI per query: 8 to 11 seconds in production. After 6.1.1 it was 11.3 of a ticket's 11.6 second preflight.
