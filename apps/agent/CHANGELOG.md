@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 6.2.1 (2026-11-01)
+
 - A restart no longer leaves running ticket tasks blocked. The operator unit used `KillMode=control-group`, so systemd's SIGTERM also reached each activation's CLI child, the activation died at once and the 100 s grace never applied; the task was marked blocked with "activation aborted" and an owner alert (tickets 1730 and 1740 on the 6.2.0 restart). The unit now uses `KillMode=mixed`, and an activation that ends while the operator is stopping is requeued like an aborted one.
 
 ## 6.2.0 (2026-11-01)
