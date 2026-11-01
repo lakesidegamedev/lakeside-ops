@@ -201,6 +201,20 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       fs.appendFileSync(usageFile, JSON.stringify({ ...usageRecord(job, result, durationMs, model, provider, metadata), effort: effort?.effort || null, effortVia: effort?.via || null }) + "\n", { mode: 0o600 });
     } catch {}
   }
+  // Keir 7 fast lane. Opt-in by config so a caller that does not set it
+  // (tests, the bench) keeps the agent-only path.
+  const fastLane = config.fastLane === true ? require("./fastlane").createFastLane({
+    ledger, broker, config, fetcher: config.fetch || fetch,
+    numbersIn: (t) => require("./knowledge").numbersIn(t),
+    tagIntake: config.tagIntake || require("./jevgate").tagIntake,
+    recordUsage: (job, r) => {
+      try {
+        fs.appendFileSync(usageFile, JSON.stringify({ event: "activation", at: new Date().toISOString(), job: job.id, kind: job.kind, ticket: job.ticket || null,
+          provider: "ask-keir", billing: "ask", model: r.model || null, durationMs: r.ms, turns: 0, outcome: "ok", release, runtime: "fast-lane", fastLane: r.kind,
+          tokens: { input: r.tokens?.input ?? null, output: r.tokens?.output ?? null, cacheRead: 0, cacheWrite: 0 }, usageVersion: 2 }) + "\n", { mode: 0o600 });
+      } catch {}
+    },
+  }) : null;
   // Conversation (quick lane) and deep work (worker lanes) can run on different
   // subscription models: claude (default), agy (Gemini) or muse (Muse Wonder).
   // A lane's provider setting is a comma list of runner[:model] entries, e.g.
@@ -318,6 +332,15 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     job.evidenceText = ""; job.reviewRefusals = 0; job.listedTools = {};
     context.ticketRecord = job.ticket ? require("./knowledge").readTicketRecord(ledger, job.ticket, job) : undefined;
     context.playbook = require("./playbooks").contextFor(job, ledger.data);
+    // Keir 7: a ticket that only asks how the game works is answered by Ask
+    // Keir before any model runs. Anything else, or an answer Ask's own checks
+    // doubt, continues below with the fast lane's draft as a starting point.
+    if (fastLane) {
+      const fast = await fastLane.attempt(job, signal).catch((e) => ({ handled: false, reason: String(e.message).slice(0, 160) }));
+      if (fast.handled) { job.requestInbox = requestInbox; job.inbox = []; delete job.addressedPending; ledger.save(); return; }
+      if (fast.draft) context.fastLaneDraft = { draft: fast.draft, reason: fast.reason, instruction: "Ask Keir drafted this answer before you started, but it was not posted for the reason given. Check it against current evidence; reuse what holds and fix or drop what does not." };
+      mark("fastLane");
+    }
     // KBX2 orientation: the broker runs the discovery reads a support activation
     // otherwise spends its first rounds on (KEIR_ORIENTATION=0 turns it off).
     if (config.orientation !== false && job.kind === "ticket" && job.ticket && job.role !== "player" && !quick && !compact && !job.codingParent) {
