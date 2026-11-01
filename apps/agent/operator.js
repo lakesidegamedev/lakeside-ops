@@ -44,6 +44,8 @@ const config = {
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
   ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
+  // Who a decision is credited to in player copy (owner, 2026-11-01).
+  developerNames: Object.fromEntries((env.KEIR_DEVELOPER_NAMES || "333052320252297216:Egg,565289871799746593:Ariane").split(",").map((x) => x.split(":")).filter((x) => x[0] && x[1])),
   guildId: env.KEIR_GUILD_ID || "1465445442987888743", staffIds: (env.KEIR_SUPPORT_DELEGATES || "565289871799746593").split(",").filter(Boolean),
   scanChannels: (env.KEIR_SCAN_CHANNELS || "1470636730884427857,1483974659929145625,1495932687058206822,1488255716753019171,1488255794628788244,1523477015217443028,1474210643841122499,1490571412040188117").split(",").filter(Boolean),
   taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000, liveGraceMs: positive("KEIR_LIVE_GRACE_MINUTES", 120) * 60000,

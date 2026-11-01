@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 6.2.2 (2026-11-01)
+
+- A decision in player copy names the developer who made it (owner, 2026-11-01): "the developers decided", "compensation is approved" and "the ruling is" are refused unless the sentence names who approved it, taken from who answered the ticket's decision (Ariane answering for the owner is Ariane) or a developer named in a recorded decision fact (`decision_unnamed`). Names come from `KEIR_DEVELOPER_NAMES` (default Egg and Ariane). The support service applies the same rule to every agent's posts and receipts (`SUPPORT_DEVELOPER_NAMES`). Replaying the delivered posts from tickets 1650 onward found 6 unnamed decisions, all genuine.
+
 ## 6.2.1 (2026-11-01)
 
 - A restart no longer leaves running ticket tasks blocked. The operator unit used `KillMode=control-group`, so systemd's SIGTERM also reached each activation's CLI child, the activation died at once and the 100 s grace never applied; the task was marked blocked with "activation aborted" and an owner alert (tickets 1730 and 1740 on the 6.2.0 restart). The unit now uses `KillMode=mixed`, and an activation that ends while the operator is stopping is requeued like an aborted one.

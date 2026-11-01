@@ -27,12 +27,18 @@ const PROMISE = /\b(?:we|I)(?:'ll|’ll| will| are going to| am going to)\s+(?:m
 // decided to compensate everyone" with no decision on record).
 const DECISION = /\b(?:developers?|devs?|owner|team|staff|moderators?) (?:have |has )?(?:decided|agreed|ruled|approved|signed off)\b|\bthe ruling (?:is|was)\b|\b(?:it|this) (?:was|has been) (?:decided|agreed|ruled)\b|\bthe decision (?:is|was) (?:to|that)\b/i;
 
+// Any wording that credits a decision or approval, named or not.
+// A bare "approved" only counts next to money or a ruling ("approved by the
+// market" is not a decision).
+const NAMED_DECISION = new RegExp(`${DECISION.source}|\\b(?:approved|signed off on|ruled (?:on|that))\\b(?=[^.!?]*\\b(?:compensat\\w*|refund\\w*|credit\\w*|payment|paid|reimburs\\w*|exception|ruling)\\b)|\\b(?:compensat\\w*|refund\\w*|credit\\w*|payment|reimburs\\w*|exception)\\b[^.!?]*\\b(?:approved|signed off|agreed)\\b`, "i");
+
 const sentenceOf = (text, re) => {
   for (const s of String(text || "").split(/(?<=[.!?])\s+|\n+/)) if (re.test(s)) return s.trim().slice(0, 160);
   return null;
 };
 
-// ctx: { emptyReads: [{ sig }], escalated, building, decided }
+// ctx: { emptyReads: [{ sig }], escalated, building, decided, approvers: names
+// who approved this ticket's decisions, developers: every developer's name }
 function refusal(text, ctx = {}) {
   let s = sentenceOf(text, CONFESSIONAL);
   if (s) return { kind: "confessional", sentence: s, reason: `"${s}" apologises or talks about Keir. Players get the right fact, not the story of the mistake. State what is correct in one sentence ("Correction: you have three agreements, not none.") and move on.` };
@@ -44,7 +50,12 @@ function refusal(text, ctx = {}) {
   s = sentenceOf(text, PROMISE);
   if (s && !ctx.escalated && !ctx.building) return { kind: "promise_unbacked", sentence: s, reason: `"${s}" promises a change the player will see, and nothing for it exists yet. Raise it with raise_to_developers or start the fix first; then the promise is backed. Otherwise say you have noted it, not that it is coming (ticket 1736 promised a page change that was never built).` };
   s = sentenceOf(text, DECISION);
-  if (s && !ctx.decided) return { kind: "decision_unrecorded", sentence: s, reason: `"${s}" reports a developer or owner decision that is not on record for this ticket. Ask with raise_to_developers kind decision and wait for the answer, or record the decision a developer gave in this channel as a ticket fact with its source, then post.` };
+  if (s && !ctx.decided) return { kind: "decision_unrecorded", sentence: s, reason: `"${s}" reports a developer or owner decision that is not on record for this ticket. Ask with raise_to_developers kind decision and wait for the answer, or record the decision a developer gave in this channel as a ticket fact with its source and their name, then post.` };
+  // Owner, 2026-11-01: a decision names the developer who approved it ("Egg
+  // approved compensation"), never a faceless "the developers decided".
+  const named = (ctx.approvers || []).length ? ctx.approvers : ctx.developers || [];
+  const s2 = sentenceOf(text, NAMED_DECISION);
+  if (s2 && named.length && !named.some((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(s2))) return { kind: "decision_unnamed", sentence: s2, reason: `"${s2}" credits a decision without naming who made it. Name the developer who approved it: ${named.join(" or ")} (for example "${named[0]} approved compensation for this").` };
   return null;
 }
 
@@ -62,4 +73,4 @@ function emptyResult(result) {
   return false;
 }
 
-module.exports = { refusal, emptyResult, CONFESSIONAL, THIRD_PERSON, ABSENCE, PROMISE, DECISION };
+module.exports = { refusal, emptyResult, CONFESSIONAL, THIRD_PERSON, ABSENCE, PROMISE, DECISION, NAMED_DECISION };

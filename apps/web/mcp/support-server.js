@@ -278,7 +278,7 @@ async function main() {
         const existing = await Tickets.findOne(key);
         if (!existing) return errorResult(`ticket #${number} not found`);
         if (existing.category !== "investigation") {
-          const voice = require("./player-copy-guard").voiceProblem(message) || require("./player-copy-guard").internalTerm(message);
+          const voice = require("./player-copy-guard").voiceProblem(message) || require("./player-copy-guard").unnamedDecision(message) || require("./player-copy-guard").internalTerm(message);
           if (voice) {
             await logCopyRefusal(Tickets, key, { tool: "support_resolve", by: auth.name || "agent", match: voice.match, kind: voice.kind });
             return errorResult(`Not resolved: "${voice.match}" in the player's receipt is ${voice.kind}.`);
@@ -456,7 +456,7 @@ async function main() {
           const leak = require("./player-copy-guard").internalTerm(message);
           if (leak) await logCopyRefusal(Tickets, key, { tool: "support_public_update", by: auth.name || "agent", match: leak.match, kind: leak.kind });
           if (leak) return errorResult(`Not delivered: "${leak.match}" is ${leak.kind}. Players see what changed and where the fix is (being built, in testing, on the sandbox, live on the main server), never PRs, issues, CI or branches.`);
-          const voice = require("./player-copy-guard").voiceProblem(message);
+          const voice = require("./player-copy-guard").voiceProblem(message) || require("./player-copy-guard").unnamedDecision(message);
           if (voice) {
             await logCopyRefusal(Tickets, key, { tool: "support_public_update", by: auth.name || "agent", match: voice.match, kind: voice.kind });
             return errorResult(`Not delivered: "${voice.match}" is ${voice.kind}.`);

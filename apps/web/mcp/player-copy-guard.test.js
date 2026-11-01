@@ -25,3 +25,12 @@ test("apologies and third-person talk about the player are refused (review 2026-
   assert.equal(voiceProblem("Correction: you have three agreements, not none."), null);
   assert.equal(voiceProblem("That figure does not match anything the player could have earned."), null);
 });
+
+test("a decision names the developer who made it (owner, 2026-11-01)", () => {
+  const { unnamedDecision } = require("./player-copy-guard");
+  assert.ok(unnamedDecision("The developers decided to compensate everyone hit by the pricing bug."));
+  assert.ok(unnamedDecision("The credit was agreed and is being applied."));
+  assert.equal(unnamedDecision("Egg approved compensation for everyone hit by the pricing bug."), null);
+  assert.equal(unnamedDecision("Ariane agreed the credit back to Oracle."), null);
+  assert.equal(unnamedDecision("Your price setting is approved by the market each turn."), null);
+});
