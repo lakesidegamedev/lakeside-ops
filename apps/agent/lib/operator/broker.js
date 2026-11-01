@@ -2804,7 +2804,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (plan.plan?.collection === "gameConfig") risk.collection = "gameConfig";
       if (!developerTask(job) && job.kind !== "finding" && job.kind !== "ticket" && authority.hugeHeal(risk)) throw new Error("huge heals require an authenticated developer task");
       if (refusal) throw new Error(`Heal plan refused: ${refusal}`);
-      const proposed = request(job, "heal", {spec, risk, affected:heal.affectedOf(plan), planDigest:musePolicy.origin(d, job).scoped ? musePolicy.digest(plan.plan) : hash(plan.plan), ...(musePolicy.origin(d, job).scoped ? { destination: mcp.identity?.("heal-ops"), plan: plan.plan } : {})}, `Developer-directed heal in ${spec.env}: ${spec.description || spec.defectId}. Dry run affects ${heal.affectedOf(plan)} records. Review this exact plan before applying.`);
+      const proposed = request(job, "heal", {spec, risk, affected:heal.affectedOf(plan), planDigest:musePolicy.origin(d, job).scoped ? musePolicy.digest(plan.plan) : hash(heal.planIdentity(plan.plan)), ...(musePolicy.origin(d, job).scoped ? { destination: mcp.identity?.("heal-ops"), plan: plan.plan } : {})}, `Developer-directed heal in ${spec.env}: ${spec.description || spec.defectId}. Dry run affects ${heal.affectedOf(plan)} records. Review this exact plan before applying.`);
       return {...proposed, plan:plan.plan, guards:plan.guards, warnings:plan.warnings, instruction:proposed.instruction || "The owner or delegate can confirm this exact action with Keir approve <action-id>. No game data has changed."};
     }
     if (name === "request_action") {
@@ -2903,7 +2903,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const call = heal.planCall(a.args.spec, `Discord developer ${a.approvedBy} via Keir`);
         const plan = await mcp.call("heal-ops", call.name, call.args, false, signal);
         const refusal = heal.planRefusal(plan);
-        if (refusal || heal.affectedOf(plan) !== a.args.affected || (a.ownerMuse ? musePolicy.digest(plan.plan) : hash(plan.plan)) !== a.args.planDigest) throw new Error("Heal target or plan changed since confirmation; create and confirm a fresh plan.");
+        // Actions created before plan identities still carry a whole-plan digest.
+        const samePlan = a.ownerMuse ? musePolicy.digest(plan.plan) === a.args.planDigest : [hash(heal.planIdentity(plan.plan)), hash(plan.plan)].includes(a.args.planDigest);
+        if (refusal || heal.affectedOf(plan) !== a.args.affected || !samePlan) throw new Error("Heal target or plan changed since confirmation; create and confirm a fresh plan.");
         healApply = heal.applyCall(a.args.spec, plan.token, `Discord developer ${a.approvedBy} via Keir`);
       }
       if (a.kind === "computer_input") {
