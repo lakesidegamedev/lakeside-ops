@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.1.0 (2026-11-01)
+
 - Two-call answers (owner, 2026-11-01). Before the model starts, the broker loads the read tools that match the request, with their exact input schemas (`context.readyReads`), so the first call can be the read and the second the reply. Matching is by meaning through the box's embedding proxy, over each tool's description and over questions that tool actually answered before: every successful read is remembered (`readyreads-examples.json`), so the index learns the words people use. Only tools the task may read are offered. It fails open; `KEIR_READY_READS=0` turns it off. The week of 2026-10-25 a ticket took a median 9 tool calls, and an owner's weekly-logins question spent four on discovery and ran out of steps.
 - Failed and workaround reads become capability requests (owner: "treat failed tools or weird hacking of MCPs as signs MCPs need to be expanded"). Hourly, refused reads and raw heal-ops queries from the last 7 days are grouped by tool and failure kind or by the collection read raw; a group seen 3 times across 2 tasks files one capability request on the lakeside-mcp board, and later hits raise its count on the same card. Policy refusals are ignored. `KEIR_CAPABILITY_GAPS=0` turns it off.
 - Wrong argument names are mapped to the schema's own name and retried once when there is exactly one clear counterpart (`corporationId` to `corporation`, `limit` to `turns`); an argument already given is never overwritten.
