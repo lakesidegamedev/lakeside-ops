@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.1.2 (2026-11-01)
+
 - Support tasks can read the new game-data tools from Keir's own capability requests (lakeside-code #69): live cabinet, Supreme Court and Senate leadership nominations with vote tallies and deadlines (`nomination_records`), the reporter's shareholdings and company control (`character_holdings`, reporter-scoped like the other player reads), stored failure messages for failed turns (`turn_failure_detail`), and the public commodity market. Ready reads are seeded with the questions they answer.
 
 ## 7.1.1 (2026-11-01)
