@@ -114,3 +114,50 @@ test("an alias answers at /mcp/<name> with its own server and the same auth", as
 test("an alias name must be a plain path segment", () => {
   assert.throws(() => createServer({ name: "x", listen: false, authorize: async () => true, buildServer: () => ({}), aliases: { "../x": () => ({}) } }), /invalid alias/);
 });
+
+test("writeTools narrows a token's write flag to the tools it names", async () => {
+  const { narrowIdentity } = require("./index");
+  const token = { name: "junior", scopes: { write: true, writeTools: ["kanban_*", "knowledge_save"] } };
+  const call = name => narrowIdentity(token, [name]).scopes.write;
+  assert.equal(call("kanban_add"), true);
+  assert.equal(call("knowledge_save"), true);
+  assert.equal(call("knowledge_delete"), false);
+  assert.equal(call("heal_apply"), false);
+  // One unlisted tool in a batch drops write for the whole request.
+  assert.equal(narrowIdentity(token, ["kanban_add", "discord_send"]).scopes.write, false);
+  // Listing calls no tool and keeps the flag; the token is not mutated.
+  assert.equal(narrowIdentity(token, []).scopes.write, true);
+  assert.equal(token.scopes.write, true);
+  // Tokens without a list are untouched.
+  const plain = { scopes: { write: true } };
+  assert.equal(narrowIdentity(plain, ["heal_apply"]), plain);
+});
+
+test("server-declared write tools refuse read tokens before the server runs", async () => {
+  let built = 0;
+  const tokens = { "ahdk_read": { scopes: { write: false } }, "ahdk_write": { scopes: { write: true } },
+    "ahdk_narrow": { scopes: { write: true, writeTools: ["kanban_add"] } } };
+  const { app } = createServer({
+    name: "sims-test", listen: false, writeTools: ["sim_run_*", "mf_sim_run"],
+    authorize: async req => tokens[String(req.headers.authorization || "").replace(/^Bearer\s+/i, "")] || null,
+    buildServer: () => { built++; return { connect: async () => {}, close: () => {} }; },
+    transportFactory: () => ({ close: () => {}, handleRequest: async (_req, res) => res.json({ ok: true }) }),
+  });
+  const listener = app.listen(0, "127.0.0.1");
+  await new Promise(resolve => listener.once("listening", resolve));
+  const base = `http://127.0.0.1:${listener.address().port}`;
+  const post = (token, tool) => fetch(`${base}/mcp`, {
+    method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: {} } }),
+  });
+  try {
+    assert.equal((await post("ahdk_read", "sim_run_world")).status, 403);
+    assert.equal((await post("ahdk_narrow", "mf_sim_run")).status, 403);
+    assert.equal(built, 0);
+    assert.equal((await post("ahdk_read", "sim_list")).status, 200);
+    assert.equal((await post("ahdk_write", "sim_run_world")).status, 200);
+    assert.equal(built, 2);
+  } finally {
+    await new Promise(resolve => listener.close(resolve));
+  }
+});

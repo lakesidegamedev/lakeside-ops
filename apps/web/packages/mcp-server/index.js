@@ -17,8 +17,40 @@ function bearerFromEnv(tokenEnv, env = process.env) {
   };
 }
 
+// Tool names a JSON-RPC body calls. A batch is an array of messages.
+function calledTools(body) {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages
+    .filter(m => m && m.method === "tools/call")
+    .map(m => String(m.params?.name ?? ""));
+}
+
+function toolMatches(patterns, tool) {
+  return patterns.some(p => (p.endsWith("*") ? tool.startsWith(p.slice(0, -1)) : p === tool));
+}
+
+// The identity as one request should see it. A token with `scopes.writeTools`
+// keeps its write flag only when every tool the request calls is on that list.
+// Servers check `scopes.write` inline, so narrowing the flag here is what makes
+// the list hold for every tool without touching each one. A request that calls
+// no tool (initialize, tools/list) keeps the plain flag, so write tools still
+// show up in listings and are refused at call time.
+function narrowIdentity(identity, tools) {
+  const scopes = identity && typeof identity === "object" ? identity.scopes : null;
+  if (!scopes || !scopes.write || !Array.isArray(scopes.writeTools) || tools.length === 0) return identity;
+  if (tools.every(t => toolMatches(scopes.writeTools, t))) return identity;
+  return { ...identity, scopes: { ...scopes, write: false } };
+}
+
+// Whether an identity may call a tool the server declared as a write. A plain
+// env-bearer identity (`true`) is the server's own operator and may.
+function mayWrite(identity) {
+  if (identity === true) return true;
+  return Boolean(identity && typeof identity === "object" && identity.scopes && identity.scopes.write === true);
+}
+
 function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", buildServer, authorize,
-  auth, health, aliases = {}, listen = true, jsonLimit = "256kb", logger = console, onListen,
+  auth, health, aliases = {}, writeTools = [], listen = true, jsonLimit = "256kb", logger = console, onListen,
   normalizeDuplicateJsonContentType = true,
   transportFactory = () => new StreamableHTTPServerTransport({ sessionIdGenerator: undefined }) } = {}) {
   if (!name || typeof buildServer !== "function") throw new Error("name and buildServer are required");
@@ -83,6 +115,14 @@ function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", build
     try { identity = await authenticate(req); }
     catch (error) { logger.error(`[${name}] auth error:`, error); return res.status(503).json(rpcError(-32603, "authentication unavailable")); }
     if (!identity) return res.status(401).json(rpcError(-32001, "invalid or missing bearer token"));
+    const tools = calledTools(req.body);
+    identity = narrowIdentity(identity, tools);
+    // Tools the server itself declared as writes are gated here, for servers
+    // whose tools never look at the token.
+    const refused = tools.find(t => toolMatches(writeTools, t));
+    if (refused && !mayWrite(identity)) {
+      return res.status(403).json(rpcError(-32001, `write scope required for ${refused}; this token is read-only`));
+    }
     try {
       const server = build(identity);
       const transport = transportFactory();
@@ -112,4 +152,4 @@ function createServer({ name, version = "1.0.0", port, bind = "127.0.0.1", build
   return { app, listener };
 }
 
-module.exports = { createServer, bearerFromEnv };
+module.exports = { createServer, bearerFromEnv, narrowIdentity, calledTools };

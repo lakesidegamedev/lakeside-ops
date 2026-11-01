@@ -20,6 +20,10 @@ const { connectWorldsim, registerWorldsimTools, buildWorldsimServer } = require(
 const { registerMetroforgeTools } = require("./metroforge-tools");
 const { registerGrandCenturyTools } = require("./grand-century-tools");
 
+// Tools that start work or write state. None of these tools reads the token,
+// so the harness gates them: a read-only token may inspect sims, not run them.
+const SIMS_WRITE_TOOLS = ["sim_run_world", "sim_run_election", "sim_snapshot", "mf_smoke", "mf_sim_run", "gc_worldsim"];
+
 const PORT = parseInt(process.env.SIMS_MCP_PORT || "9752", 10);
 
 function buildSimsServer(deps) {
@@ -43,6 +47,7 @@ async function main() {
     authorize: (req) => tokens.validate(deps.db, req.headers.authorization),
     buildServer: () => buildSimsServer(deps),
     aliases: aliases(deps),
+    writeTools: SIMS_WRITE_TOOLS,
   });
 }
 
@@ -50,4 +55,4 @@ if (require.main === module) {
   main().catch((e) => { console.error("[sims-mcp] fatal:", e); process.exit(1); });
 }
 
-module.exports = { buildSimsServer, aliases };
+module.exports = { buildSimsServer, aliases, SIMS_WRITE_TOOLS };
