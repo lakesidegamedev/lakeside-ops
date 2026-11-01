@@ -19,4 +19,18 @@ function obsoleteReason(decision, data) {
   return null;
 }
 const appDecisions = config => config.ownerDecisionChannel === "app";
-module.exports = { requireRealDecision, obsoleteReason, appDecisions };
+// Owner, 2026-11-01: tickets 1730 and 1742 asked the same payment three times
+// ("who executes", "confirm the exact payment") after it was already chosen.
+// A question about making a payment, from a task whose earlier payment
+// question the owner answered in the last two days, is a re-ask.
+const PAYMENT = /\b(?:pay|paid|payment|credit|refund|compensat\w*|reimburs\w*|restitution)\b/i;
+const EXECUTE = /\b(?:apply|applies|execute|executes|run|runs|carry out|who (?:applies|executes|runs)|confirm the (?:exact )?(?:payment|credit|amount)|already[- ]approved|approved)\b/i;
+function answeredPayment(data, job, text, now = Date.now()) {
+  const t = String(text || "");
+  if (!job || !PAYMENT.test(t) || !EXECUTE.test(t)) return null;
+  const prior = Object.values(data.decisions || {}).filter((x) => x.jobId === job.id && x.answeredAt && x.answeredAt <= now && now - x.answeredAt < 48 * 3600000 &&
+    ["selected", "approve"].includes(x.state) && PAYMENT.test(`${x.question || ""} ${x.selectedOption?.label || ""} ${x.selectedOption?.detail || ""}`));
+  const last = prior.sort((a, b) => b.answeredAt - a.answeredAt)[0];
+  return last ? { id: last.id, label: String(last.selectedOption?.label || last.state).slice(0, 120) } : null;
+}
+module.exports = { requireRealDecision, obsoleteReason, appDecisions, answeredPayment };
