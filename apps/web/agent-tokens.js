@@ -33,7 +33,10 @@ async function ensureIndexes(db) {
 
 // Issue a new token. `collections` limits which knowledge kinds it can touch;
 // `write` gates save/update/delete (read is always allowed within scope).
-async function issue(db, { name, collections, write = false, actor = "admin" }) {
+// `writeTools` narrows `write` to the named tools (exact name, or a prefix
+// ending in "*"); every other tool sees the token as read-only. `expiresAt`
+// makes the token stop validating on its own.
+async function issue(db, { name, collections, write = false, writeTools, expiresAt, actor = "admin" }) {
   const scopeCols = (collections && collections.length ? collections : KINDS).filter((c) =>
     KINDS.includes(c)
   );
@@ -42,7 +45,12 @@ async function issue(db, { name, collections, write = false, actor = "admin" }) 
     name: (name || "unnamed-agent").slice(0, 80),
     tokenHash: hashToken(raw),
     display: raw.slice(0, 12) + "…", // safe-to-show fingerprint for the UI
-    scopes: { collections: scopeCols, write: !!write },
+    scopes: {
+      collections: scopeCols,
+      write: !!write,
+      ...(Array.isArray(writeTools) ? { writeTools: writeTools.map(String) } : {}),
+    },
+    ...(expiresAt ? { expiresAt: new Date(expiresAt) } : {}),
     createdAt: new Date(),
     createdBy: actor,
     lastUsedAt: null,
@@ -64,11 +72,19 @@ async function validate(db, authHeader) {
 
   const rec = await db.collection(COLLECTION).findOne({ tokenHash: hashToken(raw) });
   if (!rec || rec.revokedAt) return null;
+  if (isExpired(rec)) return null;
 
   db.collection(COLLECTION)
     .updateOne({ _id: rec._id }, { $set: { lastUsedAt: new Date() } })
     .catch(() => {});
   return rec;
+}
+
+function isExpired(rec, now = Date.now()) {
+  if (!rec.expiresAt) return false;
+  const at = new Date(rec.expiresAt).getTime();
+  // An unparseable expiry fails closed.
+  return !Number.isFinite(at) || at <= now;
 }
 
 function canRead(rec, kind) {
@@ -117,6 +133,7 @@ module.exports = {
   validate,
   canRead,
   canWrite,
+  isExpired,
   list,
   revoke,
   invalidateListCache,
