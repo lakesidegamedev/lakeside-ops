@@ -655,7 +655,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // Keir 5.6: a finish summary that narrates Keir's own bookkeeping ("no
       // further post needed", "already answered in the source channel") is an
       // internal note, not a reply. It leaked into ticket 1575 on 2026-10-16.
-      if (META_SUMMARY.test(text)) throw new Error("finish summary is an internal note, not a player reply");
+      if (META_SUMMARY.test(text) || require("./agent").STEP_LIMIT_TEXT.test(text)) throw new Error("finish summary is an internal note, not a player reply");
       if (ticketNo) {
         text = shapeTicketPost(text);
         if (TECHNICAL.test(text)) throw new Error("Ticket finish copy must use the player's register, without technical release details.");

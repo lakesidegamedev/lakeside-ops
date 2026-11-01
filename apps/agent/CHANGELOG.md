@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A run that runs out of steps never posts its "Maximum steps reached... tools are disabled" note (#mod-bot, 2026-11-01: an owner's one-line question about weekly logins got that note instead of "142"). Its last text is kept as a private checkpoint and the work continues in a full activation; finish summaries and fallback replies refuse the same wording. The last step of an activation is kept for the answer: a read on the final step is refused with "post your answer now".
+
 ## 7.0.3 (2026-11-01)
 
 - The owner's conversation only carries what the owner can act on (owner, 2026-11-01: "All of these I can't do shit about or there's nothing actually waiting"). A stuck task stays on the working-now board and in Ops instead of posting an urgent "stuck" line each time it flips (ticket 1730 posted three). A "needs your decision" line whose decision was answered before it went out is dropped.
