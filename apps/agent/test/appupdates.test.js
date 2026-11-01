@@ -160,3 +160,32 @@ test("work digests never push the owner's conversation out of the thread", () =>
   assert.equal(messages.filter(m => m.update).length, 30);
   assert.equal(messages.at(-1).text, "- Ticket 499: live.");
 });
+
+// Owner, 2026-11-01: "All of these I can't do shit about or there's nothing actually waiting."
+test("a stuck task stays on the board and out of the owner's conversation", () => {
+  const w = world();
+  let now = 1000; const u = createAppUpdates({ ledger: w.ledger, now: () => now }); u.tick();
+  for (let i = 0; i < 3; i++) {
+    w.data.jobs.t1.state = "blocked"; w.data.jobs.t1.effects = { "action:a1": { state: "started", at: now } }; w.data.jobs.t1.updatedAt = now;
+    now += URGENT_GAP_MS; u.tick();
+    w.data.jobs.t1.state = "waiting"; w.data.jobs.t1.effects = {}; now += URGENT_GAP_MS; u.tick();
+  }
+  assert.equal(w.data.appThread.messages.length, 0, "Keir recovers its own stuck work");
+  w.data.jobs.t1.state = "blocked"; w.data.jobs.t1.effects = { "action:a1": { state: "started", at: now } }; now += URGENT_GAP_MS;
+  u.tick();
+  assert.equal(u.board().stuck, 1, "the board still shows it");
+  assert.equal(w.data.appThread.messages.length, 0);
+});
+
+test("a decision answered before its line goes out is never posted", () => {
+  const w = world(); card(w.data, 1574, "Steel", "tested");
+  let now = 1000; const u = createAppUpdates({ ledger: w.ledger, now: () => now }); u.tick();
+  card(w.data, 1574, "Steel", "main"); now += COALESCE_MS; u.tick(); now += COALESCE_MS; u.tick();
+  assert.equal(w.data.appThread.messages.length, 1);
+  w.data.decisions.x = { id: "x", jobId: "t1", state: "pending", question: "Refund the player?" };
+  now += 1000; u.tick();
+  assert.equal(w.data.appThread.messages.length, 1, "inside the urgent gap the line is queued");
+  w.data.decisions.x.state = "approve";
+  now += URGENT_GAP_MS; u.tick();
+  assert.equal(w.data.appThread.messages.length, 1, "answered meanwhile: nothing left for the owner");
+});

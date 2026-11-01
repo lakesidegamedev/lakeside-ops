@@ -996,7 +996,7 @@ const appAgent = createAppAgent({ ledger, config, app: appChannel, notebook, mus
 const publicationRecovery = require("./lib/operator/publication-recovery").createPublicationRecovery({ ledger, config, log });
 publicationRecovery.tick().catch(e => log(`publication recovery: ${e.message}`));
 setInterval(() => publicationRecovery.tick().catch(e => log(`publication recovery: ${e.message}`)), 60000).unref();
-const effectRecovery = require("./lib/operator/effectrecovery").createEffectRecovery({ ledger, log,
+const effectRecovery = require("./lib/operator/effectrecovery").createEffectRecovery({ ledger, log, mcp,
   api: (endpoint) => ciApi([endpoint]),
   running: (job) => Object.values(active).some((s) => s?.job.id === job.id) });
 setInterval(() => effectRecovery.tick().catch((e) => log(`effect recovery: ${e.message}`)), 5 * 60000).unref();
