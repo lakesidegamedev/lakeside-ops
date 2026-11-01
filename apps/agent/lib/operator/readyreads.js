@@ -65,6 +65,16 @@ function createReadyReads({ mcp, stateDir, readable = () => true, embed = null, 
     return texts.map((t) => vectors.get(hash(t)));
   }
 
+  // The first build lists ~300 tools and embeds their descriptions, which
+  // took over 4 s cold on 2026-11-01. warm() does it in the background at
+  // startup and on a timer, so pick() never waits on a listing.
+  let warming = null;
+  function warm(servers) {
+    if (warming) return warming;
+    warming = (async () => { catalog = { at: 0, tools: catalog.tools }; const tools = await loadCatalog(servers); await vectorsFor([...tools.map(docOf), ...[...SEEDS.map(([q]) => q), ...examples.map((e) => e.q)]]); return tools.length; })()
+      .catch((e) => { log(`readyreads warm: ${e.message}`); return 0; }).finally(() => { warming = null; });
+    return warming;
+  }
   async function loadCatalog(servers) {
     if (now() - catalog.at < CATALOG_TTL_MS && catalog.tools.length) return catalog.tools;
     const rows = await Promise.allSettled(servers.map(async (server) => (await mcp.list(server, AbortSignal.timeout(3000))).map((t) => ({ server, name: t.name, description: t.description || "", inputSchema: t.inputSchema || t.input_schema || null }))));
@@ -79,10 +89,16 @@ function createReadyReads({ mcp, stateDir, readable = () => true, embed = null, 
     return [job.source?.content, ...human.slice(-2)].filter(Boolean).join("\n").slice(0, 1200).trim();
   }
 
-  async function pick(job, { servers = [], k = 6 } = {}) {
+  async function pick(job, options = {}) {
+    try { return await rank(job, options); } catch (e) { log(`readyreads: ${e.message}`); return []; }
+  }
+  async function rank(job, { servers = [], k = 6 } = {}) {
     const question = questionOf(job);
     if (!question || !servers.length) return [];
-    const tools = (await loadCatalog(servers)).filter((t) => readable(job, t.server, t.name) && !/(?:_catalog|_tools|_servers)$/.test(t.name));
+    // Never wait on a cold build: serve what is warm, and warm the rest.
+    if (!catalog.tools.length) { warm(servers); return []; }
+    if (now() - catalog.at >= CATALOG_TTL_MS) warm(servers);
+    const tools = catalog.tools.filter((t) => readable(job, t.server, t.name) && !/(?:_catalog|_tools|_servers)$/.test(t.name));
     if (!tools.length) return [];
     const seeded = [...SEEDS.map(([q, server, tool]) => ({ q, server, tool })), ...examples];
     const exampleRows = seeded.filter((e) => tools.some((t) => t.server === e.server && t.name === e.tool));
@@ -111,7 +127,7 @@ function createReadyReads({ mcp, stateDir, readable = () => true, embed = null, 
     if (file) { try { fs.writeFileSync(file, JSON.stringify({ examples }), { mode: 0o600 }); } catch (e) { log(`readyreads: ${e.message}`); } }
   }
 
-  return { pick, learn, questionOf, examples: () => examples };
+  return { pick, learn, warm, questionOf, examples: () => examples };
 }
 
 module.exports = { createReadyReads, SEEDS, cosine };

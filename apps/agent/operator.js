@@ -1000,6 +1000,9 @@ const effectRecovery = require("./lib/operator/effectrecovery").createEffectReco
   api: (endpoint) => ciApi([endpoint]),
   running: (job) => Object.values(active).some((s) => s?.job.id === job.id) });
 setInterval(() => effectRecovery.tick().catch((e) => log(`effect recovery: ${e.message}`)), 5 * 60000).unref();
+// Keir 7: build the ready-reads index in the background, then keep it fresh.
+broker.warmReadyReads?.().then((n) => log(`ready reads: ${n} tools indexed`)).catch(() => {});
+setInterval(() => broker.warmReadyReads?.().catch(() => {}), 9 * 60000).unref();
 // Keir 7: repeated failed or raw-database reads become capability requests.
 const capabilityGaps = require("./lib/operator/capabilitygaps").createCapabilityGaps({ ledger, mcp, events, log });
 if (env.KEIR_CAPABILITY_GAPS !== "0") setInterval(() => capabilityGaps.tick().catch((e) => log(`capability gaps: ${e.message}`)), 3600000).unref();

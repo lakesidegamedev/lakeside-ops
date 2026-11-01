@@ -29,6 +29,8 @@ const job = (content) => ({ id: "j", kind: "conversation", role: "owner", source
 
 test("the read that answers a question is loaded with its schema before the model starts", async t => {
   const { rr } = ready(t);
+  assert.deepEqual(await rr.pick(job("how many players logged on this week?"), { servers: ["gamestate", "turndiag"] }), [], "a cold index never makes the activation wait");
+  await rr.warm(["gamestate", "turndiag"]);
   const picks = await rr.pick(job("how many players logged on this week?"), { servers: ["gamestate", "turndiag"], k: 2 });
   assert.equal(picks[0].tool, "geo_aggregate", "learned from a seed example even though the description never says logged on");
   assert.deepEqual(picks[0].inputSchema, CATALOG.gamestate[0].inputSchema);
@@ -38,6 +40,7 @@ test("the read that answers a question is loaded with its schema before the mode
 
 test("ready reads never offer a tool the task may not call, nor a write-shaped tool", async t => {
   const { rr } = ready(t, (_job, server, tool) => server === "turndiag" && tool === "lock_status");
+  await rr.warm(["gamestate", "turndiag"]);
   const picks = await rr.pick(job("how many players logged on this week?"), { servers: ["gamestate", "turndiag"], k: 3 });
   assert.deepEqual(picks.map((p) => p.tool), ["lock_status"]);
 });
@@ -55,7 +58,8 @@ test("a read that answered a question is remembered for the next similar questio
 test("no embedder means no ready reads, never a failed activation", async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-ready-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const rr = createReadyReads({ mcp, stateDir: dir, embed: async () => { throw new Error("down"); } });
-  await assert.rejects(rr.pick(job("x players"), { servers: ["gamestate"] }));
+  assert.equal(await rr.warm(["gamestate"]), 0, "a failed warm-up is logged, not thrown");
+  assert.deepEqual(await rr.pick(job("x players"), { servers: ["gamestate"] }), []);
 });
 
 test("wrong argument names are mapped to the schema's own names", () => {

@@ -88,7 +88,11 @@ mod tests {
         for i in 1..=HOST_LIMIT { let s = admit_with_memory(Some(dir.clone()), MIN_AVAILABLE_KIB).unwrap(); assert_eq!(s.number, i); held.push(s); }
         assert!(matches!(admit_with_memory(Some(dir.clone()), MIN_AVAILABLE_KIB), Err(AdmissionError::Slots(_))));
         drop(held);
-        assert_eq!(admit_with_memory(Some(dir.clone()), MIN_AVAILABLE_KIB).unwrap().number, 1);
+        // Released slots can all be taken again. Which number comes back first
+        // is not the contract (CI flaked on exactly 1, 2026-11-01).
+        let again: Vec<_> = (0..HOST_LIMIT).map(|_| admit_with_memory(Some(dir.clone()), MIN_AVAILABLE_KIB).unwrap()).collect();
+        let mut numbers: Vec<_> = again.iter().map(|s| s.number).collect(); numbers.sort();
+        assert_eq!(numbers, (1..=HOST_LIMIT).collect::<Vec<_>>());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
