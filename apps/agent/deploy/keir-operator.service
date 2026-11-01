@@ -21,7 +21,11 @@ MemoryMax=24G
 CPUQuota=600%
 CPUWeight=500
 TasksMax=2048
-KillMode=control-group
+# mixed: SIGTERM reaches only the operator, so its 100 s grace lets running
+# activations finish; their CLI children are killed only after it exits.
+# control-group sent SIGTERM to the children too, which ended every running
+# activation at once and left its ticket blocked (2026-11-01, tickets 1730, 1740).
+KillMode=mixed
 TimeoutStopSec=120
 
 [Install]

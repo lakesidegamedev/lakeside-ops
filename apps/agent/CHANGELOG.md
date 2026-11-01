@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A restart no longer leaves running ticket tasks blocked. The operator unit used `KillMode=control-group`, so systemd's SIGTERM also reached each activation's CLI child, the activation died at once and the 100 s grace never applied; the task was marked blocked with "activation aborted" and an owner alert (tickets 1730 and 1740 on the 6.2.0 restart). The unit now uses `KillMode=mixed`, and an activation that ends while the operator is stopping is requeued like an aborted one.
+
 ## 6.2.0 (2026-11-01)
 
 - Ticket post quality checks from the 2026-11-01 review of tickets 1736 to 1747, enforced in code because the brief already forbade each one (`ticketquality.js`). Refused: apologies and stories about Keir's own mistakes ("I owe you a correction", "I'm taking this one personally"); talking about the player as "him" or "her" in their own channel; "nothing is signed" style claims backed by a single empty read (ticket 1742 said it twice while three contracts existed); promises of a screen or wording change with no filing or fix behind them (ticket 1736's promised page figure was never built); and "the developers decided" with no decision on record. Each refusal is audited as `ticket_quality_refused`. Empty `read_tool` and `evidence_batch` results are remembered per task so a second, differently shaped read can confirm absence.
