@@ -750,7 +750,9 @@ function drain() {
       // unsettled receipt is effect recovery's job (a restart blocked ticket 1578).
       const startedHere = Object.values(job.effects).some((e) => e.state === "started" && (e.at || 0) >= startedAt);
       if (controller.signal.aborted && require("./lib/operator/ticketpause").pauseFor(d, job)) { job.state = "paused"; delete job.wakeAt; }
-      else if (controller.signal.aborted && (d.paused || config.supportDeferred(job) || stopping || staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy)) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(Date.now() + 60000, rootJob(job, d.jobs).staffActiveUntil || 0); }
+      // A stop counts even when the abort arrived as the CLI child dying
+      // before the grace period aborted the controller (2026-11-01).
+      else if ((controller.signal.aborted || stopping) && (d.paused || config.supportDeferred(job) || stopping || staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy)) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(Date.now() + 60000, rootJob(job, d.jobs).staffActiveUntil || 0); }
       else if (retryReadFailure(job, e)) {
         ledger.audit("transient_retry", {job:job.id, attempt:job.transientFailures, emptyWaits: job.emptyWaits});
         // One owner alert an hour while the provider answers with nothing.
