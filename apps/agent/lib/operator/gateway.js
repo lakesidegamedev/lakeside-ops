@@ -309,6 +309,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
             const delegate = actor !== config.ownerId && config.staffIds.slice(0, 1).includes(actor);
             action.approvedBy = delegate ? config.ownerId : actor; action.approvalMessage = message.id; action.approvedAt = Date.now();
             if (delegate) action.approvedOnBehalfBy = actor;
+            if (verb === "approve" && (actor === config.ownerId || delegate)) action.exactApproval = { message: message.id, by: actor, at: Date.now() };
             if (verb === "reject") {
               const n = job.ticket || ticketNumber(job.source?.channelName);
               if (n) delete d.ticketAuthority?.[n];

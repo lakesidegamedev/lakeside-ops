@@ -172,6 +172,8 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
         // approval carries the owner's authority and records who gave it.
         action.state = "approved"; action.approvedBy = config.ownerId; action.approvalMessage = x.sent[actor]?.messageId || null; action.approvedAt = now();
         if (onBehalf) action.approvedOnBehalfBy = actor;
+        // The owner (or delegate) approved this exact action on its own card.
+        action.exactApproval = { decision: x.id, by: actor, at: now() };
         if (!ownerMuse) action.expiresAt = Math.max(action.expiresAt || 0, now() + 3600000);
         if (ownerMuse) action.ownerMuseApproval = { actor, decision: x.id, digest: action.ownerMuse.digest, at: now(), via };
         // Keir 4.2: the ticket's first yes carries its later non-huge steps.

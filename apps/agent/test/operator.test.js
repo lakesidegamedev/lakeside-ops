@@ -894,7 +894,9 @@ test("developer heal confirmation grants only the exact guarded heal, never gene
   const privileged=await f.broker.tool(j,'request_action',{kind:'mcp_write',args:{server:'support',tool:'fixture',args:{}},reason:'fixture'});
   createGateway(f).ingest(f.ch,f.msg(`Keir approve ${privileged.action}`,'666666666666666667',actor));
   assert.equal(f.ledger.data.actions[privileged.action].state,'pending');
-  j.kind='ticket';await assert.rejects(f.broker.tool(j,'request_heal',{kind:'ledger',defectId:'fixture',env:'prod'}),/authenticated developer/);
+  // Owner, 2026-11-01: a ticket proposes; only an exact approval runs it.
+  j.kind='ticket';const ticketProposal=await f.broker.tool(j,'request_heal',{kind:'ledger',defectId:'fixture-ticket',env:'prod'});
+  assert.equal(ticketProposal.state,'pending');await assert.rejects(f.broker.tool(j,'execute_action',{action:ticketProposal.action}),/no valid exact owner approval/);assert.equal(applied,1);
 });
 
 test("a confirmed heal refuses changed targets before recording or applying a write", async () => {

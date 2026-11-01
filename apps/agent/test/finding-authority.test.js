@@ -49,13 +49,18 @@ test("genuine ticket authority carries a small exact heal through apply", async 
   await f.broker.tool(f.job, "execute_action", { action: proposed.action });
   assert.ok(f.calls.some((c) => c.tool === "heal_adhoc_apply" && c.write));
 });
-test("automatic tickets cannot authorize huge heals or invent a grant", async () => {
+// Owner, 2026-11-01: a ticket may propose any repair, including a huge one;
+// it only ever waits on the owner's exact approval and never approves itself.
+test("automatic tickets can propose but never authorize huge heals or invent a grant", async () => {
   const f = fixture("ticket");
   f.ledger.data.ticketAuthority = { 1522: { by: "staff", at: 4000 } };
-  await assert.rejects(f.broker.tool(f.job, "request_heal", repair), /genuine ticket authority/);
+  const ungranted = await f.broker.tool(f.job, "request_heal", repair);
+  assert.equal(ungranted.state, "pending", "a forged staff grant approves nothing");
   authority.grant(f.ledger.data, f.config, 1522, { by: "owner", how: "directed", at: 4000 });
-  await assert.rejects(f.broker.tool(f.job, "request_heal", { ...repair, touchesMoney: true }), /huge heals/);
-  assert.equal(Object.keys(f.ledger.data.actions).length, 0);
+  const huge = await f.broker.tool(f.job, "request_heal", { ...repair, touchesMoney: true });
+  assert.equal(huge.state, "pending", "a ticket's carried yes never covers a huge heal");
+  for (const id of [ungranted.action, huge.action]) await assert.rejects(f.broker.tool(f.job, "execute_action", { action: id }), /no valid exact owner approval/);
+  assert.ok(!f.calls.some((c) => /_apply$/.test(c.tool)));
 });
 test("questions, negation and retrospective messages grant no work authority", () => {
   for (const text of ["Keir, don't fix ticket #1522 yet", "Keir, do not ship ticket #1522", "Keir, why did you deploy ticket #1522?", "Have you already fixed it?"]) assert.equal(authority.isDirection(text), false, text);

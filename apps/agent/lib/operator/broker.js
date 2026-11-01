@@ -997,7 +997,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         return { action: a.id, state: a.state, instruction: "The repair specification was sent to the owner for manual application with a fresh plan. This artifact is not executable or awaiting approval. Nothing changed; continue the draft fix or finish with the handoff." };
       }
       const label = { heal: "Heal", host_command: "Host command", mcp_write: "Write" }[kind] || kind;
-      if (!(kind === "heal" && job.actorId !== config.ownerId)) {
+      // A ticket's repair is the owner's call, never the reporter's: it goes to
+      // the owner (and the delegate after three hours) as an exact approval.
+      if (!(kind === "heal" && job.actorId !== config.ownerId) || kind === "heal" && job.kind === "ticket") {
         // A merge or promotion question shows what it changes (its summary),
         // never just the generic reason: the owner was approving blind.
         const what = kind === "github" && args.summary ? args.summary : reason;
@@ -1236,6 +1238,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (name === "raise_to_developers") {
       if (input.kind === "decision") {
         require("./decisionpolicy").requireRealDecision(`${input.title || ""}. ${input.question || input.detail || ""}`);
+        const answered = require("./decisionpolicy").answeredPayment(d, job, `${input.title || ""}. ${input.question || input.detail || ""}`, now());
+        if (answered) throw new Error(`Not asked: the owner already answered this payment (${answered.id}, "${answered.label}"). Do not ask again in other words. To make the payment, call request_heal with kind compensation and the exact amount; its approval card is the owner's one sign-off, and once approved you run it with execute_action.`);
         require("./decisions").normalizeOptions(input.options);
         const prompt = `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${String(input.title || "").trim().slice(0, 200)}. ${String(input.question || input.detail || "")}`;
         if (require("./decisions").clean(prompt).length > 450) throw new Error("Keep the decision title and question concise: at most 450 characters together, including the ticket prefix. Put outcomes in the option details.");
@@ -2773,7 +2777,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         instruction: "This is the live remote branch, newer than the code index. Treat it as the source of truth for what is deployed (main) or about to deploy (development). Edit here; the host is untouched." };
     }
     if (name === "request_heal") {
-      if (!developerTask(job) && job.kind !== "finding" && !(job.kind === "ticket" && ticketYes(job))) throw new Error("a live heal needs an authenticated developer task or genuine ticket authority");
+      // Owner, 2026-11-01: "It should allow it if I approve it." A ticket task
+      // may propose a huge repair; only the owner's exact approval runs it.
+      if (!developerTask(job) && job.kind !== "finding" && job.kind !== "ticket") throw new Error("a live heal needs an authenticated developer task or a ticket");
       const checked = heal.validateRequest(input);
       if (!checked.ok) throw new Error(checked.error);
       if (musePolicy.origin(d, job).scoped) { try { musePolicy.operation(checked.spec); } catch (error) { return musePolicy.fail(ledger, job, "request_heal", error.message); } }
@@ -2789,14 +2795,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!detector || detector.mintsMoney !== false || detector.touchesMoney !== false) risk.touchesMoney = true;
         if (detector?.collection === "gameConfig") risk.collection = "gameConfig";
       }
-      if (!developerTask(job) && job.kind !== "finding" && authority.hugeHeal(risk)) throw new Error("huge heals require an authenticated developer task");
+      if (!developerTask(job) && job.kind !== "finding" && job.kind !== "ticket" && authority.hugeHeal(risk)) throw new Error("huge heals require an authenticated developer task");
       const call = heal.planCall(spec, `Discord developer ${job.actorId} via Keir`);
       const plan = await mcp.call("heal-ops", call.name, call.args, false, signal);
       const refusal = heal.planRefusal(plan);
       risk.expectedMax = Math.max(Number(spec.expectedMax || 0), heal.affectedOf(plan));
       if (plan.plan?.touchesMoney || plan.plan?.mintsMoney || Number(plan.plan?.moneyDelta || 0) !== 0) risk.touchesMoney = true;
       if (plan.plan?.collection === "gameConfig") risk.collection = "gameConfig";
-      if (!developerTask(job) && job.kind !== "finding" && authority.hugeHeal(risk)) throw new Error("huge heals require an authenticated developer task");
+      if (!developerTask(job) && job.kind !== "finding" && job.kind !== "ticket" && authority.hugeHeal(risk)) throw new Error("huge heals require an authenticated developer task");
       if (refusal) throw new Error(`Heal plan refused: ${refusal}`);
       const proposed = request(job, "heal", {spec, risk, affected:heal.affectedOf(plan), planDigest:musePolicy.origin(d, job).scoped ? musePolicy.digest(plan.plan) : hash(plan.plan), ...(musePolicy.origin(d, job).scoped ? { destination: mcp.identity?.("heal-ops"), plan: plan.plan } : {})}, `Developer-directed heal in ${spec.env}: ${spec.description || spec.defectId}. Dry run affects ${heal.affectedOf(plan)} records. Review this exact plan before applying.`);
       return {...proposed, plan:plan.plan, guards:plan.guards, warnings:plan.warnings, instruction:proposed.instruction || "The owner or delegate can confirm this exact action with Keir approve <action-id>. No game data has changed."};
@@ -2891,7 +2897,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (a.kind === "github") return { action: a.id, state: a.state, instruction: `This approval is recorded. Call the github tool again with action ${a.args.action}${a.args.to ? ` to ${a.args.to}` : a.args.number ? ` for PR ${a.args.number}` : ""}; its gate finds this approval and proceeds.` };
       let healApply;
       if (a.kind === "heal") {
-        if (!developerTask(job) && !(job.kind === "ticket" && ticketYes(job) && !authority.hugeHeal(a.args.risk || a.args.spec) && a.args.affected <= 25)) throw new Error("heal execution lost developer provenance or ticket authority");
+        const exactOwnerApproval = job.kind === "ticket" && a.exactApproval && a.approvedBy === config.ownerId;
+        if (!developerTask(job) && !exactOwnerApproval && !(job.kind === "ticket" && ticketYes(job) && !authority.hugeHeal(a.args.risk || a.args.spec) && a.args.affected <= 25)) throw new Error("heal execution lost developer provenance or ticket authority");
         if (a.args.spec.env === "prod" && prodHold()) throw new Error(HOLD_NOTE);
         const call = heal.planCall(a.args.spec, `Discord developer ${a.approvedBy} via Keir`);
         const plan = await mcp.call("heal-ops", call.name, call.args, false, signal);
