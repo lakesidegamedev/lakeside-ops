@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 6.2.0 (2026-11-01)
+
 - Ticket post quality checks from the 2026-11-01 review of tickets 1736 to 1747, enforced in code because the brief already forbade each one (`ticketquality.js`). Refused: apologies and stories about Keir's own mistakes ("I owe you a correction", "I'm taking this one personally"); talking about the player as "him" or "her" in their own channel; "nothing is signed" style claims backed by a single empty read (ticket 1742 said it twice while three contracts existed); promises of a screen or wording change with no filing or fix behind them (ticket 1736's promised page figure was never built); and "the developers decided" with no decision on record. Each refusal is audited as `ticket_quality_refused`. Empty `read_tool` and `evidence_batch` results are remembered per task so a second, differently shaped read can confirm absence.
 - Returning players get no opener: no ticket count, no thanks, no "welcome back". A player's first ever ticket still gets the one-line introduction. The answer leads.
 - Status card: "Fix written" needs a coding attempt or patch for the ticket (1743 said it three minutes after "not yet confirmed"); a row cannot move back a stage unless its note says it was rolled back or failed (1739 went Live, Sandbox, Live, Investigating), audited as `status_card_regression_refused`; a paused row must name what it waits on, and the receipt timeline shows that note instead of a bare "paused".
