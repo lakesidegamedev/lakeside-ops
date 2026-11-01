@@ -169,6 +169,9 @@ const TOOL_NOTE = "\n\n## Owner communication\n\nThe owner understands the game 
 // (estimatedUsd null) with the CLI's notional figure kept separately; tokens,
 // turns and wall time are the measured budget (2026-10-12 postmortem: the
 // usage file stopped when Keir moved to the subscription).
+// Text a model writes when it has run out of steps or tools: a private
+// checkpoint, never something to post.
+const STEP_LIMIT_TEXT = /\b(?:maximum (?:steps|turns|rounds)|step (?:budget used|limit reached)|(?:steps|turns|rounds) (?:reached|exhausted|used up)|tools (?:are )?(?:now )?(?:disabled|unavailable)|could not (?:deliver|post) the (?:channel )?reply|call(?:ed)? `?finish`?|remaining tasks)\b/i;
 function usageRecord(job, result, durationMs, model, provider = "claude-cli-subscription", { release = null, toolCalls = null, empty = null } = {}) {
   const u = result?.usage || {};
   return { event: "activation", at: new Date().toISOString(), job: job.id, kind: job.kind, ticket: job.ticket || null, provider, billing: result?.provenance?.billing || "subscription",
@@ -469,6 +472,17 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // An activation that never reached the model is a provider failure.
     if (job.state === "running" && emptyActivation(result, session)) throw new Error("model request failed: empty activation (no tokens, no tool call, no text) " + redactSecrets(String(result.result || "")).slice(0, 300));
     if (job.state !== "running") return;
+    // A run that spent its steps without replying or finishing is cut off,
+    // whatever the runner reports. Its last text is a private checkpoint
+    // ("Maximum steps reached... Tools are now disabled"), never a reply:
+    // that note was posted to #mod-bot as the answer on 2026-11-01.
+    const lastText = String(result.result || "");
+    if (result.subtype !== "error_max_turns" && !job.channelReplyQueued &&
+        (Number.isFinite(session.maxTurns) && (session.steps || 0) >= session.maxTurns || STEP_LIMIT_TEXT.test(lastText))) {
+      if (lastText.trim()) job.summary = `Checkpoint from a step-limited activation (not sent to anyone): ${lastText.trim()}`.slice(0, 4000);
+      ledger.audit("step_limit_reached", { job: job.id, lane: quick ? "quick" : "worker", steps: session.steps || 0, max: session.maxTurns, model: job.provider?.model });
+      result = { ...result, subtype: "error_max_turns" };
+    }
     if (result.subtype === "error_max_turns" || quick && job.voiceMode && !String(result.result || "").trim()) {
       if (quick && job.voiceMode && require("./voiceturn").finalReplyQueued(ledger.data, job)) {
         try { await broker.tool(job, "finish", { state: "done", summary: "Answered this voice turn." }, signal); }
@@ -544,4 +558,4 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   }
   return { run, canRun: () => true, openToolSession };
 }
-module.exports = { emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };
+module.exports = { STEP_LIMIT_TEXT, emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };

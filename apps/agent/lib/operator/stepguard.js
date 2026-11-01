@@ -14,6 +14,11 @@ const state = (session) => (session.guard ||= { failed: new Map(), down: new Map
 
 function refuse(session, name, input) {
   if (!READS.has(name)) return null;
+  // The last step is for the answer (#mod-bot, 2026-11-01: an owner's
+  // one-line stats question spent all six quick steps reading, and the
+  // reply was never posted).
+  if (Number.isFinite(session.maxTurns) && session.maxTurns > 2 && session.maxTurns - (session.steps || 0) <= 1)
+    return "Reading is over for this activation: one step is left. Post your answer now with channel_reply (or save a checkpoint), then finish.";
   const g = state(session), t = target(name, input);
   if (t && g.down.has(t)) return `${t} failed to respond earlier in this activation (${g.down.get(t)}). Do not call it again now. Use another source or continue with what you have.`;
   const prior = g.failed.get(key(name, input));
