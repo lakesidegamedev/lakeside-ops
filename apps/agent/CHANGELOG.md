@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir 7 fast lane: a ticket that only asks how the game works is answered by Ask Keir before any model runs, in the ticket, in about a minute, and the ticket then waits for the player. Gameplay advice gets the Ask redirect the same way. Anything else, a follow-up that pushes back or turns into a bug report, an attachment, or an answer Ask's own checks doubt, goes to the full agent, which starts with Ask's draft. The fast lane only reads: it posts through the same ticket update and finish guards as the agent, never draws on the player's own Ask energy, and is off with `KEIR_FAST_LANE=0` or without `KEIR_ASK_SECRET`. Each answer is logged in usage.jsonl as a `fast-lane` activation and audited as `fast_lane`.
+
 ## 6.2.2 (2026-11-01)
 
 - A decision in player copy names the developer who made it (owner, 2026-11-01): "the developers decided", "compensation is approved" and "the ruling is" are refused unless the sentence names who approved it, taken from who answered the ticket's decision (Ariane answering for the owner is Ariane) or a developer named in a recorded decision fact (`decision_unnamed`). Names come from `KEIR_DEVELOPER_NAMES` (default Egg and Ariane). The support service applies the same rule to every agent's posts and receipts (`SUPPORT_DEVELOPER_NAMES`). Replaying the delivered posts from tickets 1650 onward found 6 unnamed decisions, all genuine.
