@@ -84,11 +84,16 @@ function arithmetic(expression,evidence,bindings,derivations=[]) {
         // Equivalent to writing 1 +/- the observed fractional rate explicitly.
         // Do not register this literal as a directly observed fact or relax prose checks.
         const derived=rateFactor(n,evidence);
-        if(!derived)throw new Error(`${n.raw} is not in anything you read this activation; read its inputs first or derive it from evidence`);
+        if(!derived)throw new Error(`${n.raw} is not in anything you read this activation; read its inputs first, or write the expression that derives it (for example 4200 * 0.25). For elapsed time use now (Unix milliseconds in this activation), not a copied timestamp.`);
         if(!derivations.some(item=>item.literal===derived.literal))derivations.push(derived);
       }
     },
-    reference:id=>{if(!bindings.has(id))throw new Error(`Unknown prior calculation $${id}`);return bindings.get(id);},
+    reference:id=>{
+      if(bindings.has(id))return bindings.get(id);
+      // now never shadows a step: a batch that names a step now still reads that step.
+      if(id==='now')return Date.now();
+      throw new Error(`Unknown prior calculation $${id}`);
+    },
   });
 }
 
