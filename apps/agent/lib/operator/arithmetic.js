@@ -2,9 +2,12 @@
 // Deliberately small arithmetic grammar: no JavaScript evaluation, properties,
 // statements, external functions or access to the task's files and services.
 const FUNCTIONS=new Map(['min','max','floor','ceil','round','sqrt','abs'].map(name=>[name,Math[name]]));
-function evaluateArithmetic(expression,{literal=()=>{},reference=()=>{throw Error('Unknown calculation reference')}}={}){
+// The clock is a reading, not a fact: elapsed-time arithmetic needs a current
+// time, and a model has no other way to obtain one.
+const CLOCK='now';
+function evaluateArithmetic(expression,{literal=()=>{},reference=()=>{throw Error('Unknown calculation reference')},clock=()=>Date.now()}={}){
  const raw=String(expression||'');
- const invalid=()=>new Error('calculation may use only numbers, prior $step references, + - * / ( ) %, and min/max/floor/ceil/round/sqrt/abs');
+ const invalid=()=>new Error('calculation may use only numbers, prior $step references, now, + - * / ( ) %, and min/max/floor/ceil/round/sqrt/abs');
  if(!raw||raw.length>200)throw invalid();
  // Preserve legacy grouped numerals in plain arithmetic. In function calls,
  // commas separate arguments; callers must use ungrouped numbers there.
@@ -17,7 +20,7 @@ function evaluateArithmetic(expression,{literal=()=>{},reference=()=>{throw Erro
   else if(ref){tokens.push({type:'reference',id:ref[1]});at+=ref[0].length;}
   else if(name){
    // Bare identifiers are aliases for prior batch references, never globals.
-   if(/^\s*\(/.test(rest.slice(name[0].length))){if(!FUNCTIONS.has(name[0]))throw invalid();tokens.push({type:'function',name:name[0]});}
+   if(/^\s*\(/.test(rest.slice(name[0].length))){if(name[0]!==CLOCK&&!FUNCTIONS.has(name[0]))throw invalid();tokens.push({type:'function',name:name[0]});}
    else tokens.push({type:'reference',id:name[0]});
    at+=name[0].length;
   }
@@ -37,9 +40,13 @@ function evaluateArithmetic(expression,{literal=()=>{},reference=()=>{throw Erro
   }else if(token.type==='reference')value=reference(token.id);
   else if(token.type==='('){value=sum();expect(')');}
   else if(token.type==='function'){
-   expect('(');const args=[sum()];while(take(','))args.push(sum());expect(')');
-   if(!['min','max'].includes(token.name)&&args.length!==1)throw invalid();
-   value=FUNCTIONS.get(token.name)(...args);
+   expect('(');
+   if(token.name===CLOCK){expect(')');value=clock();}
+   else{
+    const args=[sum()];while(take(','))args.push(sum());expect(')');
+    if(!['min','max'].includes(token.name)&&args.length!==1)throw invalid();
+    value=FUNCTIONS.get(token.name)(...args);
+   }
   }else throw invalid();
   value=finite(value);while(take('%'))value/=100;return finite(value);
  }

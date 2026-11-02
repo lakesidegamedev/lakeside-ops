@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- `calculate` accepts `now` and `now()` as the current time in Unix milliseconds, so elapsed-time arithmetic no longer needs a copied timestamp, and the refusal for an unread figure now names both that clock and the expression that would derive it.
+
 ## 7.1.3 (2026-11-01)
 
 - Keir no longer waits on the sandbox server or asks the owner who can update it. The sandbox has had no automatic deploy since the move off Railway (2026-10-22): it is rebuilt by hand from staging and can run days behind. `github where` stopped reporting the frozen `turn-worker/sandbox` branch, its meaning text no longer claims a staging deploy follows within minutes, and the brief says to skip the sandbox stage once main contains the fix and verify on the main server (ticket 1740 sat "waiting for the test server" for 90 minutes while the fix was already live).
