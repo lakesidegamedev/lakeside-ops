@@ -1877,6 +1877,28 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const desktop = (input.repository || job.repository) === "AHDClient";
       const repo = desktop ? repositoryName("AHDClient") : GAME_REPO;
       const api = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000 }) || "null");
+      // Keir 7.2.1 (2026-11-02): a review a developer asked for is posted on the PR itself.
+      // Keir had to say "GitHub is read-only from here" and ask the owner to paste its review.
+      // A plain comment: never an approval, a requested change, a merge or a sign-off.
+      if (input.action === "review_comment") {
+        if (job.role === "player" || !(developerTask(job) || ownerDirected(job))) throw new Error("review_comment needs a task the owner or a developer gave you");
+        const number = Number(input.number);
+        if (!number) throw new Error("review_comment needs the PR number");
+        const raw = String(input.comment || "").trim();
+        if (raw.length < 20) throw new Error("review_comment needs the review text in comment");
+        if (raw.length > 6000) throw new Error("review_comment is at most 6000 characters; keep the points that matter");
+        // Checked before redaction: a leaking review is rewritten, not posted with holes in it.
+        const bad = require("./issues").leak(raw, []) || publicPatchLeak(`+${raw.replace(/\n/g, "\n+")}`);
+        if (bad) throw new Error(`The repository is public: the review mentions "${bad}". Remove it and post again.`);
+        const body = redactSecrets(raw);
+        const pr = await api([`repos/${repo}/pulls/${number}`]);
+        if (!pr || pr.state !== "open") throw new Error(`PR ${number} is not open`);
+        const head = String(pr.head?.sha || "").slice(0, 10);
+        const text = `Review from Keir at ${head}:\n\n${body}\n\n_Advice only: this is not an approval._`;
+        const posted = await effect(job, `pr-review-comment:${repo}:${number}:${hash(text)}`, () => api(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${text}`]));
+        ledger.audit("pr_review_comment", { job: job.id, repository: repo, number, head });
+        return { posted: true, number, head, url: posted?.html_url || pr.html_url };
+      }
       const ownPrAction = input.action === "close";
       if (input.action === "close_issue" && (job.role === "player" || !["ticket", "command"].includes(job.kind))) throw new Error("close_issue needs a staff-side ticket or developer task");
       // Ticket and developer tasks ship their own fixes (owner rule: agents merge
@@ -2164,7 +2186,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         });
         return { number, title: pr.title, author: pr.user?.login, state: pr.merged_at ? "merged" : pr.state, draft: Boolean(pr.draft), base: pr.base?.ref, head: pr.head?.ref, headSha: pr.head?.sha,
           body: String(pr.body || "").slice(0, 5000), filesComplete: Array.isArray(files), changed,
-          instruction: "Review the diff for bugs, regressions, missing tests and anything that touches money, economy, elections or turn processing. Give specific, file-referenced feedback in chat. This review is advice: it never approves, merges, promotes or signs off the PR; shipping still needs the owner or the delegate." };
+          instruction: "Review the diff for bugs, regressions, missing tests and anything that touches money, economy, elections or turn processing. Give specific, file-referenced feedback in chat, and when the owner or a developer asked for a review, also post it on the PR with github review_comment. This review is advice: it never approves, merges, promotes or signs off the PR; shipping still needs the owner or the delegate." };
       }
       if (input.action === "history") {
         // Who shipped what (2026-10-13: Keir told the owner to run git blame).
