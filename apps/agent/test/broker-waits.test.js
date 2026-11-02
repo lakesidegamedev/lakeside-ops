@@ -28,7 +28,10 @@ test("ordinary wait defaults and bounds remain finite", async (t) => {
 });
 test("reply wait records bounded event metadata and durable audit receipt", async (t) => {
   for (const waitFor of ["player_reply", "developer_reply"]) {
-    const f = fixture(t); await f.finish({ waitFor, wakeAfterMinutes: 1440 });
+    const f = fixture(t);
+    // A developer reply wait is bounded at six hours when someone owes an answer (a blocking handoff).
+    if (waitFor === "developer_reply") f.job.raisedToDevelopers = [{ id: 7, kind: "question", blocking: true, at: 0 }];
+    await f.finish({ waitFor, wakeAfterMinutes: 1440 });
     assert.deepEqual(f.job.waitingFor, { kind: waitFor, since: NOW, deadline: NOW + 360 * MINUTE });
     assert.equal(f.job.wakeAt, f.job.waitingFor.deadline);
     assert.ok(f.ledger.data.audit.some((a) => a.kind === "reply_wait" && a.job === f.job.id && a.waitFor === waitFor));
