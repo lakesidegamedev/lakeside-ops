@@ -102,7 +102,7 @@ function guard(ledger, config, job, name, input) {
     return p;
   }
   if (name === "ticket_record" && input.op === "read") return p;
-  if (name === "github" && ["status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history"].includes(input.action)) return p;
+  if (name === "github" && ["review", "status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history"].includes(input.action)) return p;
   if (name === "computer" && input.action === "look" && job.appBrowserId && !input.url && !input.html) return p;
   if (name === "sentry" && ["issues", "issue"].includes(input.action)) return p;
   // Retain conversation and inspection for legacy jobs without promoting them.

@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Anyone with the Junior Developer Discord role is a junior developer to Keir within five minutes of getting it: they can `/summon` Keir for questions and investigations and have it review their PRs, but cannot approve heals, merges, promotions or decisions. The role list is read from Discord, and an unreadable list keeps the last good one.
+- `github review` reads a PR's description and every changed file with its diff (large diffs truncated) so Keir can give a developer file-referenced review feedback. The review is advice, never an approval or sign-off.
+
 ## 7.2.0 (2026-11-02)
 
 - A wait on the developers with only a filed bug report (no handoff anyone owes an answer on) is a quiet wait whose interval grows, not a six-hour poll. Ticket 1749 woke every six hours on an unassigned issue.
