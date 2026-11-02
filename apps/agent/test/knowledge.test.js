@@ -150,3 +150,9 @@ test("cross-agent handoffs retain escalation criteria beyond the old notebook cu
     assert.throws(() => nb.remember({ kind: "decision", text: "x".repeat(4001) }), /document|4000/i);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("a percentage of a fraction that was read is supported, an unrelated percentage is not", () => {
+  const { unsupportedNumbers } = require("../lib/operator/knowledge");
+  assert.deepEqual(unsupportedNumbers("Your margin was 6.7% at the start.", [0.067]), []);
+  assert.deepEqual(unsupportedNumbers("Your margin was 9.3% at the start.", [0.067]), ["9.3%"]);
+});

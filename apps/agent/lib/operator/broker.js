@@ -308,7 +308,9 @@ const CLAIMS = [
   // Money owed to the player, not game mechanics ("workers are paid less").
   { kind: "money", re: /\bpaid (?:you |it |them )?back\b|\bpay (?:you |it |them )?back\b|\brepa(?:id|y)\b|\brefund(?:ed)?\b|\breimburs(?:ed|ement)\b|\bcompensat(?:ed|ion)\b|\b(?:paid|credited|returned) (?:to )?(?:you|your)\b|\b(?:you|your \w+) (?:\w+ ){0,3}(?:paid|credited|refunded)\b/i },
   { kind: "reverted", re: /\b(?:switched|turned|rolled|changed|put) (?:it |that |this |them |those )?back\b|\breverted\b|\bundone\b/i },
-  { kind: "main", re: /\blive on the main server\b|\b(?:is|are|was|were|it's|now) (?:now )?live\b|\bfix(?:es)? (?:is|are) (?:now )?(?:live|out)\b/i },
+  // KBX4 2026-11-02: "a change that lets higher pay speed hiring went live at the end of last
+  // week" was posted from nothing; past-tense release verbs are the same claim.
+  { kind: "main", re: /\blive on the main server\b|\b(?:is|are|was|were|it's|now) (?:now )?live\b|\b(?:went|gone|go(?:es)?) live\b|\bfix(?:es)? (?:is|are) (?:now )?(?:live|out)\b|\b(?:fix|change|update|patch)(?:es)?\b[^.]{0,60}\b(?:rolled out|was released|were released|shipped)\b/i },
   { kind: "staging", re: /\bon (?:the )?sandbox\b/i },
   { kind: "development", re: /\bin testing on dev\b|\bon (?:the )?dev(?:elopment)? server\b|\bon dev\b/i },
   // Keir 4.0: "being built" needs a coding attempt that can write (ticket 1514
@@ -321,12 +323,17 @@ const CLAIMS = [
   { kind: "written", re: /\b(?:fix|correction|patch) (?:is|has been|was) (?:now )?(?:written|ready|built|prepared|done)\b|\bhave (?:a|the) (?:fix|correction) (?:ready|written)\b|\b(?:is|are) (?:now )?in testing\b|\bgoing through (?:its |the )?(?:checks|tests)\b|\bpassed (?:its|the|all its) (?:tests|checks)\b/i },
 ];
 const FUTURE = /\b(?:will|won't|once|when|after|until|soon|should|going to|plan(?:ning)?|next|expect|if)\b|['’]ll\b/i;
-const NEGATED = /\b(?:not|never|no|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
+// KBX4 2026-11-02: "cannot" was not a negation, so "a note cannot authorise a payment, so that
+// refund has to come through our own approval" was refused as a money claim four times running.
+const NEGATED = /\b(?:not|never|no|cannot|unable|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
+// A money sentence about the approval step itself ("the refund is up for approval") describes the
+// request, not an outcome; the decision or heal request is its own receipt.
+const PENDING_APPROVAL = /\b(?:for|awaiting|needs?|pending|waiting (?:on|for)|up for|through|subject to) (?:an? |the |our (?:own )?|owner['’]s |egg['’]s |his )?(?:approval|decision|sign-?off|review)\b/i;
 function outcomeClaims(text) {
   const out = [];
   for (const sentence of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
     if (NEGATED.test(sentence)) continue;
-    for (const c of CLAIMS) if (c.re.test(sentence)) out.push({ kind: c.kind, future: FUTURE.test(sentence), sentence: sentence.trim().slice(0, 160) });
+    for (const c of CLAIMS) if (c.re.test(sentence) && !(c.kind === "money" && PENDING_APPROVAL.test(sentence))) out.push({ kind: c.kind, future: FUTURE.test(sentence), sentence: sentence.trim().slice(0, 160) });
   }
   return out;
 }
@@ -1361,7 +1368,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const bad = issues.leak(note, [reporter?.name, job.source?.author]);
         if (bad) throw new Error(`AHDGame is public: the comment mentions "${bad}". Remove it and add it again.`);
         await effect(job, `issue-comment:${number}:${hash(note)}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=${note}`]));
-        recordIssue(number, target.html_url, true);
+        recordIssue(number, target.html_url, true); job.issueEvidenceAdded = true; ledger.save();
         return { ...(await ensureIssueCard(number, target.html_url, target.title)), appended: true };
       }
       let filedIssue = null;
@@ -2105,8 +2112,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
                 const titles = (range?.commits || []).filter((c) => (c.parents || []).length < 2).map((c) => String(c.commit?.message || "").split("\n")[0].slice(0, 110));
                 if (titles.length) carries = ` This promotion carries ${titles.length} change${titles.length === 1 ? "" : "s"}: ${titles.slice(0, 8).join("; ")}${titles.length > 8 ? `; and ${titles.length - 8} more` : ""}.`;
               }
-              const asked = await requestGithubApproval({ ...args, summary: shipSignoff ? `${shipWhat}${carries}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}` }, shipSignoff ? "ship to the live server" : "economy merge or promotion");
-              return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
+              // No file list means the blast radius is unverified, not that it is economy code;
+              // say so, or the owner hears "touches the economy" about a badge fix (KBX4 2026-11-02).
+              const unverified = !sensitive;
+              const summary = shipSignoff ? `${shipWhat}${carries}` : unverified ? `${what.replace(/ changes$| carries changes to$/, "")}: GitHub did not list its changed files, so Keir cannot confirm it stays out of the economy and turn engine.${carries} Head ${head.slice(0, 10)}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}`;
+              const asked = await requestGithubApproval({ ...args, summary }, shipSignoff ? "ship to the live server" : unverified ? "merge or promotion with an unverified file list" : "economy merge or promotion");
+              return asked.needsExplanation ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
             }
             ledger.audit(shipSignoff ? "ship_signoff" : "economy_consent", { action: consent.id, job: job.id, approvalMessage: consent.approvalMessage, ...args });
           }
@@ -2183,7 +2194,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           const jobId = /\/job\/(\d+)/.exec(r.details_url || "")?.[1];
           if (jobId) { try { log = (await exec("/usr/bin/gh", ["api", `repos/${repo}/actions/jobs/${jobId}/logs`], { timeout: 60000, maxBuffer: 64 << 20 })).replace(/\x1b\[[0-9;]*m/g, "").split("\n").map((l) => l.replace(/^\S+Z\s/, "")).filter((l) => /FAIL|Error|error TS|✗|×|AssertionError|expected|Expected|failed/i.test(l)).slice(-60).join("\n").slice(-8000); } catch (e) { log = "log unavailable: " + String(e.message).slice(0, 200); }
           }
-          out.push({ name: r.name, conclusion: r.conclusion, url: r.html_url, annotations, failingLines: log });
+          // The check's own report (title and summary) often names the failing test even when
+          // there are no annotations and no job log (KBX4 2026-11-02: Keir answered "no log").
+          const report = [r.output?.title, r.output?.summary].filter(Boolean).join(": ").slice(0, 1500);
+          out.push({ name: r.name, conclusion: r.conclusion, url: r.html_url, ...(report ? { report } : {}), annotations, failingLines: log });
         }
         return { number: pr.number, sha: pr.head.sha.slice(0, 10), failed: out, note: out.length ? "Compare these failures with your change. A failure in code you did not touch, that also fails on the base branch, is pre-existing; otherwise fix it." : "No failed checks on the current head." };
       }
@@ -2307,7 +2321,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if (pr.head.sha !== scopedConsent.args.head || pr.base.sha !== scopedConsent.args.base || pr.base.ref !== scopedConsent.args.to) throw new Error("The PR changed since approval. Review its current source and target commits.");
         }
         const g = await gate(pr);
-        if (!g.ready) return { number, merged: false, url: pr.html_url, ...g, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix, do not merge." : "Checks still running: finish waiting with a wakeup of about 10 minutes and call this again." };
+        if (!g.ready) return { number, merged: false, url: pr.html_url, ...g, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix, do not merge." : g.pending.length ? "Checks still running: finish waiting with a wakeup of about 10 minutes and call this again." : g.checks ? "Every check finished green, but GitHub has not reported this PR as mergeable yet. Finish waiting about 5 minutes and call merge again; do not tell the owner checks are running." : "No checks have reported on this head yet: finish waiting about 10 minutes and call this again." };
         const mergeOnce = () => api(["-X", "PUT", `repos/${repo}/pulls/${number}/merge`, "-f", `merge_method=${method}`, "-f", `sha=${pr.head.sha}`]);
         // 405/409/422 are GitHub refusing the merge: nothing merged. "Base branch
         // was modified" is a race with another merge landing first (ticket 1619
@@ -3028,6 +3042,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
       // Ticket playbooks: a support ticket finishes done only with its required steps recorded.
       if (!developerTask(job) && !developerTicket(job) && !ownerDirected(job)) { const why = require("./playbooks").finishRefusal(job, d, state); if (why) throw new Error(why); }
+      // KBX4 2026-11-02: a watch finding that an open issue already covers finished done with
+      // nothing added, so the issue never learned it is still happening. Ask once.
+      const citedIssue = /#(\d{3,6})\b/.exec(String(input.summary || ""))?.[1];
+      if (state === "done" && job.kind === "finding" && citedIssue && !job.issueEvidenceAdded && !(job.raisedToDevelopers || []).length && !job.findingEvidenceAsked) {
+        job.findingEvidenceAsked = true; ledger.save();
+        throw new Error(`Not finished: open issue #${citedIssue} already covers this finding, but nothing from it was added there. Add this finding's new evidence (counts, users, versions, timing) with raise_to_developers issueNumber ${citedIssue}, then finish done. If it is noise, finish dismissed with the reason instead.`);
+      }
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
@@ -3163,6 +3184,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           const safe = await finishPublicText(job);
           if (safe) ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe);
         } else if (job.kind !== "command") { job.state = "waiting"; job.wakeAt = now() + (pendingHandoffs(job).length ? 6 : 1) * 3600000; }
+      } else if (state === "waiting" && job.kind === "command" && job.role === "owner" && job.actorId === config.ownerId && !job.channelReplyQueued && !job.internalProbe && !pendingDecision) {
+        // KBX4 2026-11-02: "merge N" with checks still running finished waiting on a watch and
+        // said nothing, so the owner could not tell it was handled. Say what it waits on, once.
+        const safe = await finishPublicText(job);
+        if (safe) { job.channelReplyQueued = true; ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); }
       } else if (!job.internalProbe && job.role !== "player" && ((state === "done" && !job.channelReplyQueued) || state === "blocked")) {
         const safe = job.role === "owner" && !job.channelReplyQueued ? await finishPublicText(job) : null;
         if (safe) { ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); ledger.audit("checkpoint", { job: job.id, state: job.state }); ledger.save(); return { state: job.state }; }

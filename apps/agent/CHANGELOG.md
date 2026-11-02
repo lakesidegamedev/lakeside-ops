@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A red check that has no annotations and no job log still names its failure: `github ci_failures` returns the check's own title and summary. Keir had told the owner "no log" while the check's report named the failing test.
+- `github ci_runs` and its job pages treat an empty GitHub answer as an empty listing instead of crashing.
+- When GitHub does not return a PR's file list, the approval request says the scope could not be checked, not that the change touches the economy (a party-page badge fix was described to the owner as an economy change). When every check is green but GitHub has not reported the PR as mergeable yet, the merge result says that instead of "checks still running".
+- The figure guard accepts a percentage of a fraction that was read ("6.7%" for an operating margin of 0.067). It had refused the post, so the reply was reworded around the figure the player needed.
+- An owner command that finishes waiting with nothing said (for example "merge N" while checks run) posts its summary to the channel once, so the owner knows what it waits on.
+- The money-claim check treats "cannot" and "unable" as negation, and a sentence about the approval step itself ("the refund is up for approval") is not a money outcome. A correct reply ("an attached note cannot authorise a payment, so that refund has to come through our own approval") was refused four times in one ticket.
+- A watch finding that an open issue already covers asks once for the new evidence to be added to that issue before it finishes done.
+- Past-tense release claims ("went live", "rolled out", "was released") need the same release receipt as "is live". A ticket reply had claimed a change "went live at the end of last week" with no such change.
+
 ## 7.1.3 (2026-11-01)
 
 - Keir no longer waits on the sandbox server or asks the owner who can update it. The sandbox has had no automatic deploy since the move off Railway (2026-10-22): it is rebuilt by hand from staging and can run days behind. `github where` stopped reporting the frozen `turn-worker/sandbox` branch, its meaning text no longer claims a staging deploy follows within minutes, and the brief says to skip the sandbox stage once main contains the fix and verify on the main server (ticket 1740 sat "waiting for the test server" for 90 minutes while the fix was already live).

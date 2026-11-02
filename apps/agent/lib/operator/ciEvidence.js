@@ -20,7 +20,7 @@ async function readCiEvidence({ api, repo, number, workflow = "ci.yml", runId })
   const shas = [...new Set([pr.head.sha, pr.merge_commit_sha].filter((s) => /^[a-f0-9]{40}$/i.test(s || "")))];
   const listed = await Promise.all(shas.map((sha) => api([`${prefix}/actions/workflows/${encodeURIComponent(workflow)}/runs?head_sha=${sha}&per_page=20`])));
   const candidates = new Map();
-  for (const page of listed) for (const r of page.workflow_runs || []) {
+  for (const page of listed) for (const r of page?.workflow_runs || []) {
     if (!shas.includes(r.head_sha)) continue;
     const pulls = r.pull_requests || [];
     if (pulls.length && !pulls.some((p) => p.number === number)) continue;
@@ -31,7 +31,7 @@ async function readCiEvidence({ api, repo, number, workflow = "ci.yml", runId })
   const runs = [];
   for (const r of chosen) {
     if (!Number.isSafeInteger(r.id) || !Number.isSafeInteger(r.run_attempt) || r.run_attempt < 1) throw new Error("Invalid Actions run receipt");
-    const page = await api([`${prefix}/actions/runs/${r.id}/attempts/${r.run_attempt}/jobs?per_page=100`]);
+    const page = (await api([`${prefix}/actions/runs/${r.id}/attempts/${r.run_attempt}/jobs?per_page=100`])) || {};
     const jobs = (page.jobs || []).slice(0, 100).map(jobReceipt);
     const completed = r.status === "completed" && jobs.length > 0 && jobs.every((j) => j.status === "completed" && Number.isFinite(Date.parse(j.completedAt))) && (page.total_count || 0) <= 100;
     const finished = completed ? jobs.map((j) => j.completedAt).filter((s) => Number.isFinite(Date.parse(s))).sort((a, b) => Date.parse(a) - Date.parse(b)).at(-1) : null;
@@ -50,7 +50,7 @@ async function readCiEvidence({ api, repo, number, workflow = "ci.yml", runId })
     catch { trees[name] = { commit: sha, tree: null, unavailable: true }; }
   }
   const result = { number, workflow, branches: { base: pr.base?.ref, head: pr.head?.ref }, changedFiles: pr.changed_files, merged: Boolean(pr.merged), trees,
-    runs, truncated: listed.some((p) => p.total_count > 20) || candidates.size > chosen.length,
+    runs, truncated: listed.some((p) => p?.total_count > 20) || candidates.size > chosen.length,
     note: "Latest recorded attempt per run only. Default shows up to ten longest jobs; pass run to inspect listed run steps. head_only runs do not prove PR or target qualification. Tree receipts are exact recorded commits, not proof of the workflow diff base. Missing timings are null. Job durations are not a dependency critical path; no savings inferred." };
   // Stay below the tool transport's 22KB cap with valid JSON, not a cut-off receipt.
   while (JSON.stringify(result).length > 18000) {
