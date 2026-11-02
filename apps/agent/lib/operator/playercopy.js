@@ -77,6 +77,9 @@ function sentences(text) {
 }
 function shapeTicketPost(text) {
   let t = String(text || "").trim().replace(PREAMBLE, "");
+  // Stripping a lead-in ("Update: the bank closure...") left the post starting in lower
+  // case (ticket 1749, 2026-11-02). A post starts with a capital.
+  t = t.replace(/^[a-z]/, (c) => c.toUpperCase());
   const sents = sentences(t);
   const chars = t.replace(/\s+/g, " ").length;
   if (chars > MAX_CHARS || sents.length > MAX_SENTENCES) {

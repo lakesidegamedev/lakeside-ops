@@ -230,6 +230,26 @@ test("a finding an open issue already covers asks once for the new evidence befo
   assert.equal(j.state, "done");
 });
 
+test("waiting on a developer with only a filed bug report is a quiet wait, not a six-hour poll (ticket 1749)", async () => {
+  const f = fixture(), j = running(f, { kind: "command", role: "owner" });
+  j.raisedToDevelopers = [{ id: 254949, title: "Withdraw gives no warning", kind: "bug", blocking: false, at: 1000 }];
+  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Issue filed, nobody assigned." });
+  assert.equal(j.wakeAt - 5000, 360 * 60000);
+  // Nothing changed and nobody wrote: the next wait backs off instead of polling every six hours.
+  j.state = "running";
+  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still nothing." });
+  const secondWake = j.wakeAt - 5000;
+  // A real handoff someone owes an answer on keeps the six-hour reply wait.
+  const g = fixture(), k = running(g, { kind: "command", role: "owner" });
+  k.raisedToDevelopers = [{ id: 7, title: "Which rate applies?", kind: "question", blocking: true, at: 1000 }];
+  await g.broker.tool(k, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Asked the developers." });
+  assert.equal(k.wakeAt - 5000, 360 * 60000);
+  k.state = "running";
+  await g.broker.tool(k, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still asked." });
+  assert.equal(k.wakeAt - 5000, 360 * 60000);
+  assert.equal(secondWake, 720 * 60000);
+});
+
 test("a confirmed finding opens one bug ticket per affected player; the Discord id never reaches the model", async () => {
   const DID = String(10n ** 17n + 42n); // an 18-digit fake account id, built at runtime
   const f = fixture(), j = running(f, { kind: "finding", role: "support", finding: "fp1" });

@@ -3,6 +3,8 @@ const { GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, reposi
 // Minutes between checks for a task waiting with nothing subscribed and no
 // reply owed: the first is a normal look, then it settles into a slow recheck.
 const QUIET_WAITS = [15, 30, 60, 120];
+// A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
+const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
@@ -3105,7 +3107,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const openCards = (job.raisedToDevelopers || []).filter((r) => r.blocking && !r.releasedAt);
       if (state === "waiting" && input.waitFor === "developer_reply" && openCards.length && openCards.every((r) => r.selfOwned))
         throw new Error("No developer owns an open item for this task: your filed questions are your own work items. Keep investigating with your read tools, or wait for the player instead.");
+      // A filed bug report is not a handoff anybody answers (ticket 1749 woke every six hours on
+      // an unassigned issue and told the player nothing had changed). With no blocking handoff
+      // out, a developer_reply wait is a quiet wait: the interval grows, and the developer watch
+      // or a player message wakes it early.
+      const developerHandoff = openCards.some((r) => !r.selfOwned);
       const replyWait = state === "waiting" && ["player_reply", "developer_reply"].includes(input.waitFor) && !subscription;
+      const quietDeveloperWait = replyWait && input.waitFor === "developer_reply" && !developerHandoff;
       const playerAt = (t) => (typeof t === "number" ? t : Date.parse(t) || 0);
       const owedAt = Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt));
       delete job.waitingFor;
@@ -3119,10 +3127,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const acted = Object.values(job.effects || {}).some((e) => (e.at || 0) >= (job.startedAt || 0));
         const stamp = `${owedAt}:${job.lastPublishedAt || 0}:${acted ? job.startedAt : 0}`;
         if (job.quietStamp !== stamp) { job.quietStamp = stamp; job.quietWaits = 0; }
-        const quiet = !subscription && !replyWait;
+        const quiet = (!subscription && !replyWait) || quietDeveloperWait;
         if (quiet) job.quietWaits = (job.quietWaits || 0) + 1;
-        const minutes = Number.isFinite(requested) ? requested : replyWait ? 360 : quiet ? QUIET_WAITS[Math.min(job.quietWaits - 1, QUIET_WAITS.length - 1)] : 15;
-        job.wakeAt = now() + Math.max(1, Math.min(minutes, replyWait ? 360 : 1440)) * 60000;
+        const minutes = quietDeveloperWait && !Number.isFinite(requested)
+          ? DEVELOPER_QUIET_WAITS[Math.min(job.quietWaits - 1, DEVELOPER_QUIET_WAITS.length - 1)]
+          : Number.isFinite(requested) ? requested : replyWait ? 360 : quiet ? QUIET_WAITS[Math.min(job.quietWaits - 1, QUIET_WAITS.length - 1)] : 15;
+        job.wakeAt = now() + Math.max(1, Math.min(minutes, replyWait && !quietDeveloperWait ? 360 : 1440)) * 60000;
       }
       // A reply wait, long requested wait or vision run leaving the player unanswered hands back to
       // the driver instead of sleeping (ticket 1542 waited fifteen minutes).

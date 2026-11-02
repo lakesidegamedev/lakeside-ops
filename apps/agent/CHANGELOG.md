@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A wait on the developers with only a filed bug report (no handoff anyone owes an answer on) is a quiet wait whose interval grows, not a six-hour poll. Ticket 1749 woke every six hours on an unassigned issue.
+- The unchanged-waiting check catches "still with the developers", "no fix has been built yet", "nothing has changed" and "no answer yet", so the player is not told the same news again when nothing moved and nobody wrote.
+- A ticket post whose lead-in ("Update:") is stripped starts with a capital letter.
+- The brief tells Keir to check what a money move does to the rest of a player's position, state the risk, and never point at the maximum a screen allows.
 - A red check that has no annotations and no job log still names its failure: `github ci_failures` returns the check's own title and summary. Keir had told the owner "no log" while the check's report named the failing test.
 - `github ci_runs` and its job pages treat an empty GitHub answer as an empty listing instead of crashing.
 - When GitHub does not return a PR's file list, the approval request says the scope could not be checked, not that the change touches the economy (a party-page badge fix was described to the owner as an economy change). When every check is green but GitHub has not reported the PR as mergeable yet, the merge result says that instead of "checks still running".

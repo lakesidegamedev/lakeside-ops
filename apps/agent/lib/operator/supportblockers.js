@@ -26,7 +26,9 @@ function clear(ledger, ticket, now = Date.now()) {
   const row = ledger.data.internalSupportFailures?.[ticket];
   if (row && !row.clearedAt) { row.clearedAt = now; ledger.save(); }
 }
+// Ticket 1749 (2026-11-02): "still with the developers, and no fix has been built yet" six
+// hours after the same news was posted, with nothing changed; the phrasing slipped past.
 function unchangedWait(text) {
-  return /\b(?:still not live|still waiting|not (?:on the live game|live) yet|production has not picked|live game has not picked|live game hasn.t picked)\b/i.test(String(text || ""));
+  return /\b(?:still not live|still waiting|not (?:on the live game|live) yet|production has not picked|live game has not picked|live game hasn.t picked|still (?:with|in front of|on the desk of) (?:the )?(?:developers?|devs?|team)|no fix (?:has been|is|was) (?:built|ready|made|written) yet|nothing (?:new|has changed)|no (?:developer )?(?:answer|reply|update|news) (?:yet|so far))\b/i.test(String(text || ""));
 }
 module.exports = { internalFailure, report, guard, clear, unchangedWait };
