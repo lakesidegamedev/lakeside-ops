@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.2.3 (2026-11-02)
+
 - A stop or stand-down that ends with more than one trailing phrase ("stand down on this ticket please", "stop working on this ticket, thanks", "stand down for now") now stops the ticket. The owner's "stand down on this ticket please" on ticket 1757 matched nothing, so the stop flag was never set and the next staff mention started a fresh job.
 
 ## 7.2.2 (2026-11-02)
