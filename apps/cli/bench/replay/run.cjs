@@ -13,7 +13,8 @@ const { createEnv } = require('./env.cjs');
 
 // Production limits (/etc/keir-operator.env on 2026-10-19): 36 tool rounds, a
 // 15-minute activation, coding and investigation children on cursor:auto.
-const MAX_ACTIVATIONS = 6, ACTIVATION_MS = 15 * 60000, MAX_ROUNDS = 36, CHILD_ROUTE = process.env.KEIR_REPLAY_CHILD_ROUTE || 'cursor:auto@automatic';
+// MAX_ROUNDS mirrors production KEIR_MAX_TOOL_ROUNDS (operator.js default 24; was 36 here until 2026-10-28).
+const MAX_ACTIVATIONS = 6, ACTIVATION_MS = 15 * 60000, MAX_ROUNDS = Number(process.env.KEIR_REPLAY_MAX_ROUNDS || 24), CHILD_ROUTE = process.env.KEIR_REPLAY_CHILD_ROUTE || 'cursor:auto@automatic';
 // Arms are production configurations; only these fields differ.
 const ARMS = {
   full: { leanContext: false, effectGuard: true },          // live since 2026-10-19 (KEIR_LEAN_CONTEXT=0)
@@ -72,7 +73,10 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
       if (follow && i + 1 < MAX_ACTIVATIONS) { env.playerReply(follow.text); continue; }
       if (job.state !== 'waiting') break;
       // The player answers the newest question posted this activation, if any.
-      const q = env.events.slice(0).filter((e) => e.kind === 'post').slice(asked).reverse().find((e) => /\?/.test(e.text));
+      // A question mark, or any post when Keir finished waiting on the player (imperative asks:
+      // "send a screenshot and tell me which page"). KBX3 2026-10-28.
+      const fresh = env.events.slice(0).filter((e) => e.kind === 'post' && String(e.text || '').trim()).slice(asked).reverse();
+      const q = fresh.find((e) => /\?/.test(e.text)) || (job.waitingFor === 'player_reply' || /\b(?:tell me|let me know|send (?:me )?|reply with)\b/i.test(fresh[0]?.text || '') ? fresh[0] : undefined);
       if (!q) break;
       const hit = (sc.answers || []).find((a) => a.when.test(q.text));
       env.playerReply(hit ? hit.text : sc.fallbackAnswer || "I'm not sure what you mean.");

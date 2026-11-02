@@ -18,13 +18,15 @@ const T0 = Date.parse('2026-10-19T09:00:00Z');
 
 function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   fs.mkdirSync(dir, { recursive: true });
-  const events = [], channelId = '9000000000' + String(sc.ticket).padStart(8, '0'), channelName = `ticket-${sc.category || 'bug'}-${sc.player}-${sc.ticket}`;
+  // KBX3: non-ticket jobs (owner commands, findings) set sc.job; sc.actor 'owner' writes as the owner.
+  const ticketJob = !sc.job, ACTOR = sc.actor === 'owner' ? OWNER : PLAYER_ID, ACTOR_NAME = sc.actor === 'owner' ? 'egg3901' : sc.player;
+  const events = [], channelId = '9000000000' + String(sc.ticket || 9999).padStart(8, '0'), channelName = ticketJob ? `ticket-${sc.category || 'bug'}-${sc.player}-${sc.ticket}` : (sc.channelName || 'keir-ops');
   const issues = JSON.parse(JSON.stringify(sc.issues || [])), created = [];
   let msgSeq = 1, clock = T0;
   const now = () => (clock += 1000);
   const CHARACTER_ID = 4242;
-  const card = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: BOT, username: 'Keir', bot: true }, content: `Ticket #${sc.ticket} opened by ${sc.player}. Category: ${sc.category || 'bug'}.`, timestamp: new Date(T0 - 1000).toISOString(), channel_id: channelId };
-  const messages = [card, { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: PLAYER_ID, username: sc.player, bot: false }, content: sc.opening, timestamp: new Date(T0).toISOString(), channel_id: channelId, ...(sc.openingAttachments ? { attachments: JSON.parse(JSON.stringify(sc.openingAttachments)) } : {}) }];
+  const card = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: BOT, username: 'Keir', bot: true }, content: ticketJob ? `Ticket #${sc.ticket} opened by ${sc.player}. Category: ${sc.category || 'bug'}.` : 'Keir is online.', timestamp: new Date(T0 - 1000).toISOString(), channel_id: channelId };
+  const messages = [card, { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: ACTOR, username: ACTOR_NAME, bot: false }, content: sc.opening, timestamp: new Date(T0).toISOString(), channel_id: channelId, ...(sc.openingAttachments ? { attachments: JSON.parse(JSON.stringify(sc.openingAttachments)) } : {}) }];
   const record = (kind, detail) => { const e = { kind, at: clock, ...detail }; events.push(e); return e; };
   const post = (content, via) => { const m = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: BOT, username: 'Keir', bot: true }, content: String(content), timestamp: new Date(now()).toISOString(), channel_id: channelId }; messages.push(m); record('post', { via, text: m.content, messageId: m.id }); return m; };
 
@@ -36,14 +38,22 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   // The support service's real input schema for the update tool (zod: message 1 to 1400 chars),
   // so the broker refuses a malformed update before the effect, as it does live.
   const SCHEMAS = { support_public_update: { type: 'object', required: ['kind', 'number', 'message'], properties: { kind: { type: 'string', enum: ['ticket'] }, number: { type: 'integer' }, update_kind: { type: 'string', enum: ['development', 'heal', 'production', 'progress', 'context'] }, message: { type: 'string', minLength: 1, maxLength: 1400 }, deliver: { type: 'boolean' } } } };
-  const SUPPORT_TOOLS = ['support_public_update', 'support_set_status', 'support_tracker_note', 'support_tracker_sync', 'support_resolve', 'support_get', 'support_search', 'support_list'];
+  const SUPPORT_TOOLS = ['support_public_update', 'support_set_status', 'support_tracker_note', 'support_tracker_sync', 'support_resolve', 'support_get', 'support_search', 'support_list', 'support_create_suggestion'];
   const mcp = {
     servers: () => ['gamestate', 'support', 'ops-knowledge', 'heal-ops'],
     identity: (server) => ({ server, endpoint: 'replay://' + server }),
     list: async (server) => [...new Set([...(server === 'support' ? SUPPORT_TOOLS : server === 'gamestate' ? Object.keys(sc.game || {}).map((t) => (t === 'character' ? 'trace_character' : t)) : ['knowledge_query', 'kanban_add', 'kanban_list', 'work_report']), ...Object.keys(sc.mcp?.[server] || {})])]
       .map((name) => ({ name, description: `${server} ${name} (replay fixture)`, inputSchema: SCHEMAS[name] || { type: 'object', additionalProperties: true } })),
     call: async (server, tool, args = {}) => {
-      record('mcp', { server, tool, args });
+      // KBX4 grades claims against what was actually read, so the result is kept (capped).
+      const ev = record('mcp', { server, tool, args });
+      const r = await callInner(server, tool, args);
+      try { ev.result = JSON.stringify(r).slice(0, 20000); } catch {}
+      return r;
+    },
+  };
+  async function callInner(server, tool, args) {
+    {
       // Scenario overrides for tools it models specially (e.g. heal-ops planning).
       const own = sc.mcp?.[server]?.[tool];
       if (own) return own(args, { state, record });
@@ -72,6 +82,7 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
         if (tool === 'support_tracker_note') { state.trackerNotes.push(args.body || args.note || ''); return { ok: true }; }
         if (tool === 'support_tracker_sync') return { ok: true, tracker: `kanban-${sc.ticket}` };
         if (tool === 'support_resolve') { state.status = 'resolved'; return { ok: true, resolved: true }; }
+        if (tool === 'support_create_suggestion') { const n = 7000 + (state.suggestions = (state.suggestions || 0) + 1); record('suggestion_create', { number: n, args }); return { ok: true, kind: 'suggestion', number: n, receiptUrl: `https://example.invalid/suggestion/${n}` }; }
         if (tool === 'support_merge') { state.mergedInto = Number(args.target_number); state.status = 'merged'; return { ok: true, steps: ['moved reporter', 'closed source channel'] }; }
         throw new Error(`support ${tool}: not in replay`);
       }
@@ -89,8 +100,8 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
         return { matched: 0, docs: [] };
       }
       throw new Error(`${server} is not available in replay`);
-    },
-  };
+    }
+  }
 
   // Discord REST for the ticket channel. Writes are recorded as posts/edits.
   const discord = async (method, route, body) => {
@@ -116,6 +127,8 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   const exec = async (cmd, args = [], opts = {}) => {
     record('exec', { cmd, args: args.map((a) => String(a).slice(0, 300)) });
     if (/\/gh$/.test(cmd) || cmd === 'gh') {
+      // KBX3: scenarios can script GitHub (pull state, checks, merges); undefined falls through.
+      if (sc.gh) { const o = await sc.gh(args, { record, state }); if (o !== undefined) return typeof o === 'string' ? o : JSON.stringify(o); }
       if (args[0] !== 'api') { if (args[0] === 'pr' && args[1] === 'create') { record('pr_create', { args }); return 'https://github.com/lakesidegamedev/AHDGame/pull/4321\n'; } return ''; }
       const rest = args.slice(1), isPost = rest.includes('POST'), url = rest.find((a) => /^(?:repos|search)\//.test(a)) || '';
       const field = (k) => { const i = rest.findIndex((a, j) => rest[j - 1] === '-f' && a.startsWith(k + '=')); return i >= 0 ? rest[i].slice(k.length + 1) : undefined; };
@@ -156,7 +169,7 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   if (sc.repo) {
     const src = path.isAbsolute(sc.repo) ? sc.repo : path.join(sc.dir || path.join(__dirname, 'scenarios'), sc.repo), origin = path.join(dir, 'origin.git'), clone = path.join(dir, 'AHDGame');
     const git = (...a) => cp.execFileSync('git', a, { encoding: 'utf8' });
-    const seed = path.join(dir, 'seed'); fs.cpSync(src, seed, { recursive: true });
+    const seed = path.join(dir, 'seed'); fs.cpSync(fs.realpathSync(src), seed, { recursive: true });
     // Like AHDGame: dependencies the sandbox mounts are never part of a change.
     if (!fs.existsSync(path.join(seed, '.gitignore'))) fs.writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\n');
     git('init', '-q', '-b', 'main', seed); git('-C', seed, 'add', '-A'); git('-C', seed, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@localhost', 'commit', '-qm', 'snapshot');
@@ -171,6 +184,8 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   Object.assign(config, configOverrides);
   // Production passes a notebook (remember, recall, player notes); each trial gets its own, empty.
   const notebook = require(AGENT + '/lib/operator/knowledge').createNotebook({ file: path.join(dir, 'notebook.json') });
+  // Optional seeded memory (KBX2 stale-note traps): notes exactly as an earlier task would have saved them.
+  for (const n of sc.notebook || []) notebook.remember({ by: 'replay-seed', ...n });
   const broker = createBroker({ ledger, config, mcp, discord, sandbox, exec, now, notebook });
   // Every broker tool call is recorded as an attempt ('tool', with ok/error), so
   // grading can see what was tried and refused, not only what took effect.
@@ -180,7 +195,7 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   broker.tool = async (j, name, input, signal) => {
     const e = record('tool', { name, input: JSON.parse(JSON.stringify(input ?? {}, (k, v) => (typeof v === 'string' && v.length > 2000 ? v.slice(0, 2000) : v))) });
     const seenDecisions = new Set(Object.keys(ledger.data.decisions || {})), seenActions = new Set(Object.keys(ledger.data.actions || {}));
-    try { const r = await innerTool(j, name, input, signal); e.ok = true; return r; }
+    try { const r = await innerTool(j, name, input, signal); e.ok = true; try { e.result = JSON.stringify(r).slice(0, name === 'calculate' ? 4000 : 3000); } catch {} return r; }
     catch (err) { e.ok = false; e.error = String(err?.message || err).slice(0, 600); throw err; }
     finally {
       // openDecision stamps the wall clock; the replay runs on its own clock, so
@@ -191,18 +206,20 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
   };
 
   // The ticket task exactly as intake creates it.
-  const job = ledger.createJob(`ticket:${sc.ticket}`, { kind: 'ticket', role: 'support', ticket: sc.ticket, channelId, replyChannel: channelId, actorId: PLAYER_ID, deadline: T0 + 7 * 86400000,
-    source: { channelId, channelName, messageId: messages[0].id, authorId: PLAYER_ID, author: sc.player, content: sc.opening, at: new Date(T0).toISOString() } });
-  ledger.data.seen ||= {}; ledger.data.seen[`ticket:${sc.ticket}`] = job.id;
-  ledger.data.channels ||= {}; ledger.data.channels[channelId] = { ticket: sc.ticket, category: sc.category || 'bug', name: channelName };
+  const source = { channelId, channelName, messageId: messages[ticketJob ? 0 : 1].id, authorId: ACTOR, author: ACTOR_NAME, content: sc.opening, at: new Date(T0).toISOString(), ...(sc.job?.source || {}) };
+  const job = ticketJob
+    ? ledger.createJob(`ticket:${sc.ticket}`, { kind: 'ticket', role: 'support', ticket: sc.ticket, channelId, replyChannel: channelId, actorId: PLAYER_ID, deadline: T0 + 7 * 86400000, source })
+    : ledger.createJob(sc.job.key || `kbx:${sc.id}`, { role: 'owner', actorId: ACTOR, channelId, replyChannel: channelId, deadline: T0 + 7 * 86400000, ...sc.job, source });
+  ledger.data.seen ||= {}; ledger.data.seen[ticketJob ? `ticket:${sc.ticket}` : (sc.job.key || `kbx:${sc.id}`)] = job.id;
+  ledger.data.channels ||= {}; if (ticketJob) ledger.data.channels[channelId] = { ticket: sc.ticket, category: sc.category || 'bug', name: channelName };
   ledger.save();
 
   // The player answers a question between activations, the way the gateway queues a new message.
   function playerReply(text) {
     clock += 5 * 60000; // the player answers a few minutes later
-    const m = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: PLAYER_ID, username: sc.player, bot: false }, content: text, timestamp: new Date(now()).toISOString(), channel_id: channelId };
+    const m = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: ACTOR, username: ACTOR_NAME, bot: false }, content: text, timestamp: new Date(now()).toISOString(), channel_id: channelId };
     messages.push(m); record('player', { text });
-    (job.inbox ||= []).push({ content: text, authorId: PLAYER_ID, author: sc.player, messageId: m.id, at: m.timestamp });
+    (job.inbox ||= []).push({ content: text, authorId: ACTOR, author: ACTOR_NAME, messageId: m.id, at: m.timestamp });
     job.lastPlayerAt = job.observedPlayerAt = Date.parse(m.timestamp); ledger.save();
     return m;
   }
