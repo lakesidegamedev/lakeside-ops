@@ -222,6 +222,14 @@ test("a refused first reply does not let the task wait on the player (KBX3 probe
   await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." }), /nothing has been posted to them since they last wrote/);
 });
 
+test("a finding an open issue already covers asks once for the new evidence before finishing done", async () => {
+  const f = fixture(), j = running(f, { kind: "finding", role: "support", finding: "fp2" });
+  await assert.rejects(f.broker.tool(j, "finish", { state: "done", summary: "Already tracked as #4311; no duplicate filed." }), /issueNumber 4311/);
+  // Asked once: a model that judges nothing new to add can still finish.
+  await f.broker.tool(j, "finish", { state: "done", summary: "Already tracked as #4311; no duplicate filed." });
+  assert.equal(j.state, "done");
+});
+
 test("a confirmed finding opens one bug ticket per affected player; the Discord id never reaches the model", async () => {
   const DID = String(10n ** 17n + 42n); // an 18-digit fake account id, built at runtime
   const f = fixture(), j = running(f, { kind: "finding", role: "support", finding: "fp1" });
@@ -1375,6 +1383,9 @@ test("outcome claims are recognised without flagging game mechanics", () => {
   assert.deepEqual(kinds("A change that lets higher pay speed hiring went live at the end of last week."), ["main"]);
   assert.deepEqual(kinds("The hiring change was rolled out on Monday."), ["main"]);
   assert.deepEqual(kinds("Your steel shipped to Ohio and the rail line went quiet."), []);
+  assert.deepEqual(kinds("An attached note cannot authorise a payment by itself, so that refund has to come through our own approval."), []);
+  assert.deepEqual(kinds("The refund of 1,126,600 USD is up for approval."), []);
+  assert.deepEqual(kinds("Your refund has been processed."), ["money"]);
 });
 
 test("ticket copy cannot claim money, reversals or releases without a receipt", async () => {

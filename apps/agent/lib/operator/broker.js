@@ -323,12 +323,17 @@ const CLAIMS = [
   { kind: "written", re: /\b(?:fix|correction|patch) (?:is|has been|was) (?:now )?(?:written|ready|built|prepared|done)\b|\bhave (?:a|the) (?:fix|correction) (?:ready|written)\b|\b(?:is|are) (?:now )?in testing\b|\bgoing through (?:its |the )?(?:checks|tests)\b|\bpassed (?:its|the|all its) (?:tests|checks)\b/i },
 ];
 const FUTURE = /\b(?:will|won't|once|when|after|until|soon|should|going to|plan(?:ning)?|next|expect|if)\b|['’]ll\b/i;
-const NEGATED = /\b(?:not|never|no|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
+// KBX4 2026-11-02: "cannot" was not a negation, so "a note cannot authorise a payment, so that
+// refund has to come through our own approval" was refused as a money claim four times running.
+const NEGATED = /\b(?:not|never|no|cannot|unable|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
+// A money sentence about the approval step itself ("the refund is up for approval") describes the
+// request, not an outcome; the decision or heal request is its own receipt.
+const PENDING_APPROVAL = /\b(?:for|awaiting|needs?|pending|waiting (?:on|for)|up for|through|subject to) (?:an? |the |our (?:own )?|owner['’]s |egg['’]s |his )?(?:approval|decision|sign-?off|review)\b/i;
 function outcomeClaims(text) {
   const out = [];
   for (const sentence of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
     if (NEGATED.test(sentence)) continue;
-    for (const c of CLAIMS) if (c.re.test(sentence)) out.push({ kind: c.kind, future: FUTURE.test(sentence), sentence: sentence.trim().slice(0, 160) });
+    for (const c of CLAIMS) if (c.re.test(sentence) && !(c.kind === "money" && PENDING_APPROVAL.test(sentence))) out.push({ kind: c.kind, future: FUTURE.test(sentence), sentence: sentence.trim().slice(0, 160) });
   }
   return out;
 }
@@ -1363,7 +1368,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const bad = issues.leak(note, [reporter?.name, job.source?.author]);
         if (bad) throw new Error(`AHDGame is public: the comment mentions "${bad}". Remove it and add it again.`);
         await effect(job, `issue-comment:${number}:${hash(note)}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=${note}`]));
-        recordIssue(number, target.html_url, true);
+        recordIssue(number, target.html_url, true); job.issueEvidenceAdded = true; ledger.save();
         return { ...(await ensureIssueCard(number, target.html_url, target.title)), appended: true };
       }
       let filedIssue = null;
@@ -3037,6 +3042,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
       // Ticket playbooks: a support ticket finishes done only with its required steps recorded.
       if (!developerTask(job) && !developerTicket(job) && !ownerDirected(job)) { const why = require("./playbooks").finishRefusal(job, d, state); if (why) throw new Error(why); }
+      // KBX4 2026-11-02: a watch finding that an open issue already covers finished done with
+      // nothing added, so the issue never learned it is still happening. Ask once.
+      const citedIssue = /#(\d{3,6})\b/.exec(String(input.summary || ""))?.[1];
+      if (state === "done" && job.kind === "finding" && citedIssue && !job.issueEvidenceAdded && !(job.raisedToDevelopers || []).length && !job.findingEvidenceAsked) {
+        job.findingEvidenceAsked = true; ledger.save();
+        throw new Error(`Not finished: open issue #${citedIssue} already covers this finding, but nothing from it was added there. Add this finding's new evidence (counts, users, versions, timing) with raise_to_developers issueNumber ${citedIssue}, then finish done. If it is noise, finish dismissed with the reason instead.`);
+      }
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
