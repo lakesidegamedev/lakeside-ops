@@ -2257,13 +2257,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         let sha = input.sha;
         if (input.number) { const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]); if (!pr.merged) return { number: pr.number, merged: false, state: pr.state }; sha = pr.merge_commit_sha; }
         if (!/^[0-9a-f]{7,40}$/i.test(sha || "")) throw new Error("give a merged PR number or a commit sha");
-        const branches = desktop ? ["main"] : ["development", "staging", "main", "turn-worker/sandbox", "turn-worker/production"], out = { sha: sha.slice(0, 10) };
+        const branches = desktop ? ["main"] : ["development", "staging", "main", "turn-worker/production"], out = { sha: sha.slice(0, 10) };
         for (const b of branches) {
           try { const c = await api([`repos/${repo}/compare/${encodeURIComponent(b)}...${sha}`]); out[b] = ["behind", "identical"].includes(c.status); } catch { out[b] = null; }
         }
-        out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = merged for web; it is live once github deployed shows the main server running a commit that contains it. turn-worker/production = turn processing source; it is live once github deployed shows the turn worker running it. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. turn-worker/sandbox containing it means the sandbox turn worker has been released it (the staging deploy follows within minutes).";
+        out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = merged for web; it is live once github deployed shows the main server running a commit that contains it. turn-worker/production = turn processing source; it is live once github deployed shows the turn worker running it. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. staging = the fix is in the sandbox release line, but the sandbox server is rebuilt by hand and can lag staging by days: never wait for it to update, and do not ask anyone to start it. Once main contains a fix and github deployed shows it running, the sandbox step is done; verify on the main server instead.";
         // Release claims in ticket copy are checked against these receipts.
-        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, sandboxWorker: out["turn-worker/sandbox"] === true };
+        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true };
         ledger.save();
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
           const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));
