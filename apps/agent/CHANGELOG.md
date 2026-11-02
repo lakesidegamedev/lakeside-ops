@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.2.4 (2026-11-03)
+
 Found by mining 30 hours of live refusals, audits and token use (2026-11-01/02), not by the benchmark:
 - A ticket task with no channel id (adopted from a handoff after its channel was already gone) is closed by the sweep when the support record says the ticket is closed. Ticket 1730's task woke every fifteen minutes for 29 hours after closure: 128 activations, about 15M tokens, 237 refused reads (40% of all refusals).
 - A not-now refusal ("Keir has posted 3 times since the player last wrote", "this task posted N min ago", an unchanged waiting notice) no longer marks an answer as owed. With both armed Keir could neither post nor finish: 70 refusals across tickets 1749 to 1755.
