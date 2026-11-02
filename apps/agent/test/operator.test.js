@@ -1276,7 +1276,9 @@ test("a promotion range that cannot be listed completely fails closed", async ()
   const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
   const r = await f.broker.tool(j, "github", { action: "promote", to: "staging" });
   assert.equal(r.approvalRequired, true);
-  assert.match(f.ledger.data.actions[r.action].args.summary, /file list unavailable/);
+  assert.match(f.ledger.data.actions[r.action].args.summary, /did not list its changed files/);
+  assert.equal(r.reason, "file_list_unavailable");
+  assert.doesNotMatch(f.ledger.data.actions[r.action].args.summary, /high-impact code/);
 });
 
 test("PR files are read past the first hundred before a merge", async () => {
@@ -1370,6 +1372,9 @@ test("outcome claims are recognised without flagging game mechanics", () => {
   assert.deepEqual(kinds("It will be live on the main server after the next update."), ["main:future"]);
   assert.deepEqual(kinds("It isn't refunded yet."), []);
   assert.deepEqual(kinds("Your company was credited 170M."), ["money"]);
+  assert.deepEqual(kinds("A change that lets higher pay speed hiring went live at the end of last week."), ["main"]);
+  assert.deepEqual(kinds("The hiring change was rolled out on Monday."), ["main"]);
+  assert.deepEqual(kinds("Your steel shipped to Ohio and the rail line went quiet."), []);
 });
 
 test("ticket copy cannot claim money, reversals or releases without a receipt", async () => {

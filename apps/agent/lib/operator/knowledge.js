@@ -48,7 +48,9 @@ function supported(n, evidence) {
 /** Figures in a draft that nothing read this activation supports. */
 function unsupportedNumbers(text, evidence) {
   const t = String(text || "");
-  return numbersIn(t).filter((n) => checkable(n, t) && !supported(n, evidence)).map((n) => n.raw);
+  // A percentage of a fraction that was read ("6.7%" for operatingMargin 0.067) is that figure
+  // (KBX4 2026-11-02: refused, so the reply was reworded around a number the player needed).
+  return numbersIn(t).filter((n) => checkable(n, t) && !supported(n, evidence) && !(n.percent && supported({ ...n, value: n.value / 100 }, evidence))).map((n) => n.raw);
 }
 
 /** A model-registered calculation over evidence numbers; returns the result. */

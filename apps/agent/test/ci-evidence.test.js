@@ -52,3 +52,9 @@ test("large step receipts remain valid below transport limit with explicit trunc
   assert.ok(r.runs[0].jobsTruncated || r.runs[0].jobs.some((j) => j.stepsTruncated));
   assert.equal(r.runs[0].observedWallMs, 60000);
 });
+
+test("a workflow-runs read that returns nothing is an empty listing, not a crash", async () => {
+  const h = fixture();
+  const r = await readCiEvidence({ repo: "lakesidegamedev/AHDGame", number: 7, api: async ([url]) => (url.includes("/runs?head_sha=") ? null : h.api([url])) });
+  assert.equal(r.runs.length, 0);
+});
