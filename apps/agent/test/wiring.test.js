@@ -190,8 +190,10 @@ test("an inherited ticket can read where its fix is; a player task cannot", asyn
   const t = f.ledger.createJob("ticket:1532", { kind: "ticket", role: "support", ticket: 1532, source: {}, deadline: 9e15 });
   t.state = "running";
   const out = await broker.tool(t, "github", { action: "where", sha: "813986ca3f" });
-  assert.equal(out.staging, true); assert.equal(out["turn-worker/sandbox"], true); assert.equal(out["turn-worker/production"], false);
-  assert.equal(t.releaseEvidence["813986ca3f"].sandboxWorker, true);
+  assert.equal(out.staging, true); assert.equal(out["turn-worker/production"], false);
+  // The sandbox has no auto-deployer, so where must not report or imply one.
+  assert.equal("turn-worker/sandbox" in out, false);
+  assert.match(out.meaning, /rebuilt by hand/);
   const p = f.ledger.createJob("player-q", { kind: "conversation", role: "player", source: {}, deadline: 9e15 });
   p.state = "running";
   await assert.rejects(broker.tool(p, "github", { action: "where", sha: "813986ca3f" }));

@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir no longer waits on the sandbox server or asks the owner who can update it. The sandbox has had no automatic deploy since the move off Railway (2026-10-22): it is rebuilt by hand from staging and can run days behind. `github where` stopped reporting the frozen `turn-worker/sandbox` branch, its meaning text no longer claims a staging deploy follows within minutes, and the brief says to skip the sandbox stage once main contains the fix and verify on the main server (ticket 1740 sat "waiting for the test server" for 90 minutes while the fix was already live).
+
 ## 7.1.2 (2026-11-01)
 
 - Support tasks can read the new game-data tools from Keir's own capability requests (lakeside-code #69): live cabinet, Supreme Court and Senate leadership nominations with vote tallies and deadlines (`nomination_records`), the reporter's shareholdings and company control (`character_holdings`, reporter-scoped like the other player reads), stored failure messages for failed turns (`turn_failure_detail`), and the public commodity market. Ready reads are seeded with the questions they answer.
