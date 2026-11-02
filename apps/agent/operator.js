@@ -591,11 +591,27 @@ async function scan() {
       ledger.save();
     }
     if (ledger.data.seen[`ticket:${n}`]) continue;
+    // A live task already working this channel may not be filed under the ticket number
+    // yet (intake keys it by message first). Adopting again ran two tasks on ticket 1757
+    // (2026-11-02, about 14.5M tokens between them); register the existing one instead.
+    const holder = require("./lib/operator/channellesstickets").liveTaskForChannel(ledger.data.jobs, ch.id);
+    if (holder) { ledger.data.seen[`ticket:${n}`] = holder.id; ledger.save(); continue; }
     const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId: ch.id, source: { content: `Open ticket channel #${ch.name} with no Keir task; adopted by the sweep. Read its history and pick it up.`, channelId: ch.id, at: new Date().toISOString() }, deadline: Date.now() + config.taskLifetimeMs });
     ledger.audit("ticket_adopted_by_sweep", { job: job.id, ticket: n }); ledger.save();
   }
   for (const job of Object.values(ledger.data.jobs)) {
     if (job.ticket && !liveChannels.has(job.channelId) && !["done", "cancelled"].includes(job.state)) {
+      // A ticket adopted from a handoff after its channel was already gone has no
+      // channel id, so the Discord check below can never return 404 and the task
+      // woke every fifteen minutes for 29 hours (ticket 1730, 2026-11-01: 128
+      // activations, 15M tokens, every read refused). Ask the support record instead.
+      if (!job.channelId) {
+        const readTicket = (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(8000));
+        if (!(await require("./lib/operator/channellesstickets").closeIfTicketClosed(job, readTicket))) continue;
+        ledger.audit("ticket_closed_without_channel", { job: job.id, ticket: job.ticket });
+        for (const slot of Object.values(active)) if (slot?.job.id === job.id) slot.controller.abort();
+        continue;
+      }
       // The guild list is read once at the start of the scan; a ticket channel
       // created since (ticket 1555, opened by Keir mid-scan) is missing from it
       // without being closed. Only Discord saying the channel is gone closes it.

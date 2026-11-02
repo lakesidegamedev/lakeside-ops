@@ -5,6 +5,13 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+Found by mining 30 hours of live refusals, audits and token use (2026-11-01/02), not by the benchmark:
+- A ticket task with no channel id (adopted from a handoff after its channel was already gone) is closed by the sweep when the support record says the ticket is closed. Ticket 1730's task woke every fifteen minutes for 29 hours after closure: 128 activations, about 15M tokens, 237 refused reads (40% of all refusals).
+- A not-now refusal ("Keir has posted 3 times since the player last wrote", "this task posted N min ago", an unchanged waiting notice) no longer marks an answer as owed. With both armed Keir could neither post nor finish: 70 refusals across tickets 1749 to 1755.
+- An invariant breach that the check returns flagged as a tool error is read as a result. A share_accounting breach was logged as a failed sensor 133 times in a day and never became a finding.
+- An action the owner approved that the task has not run yet keeps it on a short wake. Ticket 1749's approved repair was parked for twelve hours behind a quiet developer wait after the player was told it would run after the turn.
+- The sweep does not adopt a ticket whose channel a live task already holds (two tasks ran ticket 1757, about 14.5M tokens between them).
+
 ## 7.2.3 (2026-11-02)
 
 - A stop or stand-down that ends with more than one trailing phrase ("stand down on this ticket please", "stop working on this ticket, thanks", "stand down for now") now stops the ticket. The owner's "stand down on this ticket please" on ticket 1757 matched nothing, so the stop flag was never set and the next staff mention started a fresh job.
