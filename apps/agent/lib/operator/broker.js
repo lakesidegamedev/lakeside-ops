@@ -1870,7 +1870,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       throw new Error("action must be issues, issue, note or resolve");
     }
     if (name === "github") {
-      const readOnly = ["status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue"].includes(input.action);
+      const readOnly = ["review", "status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue"].includes(input.action);
       // A ticket can span the game and the desktop client (1514 does); an
       // explicit repository wins over the task's default.
       if (input.repository && !["AHDGame", "AHDClient"].includes(input.repository)) throw new Error("repository must be AHDGame or AHDClient");
@@ -2146,6 +2146,25 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
             }
           }
         }
+      }
+      if (input.action === "review") {
+        // A developer asks Keir to read their PR. Advisory only: the reply is
+        // feedback in chat, never a GitHub approval, a merge or a sign-off.
+        const number = Number(input.number);
+        if (!number) throw new Error("review needs the PR number");
+        const pr = await api([`repos/${repo}/pulls/${number}`]);
+        const files = await prFiles(number, true);
+        let budget = 60000;
+        const changed = (files || []).map((f) => {
+          const patch = String(f.patch || "");
+          const keep = Math.max(0, Math.min(patch.length, 8000, budget));
+          budget -= keep;
+          return { file: f.filename, status: f.status, additions: f.additions, deletions: f.deletions, ...(f.previous_filename ? { renamedFrom: f.previous_filename } : {}),
+            patch: patch.slice(0, keep), ...(keep < patch.length ? { truncated: true } : {}), ...(!patch && f.status !== "removed" ? { note: "binary or too large for an inline diff; read it with code_read on the head branch" } : {}) };
+        });
+        return { number, title: pr.title, author: pr.user?.login, state: pr.merged_at ? "merged" : pr.state, draft: Boolean(pr.draft), base: pr.base?.ref, head: pr.head?.ref, headSha: pr.head?.sha,
+          body: String(pr.body || "").slice(0, 5000), filesComplete: Array.isArray(files), changed,
+          instruction: "Review the diff for bugs, regressions, missing tests and anything that touches money, economy, elections or turn processing. Give specific, file-referenced feedback in chat. This review is advice: it never approves, merges, promotes or signs off the PR; shipping still needs the owner or the delegate." };
       }
       if (input.action === "history") {
         // Who shipped what (2026-10-13: Keir told the owner to run git blame).

@@ -46,6 +46,8 @@ const config = {
   ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
   // Who a decision is credited to in player copy (owner, 2026-11-01).
   developerNames: Object.fromEntries((env.KEIR_DEVELOPER_NAMES || "333052320252297216:Egg,565289871799746593:Ariane").split(",").map((x) => x.split(":")).filter((x) => x[0] && x[1])),
+  // Holders of this role become junior developers (lib/operator/juniors.js).
+  juniorRoleId: env.KEIR_JUNIOR_ROLE_ID ?? "1566829201523347497",
   guildId: env.KEIR_GUILD_ID || "1465445442987888743", staffIds: (env.KEIR_SUPPORT_DELEGATES || "565289871799746593").split(",").filter(Boolean),
   scanChannels: (env.KEIR_SCAN_CHANNELS || "1470636730884427857,1483974659929145625,1495932687058206822,1488255716753019171,1488255794628788244,1523477015217443028,1474210643841122499,1490571412040188117").split(",").filter(Boolean),
   taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000, liveGraceMs: positive("KEIR_LIVE_GRACE_MINUTES", 120) * 60000,
@@ -135,6 +137,10 @@ try { log(`v3 work records: ${JSON.stringify({ ...integrityReport(ledger.data), 
 catch (e) { log(`v3 work records unavailable: ${e.message}`); }
 const observe = createObserver({ token: env.KEIR_INBOX_ADMIN_TOKEN, log });
 const discord = createDiscord({ token: env.DISCORD_BOT_TOKEN, onMessages: observe });
+const juniors = require("./lib/operator/juniors").createJuniorRoster({ config, discord, log });
+const refreshJuniors = () => juniors.refresh().catch((e) => log(`junior roster: ${redactSecrets(e.message)}`));
+refreshJuniors();
+setInterval(refreshJuniors, 5 * 60000).unref();
 const mcp = createMcp(env.KEIR_MCP_CONFIG || "/root/.claude.json", readAgentToken(env.KEIR_AGENT_ENV_FILE || "/etc/keir-agent.env"));
 const reopenedTickets = createReopenedTickets({ ledger, config, supportOwner, readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false), readChannel: async (id) => { try { return await discord("GET", `/channels/${id}`); } catch (e) { if (e.status === 404) return null; throw e; } } });
 const sandbox = createSandbox(path.join(config.stateDir, "workspaces"));

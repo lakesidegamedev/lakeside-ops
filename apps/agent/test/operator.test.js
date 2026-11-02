@@ -2672,3 +2672,18 @@ test("a refused answer blocks finishing done or waiting until an answer is poste
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Coal is the short input: your coal contract ended, so supply is at 80%. Renewing it restores full output." } });
   assert.equal(j.replyRefusedPending, undefined);
 });
+
+test("a junior developer can have Keir review a PR but cannot merge it", async () => {
+  const f = githubFixture([
+    [/pulls\/42\/files/, [{ filename: "src/a.ts", status: "modified", additions: 2, deletions: 1, patch: "@@ -1 +1,2 @@\n-a\n+b\n+c" }, { filename: "img.png", status: "added", additions: 0, deletions: 0 }]],
+    [/pulls\/42$/, { title: "fix: thing", user: { login: "junior" }, state: "open", draft: false, base: { ref: "development" }, head: { ref: "fix/thing", sha: "abc" }, body: "why" }]]);
+  const junior = "555555555555555551";
+  f.config.staffIds.push(junior);
+  const j = running(f, { role: "support", kind: "command", actorId: junior, source: { authorId: junior } });
+  const r = await f.broker.tool(j, "github", { action: "review", number: 42 });
+  assert.equal(r.title, "fix: thing"); assert.equal(r.changed.length, 2); assert.match(r.changed[0].patch, /\+c/);
+  assert.match(r.changed[1].note, /binary/); assert.match(r.instruction, /never approves/);
+  await assert.rejects(f.broker.tool(j, "github", { action: "merge", number: 42 }), /merge only PRs Keir opened|owner/);
+  const p = f.ledger.createJob("player-chat", { role: "player", kind: "conversation", actorId: "888888888888888888", source: { authorId: "888888888888888888" }, deadline: 9999999999999 }); p.state = "running";
+  await assert.rejects(f.broker.tool(p, "github", { action: "review", number: 42 }), /PR tools need|players can/);
+});
