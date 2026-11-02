@@ -2260,6 +2260,16 @@ test("stop withdraws queued replies, approvals and descendants, preserving recei
   assert.equal(parent.state, "cancelled", "restart never resurrects cancelled attempts");
 });
 
+test("stop with more than one trailing phrase still stops the ticket (ticket 1757)", () => {
+  for (const template of ["<@BOT> stand down on this ticket please", "Keir please stop working on this ticket, thanks", "Keir stand down for now"]) {
+    const f = fixture(), text = template.replace("BOT", f.config.botId), ch = { ...f.ch, name: "ticket-bug-fixture-1757" }, g = createGateway(f);
+    const parent = running(f, { kind: "ticket", role: "support", ticket: 1757, channelId: ch.id });
+    g.ingest(ch, f.msg(text, undefined, f.config.ownerId));
+    assert.equal(parent.state, "cancelled", text);
+    assert.ok(f.ledger.data.channels[ch.id].keirStopped, text);
+  }
+});
+
 test("player, quoted and historical stop text cannot cancel a staff task", () => {
   const cases = [
     { text: "Keith stop", actor: "888888888888888888" },

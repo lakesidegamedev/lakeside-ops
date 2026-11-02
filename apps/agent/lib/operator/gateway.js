@@ -112,7 +112,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       delete d.classify?.[message.id]; ledger.save(); return;
     }
     if (!historical && !summonTask && nTicket && role !== "player" && controlAddress &&
-        /^(?:please\s+)?(?:stop|stand down|leave (?:this|the) ticket alone)(?:\s+(?:please|now|here|working|work|this ticket|on this ticket|on this|this|it))?[.!]*$/i.test(controlText)) {
+        /^(?:please\s+)?(?:stop|stand down|leave (?:this|the) ticket alone)(?:[\s,]+(?:please|now|for now|here|working|work|this ticket|on this ticket|on this one|on this|this one|this|it|thanks|thank you))*[.!]*$/i.test(controlText)) {
       const key = `discord:${message.id}`;
       if (d.seen[key]) return;
       stopTicket(channel, nTicket, actor, message.id);
