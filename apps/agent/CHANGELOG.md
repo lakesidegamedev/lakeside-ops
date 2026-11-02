@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.2.2 (2026-11-02)
+
 - `github review_comment` posts a review the owner or a developer asked for on the PR itself, as a plain comment headed with the reviewed commit (never an approval, requested change or merge). Keir had answered "GitHub is read-only from here" and asked the owner to paste its review of AHDGame #5337. The text is checked for internal hosts, paths, addresses and credentials before redaction, so a leaking review is rewritten rather than posted with holes.
 
 ## 7.2.1 (2026-11-02)

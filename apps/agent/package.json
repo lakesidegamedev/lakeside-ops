@@ -1,6 +1,6 @@
 {
   "name": "lakeside-operator",
-  "version": "7.2.1",
+  "version": "7.2.2",
   "private": true,
   "description": "Keir: the A House Divided Discord operator, support desk and /summon edge",
   "main": "operator.js",
