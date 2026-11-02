@@ -2687,3 +2687,25 @@ test("a junior developer can have Keir review a PR but cannot merge it", async (
   const p = f.ledger.createJob("player-chat", { role: "player", kind: "conversation", actorId: "888888888888888888", source: { authorId: "888888888888888888" }, deadline: 9999999999999 }); p.state = "running";
   await assert.rejects(f.broker.tool(p, "github", { action: "review", number: 42 }), /PR tools need|players can/);
 });
+
+test("a requested PR review is posted on the PR as a plain comment, never from a player task or with internal hosts", async () => {
+  const OWNER = "111111111111111111";
+  const f = githubFixture([
+    [/pulls\/5337$/, { number: 5337, state: "open", head: { sha: "14da19ece7aa" }, html_url: "https://github.com/lakesidegamedev/AHDGame/pull/5337" }],
+    [/issues\/5337\/comments$/, { html_url: "https://github.com/lakesidegamedev/AHDGame/pull/5337#issuecomment-1" }],
+  ]);
+  const owner = running(f, { role: "owner", kind: "command", actorId: OWNER, source: { authorId: OWNER } });
+  const review = "1. The ceiling anchors on last turn's clearing, which includes this plant's own sales.";
+  const r = await f.broker.tool(owner, "github", { action: "review_comment", number: 5337, comment: review });
+  assert.equal(r.posted, true);
+  const post = f.calls.find((c) => c.includes("POST") && c.some((a) => /issues\/5337\/comments$/.test(a)));
+  assert.ok(post, "posted to the PR conversation");
+  const body = post.find((a) => a.startsWith("body="));
+  assert.match(body, /Review from Keir at 14da19ece7/);
+  assert.match(body, /not an approval/);
+  assert.ok(!f.calls.some((c) => c.some((a) => /\/reviews|\/merge/.test(a))), "never an approval or merge");
+  await assert.rejects(f.broker.tool(owner, "github", { action: "review_comment", number: 5337, comment: "Checked against localhost:9765 and it looks fine to me." }), /public/);
+  const g = githubFixture([[/pulls\/5337$/, { number: 5337, state: "open", head: { sha: "14da19ece7aa" } }]]);
+  const player = running(g, { role: "player", kind: "ticket", ticket: 9 });
+  await assert.rejects(g.broker.tool(player, "github", { action: "review_comment", number: 5337, comment: review }), /owner or a developer|PR tools|not allowed|player/i);
+});
