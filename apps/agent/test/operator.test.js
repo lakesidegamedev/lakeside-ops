@@ -2719,3 +2719,21 @@ test("a requested PR review is posted on the PR as a plain comment, never from a
   const player = running(g, { role: "player", kind: "ticket", ticket: 9 });
   await assert.rejects(g.broker.tool(player, "github", { action: "review_comment", number: 5337, comment: review }), /owner or a developer|PR tools|not allowed|player/i);
 });
+
+test("a not-now refusal (enough posts already) does not leave Keir unable to post or finish", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  // Three Keir posts since the player last wrote, the last one just now.
+  (f.ledger.data.monologue ||= {})[123] = { humanAt: 0, count: 3, at: 5000 };
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "One more thing about your coal contract." } }), /Keir has posted 3 times/);
+  assert.equal(j.replyRefusedPending, undefined, "the player is owed nothing new");
+  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting for the player." });
+  assert.equal(j.state, "waiting");
+});
+
+test("an approved action the task has not run keeps it on a short wake, not a quiet developer wait (ticket 1749)", async () => {
+  const f = fixture(), j = running(f, { kind: "command", role: "owner" });
+  j.raisedToDevelopers = [{ id: 254949, title: "Bank withdraw cap", kind: "bug", blocking: false, at: 1000 }];
+  f.ledger.data.actions = { a1: { id: "a1", jobId: j.id, kind: "heal", state: "approved" } };
+  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Heal approved; a turn is running." });
+  assert.ok(j.wakeAt - 5000 <= 15 * 60000, `woke in ${(j.wakeAt - 5000) / 60000} min`);
+});

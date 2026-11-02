@@ -21,7 +21,7 @@ function harness({ anomalies = [], pulse = {}, defects = [], detect = {}, sentry
     if (tool === "economy_pulse") return pulse;
     if (tool === "heal_list") return { defects };
     if (tool === "heal_detect") return detect[args.defectId] || { count: 0 };
-    if (tool === "invariant_check") { if (!invariants) throw new Error("unknown tool invariant_check"); return invariants.shift() || { rules: [] }; }
+    if (tool === "invariant_check") { if (!invariants) throw new Error("unknown tool invariant_check"); const v = invariants.shift() || { rules: [] }; if (v instanceof Error) throw v; return v; }
     throw new Error(`unexpected ${tool}`);
   } };
   const w = createWatch({ ledger: l, mcp, now: () => clock, sentry: async () => sentry, viewPage: async (url) => pages[new URL(url).pathname] || { title: "A House Divided", text: "Elections and parties" }, propose: async (p) => { proposals.push(p); return { ...p, messageId: "proposal1" }; } });
@@ -283,4 +283,15 @@ test("a failed turn is one event and old persisted failure state clears after cl
   await h.w.tick({ turn: 386 });
   assert.equal(f.state, "resolved");
   assert.equal(h.proposals.length, 1);
+});
+
+test("a breach the check reports as a tool error is still a finding, not a failed sensor (2026-11-02)", async () => {
+  const result = { ok: false, rules: [{ id: "share_accounting", source: "src/lib/corporations/shareInvariant.ts", checked: 1072, breaches: 1, ok: false, sample: [{ corporationId: "c1" }] }] };
+  const h = harness({ invariants: [new Error(JSON.stringify(result))] });
+  await h.w.tick({ turnProcessed: true });
+  assert.ok(h.l.data.watch.findings["invariant:share_accounting"], "the breach became a finding");
+  assert.ok(!h.l.data.audit.some((a) => a.kind === "watch_sensor_failed" && a.sensor === "invariants"));
+  const broken = harness({ invariants: [new Error("The operation was aborted due to timeout")] });
+  await broken.w.tick({ turnProcessed: true });
+  assert.ok(broken.l.data.audit.some((a) => a.kind === "watch_sensor_failed" && a.sensor === "invariants"), "a real failure is still a failure");
 });

@@ -3,6 +3,11 @@ const { GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, reposi
 // Minutes between checks for a task waiting with nothing subscribed and no
 // reply owed: the first is a normal look, then it settles into a slow recheck.
 const QUIET_WAITS = [15, 30, 60, 120];
+// Refusals that mean "not now" (the player already has enough posts or this exact
+// news), not "that answer was wrong". They owe the player nothing new, so they must
+// not arm replyRefusedPending: with both armed, Keir could neither post nor finish
+// (2026-11-02: 70 refusals across tickets 1749 to 1755).
+const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -1155,7 +1160,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, ...(name === "read_tool" && input?.server && input?.tool ? { target: `${input.server}/${input.tool}` } : {}), error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
       // Keir 6.1: a refused answer to the player is owed until one is posted
       // (KBX3: Sonnet's reply was refused for length, then it finished done).
-      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
@@ -3142,7 +3147,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // to rerun the model every fifteen minutes when nothing can change.
       const pendingQuestion = appQuestions?.list(job.appThread || "main").some((q) => q.jobId === job.id && q.state === "pending");
       const pendingDecision = Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.jobId === job.id);
-      const subscription = job.turnWatch || Object.keys(job.ciWatch || {}).length || job.promotionHoldUntil > now() || pendingDecision || pendingQuestion || Object.values(d.actions || {}).some((a) => a.jobId === job.id && a.state === "pending");
+      // An action the owner approved but this task has not run yet is something to do, not
+      // a reason to sleep: ticket 1749's approved bank repair (2026-11-02 22:05Z) was parked
+      // for twelve hours behind a quiet developer wait after the player was told "after this turn".
+      const subscription = job.turnWatch || Object.keys(job.ciWatch || {}).length || job.promotionHoldUntil > now() || pendingDecision || pendingQuestion || Object.values(d.actions || {}).some((a) => a.jobId === job.id && ["pending", "approved", "executing"].includes(a.state));
       // Keir 5.6: a developer_reply wait needs someone else to reply. Keir's
       // own cards have no other owner, so waiting on them stalls forever.
       const openCards = (job.raisedToDevelopers || []).filter((r) => r.blocking && !r.releasedAt);

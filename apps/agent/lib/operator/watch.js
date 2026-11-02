@@ -15,6 +15,12 @@ const { createHash } = require("node:crypto");
 // and new finding tasks are capped per hour and per day.
 
 const HOUR = 3600000;
+function invariantResultFromError(e) {
+  const text = String(e?.message || "");
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  try { const r = JSON.parse(text.slice(start)); return Array.isArray(r?.rules) ? r : null; } catch { return null; }
+}
 const CADENCE = { turns: 5 * 60000, economy: 0, invariants: 0, heal: 3 * HOUR, sentry: 0.5 * HOUR, pages: 2 * HOUR };
 const LIMITS = { perHour: 3, perDay: 8 };
 const RESOLVE_AFTER = 6 * HOUR;
@@ -293,7 +299,14 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
       const w = state();
       let r;
       try { r = await mcp.call("gamestate", "invariant_check", {}, false); }
-      catch (e) { if (/unknown tool|not found|-32601/i.test(e.message)) { w.invariantsUnavailable = now(); return false; } throw e; }
+      catch (e) {
+        if (/unknown tool|not found|-32601/i.test(e.message)) { w.invariantsUnavailable = now(); return false; }
+        // A breach comes back flagged as a tool error carrying the full result. Read it as
+        // the result: for a day (2026-11-01/02) a share_accounting breach was logged as
+        // "sensor failed" 133 times and never became a finding.
+        r = invariantResultFromError(e);
+        if (!r) throw e;
+      }
       delete w.invariantsUnavailable;
       const measures = (w.measures ||= {});
       for (const rule of r?.rules || []) {
@@ -476,4 +489,4 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
   return { tick, observe, promote, settle, credit, linkFinding, score, headline, health, healthAlerts, rootOf, group, groupJobs, findingByJob, sensors, LIMITS, PAGES };
 }
 
-module.exports = { createWatch, finiteIssues, sentryWatchQuery, causeKey, PAGE_ERROR, CADENCE, LIMITS, STALE, RECUR_AFTER, CLEAN_TURNS };
+module.exports = { invariantResultFromError, createWatch, finiteIssues, sentryWatchQuery, causeKey, PAGE_ERROR, CADENCE, LIMITS, STALE, RECUR_AFTER, CLEAN_TURNS };
