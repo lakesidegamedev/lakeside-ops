@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.2.0 (2026-11-02)
+
 - A wait on the developers with only a filed bug report (no handoff anyone owes an answer on) is a quiet wait whose interval grows, not a six-hour poll. Ticket 1749 woke every six hours on an unassigned issue.
 - The unchanged-waiting check catches "still with the developers", "no fix has been built yet", "nothing has changed" and "no answer yet", so the player is not told the same news again when nothing moved and nobody wrote.
 - A ticket post whose lead-in ("Update:") is stripped starts with a capital letter.
