@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A stop or stand-down that ends with more than one trailing phrase ("stand down on this ticket please", "stop working on this ticket, thanks", "stand down for now") now stops the ticket. The owner's "stand down on this ticket please" on ticket 1757 matched nothing, so the stop flag was never set and the next staff mention started a fresh job.
+
 ## 7.2.2 (2026-11-02)
 
 - `github review_comment` posts a review the owner or a developer asked for on the PR itself, as a plain comment headed with the reviewed commit (never an approval, requested change or merge). Keir had answered "GitHub is read-only from here" and asked the owner to paste its review of AHDGame #5337. The text is checked for internal hosts, paths, addresses and credentials before redaction, so a leaking review is rewritten rather than posted with holes.
