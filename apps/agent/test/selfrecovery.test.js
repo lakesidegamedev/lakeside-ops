@@ -142,6 +142,18 @@ test("a ticket admission cannot run never triggers preemption, and preemption is
   assert.equal(w.ledger.data.recoveries.filter((x) => x.action === "preempted").length, 2);
 });
 
+test("blocked work on an open developer handoff becomes a developer wait, not a dismissal", () => {
+  const t0 = 1_000_000_000;
+  const held = { id: "h1", state: "blocked", kind: "command", ticket: 1760, at: t0, updatedAt: t0, raisedToDevelopers: [{ id: 255014, blocking: true }] };
+  const released = { id: "h2", state: "blocked", kind: "command", ticket: 1761, at: t0, updatedAt: t0, raisedToDevelopers: [{ id: 255015, blocking: true, releasedAt: t0 }] };
+  const w = world([held, released], t0);
+  w.advance(6.5 * 3600000); w.r.tick([]);
+  assert.equal(held.state, "waiting");
+  assert.equal(held.waitingFor.kind, "developer_reply");
+  assert.ok(held.wakeAt > w.now());
+  assert.equal(released.state, "dismissed");
+});
+
 test("blocked work nobody can act on closes after six hours, but never with an unverified effect", () => {
   const t0 = 1_000_000_000;
   const dead = { id: "d1", state: "blocked", role: "support", ticket: 1584, at: t0, updatedAt: t0, summary: "activation aborted" };
