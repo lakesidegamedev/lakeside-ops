@@ -25,9 +25,11 @@ const LEAKS = [
 // strict: player-facing (ticket channels, player conversations). Non-strict
 // keeps only the leaks that are wrong in every channel (internal URLs and
 // tools stay allowed for developers).
-function playerLeak(text, { strict = true } = {}) {
+function playerLeak(text, { strict = true, publicReports = [] } = {}) {
   if (!strict) return null; // developers may talk shop; text.js still redacts secrets and hosts
-  const t = String(text || "");
+  // A report Keir published as public is meant for players (the owner's tax audit for
+  // ticket 1757, 2026-11-03, was refused as an "internal URL"). Only those exact links pass.
+  const t = String(text || "").replace(/https?:\/\/ops\.lakesidegames\.net\/reports\/([a-z0-9-]+)\b\/?/gi, (m, slug) => (publicReports.includes(slug.toLowerCase()) ? "" : m));
   for (const l of LEAKS) {
     const m = l.re.exec(t);
     if (m) return { kind: l.kind, match: m[0].trim().slice(0, 80) };

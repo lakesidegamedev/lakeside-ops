@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A link to a report Keir published as public may go in a player's ticket; every other ops address is still refused. The owner's tax audit link for ticket 1757 was refused as an "internal URL".
+
 ## 7.2.7 (2026-11-03)
 
 - A ticket task that just told the player it is still checking something cannot finish with a long wait for their reply; it does the check or comes back within 30 minutes. Ticket 1759 promised a check at 00:47 and slept six hours.
