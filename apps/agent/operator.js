@@ -43,7 +43,7 @@ const config = {
   stateDir: env.KEIR_OPERATOR_STATE_DIR || "/var/lib/keir-operator",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   // @keir-bot on an AHDGame PR asks for a review; posted as keir-bot when its token is set.
-  prMentionEnabled: env.KEIR_PR_MENTION !== "0", githubReviewerToken: env.KEIR_GITHUB_TOKEN || "",
+  prMentionEnabled: env.KEIR_PR_MENTION !== "0", githubReviewerToken: env.KEIR_GITHUB_TOKEN || "", keirGitEmail: env.KEIR_GIT_EMAIL || "keir@localhost",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
   ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
   // Who a decision is credited to in player copy (owner, 2026-11-01).
