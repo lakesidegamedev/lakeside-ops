@@ -158,7 +158,7 @@ test("a status card edit is not the decision notice: the player's question still
   f.tick(2 * 3600000);
   f.job.observedPlayerAt = Date.now() - 60000;
   // The card is edited in place after the player's message; it must not count as the notice.
-  (f.ledger.data.ticketPosts[1522] ||= []).push({ at: Date.now(), jobId: f.job.id, text: "[status card] Refund decision: with the developers" });
+  (f.ledger.data.ticketPosts[1522] ||= []).push({ at: Date.now(), jobId: f.job.id, kind: "status_card", text: "Refund decision: with the developers" });
   assert.equal((await say(f, "The refund is still with the developers; they have not decided yet. I will tell you here when they do.")).published, true);
 });
 
@@ -201,7 +201,7 @@ test("ticket posts are short, in paragraphs, one per ten minutes, and correction
 test("a progress card does not hold back the answer it announces, and a mechanics question gets no fix card", async () => {
   const f = fixture();
   // A card recorded a minute ago, then the long answer: it goes out.
-  (f.ledger.data.ticketPosts ||= {})[1522] = [{ at: Date.now(), jobId: f.job.id, text: "[status card] Checked the records; posting the explanation." }];
+  (f.ledger.data.ticketPosts ||= {})[1522] = [{ at: Date.now(), jobId: f.job.id, kind: "status_card", text: "Checked the records; posting the explanation." }];
   f.tick(60000);
   assert.equal((await say(f, "Your company fell because its main plant lost its supplier. The plant ran at half speed for three turns. Revenue dropped while wages stayed the same.")).published, true);
   // Mechanics questions: no fix-progress card unless Jev read a bug report.
