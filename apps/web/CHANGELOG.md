@@ -1,5 +1,11 @@
 # Ops web changelog
 
+## 4.5.0 (2026-11-03)
+
+- **Work board cards, redesigned.** Each card leads with an icon badge for its area and one for its class (project, issue, idea), then the title in bold, then one progress bar: projects show steps done out of total, every other card shows its stage (filed, next, doing, done). Owner and age sit on one quiet line; the progress note moved to the tooltip and the card dialog.
+- Column and area headers carry icons; the inbox and backlog lists open with a count per area.
+- "Shipped this week" counts finished work only; housekeeping closes (expired, decluttered) are left out.
+
 ## 4.4.0 (2026-11-03)
 
 - **Grouping.** Cards carry an `area` (a fixed list per product, e.g. economy, politics, turns, apps for A House Divided), a `class` (project, issue or idea) and an optional `parent_id` that puts a card inside a project. `kanban_add`, `kanban_update` and `kanban_list` accept all three; `kanban_get` lists a project's child cards.
