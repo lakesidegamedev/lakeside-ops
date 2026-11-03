@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.2.5 (2026-11-03)
+
 - `publish_report` publishes a finished HTML report to the Lakeside ops report library and returns its URL. Owner or developer tasks only; `public: true` only on the owner's own request; refused if it contains an internal host, path, account id, email or credential. The owner asked Keir for a public tax audit report and Keir had no way to publish one.
 - Staff can hand a ticket held by another operator back to Keir in its channel ("Keir, take this ticket back"). Before, only the host CLI could, and ticket 1757 sat for hours behind a session that had stopped.
 - A staff or developer request that lands on a held ticket gets a direct message naming who holds it and how to hand it back, instead of silence (three junior-developer requests on ticket 1757 went unanswered).
