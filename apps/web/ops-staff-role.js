@@ -22,7 +22,7 @@ const JUNIOR_NAV = [{ label: "Development", items: [
 
 const JUNIOR_READ_PATHS = new Set([
   "/", "/apps", "/kanban", "/api/kanban", "/api/kanban/brief",
-  "/project-guide", "/api/project-guide", "/reports", "/economy", "/commodity-report",
+  "/project-guide", "/api/project-guide", "/reports", "/economy", "/economy.csv", "/commodity-report",
   "/reports/extraction-capacity", "/api/extraction-audit", "/engine",
   "/api/me", "/api/health", "/api/auth/check", "/api/auth/admin-check",
   "/auth/game", "/auth/handoff", "/auth/callback",
