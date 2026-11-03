@@ -504,6 +504,28 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       throw e;
     }
   }
+  // Keir 8: posts a public comment at most once per marker. GitHub is the receipt: the issue's
+  // own comments are read first (a failed read posts nothing), and a comment already carrying the
+  // marker settles a receipt that was left "started" by a crash or timeout instead of repeating it.
+  async function commentOnce(job, key, read, issueRoute, marker, post) {
+    let found = false;
+    for (let page = 1; page <= 5 && !found; page++) {
+      const rows = await read([`${issueRoute}/comments?per_page=100&page=${page}`]);
+      if (!Array.isArray(rows)) throw new Error("could not read the issue's comments; nothing was posted rather than risk a repeat");
+      found = rows.some((c) => String(c?.body || "").includes(marker));
+      if (!found && rows.length < 100) break;
+      if (!found && page === 5) throw new Error("the issue has too many comments to check for an earlier closing note; nothing was posted");
+    }
+    if (found) {
+      const old = job.effects[key];
+      if (old && old.state !== "done") {
+        job.effects[key] = { ...old, state: "done", at: now(), result: { reconciled: true } };
+        ledger.audit("effect_reconciled", { job: job.id, key, outcome: "commented" }); ledger.save();
+      }
+      return { skipped: "already commented" };
+    }
+    return effect(job, key, () => post(marker));
+  }
   function publicText(value) {
     if (typeof value !== "string" || !value.trim() || value.length > 5000) throw new Error("invalid player text");
     const clean = redactSecrets(value).replace(/[\u2013\u2014]/g, ",");
@@ -2426,10 +2448,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if ((issue.labels || []).some((l) => /status: partial/i.test(l.name || l))) continue;
           // A reopened issue must not reuse a receipt from its prior closure.
           const generation = issue.updated_at || issue.created_at || "initial";
-          await effect(job, `close-issue:${number}:${prNumber}:${generation}`, async () => {
-            await apiKeir(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}`]);
-            return apiKeir(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]);
-          });
+          // Keir 8: the comment and the close are two receipts. The comment is keyed on the issue
+          // and the PR only (it used to include updated_at, which the comment itself changes, so a
+          // failed close made the retry post a second comment) and carries a hidden marker that is
+          // looked for before posting. Only the close keeps the reopen generation.
+          await commentOnce(job, `close-issue-comment:${number}:${prNumber}`, api, `repos/${repo}/issues/${number}`, `<!-- keir:closed:${number}:${prNumber} -->`,
+            (marker) => apiKeir(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}\n\n${marker}`]));
+          await effect(job, `close-issue:${number}:${prNumber}:${generation}`, () => apiKeir(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]));
           if (d.keirIssues?.[number]) { d.keirIssues[number].state = "closed"; d.keirIssues[number].closedAt = now(); d.keirIssues[number].fixedBy = prNumber; }
           ledger.audit("issue_closed_fixed", { job: job.id, issue: number, pr: prNumber, turn });
           closed.push(number);
@@ -3484,10 +3509,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const gh = (args) => exec("/usr/bin/gh", ["api", ...args], isKeirWrite(args) ? asKeir({ timeout: 60000 }) : { timeout: 60000 }).then((o) => JSON.parse(o || "null"));
         const issue = await gh([`repos/${GITHUB_OWNER}/AHDGame/issues/${number}`]).catch(() => null);
         if (issue && issue.state === "open" && !issue.pull_request) {
-          await effect(job, `close-duplicate:${number}:${canonical}`, async () => {
-            await gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=Same root cause as #${canonical}, which tracks the fix. Closing this one as a duplicate.`]);
-            return gh(["-X", "PATCH", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}`, "-f", "state=closed", "-f", "state_reason=not_planned"]);
-          });
+          await commentOnce(job, `close-duplicate-comment:${number}:${canonical}`, gh, `repos/${GITHUB_OWNER}/AHDGame/issues/${number}`, `<!-- keir:duplicate:${number}:${canonical} -->`,
+            (marker) => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=Same root cause as #${canonical}, which tracks the fix. Closing this one as a duplicate.\n\n${marker}`]));
+          await effect(job, `close-duplicate:${number}:${canonical}`, () => gh(["-X", "PATCH", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}`, "-f", "state=closed", "-f", "state_reason=not_planned"]));
         }
         if (!issue || issue.state !== "open" || job.effects?.[`close-duplicate:${number}:${canonical}`]?.state === "done") {
           d.keirIssues[number].state = "closed"; d.keirIssues[number].closedAt = now(); d.keirIssues[number].duplicateOf = canonical;
