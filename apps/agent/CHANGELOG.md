@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket held by staff claim or an owner directive past its deadline now tells the owner once by DM; Keir still does nothing on it and keeps it held.
+
 ## 8.0.0 (2026-11-03)
 
 Keir 8: recovery, reliability and a learning loop.
