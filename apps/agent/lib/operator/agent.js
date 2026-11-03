@@ -231,7 +231,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     const lane = isQuick(job) ? "quick" : "worker";
     const list = String((lane === "quick" ? config.quickProvider : config.workerProvider) || "claude").split(",").map((x) => x.trim()).filter((x) => DEFAULT_MODEL[x.split(/[:@]/)[0]]);
     // A pinned route that left the configured list (a retired provider after a route switch) is re-chosen, otherwise an old job keeps failing on it forever.
-    const stale = job.provider && !job.provider.ownerSelected && !job.provider.vision && !list.some((x) => x.split("@")[0].split(":")[0] === job.provider.runner);
+    const stale = job.provider && (lane === "quick" ? config.quickProvider : config.workerProvider) && !job.provider.ownerSelected && !job.provider.vision && !job.provider.assignedBy && !list.some((x) => x.split("@")[0].split(":")[0] === job.provider.runner);
     if (job.provider?.lane !== lane || stale) {
       const rr = (ledger.data.providerTurn ||= {}), i = (rr[lane] || 0) % Math.max(1, list.length);
       rr[lane] = i + 1;
