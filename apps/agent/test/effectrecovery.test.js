@@ -98,3 +98,109 @@ test("a refused dry run never counts as paid", async () => {
   await refused.r.tick();
   assert.equal(refused.data.jobs.j.effects["action:a1"].state, "started");
 });
+
+// Keir 8: uncertain public writes are settled from the source of truth.
+const W = 10 * SETTLE_MS;
+function writeWorld(effect, { ticket = null, search = null, list = null, state = "blocked" } = {}) {
+  const key = "k1", audits = [], calls = [];
+  const job = { id: "j", state, effects: { [key]: { state: "started", at: W - SETTLE_MS - 1, error: "The operation was aborted due to timeout", ...effect } } };
+  const ledger = { data: { jobs: { j: job } }, audit: (k, v) => audits.push([k, v]), save() {} };
+  const mcp = { call: async (s, tool, args, write) => { calls.push([tool, write]);
+    if (tool === "support_get") { if (ticket instanceof Error) throw ticket; return typeof ticket === "function" ? ticket(args) : ticket; }
+    if (tool === "support_search") { if (search instanceof Error) throw search; return search; }
+    throw new Error("unexpected " + tool); } };
+  const api = async () => { if (list instanceof Error) throw list; return list; };
+  return { job, key, audits, calls, r: createEffectRecovery({ ledger, api, mcp, now: () => W }) };
+}
+const reply = { settle: { kind: "reply", ticket: 77, text: "The page works again." } };
+const posted = { kind: "progress", message: "The page works again.", delivery: { status: "posted", messageId: "9" } };
+
+test("a reply that is on the ticket with a posted delivery settles as done and the task resumes", async () => {
+  const w = writeWorld(reply, { ticket: { publicUpdates: [posted] } });
+  await w.r.tick();
+  assert.equal(w.job.effects[w.key].state, "done");
+  assert.equal(w.job.effects[w.key].result.delivery.status, "posted");
+  assert.equal(w.job.state, "queued");
+  assert.deepEqual(w.calls, [["support_get", false]], "a read, never a write");
+  assert.deepEqual(w.audits.map(([k, v]) => [k, v.outcome]), [["effect_reconciled", "posted"]]);
+});
+
+test("a reply provably absent from a readable ticket is safe to retry; other updates do not count", async () => {
+  const w = writeWorld(reply, { ticket: { publicUpdates: [{ kind: "progress", message: "Something else entirely.", delivery: { status: "posted" } }] } });
+  await w.r.tick();
+  assert.equal(w.job.effects[w.key].state, "rejected"); assert.equal(w.job.effects[w.key].retryable, true);
+  assert.equal(w.audits[0][1].outcome, "not-posted");
+});
+
+test("a reply is never settled on a guess: similar text, unposted delivery, unreadable ticket, young receipt, running task", async () => {
+  const held = async (effect, opts, reason, run) => {
+    const w = writeWorld(effect, opts); if (run) w.r = createEffectRecovery({ ledger: { data: { jobs: { j: w.job } }, audit: (k, v) => w.audits.push([k, v]), save() {} }, api: async () => [], mcp: { call: async () => ({}) }, now: () => W, running: () => true });
+    await w.r.tick();
+    assert.equal(w.job.effects[w.key].state, "started", reason);
+    return w;
+  };
+  const a = await held(reply, { ticket: { publicUpdates: [{ kind: "progress", message: "The page works again, please refresh.", delivery: { status: "posted" } }] } }, "similar");
+  assert.match(a.audits[0][1].reason, /similar/);
+  const b = await held(reply, { ticket: { publicUpdates: [{ ...posted, delivery: { status: "failed" } }] } }, "failed delivery");
+  assert.match(b.audits[0][1].reason, /delivery is failed/);
+  await held(reply, { ticket: new Error("503") }, "read failed");
+  await held(reply, { ticket: { status: "open" } }, "no update list");
+  await held(reply, { ticket: null }, "empty read");
+  await held({ ...reply, at: W - 1000 }, { ticket: { publicUpdates: [] } }, "young");
+  await held(reply, { ticket: { publicUpdates: [] } }, "running", true);
+});
+
+test("a held receipt is explained once, not on every pass", async () => {
+  const w = writeWorld(reply, { ticket: { publicUpdates: [{ ...posted, delivery: { status: "failed" } }] } });
+  await w.r.tick(); await w.r.tick(); await w.r.tick();
+  assert.equal(w.audits.filter(([k]) => k === "effect_settle_held").length, 1);
+  assert.equal(w.job.state, "blocked");
+});
+
+const issue = { settle: { kind: "issue", repo: "AHDGame", marker: "<!-- keir:issue:abc -->" } };
+const iso = (ms) => new Date(ms).toISOString();
+test("an issue found by its marker settles as done with the issue as the result", async () => {
+  const w = writeWorld(issue, { list: [{ number: 9, html_url: "u", body: "text\n\n<!-- keir:issue:abc -->", created_at: iso(W - 1000) }, { number: 8, body: "x", created_at: iso(0) }] });
+  await w.r.tick();
+  assert.equal(w.job.effects[w.key].state, "done"); assert.equal(w.job.effects[w.key].result.number, 9);
+  assert.equal(w.audits[0][1].outcome, "filed");
+});
+test("an issue absent from a list that reaches back past the write is safe to retry; a short list is held", async () => {
+  const old = writeWorld(issue, { list: [{ number: 8, body: "x", created_at: iso(0) }] });
+  await old.r.tick();
+  assert.equal(old.job.effects[old.key].state, "rejected"); assert.equal(old.job.effects[old.key].retryable, true);
+  const short = writeWorld(issue, { list: [{ number: 8, body: "x", created_at: iso(W - 1000) }] });
+  await short.r.tick();
+  assert.equal(short.job.effects[short.key].state, "started");
+  assert.match(short.audits[0][1].reason, /reach back/);
+  const pr = writeWorld(issue, { list: [{ number: 7, pull_request: {}, body: "<!-- keir:issue:abc -->", created_at: iso(W - 1000) }, { number: 8, body: "x", created_at: iso(0) }] });
+  await pr.r.tick();
+  assert.equal(pr.job.effects[pr.key].state, "rejected", "a pull request carrying the marker is not the issue");
+  const failed = writeWorld(issue, { list: new Error("502") });
+  await failed.r.tick();
+  assert.equal(failed.job.effects[failed.key].state, "started");
+});
+
+const created = { settle: { kind: "ticket", marker: "Request message: 555", needsChannel: false } };
+test("a created ticket is found by its marker and settles; no hit stays held because search lags", async () => {
+  const found = writeWorld(created, { search: { results: [{ number: 1801 }, { number: 1802 }] }, ticket: ({ number }) => ({ description: number === 1802 ? "Turn stalled\n\nRequest message: 555" : "other", discordChannelId: "c9" }) });
+  await found.r.tick();
+  assert.equal(found.job.effects[found.key].state, "done"); assert.equal(found.job.effects[found.key].result.ticketNumber, 1802);
+  assert.ok(found.calls.every(([, write]) => write === false));
+  const none = writeWorld(created, { search: { results: [] } });
+  await none.r.tick();
+  assert.equal(none.job.effects[none.key].state, "started");
+  assert.match(none.audits[0][1].reason, /not proof of absence/);
+  const nochan = writeWorld({ settle: { ...created.settle, needsChannel: true } }, { search: { results: [{ number: 5 }] }, ticket: { description: "Request message: 555" } });
+  await nochan.r.tick();
+  assert.equal(nochan.job.effects[nochan.key].state, "started");
+});
+
+test("receipts with no descriptor and unknown kinds are untouched", async () => {
+  const w = writeWorld({ settle: { kind: "mystery" } }, { ticket: { publicUpdates: [] } });
+  await w.r.tick();
+  assert.equal(w.job.effects[w.key].state, "started");
+  const plain = writeWorld({}, { ticket: { publicUpdates: [] } });
+  await plain.r.tick();
+  assert.equal(plain.job.effects[plain.key].state, "started"); assert.equal(plain.calls.length, 0);
+});

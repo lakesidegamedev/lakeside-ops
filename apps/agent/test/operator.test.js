@@ -2851,3 +2851,12 @@ test("Keir's GitHub review posts carry no em or en dashes", async () => {
   assert.doesNotMatch(body, /[–—]/);
   assert.match(body, /correct\*\*, one jose entry changes, lines 3-5\./);
 });
+
+test("support public updates record what they said so an uncertain post can be settled", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  f.mcp.call = async (_s, tool) => { if (tool === "support_public_update") throw new Error("The operation was aborted due to timeout"); return {}; };
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "I am checking the page." } }), /timeout/);
+  const receipts = Object.values(j.effects);
+  assert.equal(receipts.length, 1); assert.equal(receipts[0].state, "started");
+  assert.deepEqual(receipts[0].settle, { kind: "reply", ticket: 123, text: "I am checking the page." });
+});

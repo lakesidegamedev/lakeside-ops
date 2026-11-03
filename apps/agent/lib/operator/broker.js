@@ -453,7 +453,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     active(job, states);
     return messages;
   }
-  async function effect(job, key, fn) {
+  async function effect(job, key, fn, settle = null) {
     active(job);
     const old = job.effects[key];
     if (old?.state === "done") return old.result;
@@ -462,8 +462,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (old && old.state !== "rejected") throw new Error(require("./effectrecovery").MERGE_KEY.test(key)
       ? "This merge's outcome is being checked against GitHub automatically within ten minutes. Do not ask the owner about it: finish waiting with a wakeup of about ten minutes, then re-read the PR."
       : "external action outcome is uncertain; owner inspection required");
-    if (old?.state === "rejected" && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
-    job.effects[key] = { state: "started", at: now() }; ledger.save();
+    if (old?.state === "rejected" && !old.retryable && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
+    job.effects[key] = { state: "started", at: now(), ...(settle ? { settle } : {}) }; ledger.save();
     try {
       require("./supporttakeover").assertCanAct(d, job);
       const result = await fn();
@@ -862,7 +862,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     try {
       guardPlayerRegister(effectJob, ticketNo, message);
       const key = `live-notice:${ticketNo}:${crypto.createHash("sha1").update(names.join("|")).digest("hex").slice(0, 10)}`;
-      await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true));
+      await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
       effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
       ledger.audit("live_notice", { job: effectJob.id, ticket: ticketNo, items: names.length }); ledger.save();
       return true;
@@ -1467,7 +1467,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           const candidates = (found?.items || []).map((i) => ({ number: i.number, title: i.title, score: similarity(`${i.title} ${String(i.body || "").slice(0, 600)}`, `${built.title} ${built.body.slice(0, 600)}`) })).filter((i) => i.score >= 0.08).sort((a, b) => b.score - a.score).slice(0, 3);
           if (candidates.length) return { raised: false, issueCandidates: candidates.map(({ number, title }) => ({ number, title })), instruction: "These open GitHub issues may be the same problem. If one is, call raise_to_developers again with issueNumber set to it and your evidence in issue. If none is, call again with force: true." };
         }
-        const created = await effect(job, `issue:${hash({ t: built.title, b: built.body })}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues`, "-f", `title=${built.title}`, "-f", `body=${built.body}`, ...built.labels.flatMap((l) => ["-f", `labels[]=${l}`])]));
+        // Keir 8: a hidden marker lets an uncertain filing be found again on GitHub.
+        const issueHash = hash({ t: built.title, b: built.body }), issueMarker = `<!-- keir:issue:${issueHash} -->`;
+        const created = await effect(job, `issue:${issueHash}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues`, "-f", `title=${built.title}`, "-f", `body=${built.body}\n\n${issueMarker}`, ...built.labels.flatMap((l) => ["-f", `labels[]=${l}`])]), { kind: "issue", repo: "AHDGame", marker: issueMarker });
         filedIssue = { number: created.number, url: created.html_url };
         recordIssue(created.number, created.html_url, false);
         d.keirIssues[created.number].title = built.title; ledger.save();
@@ -1662,7 +1664,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
           const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
-          const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal));
+          const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: message });
           const delivery = result.delivery;
           const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
           if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
@@ -2790,8 +2792,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (incidentAsk) {
         // An incident is a staff catch-all: no reporter channel to reuse, no
         // per-player intake. Repeat tickets join it with merge_into_incident.
+        const incidentMarker = requestMessageId ? `Request message: ${requestMessageId}` : null;
         const result = await effect(job, `incident:${requestMessageId}`, () => mcp.call("support", "support_create_ticket", { category: "incident", title: publicText(input.title).slice(0, 200),
-          description: publicText(input.description).slice(0, 5000), source_channel_id: job.source.channelId }, true, signal));
+          description: `${publicText(input.description).slice(0, 4900)}${incidentMarker ? `\n\n${incidentMarker}` : ""}`, source_channel_id: job.source.channelId }, true, signal),
+        incidentMarker ? { kind: "ticket", marker: incidentMarker, needsChannel: false } : null);
         const number = result.ticketNumber || result.number || result.ticket?.number;
         if (!number) throw new Error("ticket API did not return a number; inspect receipt");
         ledger.audit("incident_opened", { job: job.id, ticket: number, by: job.actorId, from: job.ticket || null });
@@ -2847,7 +2851,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         category: ["bug", "account", "gameplay", "other"].includes(input.category) ? input.category : "bug", source_channel_id: reportChannelId,
         image_urls: (original.attachments || []).filter((a) => /^image\//.test(a.content_type || "")).map((a) => a.url).slice(0, 10) };
       d.intake.push({ at: now(), source: original.id, directed: developerTask(job) }); ledger.save();
-      const result = await effect(job, commanded ? `intake:${reportId}` : "intake", () => mcp.call("support", "support_create_ticket", args, true, signal));
+      const result = await effect(job, commanded ? `intake:${reportId}` : "intake", () => mcp.call("support", "support_create_ticket", args, true, signal),
+        original.id && args.description.includes(`/${original.id}`) ? { kind: "ticket", marker: `/${reportChannelId}/${original.id}`, needsChannel: true } : null);
       const number = result.ticketNumber || result.number || result.ticket?.number;
       const channelId = result.channelId || result.channel?.id || result.discordChannelId;
       if (!number || !channelId) throw new Error("ticket API did not return a number and channel; inspect receipt");
@@ -2927,7 +2932,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!ticket.trackerItemId) throw new Error("Ticket has no linked tracker item. Use support_tracker_sync first, then support_tracker_note with body; investigation and public updates can continue meanwhile.");
       }
       if (input.tool === "support_tracker_sync" && args.status && !["open", "active", "blocked"].includes(args.status)) throw new Error("terminal tracker statuses require a resolution receipt");
-      const result = await effect(job, hash({ tool: input.tool, args }), () => mcp.call("support", input.tool, args, true, signal));
+      const result = await effect(job, hash({ tool: input.tool, args }), () => mcp.call("support", input.tool, args, true, signal),
+        input.tool === "support_public_update" && args.kind === "ticket" && typeof args.message === "string" && args.message.trim() ? { kind: "reply", ticket: Number(job.ticket), text: args.message } : null);
       if (["support_tracker_sync", "support_tracker_note"].includes(input.tool)) { job.trackerRaised = true; ledger.save(); }
       if (input.tool === "support_public_update") {
         const delivered = ["sent", "delivered", "posted", "already_posted"].includes(result.delivery?.status) || result.delivery?.alreadyPosted === true || result.delivery?.posted === true || result.delivery?.delivery?.status === "posted";

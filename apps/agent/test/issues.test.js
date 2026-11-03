@@ -56,7 +56,7 @@ test("an issue refuses names, Discord ids, ticket numbers, internal hosts and th
   assert.equal(issues.build({ ...good, kind: "enhancement", expected: "Show last turn's output with a note.", actual: "" }).labels[0], "enhancement");
 });
 
-function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false, issueVersion = { updated_at: "2026-10-23T10:00:00Z" } } = {}) {
+function fixture({ failPost = false, search = [], pr = null, compare = {}, unreadableFiles = false, issueVersion = { updated_at: "2026-10-23T10:00:00Z" } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-issues-")); dirs.push(dir);
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [],
@@ -76,6 +76,7 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
     const method = a[0] === "-X" ? a[1] : "GET";
     const route = a[0] === "-X" ? a[2] : a[0];
     if (route.startsWith("search/issues")) return JSON.stringify({ items: search });
+    if (method === "POST" && route === "repos/lakesidegamedev/AHDGame/issues" && failPost) throw new Error("request timed out");
     if (method === "POST" && route === "repos/lakesidegamedev/AHDGame/issues") return JSON.stringify({ number: 501, html_url: "https://github.com/lakesidegamedev/AHDGame/issues/501" });
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+\/files/.test(route)) { if (unreadableFiles) throw new Error("fixture unavailable files"); return JSON.stringify((pr?.files || []).map((filename) => ({ filename }))); }
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+$/.test(route)) return JSON.stringify(pr);
@@ -234,4 +235,23 @@ test("github deployed reports the running web and worker commits and site health
   assert.deepEqual(out.worker, { sha: DEPLOYED.worker, source: "live-probe" });
   assert.equal(out.health.ok, true);
   assert.ok(f.gh.some((a) => a[0].includes("environment=box%2Fahd-us-web")));
+});
+
+test("a filed issue carries a hidden marker and its receipt can be settled from GitHub", async () => {
+  const f = fixture();
+  const { title, kind, ...issue } = good;
+  await f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, force: false });
+  const post = f.gh.find((a) => a[0] === "-X" && a[1] === "POST" && a[2] === "repos/lakesidegamedev/AHDGame/issues");
+  const body = post.find((x) => x.startsWith("body="));
+  assert.match(body, /\n\n<!-- keir:issue:[0-9a-f]{64} -->$/);
+  assert.ok(Object.keys(f.job.effects).includes(`issue:${/keir:issue:([0-9a-f]{64})/.exec(body)[1]}`), "the receipt key is the marker hash");
+});
+
+test("an issue filing whose result is lost leaves a started receipt that names the marker", async () => {
+  const f = fixture({ failPost: true });
+  const { title, kind, ...issue } = good;
+  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, force: false }), /timed out/);
+  const [key, receipt] = Object.entries(f.job.effects).find(([k]) => k.startsWith("issue:"));
+  assert.equal(receipt.state, "started");
+  assert.deepEqual(receipt.settle, { kind: "issue", repo: "AHDGame", marker: `<!-- keir:issue:${key.slice(6)} -->` });
 });
