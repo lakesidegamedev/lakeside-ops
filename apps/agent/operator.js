@@ -358,6 +358,14 @@ setInterval(async () => {
   try { await devMerges.tick(); } catch (e) { log(`devmerges: ${e.message}`); } finally { watchingMerges = false; }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
 }, 5 * 60000).unref();
+// Owner approval pings: a developer PR green except the owner's own approval (owner, 2026-11-03).
+const { createOwnerWait } = require("./lib/operator/ownerwait");
+const ownerWait = createOwnerWait({ ledger, api: ciApi, log });
+let watchingOwnerWait = false;
+setInterval(async () => {
+  if (watchingOwnerWait) return; watchingOwnerWait = true;
+  try { await ownerWait.tick(); } catch (e) { log(`ownerwait: ${e.message}`); } finally { watchingOwnerWait = false; }
+}, 5 * 60000).unref();
 let watchingCi = false;
 setInterval(async () => {
   if (watchingCi) return; watchingCi = true;
