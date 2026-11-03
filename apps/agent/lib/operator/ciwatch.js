@@ -1,5 +1,5 @@
 "use strict";
-const { GAME_REPO, CI_REPOSITORIES, canonicalRepository } = require("./github");
+const { GAME_REPO, CI_REPOSITORIES, canonicalRepository, redChecks } = require("./github");
 // Polls GitHub for tasks waiting on a PR's checks (github watch) and wakes the
 // task when checks finish, fail, or an identical promotion is qualified. No model
 // runs while waiting: CI polling cost about 80 Opus minutes on one ticket
@@ -18,7 +18,7 @@ function createCiWatch({ ledger, api, now = () => Date.now(), log = () => {}, on
     const pr = await api([`repos/${repository}/pulls/${number}`]);
     if (pr.merged || pr.state === "closed") return { done: true, text: `PR #${number} is ${pr.merged ? "merged" : "closed"}.` };
     const runs = (await api([`repos/${repository}/commits/${pr.head.sha}/check-runs?per_page=100`])).check_runs || [];
-    const red = runs.filter((r) => r.status === "completed" && !["success", "neutral", "skipped"].includes(r.conclusion)).map((r) => r.name);
+    const red = redChecks(runs).map((r) => r.name);
     if (red.length) return { done: true, text: `CI failed (${red.slice(0, 6).join(", ")}) on PR #${number}. Use github ci_failures; unrelated checks may still be running.` };
     const qualification = await promotionQualification({ api, pr, runs, repository });
     if (qualification.qualified) return { done: true, text: `PR #${number} is qualified by the identical tested staging tree (run ${qualification.run}); duplicate analysis need not delay promotion. Check mergeability and deployment health.` };

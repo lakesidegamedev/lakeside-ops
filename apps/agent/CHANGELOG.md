@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A check cancelled because a newer run of the same check replaced it no longer counts as a CI failure. Ticket 1758's task woke 12 times in an hour on a cancelled duplicate custom-rules run whose replacement had passed.
+
 ## 7.2.9 (2026-11-02)
 
 - A task cannot finish done while its repository snapshot holds unpublished changes; it publishes them with publish_patch or reverts and dismisses. Ticket 1757's tested bond-interest deduction finished "left uncommitted for the supervisor" and was deleted with the workspace.
