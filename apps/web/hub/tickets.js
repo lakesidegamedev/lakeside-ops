@@ -231,6 +231,7 @@ function makeTicketHubBody(live) {
 }
 
 const TK_JS = `(function(){
+function setHtml(el,h){el.innerHTML=h}
 var M=JSON.parse(document.getElementById('tkMeta').textContent),ST=M.st,JOB=M.job,live=JSON.parse(document.getElementById('tkLive').textContent);
 var $=function(id){return document.getElementById(id)};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -249,19 +250,19 @@ function head(k){if(!k){$('kHead').innerHTML='<div class="kh-sprite"><div class=
 var tone={good:'#3fb950',warn:'#d29922',quiet:'#6c747e'}[k.mood.tone]||'#6c747e';
 var models=(k.models||[]).map(function(m){return'<span class="kh-model">'+esc(m.role)+' <b>'+esc(m.name)+'</b></span>'}).join('');
 var sens=(k.sensors||[]).map(function(s){return'<span class="kh-sens"><span class="dot" style="--c:'+(s.ok?'#3fb950':'#d29922')+'"></span>'+esc(s.label)+'</span>'}).join('');
-$('kHead').innerHTML='<div class="kh-sprite" style="--c:'+tone+'"><div class="ksprite" data-state="'+esc(k.mood.state)+'" style="--ks:80px"></div><span class="on"></span></div><div style="min-width:0"><div class="kh-top"><h2>'+esc(k.mood.label)+'</h2>'+(k.version?'<span class="tag">Keir '+esc(k.version)+'</span>':'')+(k.paused?pill('Paused','#d29922'):pill('Running','#3fb950'))+'</div><div class="kh-sub">Keir is the studio\\'s support agent. It reads every ticket, investigates, ships fixes and replies to players.</div><div class="kh-row">'+models+'</div>'+(sens?'<div class="kh-row">'+sens+'</div>':'')+'</div>';
+setHtml($('kHead'),'<div class="kh-sprite" style="--c:'+tone+'"><div class="ksprite" data-state="'+esc(k.mood.state)+'" style="--ks:80px"></div><span class="on"></span></div><div style="min-width:0"><div class="kh-top"><h2>'+esc(k.mood.label)+'</h2>'+(k.version?'<span class="tag">Keir '+esc(k.version)+'</span>':'')+(k.paused?pill('Paused','#d29922'):pill('Running','#3fb950'))+'</div><div class="kh-sub">Keir is the studio\\'s support agent. It reads every ticket, investigates, ships fixes and replies to players.</div><div class="kh-row">'+models+'</div>'+(sens?'<div class="kh-row">'+sens+'</div>':'')+'</div>');
 var p=k.kpis||{};var sr=p.successRate24h!=null?Math.round(p.successRate24h*100)+'%':'n/a';var dec=live.cards.filter(function(c){return c.decision}).length;
-$('kStats').innerHTML='<div class="stat"><div class="k">Open tickets</div><div class="v">'+live.cards.length+'</div><div class="s">'+(dec?'<span class="warn">'+dec+' need a decision</span>':'no decisions waiting')+'</div></div>'+
+setHtml($('kStats'),'<div class="stat"><div class="k">Open tickets</div><div class="v">'+live.cards.length+'</div><div class="s">'+(dec?'<span class="warn">'+dec+' need a decision</span>':'no decisions waiting')+'</div></div>'+
 '<div class="stat"><div class="k">Working now</div><div class="v">'+(p.running||0)+'</div><div class="s">'+(p.queued||0)+' up next</div></div>'+
 '<div class="stat"><div class="k">Checking back</div><div class="v">'+(p.waiting||0)+'</div><div class="s">waiting on a turn or a player</div></div>'+
 '<div class="stat"><div class="k">Blocked</div><div class="v">'+(p.blocked||0)+'</div><div class="s">'+((p.blocked||0)?'<span class="warn">needs attention</span>':'none')+'</div></div>'+
 '<div class="stat"><div class="k">Keir runs, 24h</div><div class="v">'+(p.activations24h||0)+'</div><div class="s">'+sr+' finished cleanly</div></div>'+
-'<div class="stat"><div class="k">Typical run</div><div class="v">'+dur(p.medianActivationMs)+'</div><div class="s">slow runs '+dur(p.p90ActivationMs)+'</div></div>'}
+'<div class="stat"><div class="k">Typical run</div><div class="v">'+dur(p.medianActivationMs)+'</div><div class="s">slow runs '+dur(p.p90ActivationMs)+'</div></div>')}
 function renderLive(){head(live.keir);
 $('laneCount').textContent=live.cards.length;$('liveAt').textContent='Updated '+hm(live.at);
 $('lane').innerHTML=live.cards.length?live.cards.map(card).join(''):'<div class="tk-empty">No open tickets. Nice.</div>';
-$('kFeed').innerHTML=(live.feed||[]).length?live.feed.map(function(f){return'<div class="fi"><time>'+hm(f.at)+'</time><span>'+(f.ticket?'<a href="/tickets/'+f.ticket+'">#'+f.ticket+'</a> ':'')+esc(String(f.text||'').replace(/^Worked on ticket \\d+ /,'worked '))+(f.model?' <small>· '+esc(f.model)+'</small>':'')+'</span></div>'}).join(''):'<div class="tk-empty">Nothing in the last few hours.</div>';
-$('kClosed').innerHTML=(live.closed||[]).length?live.closed.map(function(c){var s=ST[c.status]||{label:c.status};return'<div class="fi"><time>'+rel(c.at).replace(' ago','')+'</time><span><a href="/tickets/'+c.n+'">#'+c.n+' '+esc(c.title)+'</a> <small>· '+esc(s.label)+(c.at&&c.open?' after '+dur(c.at-c.open):'')+'</small></span></div>'}).join(''):'<div class="tk-empty">No tickets closed in 14 days.</div>';
+setHtml($('kFeed'),(live.feed||[]).length?live.feed.map(function(f){return'<div class="fi"><time>'+hm(f.at)+'</time><span>'+(f.ticket?'<a href="/tickets/'+f.ticket+'">#'+f.ticket+'</a> ':'')+esc(String(f.text||'').replace(/^Worked on ticket \\d+ /,'worked '))+(f.model?' <small>· '+esc(f.model)+'</small>':'')+'</span></div>'}).join(''):'<div class="tk-empty">Nothing in the last few hours.</div>');
+setHtml($('kClosed'),(live.closed||[]).length?live.closed.map(function(c){var s=ST[c.status]||{label:c.status};return'<div class="fi"><time>'+rel(c.at).replace(' ago','')+'</time><span><a href="/tickets/'+c.n+'">#'+c.n+' '+esc(c.title)+'</a> <small>· '+esc(s.label)+(c.at&&c.open?' after '+dur(c.at-c.open):'')+'</small></span></div>'}).join(''):'<div class="tk-empty">No tickets closed in 14 days.</div>');
 if(window.keirSprites)window.keirSprites()}
 function refresh(){if(document.hidden||$('tab-live').hidden)return;fetch('/api/hub/tickets/live',{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.ok?r.json():null}).then(function(d){if(d){var x=$('lane').scrollLeft;live=d;renderLive();$('lane').scrollLeft=x}}).catch(function(){})}
 renderLive();setInterval(refresh,20000);document.addEventListener('visibilitychange',refresh);
@@ -273,9 +274,9 @@ function chip(s){var m=ST[s]||{label:s,color:'#8b949e'};return pill(m.label,m.co
 function renderHist(){var q=$('htQ').value.trim().toLowerCase(),s=$('htS').value,c=$('htC').value,p=$('htP').value;
 var list=rows.filter(function(r){if(s&&r.s!==s)return false;if(c&&r.c!==c)return false;if(p==='1'&&!r.p)return false;if(p==='0'&&r.p)return false;if(q){var h=('#'+r.n+' '+r.t+' '+r.r+' '+(r.g||[]).join(' ')+' '+r.c).toLowerCase();var w=q.split(/\\s+/);for(var i=0;i<w.length;i++)if(h.indexOf(w[i])<0)return false}return true});
 list.sort(function(a,b){var x=a[sortK],y=b[sortK];if(typeof x==='number')return(x-y)*dir;return String(x||'').localeCompare(String(y||''))*dir});
-$('htBody').innerHTML=list.slice(0,limit).map(function(r){return'<tr data-n="'+r.n+'"><td class="n">#'+r.n+'</td><td class="t" title="'+esc(r.t)+'">'+esc(r.t)+'</td><td>'+chip(r.s)+'</td><td>'+esc(r.c)+'</td><td>'+esc(r.r)+'</td><td class="d">'+esc(r.o)+'</td><td class="d">'+esc(r.d)+'</td><td class="d">'+(r.p?'#'+r.p:'')+'</td></tr>'}).join('')||'<tr><td colspan="8" class="d" style="text-align:center;padding:24px">No tickets match.</td></tr>';
+setHtml($('htBody'),list.slice(0,limit).map(function(r){return'<tr data-n="'+r.n+'"><td class="n">#'+r.n+'</td><td class="t" title="'+esc(r.t)+'">'+esc(r.t)+'</td><td>'+chip(r.s)+'</td><td>'+esc(r.c)+'</td><td>'+esc(r.r)+'</td><td class="d">'+esc(r.o)+'</td><td class="d">'+esc(r.d)+'</td><td class="d">'+(r.p?'#'+r.p:'')+'</td></tr>'}).join('')||'<tr><td colspan="8" class="d" style="text-align:center;padding:24px">No tickets match.</td></tr>');
 $('htMore').hidden=list.length<=limit}
-function loadHistory(){fetch('/api/hub/tickets/history',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){rows=d.items||[];var cats={};rows.forEach(function(r){if(r.c)cats[r.c]=1});$('htC').innerHTML='<option value="">Any category</option>'+Object.keys(cats).sort().map(function(c){return'<option>'+esc(c)+'</option>'}).join('');renderHist()})}
+function loadHistory(){fetch('/api/hub/tickets/history',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){rows=d.items||[];var cats={};rows.forEach(function(r){if(r.c)cats[r.c]=1});setHtml($('htC'),'<option value="">Any category</option>'+Object.keys(cats).sort().map(function(c){return'<option>'+esc(c)+'</option>'}).join(''));renderHist()})}
 ['htQ','htS','htC','htP'].forEach(function(id){$(id).addEventListener(id==='htQ'?'input':'change',function(){limit=100;renderHist()})});
 $('htMore').addEventListener('click',function(){limit+=300;renderHist()});
 $('htBody').addEventListener('click',function(e){var tr=e.target.closest('tr[data-n]');if(tr)location.href='/tickets/'+tr.getAttribute('data-n')});

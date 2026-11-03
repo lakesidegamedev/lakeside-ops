@@ -226,6 +226,7 @@ function renderHubBar(active) {
 
 // Client side. Plain ES5-ish so it runs inside any page the bar is injected in.
 const HUB_JS = `<script>(function(){
+function setHtml(el,h){el.innerHTML=h}
 var $=function(id){return document.getElementById(id)};
 var CH=null;try{CH=new BroadcastChannel('lakeside-ops-auth')}catch(e){}
 var signedOut=false;
@@ -243,7 +244,7 @@ $('hubLogout').addEventListener('click',function(){fetch('/api/logout',{method:'
 $('hubTheme').addEventListener('click',function(){var r=document.documentElement,n=r.getAttribute('data-theme')==='light'?'dark':'light';r.setAttribute('data-theme',n);try{localStorage.setItem('ahd-theme',n)}catch(e){}});
 var pal=$('hubPal'),inp=$('hubPalIn'),list=$('hubPalList'),items=[],sel=0,timer=null,seq=0;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
-function render(groups){items=[];var h='';groups.forEach(function(g){if(!g.items.length)return;h+='<div class="hub-pal-group">'+esc(g.label)+'</div>';g.items.forEach(function(it){var i=items.length;items.push(it);h+='<div class="hub-pal-item'+(i===sel?' sel':'')+'" data-i="'+i+'"><span class="k" style="background:'+esc(it.color||'var(--text-3)')+'"></span><span class="tt">'+esc(it.title)+'</span><span class="mm">'+esc(it.meta||'')+'</span></div>'})});list.innerHTML=h||'<div class="hub-pal-empty">'+(inp.value?'Nothing matches.':'Type to search the library, tickets and the work board.')+'</div>'}
+function render(groups){items=[];var h='';groups.forEach(function(g){if(!g.items.length)return;h+='<div class="hub-pal-group">'+esc(g.label)+'</div>';g.items.forEach(function(it){var i=items.length;items.push(it);h+='<div class="hub-pal-item'+(i===sel?' sel':'')+'" data-i="'+i+'"><span class="k" style="background:'+esc(it.color||'var(--text-3)')+'"></span><span class="tt">'+esc(it.title)+'</span><span class="mm">'+esc(it.meta||'')+'</span></div>'})});setHtml(list,h||'<div class="hub-pal-empty">'+(inp.value?'Nothing matches.':'Type to search the library, tickets and the work board.')+'</div>')}
 function search(){var q=inp.value.trim(),my=++seq;fetch('/api/hub/search?q='+encodeURIComponent(q),{credentials:'same-origin'}).then(function(r){return r.ok?r.json():{groups:[]}}).then(function(d){if(my!==seq)return;sel=0;render(d.groups||[])}).catch(function(){})}
 function open(){pal.classList.add('on');pal.setAttribute('aria-hidden','false');inp.value='';search();setTimeout(function(){inp.focus()},10)}
 function close(){pal.classList.remove('on');pal.setAttribute('aria-hidden','true')}

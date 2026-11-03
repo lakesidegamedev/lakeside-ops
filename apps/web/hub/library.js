@@ -286,6 +286,7 @@ function makeLibraryBody({ reports, docCount }) {
 }
 
 const LIB_JS = `(function(){
+function setHtml(el,h){el.innerHTML=h}
 var D=JSON.parse(document.getElementById('libData').textContent),items=D.items,CAT={},TY=D.types,docs=null,docsLoading=false;D.cats.forEach(function(c){CAT[c.id]=c});
 var st={q:'',cat:'',type:'',label:'',sort:'new',view:'grid',limit:60};
 try{st.view=localStorage.getItem('lib-view')||'grid';var h=new URLSearchParams(location.hash.slice(1));['q','cat','type','label','sort'].forEach(function(k){if(h.get(k))st[k]=h.get(k)})}catch(e){}
@@ -315,7 +316,7 @@ document.querySelectorAll('#libView button').forEach(function(b){b.classList.tog
 $('libSort').value=st.sort;if($('libQ').value!==st.q)$('libQ').value=st.q;
 var filtered=st.q||st.cat||st.type||st.label;
 var waiting=(st.cat==='kb'||st.q)&&!docs;
-$('libSum').innerHTML='<span>'+(waiting?'Loading the knowledge base…':list.length+' item'+(list.length===1?'':'s'))+'</span>'+(filtered?'<button id="libClear">Clear filters</button>':'');
+setHtml($('libSum'),'<span>'+(waiting?'Loading the knowledge base…':list.length+' item'+(list.length===1?'':'s'))+'</span>'+(filtered?'<button id="libClear">Clear filters</button>':''));
 var out='';
 if(!list.length&&!waiting)out='<div class="lib-empty">Nothing matches those filters.</div>';
 else if(st.view==='list')out='<div class="lib-list">'+list.slice(0,st.limit*4).map(row).join('')+'</div>';
