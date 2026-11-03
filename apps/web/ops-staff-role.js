@@ -15,13 +15,14 @@ const JUNIOR_NAV = [{ label: "Development", items: [
   { href: "/kanban", label: "Work board", icon: "check-square" },
   { href: "/project-guide", label: "Project guide", icon: "book-open" },
   { href: "https://docs.lakesidegames.net", label: "Technical docs", icon: "book-open", ext: true },
+  { href: "/economy", label: "Economy", icon: "trending-up" },
   { href: "/reports", label: "Economy reports", icon: "newspaper" },
   { href: "/engine", label: "Engine diagnostics", icon: "activity" },
 ] }];
 
 const JUNIOR_READ_PATHS = new Set([
   "/", "/apps", "/kanban", "/api/kanban", "/api/kanban/brief",
-  "/project-guide", "/api/project-guide", "/reports", "/commodity-report",
+  "/project-guide", "/api/project-guide", "/reports", "/economy", "/commodity-report",
   "/reports/extraction-capacity", "/api/extraction-audit", "/engine",
   "/api/me", "/api/health", "/api/auth/check", "/api/auth/admin-check",
   "/auth/game", "/auth/handoff", "/auth/callback",
@@ -58,6 +59,7 @@ function juniorDeveloperHome() {
 
 function juniorEconomyReports() {
   return `<section style="max-width:900px;margin:32px auto;padding:24px"><h1>Economy reports</h1><ul>
+<li><a href="/economy">Live economy tracker</a></li>
 <li><a href="/commodity-report">Commodity economy analysis</a></li>
 <li><a href="/reports/extraction-capacity">Extraction capacity and bottlenecks</a></li>
 <li><a href="/engine">Current economy and turn diagnostics</a></li></ul></section>`;

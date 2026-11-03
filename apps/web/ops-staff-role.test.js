@@ -19,7 +19,7 @@ test('dashboard Junior Developer is independent of game role and flags', () => {
 
 test('Junior Developer has explicit read views and logout only', () => {
   for (const path of ['/', '/kanban', '/api/kanban', '/api/kanban/items/12', '/project-guide',
-    '/api/project-guide', '/reports', '/commodity-report', '/reports/extraction-capacity',
+    '/api/project-guide', '/reports', '/economy', '/commodity-report', '/reports/extraction-capacity',
     '/api/extraction-audit', '/engine', '/api/me']) {
     assert.equal(juniorDeveloperRequestAllowed('GET', path), true, path);
     assert.equal(juniorDeveloperRequestAllowed('HEAD', path), true, path);
@@ -71,7 +71,7 @@ test('real sign-in staff resolver reads the dashboard role and still checks bans
 test('Junior Developer navigation does not advertise private or production tools', () => {
   const { renderShell } = require('./ops-shell');
   const html = renderShell({ role: 'junior_dev', body: '<h1>Junior Developer</h1>' });
-  for (const path of ['/kanban', '/project-guide', '/reports', '/engine']) assert.ok(html.includes(`href="${path}"`));
+  for (const path of ['/kanban', '/project-guide', '/economy', '/reports', '/engine']) assert.ok(html.includes(`href="${path}"`));
   for (const path of ['/inbox', '/db', '/settings/credentials', '/code', '/scheduler', '/ask']) {
     assert.ok(!html.includes(`href="${path}"`), path);
   }
@@ -87,4 +87,38 @@ test('the admin hub does not replace or expose its views to Junior Developers', 
     });
     assert.equal(handled, false, pathname);
   }
+});
+
+test('Junior Developers can open the real economy route and every tab read-only', async () => {
+  const { canReadDeveloperView } = require('./ops-staff-role');
+  const { makeEconomyBody } = require('./economy-page');
+  const text = fs.readFileSync(require.resolve('./server.js'), 'utf8');
+  const marker = text.indexOf('pathname === "/economy"');
+  const start = text.lastIndexOf('  if (', marker);
+  const end = text.indexOf('\n  if ((req.method === "GET" || req.method === "HEAD") && pathname === "/engine")', marker);
+  assert.ok(start >= 0 && end > start, 'real economy handler is present');
+  for (const method of ['GET', 'HEAD']) {
+    for (const tab of ['overview', 'markets', 'companies', 'players', 'countries', 'fixes']) {
+      let status;
+      let body;
+      const req = { method, url: `/economy?tab=${tab}&range=all` };
+      const res = { writeHead: code => { status = code; }, end: value => { body = value; } };
+      const resolveSession = async () => ({ role: 'junior_dev' });
+      const context = { req, res, URL, pathname: '/economy', url: new URL(`/economy?tab=${tab}&range=all`, 'https://ops.example.test'),
+        guardJuniorDeveloperRequest, resolveSession, canReadDeveloperView,
+        json: (_, code) => { status = code; },
+        denyHtml: () => { status = 403; }, addSecurityHeaders: () => {},
+        readEconomyFeed: () => ({ feed: null, error: 'Test feed unavailable' }), makeEconomyBody,
+        renderShell: ({ role, body }) => `<main data-role="${role}">${body}</main>`,
+      };
+      await vm.runInNewContext(`(async () => {
+        if (await guardJuniorDeveloperRequest(req, res, pathname, { resolveSession, json })) return;
+        ${text.slice(start, end)}
+      })()`, context);
+      assert.equal(status, 200, `${method} /economy?tab=${tab}`);
+      if (method === 'GET') assert.match(body, /data-role="junior_dev"/);
+      else assert.equal(body, '');
+    }
+  }
+  assert.equal(juniorDeveloperRequestAllowed('POST', '/economy'), false);
 });

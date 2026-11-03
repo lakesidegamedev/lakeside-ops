@@ -4926,7 +4926,7 @@ const server = http.createServer(async (req, res) => {
   // Engine — Game Engine Observatory (simulation health).
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/economy") {
     const session = await resolveSession(req);
-    if (!session || session.role !== "admin") return denyHtml();
+    if (!canReadDeveloperView(session, pathname)) return denyHtml();
     const q = new URL(req.url, "http://x").searchParams;
     const { extraCss, body } = makeEconomyBody({ ...readEconomyFeed(), tab: q.get("tab") || "overview", range: q.get("range") || "reset" });
     addSecurityHeaders(res);
