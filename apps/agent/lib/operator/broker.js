@@ -7,7 +7,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // news), not "that answer was wrong". They owe the player nothing new, so they must
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
-const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket/i;
+const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -2839,7 +2839,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const coordinator = ownerDirected(job) && d.jobs[d.seen[`ticket:${job.ticket}`]];
         const sharedAnswerAt = coordinator?.kind === "ticket" && coordinator.ticket === job.ticket && coordinator.channelId === job.channelId ? coordinator.resolutionReadyAt || 0 : 0;
         const answerAt = sharedAnswerAt || job.resolutionReadyAt;
-        if (!answerAt || now() - answerAt < config.closeGraceMs) throw new Error("give the player the final answer and wait for the closure grace period");
+        // The task wakes when the grace ends, not on a long reply wait (ticket 1755 was due to
+        // close two hours after its fix and slept nine).
+        if (!answerAt || now() - answerAt < config.closeGraceMs) { if (answerAt) job.closeReadyAt = answerAt + config.closeGraceMs; throw new Error("give the player the final answer and wait for the closure grace period"); }
         // Review 2026-10-19: 1610 resolved one minute after "live", 1611 52
         // minutes after (the player's deliveries had fallen), 1630 before the
         // change shipped. After a fix goes live the player gets a turn to see
@@ -2847,6 +2849,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const liveAt = d.liveSaid?.[job.ticket] || 0;
         const liveGrace = config.liveGraceMs ?? 2 * 3600000;
         const playerSince = lastHuman && lastHuman.author.id !== config.ownerId && !config.staffIds.includes(lastHuman.author.id) && Date.parse(lastHuman.timestamp) > liveAt;
+        if (liveAt && now() - liveAt < liveGrace && !playerSince) job.closeReadyAt = Math.max(job.closeReadyAt || 0, liveAt + liveGrace);
         if (liveAt && now() - liveAt < liveGrace && !playerSince) throw new Error(`Not closed: a fix went live ${Math.round((now() - liveAt) / 60000)} minutes ago. Give the player at least ${Math.round(liveGrace / 60000)} minutes and a turn to see it, then check their numbers before resolving.`);
       }
       validateArguments(args, definition.inputSchema);
@@ -3148,6 +3151,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
       if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
+      // Ticket 1759 (2026-11-03): "I am still checking what stopped the buying", then a six-hour
+      // wait for the player. A promise of more work is not something the player can answer.
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !(Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes <= 30)) {
+        const last = (d.ticketPosts?.[job.ticket] || []).filter((p) => p.jobId === job.id && p.at >= (job.startedAt || 0)).at(-1);
+        if (last && !/\?/.test(last.text) && /\b(?:I am|I'm|I will|I'll)\s+(?:still\s+)?(?:checking|looking into|investigating|tracing|finding out|working out|come back|report back|check)\b|\bbefore I (?:say|give)\b/i.test(last.text))
+          throw new Error("Not finished: you just told the player you are still checking something, so a wait for their reply would leave that promise hanging. Do the check now, or finish waiting with wakeAfterMinutes of 30 or less.");
+      }
       if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
@@ -3237,6 +3247,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // and this hand-back fired again on every wait.
       const owedOnce = state === "waiting" && ["ticket", "command", "conversation"].includes(job.kind) && owedAt > (job.lastPublishedAt || 0) && job.replyOx !== owedAt;
       if (owedOnce && (job.provider?.vision || replyWait || Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes > 15)) { job.wakeAt = now() + 60000; job.replyOx = owedAt; }
+      // A ticket waiting out its closure grace wakes when the grace ends.
+      if (state === "waiting" && job.closeReadyAt > now() && job.wakeAt > job.closeReadyAt + 60000) job.wakeAt = job.closeReadyAt + 60000;
       // A promotion held for the owner's waking hours wakes when the window opens, not every quarter hour.
       if (state === "waiting" && job.promotionHoldUntil > now()) job.wakeAt = Math.max(job.wakeAt || 0, job.promotionHoldUntil);
       // Each wake that had nothing new to tell the owner doubles the next wait.
