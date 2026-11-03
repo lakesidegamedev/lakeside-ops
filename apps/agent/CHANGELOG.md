@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- The owner's or a developer's direct question in a ticket is answered at once: the pacing rules (another task just posted, the monologue cap, ten-minute spacing) no longer hold it back. On ticket 1757 the owner's answer waited behind another task's post and read as Keir going silent.
+
 ## 7.2.5 (2026-11-03)
 
 - `publish_report` publishes a finished HTML report to the Lakeside ops report library and returns its URL. Owner or developer tasks only; `public: true` only on the owner's own request; refused if it contains an internal host, path, account id, email or credential. The owner asked Keir for a public tax audit report and Keir had no way to publish one.

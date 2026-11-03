@@ -624,6 +624,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   function guardTicketPostRules(job, ticketNo, message) {
     require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
+    // The owner or a developer asking Keir directly in a ticket is owed the answer now. The
+    // pacing rules below (another task just posted, the monologue cap, ten-minute spacing)
+    // held the owner's answer back on ticket 1757 (2026-11-03) and read as Keir going silent.
+    const askedAt = Math.max(job.observedPlayerAt || 0, Date.parse(job.source?.at || "") || 0);
+    const answeringStaff = (job.role === "owner" || developerTask(job)) && askedAt > (job.lastPublishedAt || 0);
     // Blocked on the owner means one notice, then silence (ticket 1514 posted
     // "still waiting on your call" three times in four hours). A direct
     // question to the player, or a new player message, is not silence.
@@ -648,7 +653,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // The progress card is edited in place and is not a message, so it does not
     // hold back the answer it announces (ticket 1540).
     const mine = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.jobId === job.id && !String(p.text || "").startsWith("[status card]")).at(-1);
-    if (mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
+    if (!answeringStaff && mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
       throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
     // The same question again (1592 asked one question four times in 31
     // hours): asking twice is a reminder, a third time is not progress.
@@ -657,7 +662,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (isCorrection(message) && sentences(message).length > 2)
       throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
-    if (run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
+    if (!answeringStaff && run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
       throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
     // A developer asking Keir in the ticket gets one answer, from their own task.
     // The automatic ticket task must not answer it over them (ticket 1510).
@@ -673,7 +678,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // A status card is edited in place and a human question deserves an answer,
     // so neither holds a reply back (ticket 1602: the owner asked twice, Keir
     // drafted twice and stayed silent behind the coordinator's card).
-    const other = posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !String(p.text || "").startsWith("[status card]") && !playerSpokeAfter(p.at)).at(-1);
+    const other = answeringStaff ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !String(p.text || "").startsWith("[status card]") && !playerSpokeAfter(p.at)).at(-1);
     if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
     const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6);
     if (dup) throw new Error(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);

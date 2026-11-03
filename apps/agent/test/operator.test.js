@@ -2775,3 +2775,13 @@ test("a handoff for a ticket Keir already owns keeps the owner's approvals (tick
   owner.receive({ id: "wake-1749", from: "claude", scope: "1749", asks: ["run the approved heal"], tickets: [1749] }, { ensureTicketJob: () => t });
   assert.equal(f.ledger.data.actions.heal.state, "approved");
 });
+
+test("the owner's direct question in a ticket is answered at once, not held behind another task's post (ticket 1757)", async () => {
+  const f = fixture(), ch = "777777777777777777";
+  const owner = running(f, { role: "owner", kind: "conversation", ticket: 123, actorId: f.config.ownerId, channelId: ch, replyChannel: ch, observedPlayerAt: 4980, source: { channelId: ch, authorId: f.config.ownerId } });
+  // Another Keir task posted in this ticket a moment ago, and Keir has posted three times since a human wrote.
+  (f.ledger.data.ticketPosts ||= {})[123] = [{ at: 4990, jobId: "other-task", text: "Your tax bill is 35% of profit." }];
+  (f.ledger.data.monologue ||= {})[123] = { humanAt: 0, count: 3, at: 4990 };
+  const r = await f.broker.tool(owner, "channel_reply", { message: "Not ignored: I read it and did nothing with it, because cash only moves on your own recorded approval." });
+  assert.ok(r && !r.skipped, JSON.stringify(r));
+});
