@@ -52,7 +52,7 @@ const WAKE = [
   ["a subworker whose report reached its parent, blocked 31 min, is dismissed", { state: "blocked", kind: "coding", ticket: null, codingParent: "p", codingReported: true, updatedAt: NOW - 31 * MIN }, {}, { state: "dismissed", summary: /its report already reached the parent/, effects: ["audit:job_dismissed"] }],
   ["a subworker whose report has not reached its parent is kept", { state: "blocked", kind: "coding", ticket: null, codingParent: "p", updatedAt: NOW - 99 * MIN }, {}, { state: "blocked", effects: [] }],
   // directive hold
-  ["a held directive stops every later rule, wake and deadline included", { state: "waiting", wakeAt: 0, deadline: 1 }, { directive: true }, { state: "waiting", effects: [] }],
+  ["a held directive stops every later rule, wake and deadline included", { state: "waiting", wakeAt: 0, deadline: 1, heldDeadlineNotified: true }, { directive: true }, { state: "waiting", effects: [] }],
   // wake
   ["waiting with wakeAt reached queues and drops debounceWake", { state: "waiting", wakeAt: NOW, debounceWake: true }, {}, { state: "queued", noDebounce: true, effects: [] }],
   ["waiting before wakeAt, no mail, stays", { state: "waiting", wakeAt: NOW + MIN }, {}, { state: "waiting", effects: [] }],
@@ -80,6 +80,11 @@ const WAKE = [
   ["first deadline expiry also wakes a waiting job", { state: "waiting", wakeAt: NOW + 99 * MIN, deadline: NOW - 1 }, {}, { state: "queued", effects: ["audit:deadline_extended"] }],
   ["second deadline expiry blocks and tells the owner", { state: "running", deadline: NOW - 1, deadlineExtensions: 1 }, {}, { state: "blocked", summary: /ran out of time twice/, effects: ["notify:deadline:j1"] }],
   ["deadline is not checked on a blocked job", { state: "blocked", deadline: NOW - 1 }, {}, { state: "blocked", effects: [] }],
+  ["claimed past its deadline stays deferred and tells the owner once", { state: "queued", deadline: NOW - 1 }, { claim: true }, { state: "deferred", effects: ["notify:held-deadline:j1"] }],
+  ["claimed past its deadline is not extended", { state: "deferred", deferredBy: "claim", deadline: NOW - 1, deadlineExtensions: 1 }, { claim: true }, { state: "deferred", effects: ["notify:held-deadline:j1"] }],
+  ["claimed past its deadline, owner already told, is quiet", { state: "deferred", deadline: NOW - 1, heldDeadlineNotified: true }, { claim: true }, { state: "deferred", effects: [] }],
+  ["claimed before its deadline is quiet", { state: "queued", deadline: NOW + 1 }, { claim: true }, { state: "deferred", effects: [] }],
+  ["directive-held past its deadline tells the owner once and keeps state", { state: "waiting", wakeAt: 0, deadline: NOW - 1 }, { directive: true }, { state: "waiting", effects: ["notify:held-deadline:j1"] }],
   ["a deadline exactly now is not expired", { state: "queued", deadline: NOW }, {}, { state: "queued", effects: [] }],
 ];
 for (const [name, fields, holds, want] of WAKE) {
@@ -317,4 +322,14 @@ test("a support outage cannot wake a channel-less job every cycle: wake, fail, w
     if (job.state === "queued") { wakes++; job.state = "waiting"; job.wakeAt = now + 15 * MIN; }
   }
   assert.ok(wakes <= 14, `${wakes} wakes in 29 hours (was 128)`);
+});
+
+test("held past deadline: one DM to the owner per job, flag stops repeats", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lc-")), ledger = createLedger(path.join(dir, "l.json"));
+  const j = ticket({ state: "deferred", deadline: NOW - 1 });
+  for (let i = 0; i < 3; i++) lc.applyEffects(ledger, lc.wakeStep(j, ctxFor({ claimedBy: () => "staff1" })));
+  assert.deepEqual(Object.keys(ledger.data.outbox), ["held-deadline:j1"]);
+  assert.equal(ledger.data.outbox["held-deadline:j1"].destination, "owner");
+  assert.equal(j.state, "deferred");
+  assert.equal(j.deadline, NOW - 1);
 });

@@ -32,7 +32,9 @@
 //                             blocked on an owner decision, ticket, channel open, human
 //                             message waiting                         -> queued
 //   7. deadline               past job.deadline: first time extended (a waiting job is
-//                             queued), second time -> blocked + owner notice
+//                             queued), second time -> blocked + owner notice. A job held by
+//                             a claim or directive never gets here: it stays held and the
+//                             owner is told once (held-deadline:<job>), nothing is posted
 // Run end (onRunError): abort for a pause -> paused; abort for a stop, hold or claim
 //   with no write started -> waiting; transient or provider failure -> waiting (see
 //   recovery.js); anything else -> blocked + owner notice.
@@ -73,10 +75,19 @@ function applyEffects(ledger, effects) {
 
 // One job's pass through the wake rules. ctx: { now, config: { taskLifetimeMs },
 // claimedBy(channelId), directiveHeld(job) }. Returns the effects to record.
+// A claim or a directive stops the rules before the deadline, so a held ticket
+// could sit forever unseen. Past its normal deadline the owner hears once (a DM,
+// not a quiet alert); the job stays held and Keir does nothing on the ticket.
+function noteHeldPastDeadline(j, now, effects) {
+  if (!(j.deadline < now) || j.heldDeadlineNotified || ["done", "cancelled", "dismissed", "paused"].includes(j.state)) return;
+  j.heldDeadlineNotified = true;
+  effects.push(notify(`held-deadline:${j.id}`, "owner", `Ticket ${j.ticket || j.id} has been held past its deadline (${j.deferredBy === "claim" || j.state === "deferred" ? "staff claimed it" : "an owner directive holds it"}). Keir is not acting on it and will stay hands off until it is released.`));
+}
+
 function wakeStep(j, ctx) {
   const { now } = ctx, effects = [];
   if (j.role !== "owner" && !["command", "conversation"].includes(j.kind) && j.ticket && !["done", "cancelled", "dismissed", "paused"].includes(j.state)) {
-    if (ctx.claimedBy(j.channelId)) { j.state = "deferred"; j.deferredBy = "claim"; j.summary = "Staff owns this ticket; automatic work is deferred."; return effects; }
+    if (ctx.claimedBy(j.channelId)) { j.state = "deferred"; j.deferredBy = "claim"; j.summary = "Staff owns this ticket; automatic work is deferred."; noteHeldPastDeadline(j, now, effects); return effects; }
     // Staff released the claim: lift the deferral the claim caused. A deferral for
     // another reason (a coordinator took over the ticket) stays until its own exit.
     if (j.state === "deferred" && j.deferredBy === "claim" && !j.channelClosed) { j.state = "queued"; j.wakeAt = 0; delete j.deferredBy; effects.push(audit("claim_release_lifted", { job: j.id, ticket: j.ticket })); }
@@ -100,7 +111,7 @@ function wakeStep(j, ctx) {
     effects.push(audit("job_dismissed", { job: j.id, by: "keir", reason: j.codingParent ? "subworker_reported" : "probe_blocked" }));
     return effects;
   }
-  if (ctx.directiveHeld(j)) return effects;
+  if (ctx.directiveHeld(j)) { noteHeldPastDeadline(j, now, effects); return effects; }
   if (j.state === "waiting" && !Number.isFinite(j.wakeAt)) j.wakeAt = now + DEFAULT_WAKE_MS;
   // While the support record cannot be read, the timer wake backs off with the check;
   // a message still wakes the job.
