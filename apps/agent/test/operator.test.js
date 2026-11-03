@@ -2851,3 +2851,33 @@ test("Keir's GitHub review posts carry no em or en dashes", async () => {
   assert.doesNotMatch(body, /[–—]/);
   assert.match(body, /correct\*\*, one jose entry changes, lines 3-5\./);
 });
+
+test("support public updates record what they said so an uncertain post can be settled", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  f.mcp.call = async (_s, tool) => { if (tool === "support_public_update") throw new Error("The operation was aborted due to timeout"); return {}; };
+  await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "I am checking the page." } }), /timeout/);
+  const receipts = Object.values(j.effects);
+  assert.equal(receipts.length, 1); assert.equal(receipts[0].state, "started");
+  assert.deepEqual(receipts[0].settle, { kind: "reply", ticket: 123, text: "I am checking the page." });
+});
+
+test("a support write refused at connect is rejected and repeatable; a reset mid-request still blocks for a person", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  const msg = { tool: "support_public_update", args: { message: "I am checking the page." } };
+  let down = true;
+  f.mcp.call = async (_s, tool) => { if (tool === "support_public_update" && down) throw Object.assign(new Error("fetch failed"), { code: "MCP_CONNECT_REFUSED" }); return { ok: true, delivery: { status: "posted" } }; };
+  await assert.rejects(f.broker.tool(j, "support_action", msg), /fetch failed/);
+  const [key, receipt] = Object.entries(j.effects)[0];
+  assert.equal(receipt.state, "rejected"); assert.equal(receipt.retryable, true);
+  assert.equal(j.state, "running", "no hold for a person");
+  assert.ok(f.ledger.data.audit.some((r) => r.kind === "effect_rejected" && r.key === key && /nothing written/.test(r.reason)));
+  down = false;
+  await f.broker.tool(j, "support_action", msg);
+  assert.equal(j.effects[key].state, "done");
+  const k = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  const reset = { tool: "support_public_update", args: { message: "A different line." } };
+  f.mcp.call = async () => { throw Object.assign(new Error("fetch failed"), { cause: { code: "ECONNRESET" } }); };
+  await assert.rejects(f.broker.tool(k, "support_action", reset), /fetch failed/);
+  assert.equal(k.state, "blocked");
+  assert.equal(Object.values(k.effects).at(-1).state, "started");
+});
