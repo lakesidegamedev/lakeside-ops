@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Nothing Keir writes on GitHub (reviews, comments, issues, PR titles and bodies) carries an em or en dash any more: they become commas, and number ranges keep a hyphen. The first @keir-bot review had one. Its instructions say the same.
 ## 7.4.0 (2026-11-03)
 
 - A maintainer who writes @keir-bot (or @Keir) in a comment on an AHDGame pull request gets a Keir review on it: specific suggestions and a verdict line (looks good, needs changes or blocking issue), posted as the keir-bot account when its token is configured. Only people who can push to the repository can ask; the ops webhook forwards only ids and Keir re-reads the comment, the asker's access and the PR from GitHub. One review per PR commit, a 👀 reaction acknowledges the request, and the task can only read that PR and the code and post one comment: no merges, heals or other posts.

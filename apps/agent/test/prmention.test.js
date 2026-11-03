@@ -44,3 +44,11 @@ test("readers, strangers, keir-bot itself, closed PRs and other repositories are
   assert.match((await setup().m.handle({ ...ask, number: 5401 })).skipped, /not on that pull request/);
   assert.match((await setup().m.handle({ ...ask, repository: "someone/else" })).skipped, /not the game repository/);
 });
+
+test("noDashes turns dashes into commas and keeps ranges as hyphens", () => {
+  const { noDashes } = require("../lib/operator/github");
+  assert.equal(noDashes("a — b"), "a, b");
+  assert.equal(noDashes("turns 3–5"), "turns 3-5");
+  assert.equal(noDashes("— lead"), "lead");
+  assert.equal(noDashes("end —."), "end.");
+});
