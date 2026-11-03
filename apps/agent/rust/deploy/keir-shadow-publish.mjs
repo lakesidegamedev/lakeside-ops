@@ -72,9 +72,15 @@ if (dry) { console.log(`rendered ${html.length} chars to ${htmlOut}`); process.e
 // Publish through the report-publish MCP registered for this box (write-scoped token).
 const cfg = JSON.parse(fs.readFileSync(process.env.KEIR_MCP_CONFIG || "/root/.claude.json", "utf8")).mcpServers["report-publish"];
 if (!cfg?.url) { console.error("report-publish MCP not configured"); process.exit(0); }
+const agreed = (r.agreement_24h || []).reduce((n, a) => n + (a.agreed || 0), 0);
+const compared = (r.agreement_24h || []).reduce((n, a) => n + (a.total || 0), 0);
+const takeaway = compared
+  ? `The Rust harness agreed with the Node operator on ${agreed} of ${compared} decisions in the last 24 hours (${Math.round((100 * agreed) / compared)}%).`
+  : "No shadow comparisons in the last 24 hours, so there is no agreement figure yet.";
 const body = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "publish_report", arguments: {
   slug: SLUG, title: "Keir 4.0 shadow", category: "Keir", icon: "🦀", badge: r.release ? String(r.release).slice(0, 7) : "live", author: "keir-shadow-rs",
   summary: "Live view of the Keir 4.0 Rust harness shadowing the Node operator: agreement, outcome labels, completion and friction metrics, Jev tags and the human review queue. Refreshed every ten minutes.",
+  takeaway, library_category: "keir", report_type: "Tracker",
   html } } };
 const res = await fetch(cfg.url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...(cfg.headers || {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(20000) });
 const text = await res.text();
