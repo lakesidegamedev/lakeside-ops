@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.4.0 (2026-11-03)
+
 - A maintainer who writes @keir-bot (or @Keir) in a comment on an AHDGame pull request gets a Keir review on it: specific suggestions and a verdict line (looks good, needs changes or blocking issue), posted as the keir-bot account when its token is configured. Only people who can push to the repository can ask; the ops webhook forwards only ids and Keir re-reads the comment, the asker's access and the PR from GitHub. One review per PR commit, a 👀 reaction acknowledges the request, and the task can only read that PR and the code and post one comment: no merges, heals or other posts.
 - KEIR.md now says what the broker already allows: a ticket task proposes a bounded data repair itself for the owner's approval (owner rule 2026-11-01), instead of only raising it to developers. It also states the real heal timings: a dry-run token lasts nine minutes, the owner's consent 24 hours. In a day-benchmark experiment the old text kept both models from ever proposing the repair.
 
