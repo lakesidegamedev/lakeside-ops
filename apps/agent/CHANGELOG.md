@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A support-service outage can no longer keep a channel-less ticket waking every cycle (ticket 1730: 128 wakes, 15M tokens). While the ticket's support record cannot be read, the next check and the timer wake back off from 5 minutes, doubling to 6 hours, each failed check is logged, and the owner is told once after the fourth failure. A new message still wakes the job, and a successful read clears the backoff.
+- Turn-watch notes no longer count as a human message, so they cannot wake a ticket held on an owner decision. The wake rule and the unread watchdog now share one list.
+- A waiting job with no wake time now wakes after 4 hours instead of sleeping until a message arrives.
+- A dismissed or owner-paused ticket is no longer relabelled deferred or waiting by the claim and close-stall rules, and a dismissed ticket whose channel is gone stays dismissed (it is still marked channel-closed so a reopened ticket is adopted).
+- Releasing a staff claim now lifts the deferral that claim caused on its own, without waiting for a message. A deferral from a coordinator takeover is left alone.
 - Nothing changes for players or staff. The rules that decide when a ticket job wakes, waits, is held, times out or is closed now live in one module (`lib/operator/lifecycle.js`) whose header describes the whole state machine, with 101 tests pinning today's behavior, instead of being spread through `operator.js`.
 
 ## 7.6.1 (2026-11-03)

@@ -3358,7 +3358,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // own command may continue their work. Never turn a model "done" into
       // another scheduled investigation of the same staff-owned ticket.
       if (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy) {
-        job.state = "deferred"; delete job.wakeAt; delete job.ciWatch; delete job.turnWatch;
+        job.state = "deferred"; job.deferredBy = "claim"; delete job.wakeAt; delete job.ciWatch; delete job.turnWatch;
       }
       if (job.codingParent) { delegation.complete(job); ledger.save(); return { state: job.state }; }
       if (!["waiting", "blocked"].includes(job.state)) withdrawDecisions(ledger, job.id, `task finished ${job.state}`);
