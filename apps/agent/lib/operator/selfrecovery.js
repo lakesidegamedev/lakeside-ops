@@ -189,6 +189,16 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
       if (now() - since < (app || restart ? DEAD_APP_MS : DEAD_STUCK_MS)) continue;
       if (inFlight(j) || j.ownerDecisionPending || Object.values(d.decisions || {}).some((x) => x.jobId === j.id && x.state === "pending")) continue;
       if (Object.values(j.effects || {}).some((e) => ["started", "executing", "uncertain"].includes(e.state))) continue;
+      // Blocked on a developer handoff that is still open is a developer wait,
+      // not dead work. Dismissing it also self-closed the handoff (ticket 1760,
+      // card 255014), so the work it asked for was dropped.
+      if (!restart && (j.raisedToDevelopers || []).some((r) => r.blocking && r.id && !r.releasedAt && !r.selfOwned)) {
+        j.state = "waiting";
+        j.wakeAt = now() + DEAD_STUCK_MS;
+        j.waitingFor = { kind: "developer_reply", since: now(), deadline: j.wakeAt };
+        record(d, ledger, { at: now(), job: j.id, ticket: j.ticket || null, action: "blocked-to-developer-wait", reason: "blocked on an open developer handoff" });
+        continue;
+      }
       j.state = "dismissed";
       j.summary = restart ? "Closed: this saved request could not be restarted safely. Ask again to start a fresh task." : `Self-recovery: closed after being blocked with nothing pending (${String(j.summary || "").slice(0, 200)})`;
       record(d, ledger, { at: now(), job: j.id, ticket: j.ticket || null, action: app ? "app-task-dismissed" : "stuck-task-dismissed", reason: restart ? "unrestartable saved request" : "blocked with nothing pending" });
