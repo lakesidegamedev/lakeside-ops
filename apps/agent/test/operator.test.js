@@ -2785,3 +2785,13 @@ test("the owner's direct question in a ticket is answered at once, not held behi
   const r = await f.broker.tool(owner, "channel_reply", { message: "Not ignored: I read it and did nothing with it, because cash only moves on your own recorded approval." });
   assert.ok(r && !r.skipped, JSON.stringify(r));
 });
+
+test("a developer task holding the ticket does not leave the ticket task owing an answer (ticket 1761)", async () => {
+  const f = fixture();
+  const fields = { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" } };
+  const ticketTask = running(f, fields);
+  f.ledger.data.seen["ticket:123"] = ticketTask.id;
+  const dev = f.ledger.createJob("dev-1761", { ...fields, kind: "command", role: "owner", actorId: f.config.ownerId, source: { ...fields.source, authorId: f.config.ownerId } }); dev.state = "running";
+  await assert.rejects(f.broker.tool(ticketTask, "channel_reply", { message: "Impeachment filing will work the same way as bills." }), /developer's own task/);
+  assert.equal(ticketTask.replyRefusedPending, undefined);
+});
