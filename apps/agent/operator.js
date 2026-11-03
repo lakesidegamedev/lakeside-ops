@@ -42,6 +42,8 @@ const config = {
   releaseDirectory: env.KEIR_RELEASE_DIRECTORY || path.resolve(__dirname, ".."),
   stateDir: env.KEIR_OPERATOR_STATE_DIR || "/var/lib/keir-operator",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
+  // @keir-bot on an AHDGame PR asks for a review; posted as keir-bot when its token is set.
+  prMentionEnabled: env.KEIR_PR_MENTION !== "0", githubReviewerToken: env.KEIR_GITHUB_TOKEN || "",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
   ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
   // Who a decision is credited to in player copy (owner, 2026-11-01).
@@ -166,6 +168,9 @@ const toolSessions = new Map(); // Keir 4.0: Rust runner tool sessions (see /v4/
 // Keir 5.7: Jev-logged feedback and a daily self-review (lib/operator/selfimprove.js).
 const selfImprove = require("./lib/operator/selfimprove");
 const feedbackLog = selfImprove.createFeedbackLog({ ledger, log });
+const prMention = require("./lib/operator/prmention").createPrMention({ ledger, config, log, drain: () => drain(),
+  gh: (args, { asReviewer } = {}) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000,
+    env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", ...(asReviewer && config.githubReviewerToken ? { GH_TOKEN: config.githubReviewerToken } : {}) } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null")))) });
 const dailyReview = selfImprove.createDailyReview({ ledger, config, log, drain: () => drain(), hour: Number(env.KEIR_SELF_REVIEW_HOUR || 5) });
 setInterval(() => { try { dailyReview.tick(); } catch (e) { log(`self-review: ${e.message}`); } }, 5 * 60000).unref();
 const gateway = createGateway({ ledger, config, conversation, drain: () => drain(), observe: process.env.KEIR_FEEDBACK_LOG === "0" ? null : (x) => feedbackLog.observe(x) });
@@ -820,6 +825,11 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (!authorized(req)) return reply(401, { error: "unauthorized" });
+  if (req.url === "/v5/github/mention" && req.method === "POST") {
+    let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 2000) return reply(413, { error: "too large" }); }
+    try { return reply(202, await prMention.handle(JSON.parse(raw || "{}"))); }
+    catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
+  }
   if (req.url?.split("?")[0] === "/v5/efficiency" && req.method === "GET") {
     const days = Number(new URL(req.url, "http://localhost").searchParams.get("days") || 30), until = Date.now();
     if (!Number.isFinite(days) || days <= 0 || days > 3650) return reply(400, { error: "Invalid days" });

@@ -2822,3 +2822,19 @@ test("done refuses unpublished snapshot changes, so housekeeping cannot delete t
   await b.tool(j, "finish", { state: "done", summary: "Reverted the experiment; nothing to publish." });
   assert.equal(j.state, "done");
 });
+
+test("an @keir-bot PR review task reads its own PR, posts one verdict review and nothing else", async () => {
+  const f = githubFixture([
+    [/pulls\/5400$/, { number: 5400, state: "open", head: { sha: "abcdef123456" }, html_url: "https://github.com/lakesidegamedev/AHDGame/pull/5400" }],
+    [/issues\/5400\/comments$/, { html_url: "https://github.com/lakesidegamedev/AHDGame/pull/5400#issuecomment-2" }],
+  ]);
+  const j = running(f, { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", prMention: { number: 5400, head: "abcdef123456", by: "HyawiiGithub" }, source: { authorId: "github:HyawiiGithub" } });
+  const review = "1. The new loop recomputes the clearing price for every bidder; hoist it.";
+  await assert.rejects(f.broker.tool(j, "github", { action: "review_comment", number: 5400, comment: review }), /Verdict/);
+  await assert.rejects(f.broker.tool(j, "github", { action: "review_comment", number: 5401, comment: `${review}\n\nVerdict: looks good` }), /5400 only/);
+  await assert.rejects(f.broker.tool(j, "github", { action: "merge", number: 5400 }), /only reads the pull request/);
+  await assert.rejects(f.broker.tool(j, "request_heal", {}), /only reads the pull request/);
+  const r = await f.broker.tool(j, "github", { action: "review_comment", number: 5400, comment: `${review}\n\nVerdict: needs changes` });
+  assert.equal(r.posted, true);
+  await assert.rejects(f.broker.tool(j, "github", { action: "review_comment", number: 5400, comment: `${review} again\n\nVerdict: needs changes` }), /already posted/);
+});
