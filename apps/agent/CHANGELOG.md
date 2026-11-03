@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- KEIR.md now says what the broker already allows: a ticket task proposes a bounded data repair itself for the owner's approval (owner rule 2026-11-01), instead of only raising it to developers. It also states the real heal timings: a dry-run token lasts nine minutes, the owner's consent 24 hours. In a day-benchmark experiment the old text kept both models from ever proposing the repair.
+
 ## 7.3.0 (2026-11-02)
 
 - An owner approval whose plan changed after a turn is withdrawn when it is refused, and an expired approval no longer counts as a reason to wake. The stale approval used to keep the task waking every 15 minutes after the fresh plan had run.
