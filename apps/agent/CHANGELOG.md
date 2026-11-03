@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.2.6 (2026-11-03)
+
 - The owner's or a developer's direct question in a ticket is answered at once: the pacing rules (another task just posted, the monologue cap, ten-minute spacing) no longer hold it back. On ticket 1757 the owner's answer waited behind another task's post and read as Keir going silent.
 
 ## 7.2.5 (2026-11-03)
