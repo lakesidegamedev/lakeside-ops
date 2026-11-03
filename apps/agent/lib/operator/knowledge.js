@@ -184,6 +184,22 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
   try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }
   let replacingDoc = false;
   const save = () => { if (replacingDoc) return; const tmp = `${file}.tmp`; fs.writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 }); fs.renameSync(tmp, file); };
+  // Recall accounting (Keir 8): which notes reach an activation, so lessons can be joined to ticket
+  // outcomes later (lib/operator/lessonreport.js). Counters live on the note; each recall is also one
+  // line in <notebook>.recalls.jsonl. Saves are debounced because recall runs on every activation.
+  const recallLog = `${file}.recalls.jsonl`;
+  let dirty = false, flushTimer = null, logWrites = 0;
+  const flush = () => { if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; } if (dirty) { dirty = false; save(); } };
+  const scheduleFlush = () => { dirty = true; if (flushTimer) return; flushTimer = setTimeout(() => { flushTimer = null; if (dirty) { dirty = false; save(); } }, 30000); flushTimer.unref?.(); };
+  function track(notes, { job, ticket, via } = {}) {
+    const at = now();
+    for (const n of notes) { n.recalls = (n.recalls || 0) + 1; n.lastRecalledAt = at; }
+    scheduleFlush();
+    try {
+      if (++logWrites % 200 === 0 && fs.existsSync(recallLog) && fs.statSync(recallLog).size > 8e6) fs.renameSync(recallLog, `${recallLog}.old`);
+      fs.appendFileSync(recallLog, JSON.stringify({ at, job: job || null, ticket: ticket || null, via: via || null, ids: notes.map((n) => n.id) }) + "\n", { mode: 0o600 });
+    } catch { /* accounting never blocks an answer */ }
+  }
   const git = (args) => String(exec("/usr/bin/git", ["-C", repo, ...args], { timeout: 10000, encoding: "utf8", maxBuffer: 2e6 })).trim();
   const blob = (path, ref = "origin/main") => { try { return git(["rev-parse", `${ref}:${path}`]); } catch { return null; } };
   const words = (t) => new Set(String(t || "").toLowerCase().match(/[a-z][a-z0-9_]{2,}/g) || []);
@@ -235,7 +251,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
       ...(disputed.length ? { conflictsWith: disputed, conflict: "these notes disagree; read current evidence and record a sourced replacement before relying on either" } : {}) };
   }
   // Player notes are private to that player's support task or developer work.
-  function recall(query, { k = 6, ticket, player } = {}) {
+  function recall(query, { k = 6, ticket, player, job, via } = {}) {
     const q = words(query);
     const scored = data.notes.filter((n) => live(n) && (!n.player || player === "*" || (player && n.player === String(player)))).map((n) => {
       const w = words(n.text + " " + codeSources(n).map((s) => s.path).join(" "));
@@ -244,6 +260,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
       if (n.kind === "lesson" || n.kind === "decision") s += 0.5;
       return { n, s };
     }).filter((x) => x.s >= 2).sort((a, b) => b.s - a.s || b.n.at - a.n.at).slice(0, k);
+    if (scored.length) track(scored.map(({ n }) => n), { job, ticket, via });
     return scored.map(({ n }) => project(n));
   }
   function curate(actions, { backup = true, by = "curator", allowedIds } = {}) {
@@ -265,6 +282,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
         if (new Set(group.map((n) => n.kind)).size > 1 || new Set(group.map((n) => n.player || "")).size > 1) continue;
         const keep = group[0]; recordHistory(keep, "merge", { by });
         keep.sources = unique(group.flatMap(noteSources));
+        keep.recalls = group.reduce((sum, n) => sum + (n.recalls || 0), 0); keep.lastRecalledAt = Math.max(0, ...group.map((n) => n.lastRecalledAt || 0)) || undefined;
         keep.text = t; keep.curatedAt = now(); keep.mergedFrom = unique(group.flatMap((n) => [n.id, ...(n.mergedFrom || [])])).filter((id) => id !== keep.id);
         if (!keep.ticket) keep.ticket = group.find((n) => n.ticket)?.ticket || null;
         for (const n of group.slice(1)) { recordHistory(n, "merged", { into: keep.id, by }); n.supersededBy = keep.id; n.supersededAt = now(); byId.delete(n.id); }
@@ -350,7 +368,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
     }
     return results;
   }
-  return { curate, remember, recall, forget, notesFor, forgetDoc, invalidateDoc, replaceDoc, queueStale, refresh, all: () => data.notes.filter(live), archive: () => data.notes.filter((n) => !live(n)), meta: () => (data.meta ||= {}), save };
+  return { flush, recallLog, curate, remember, recall, forget, notesFor, forgetDoc, invalidateDoc, replaceDoc, queueStale, refresh, all: () => data.notes.filter(live), archive: () => data.notes.filter((n) => !live(n)), meta: () => (data.meta ||= {}), save };
 }
 
 // ---------- Code checks (2.1: replaced the Haiku second look) ----------

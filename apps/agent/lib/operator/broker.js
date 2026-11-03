@@ -1527,7 +1527,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (name === "recall") {
       if (!notebook) return { notes: [] };
       const player = job.role === "player" ? undefined : (job.role === "owner" || developerTask(job)) ? "*" : (await reporterOf(job, signal))?.id || undefined;
-      return { notes: notebook.recall(String(input.query || ""), { ticket: job.ticket, k: 8, player }) };
+      return { notes: notebook.recall(String(input.query || ""), { ticket: job.ticket, k: 8, player, job: job.id, via: "tool" }) };
     }
     if (name === "player_note") {
       // Keir 2.3 (owner-approved): a private note about this ticket's reporter,

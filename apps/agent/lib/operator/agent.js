@@ -375,7 +375,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // Keir 2.3: private notes about this ticket's reporter (never for player tasks).
     if (broker.notebook && job.ticket && job.role !== "player") { try { const r = await broker.reporterOf(job); if (r?.id) context.playerNotes = broker.notebook.notesFor(r.id); } catch {} }
     const recallPlayer = job.role === "player" ? undefined : job.role === "owner" ? "*" : job.reporterCharacter?.id || undefined;
-    context.notebook = !compact && broker.notebook ? broker.notebook.recall([job.source?.content, ...requestInbox.map((m) => m?.content), job.summary].filter(Boolean).join(" "), { ticket: job.ticket, k: 6, player: recallPlayer }) : undefined;
+    context.notebook = !compact && broker.notebook ? broker.notebook.recall([job.source?.content, ...requestInbox.map((m) => m?.content), job.summary].filter(Boolean).join(" "), { ticket: job.ticket, k: 6, player: recallPlayer, job: job.id, via: "context" }) : undefined;
     mark("context");
     if (!quick && config.knowledgePreparation) context.knowledge = await require("./knowledge-context").prepareKnowledgeContext(job,
       (input, readSignal) => broker.tool(job, "read_tool", input, readSignal), config.knowledgePreparation, signal);

@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir's notebook now records which notes reach an activation: each note carries a recall count and last-recalled time, and every recall is one line in `notebook.json.recalls.jsonl` with its job and ticket. `bin/keir-lesson-report.js` joins those recalls to ticket outcomes and feedback and flags lessons that stay unused or that sit on tickets doing clearly worse than baseline. It only reports; nothing is retired automatically. This starts the Keir 8 learning loop: until now nothing measured whether a lesson was used or helped.
+
 ## 7.4.1 (2026-11-03)
 
 - Nothing Keir writes on GitHub (reviews, comments, issues, PR titles and bodies) carries an em or en dash any more: they become commas, and number ranges keep a hyphen. The first @keir-bot review had one. Its instructions say the same.
