@@ -70,7 +70,7 @@ function validateRequest(body) {
     if (!isPlainObject(b.filter) || !Object.keys(b.filter).length) {
       return { ok: false, error: "filter is required and must not be empty" };
     }
-    const action = b.action;
+    const action = isPlainObject(b.action) && !b.action.kind ? { ...b.action, kind: "set" in b.action ? "set" : "unset" in b.action ? "unset" : undefined } : b.action;
     if (!isPlainObject(action) || !["set", "unset", "delete"].includes(action.kind)) {
       return { ok: false, error: 'action must be {kind:"set", set:{...}}, {kind:"unset", unset:[...]} or {kind:"delete"}' };
     }

@@ -25,7 +25,7 @@ const SOURCES = /^Biography sources/;
 
 // Tools a ticket or command rarely needs. Their schemas load on demand and run
 // through call_tool; the completion tools and the everyday reads stay direct.
-const RARE_TOOLS = ["publish_report", "request_heal", "open_suggestion", "chart", "support_directive", "open_ticket", "sentry", "present_choices", "computer", "idea_suggest",
+const RARE_TOOLS = ["publish_report", "open_suggestion", "chart", "support_directive", "open_ticket", "sentry", "present_choices", "computer", "idea_suggest",
   "feed_post", "merge_into_incident", "merge_related", "artifact_save", "review_fix", "request_action", "execute_action", "view_page", "discord_search",
   "watch_turn", "goal_update", "task_plan", "local_file", "past_ticket", "similar_reports", "open_channel", "add_to_ticket", "player_note",
   "owner_updates", "support_updates", "operator_roles", "task_progress"];
@@ -34,7 +34,7 @@ const RARE_TOOLS = ["publish_report", "request_heal", "open_suggestion", "chart"
 // with load_context section skills.
 const DIGEST = {
   "verification-before-completion": "No claim of fixed, passing, live or done without fresh evidence from this activation: run the check or read the receipt and quote what it showed. Never infer success from an earlier run, a subagent summary or a clean-looking diff. If you could not verify, say what is unverified.",
-  "systematic-debugging": "Find the root cause before proposing a fix. Read the error and the code path, reproduce, compare a working case with the broken one, test one hypothesis at a time with the smallest check. After a failed fix re-read the evidence instead of stacking guesses; after three failures question the approach. Raise a developer decision with raise_to_developers instead of asking a human partner.",
+  "systematic-debugging": "Find the root cause before proposing a code fix: read the error and the code path, compare a working case with the broken one, test one hypothesis at a time. A bad data record is not a code question: read it, propose the repair with request_heal in the same activation, then trace the cause. After three failed fixes question the approach. Raise a developer decision with raise_to_developers instead of asking a human partner.",
   "ponytail-review": "Before publishing a subworker's patch, list what to delete: speculative options, unused helpers, abstractions for a single use, unrelated reformatting. The smallest complete change wins.",
   "ponytail": "Always on at the full level. Make the smallest complete change: no speculative flexibility, no new abstraction for one use, no drive-by edits. The patch is reviewed by a developer and the repository is public.",
   "test-driven-development": "Run or write a failing focused test first, make it pass with the smallest change, rerun that file. Never delete or weaken a test to pass. If a test is impossible, say why in the PR body. Focused tests only, never the full suite.",
@@ -65,8 +65,6 @@ function trim(briefText, profile, job = {}) {
   const allow = ALLOW[profile], drop = new Set(DROP[profile] || []);
   if (profile === "work") {
     if (job.role !== "owner") drop.add(OWNER_APP);
-    // Automatic support and players cannot request or approve heals; a command has no ticket card.
-    if (["support", "player"].includes(job.role)) drop.add("Heals and approvals");
     if (!job.ticket) drop.add("Ticket progress card");
   }
   const kept = [], omitted = [];

@@ -44,3 +44,14 @@ test("lean session defers rare tools, keeps completion tools direct and loads om
   assert.equal(bp.lean({ job: { ...job, voiceMode: true }, quick: true, briefText: text, tools: TOOLS, skills, skillLane: lane, skillNames: [] }), null);
   assert.equal(bp.lean({ job, quick: false, briefText: text, tools: TOOLS, skills, skillLane: lane, skillNames: [], enabled: false }), null);
 });
+
+test("a support ticket can call request_heal directly and still sees the heal rule", () => {
+  const job = { kind: "ticket", role: "support", ticket: 7 };
+  const lane = skills.laneOf(job, false), prep = skills.prepare(lane);
+  const ctx = bp.lean({ job, quick: false, briefText: text, tools: TOOLS, skills, skillLane: lane, skillNames: prep.names });
+  assert.ok(ctx.session.tools.some((t) => t.name === "request_heal"));
+  assert.ok(!ctx.deferredNames.includes("request_heal"));
+  assert.match(bp.trim(text, "work", job).text, /## Heals and approvals/);
+  const action = TOOLS.find((t) => t.name === "request_heal").input_schema.properties.action;
+  assert.deepEqual(action.properties.kind.enum, ["set", "unset"]);
+});

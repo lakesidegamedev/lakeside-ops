@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket whose sector or record is damaged now gets the repair proposed to the owner for approval instead of only a developer report. The request_heal tool is no longer hidden behind a deferred schema, spells out the action shape (a bare set or unset is accepted), says it works from tickets, and the heal rule is no longer cut from support tasks. Filing a bug now tells the task to propose the data repair as well, and the debugging digest no longer tells it to wait for a root cause before repairing a bad record. Net model-facing text shrinks.
 - Nothing changes for players or staff. The rules that decide when a ticket job wakes, waits, is held, times out or is closed now live in one module (`lib/operator/lifecycle.js`) whose header describes the whole state machine, with 101 tests pinning today's behavior, instead of being spread through `operator.js`.
 
 ## 7.6.1 (2026-11-03)
