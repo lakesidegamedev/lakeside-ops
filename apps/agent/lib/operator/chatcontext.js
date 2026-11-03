@@ -57,7 +57,7 @@ function sessionContext({ job, ledger, broker, config, tools, fullBrief, recallP
         case "instructions": return page(fullBrief, input.offset);
         case "conversation": return { evidenceOnly: true, ...page(JSON.stringify(broker.context?.(job) || {}), input.offset) };
         case "work": return { evidenceOnly: true, ...page(JSON.stringify({ work: broker.appContext?.(job), progress: broker.progress?.(job) }), input.offset) };
-        case "memory": return { evidenceOnly: true, notes: broker.notebook?.recall(input.query || job.source?.content || "", { ticket: job.ticket, k: 3, player: recallPlayer }) || [] };
+        case "memory": return { evidenceOnly: true, notes: broker.notebook?.recall(input.query || job.source?.content || "", { ticket: job.ticket, k: 3, player: recallPlayer, job: job.id, via: "chat" }) || [] };
         case "skills": {
           if (config.skills === false) return { skills: [], disabled: true };
           const skills = require("./skills"), prefs = require("./appcontrols").preferences(ledger.data, job);
