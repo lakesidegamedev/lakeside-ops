@@ -288,11 +288,25 @@ setInterval(refreshKnowledge, 5 * 60000).unref();
 // drop no-value notes; decisions and lessons are never dropped; dated backup).
 const curator = knowledgeLayer.makeCurator();
 let curating = false;
+// Keir 8.x: lesson record -> recall ranking boost, and capped reversible retirement (KEIR_LESSON_RETIRE=0 turns retirement off).
+const lessonRetire = require("./lib/operator/lessonretire");
+function lessonRecord() {
+  try {
+    const report = lessonRetire.reportFor({ notes: notebook.all(), recallLog: notebook.recallLog, ledgerData: ledger.data });
+    notebook.setBoost(lessonRetire.recordMultipliers(report));
+    if (["0", "off", "false"].includes(String(process.env.KEIR_LESSON_RETIRE || "").toLowerCase())) return [];
+    const done = notebook.retire(lessonRetire.planRetirements({ notes: notebook.all(), report, cap: 5 }), { dailyCap: 5 });
+    for (const d of done) ledger.audit("lesson_retired", { id: d.id, rule: d.rule, reason: d.reason });
+    if (done.length) { ledger.save(); log(`lessons retired: ${done.map((d) => `${d.id}(${d.rule})`).join(", ")}`); }
+    return done;
+  } catch (e) { log(`lesson record: ${e.message}`); return []; }
+}
+setTimeout(lessonRecord, 90000).unref();
 async function curateIfDue(force = false) {
   if (curating || learning || verifying) return { busy: true };
   if (!force && (Object.values(ledger.data.jobs).some((j) => ["running", "queued"].includes(j.state)) || Date.now() - (notebook.meta().lastCurated || 0) < 22 * 3600000)) return { skipped: true };
   curating = true;
-  try { const r = await knowledgeLayer.curateNotebook(notebook, curator, { log }); ledger.audit("notebook_curated", { actions: r.length }); ledger.save(); return { actions: r.length, notes: notebook.all().length }; }
+  try { const r = await knowledgeLayer.curateNotebook(notebook, curator, { log }); ledger.audit("notebook_curated", { actions: r.length }); ledger.save(); const retired = lessonRecord(); return { actions: r.length, retired: retired.length, notes: notebook.all().length }; }
   catch (e) { log(`curation: ${e.message}`); return { error: e.message }; } finally { curating = false; }
 }
 setInterval(() => curateIfDue(), 6 * 3600000).unref();

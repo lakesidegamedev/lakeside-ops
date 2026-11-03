@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Lesson retirement: capped, reversible, audited retirement of near-duplicate, stale and long-unused lessons (`bin/keir-lesson-retire.js`, dry run by default, `KEIR_LESSON_RETIRE=0` to disable), and recall ranking now favours lessons with a good ticket record.
+
 ## 8.0.0 (2026-11-03)
 
 Keir 8: recovery, reliability and a learning loop.

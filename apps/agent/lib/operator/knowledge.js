@@ -258,8 +258,8 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
       let s = 0; for (const x of q) if (w.has(x)) s++;
       if (ticket && noteSources(n).some((r) => r.type === "ticket" && String(r.number) === String(ticket))) s += 5;
       if (n.kind === "lesson" || n.kind === "decision") s += 0.5;
-      return { n, s };
-    }).filter((x) => x.s >= 2).sort((a, b) => b.s - a.s || b.n.at - a.n.at).slice(0, k);
+      return { n, s, rank: s * (n.kind === "lesson" ? boost.get(n.id) || 1 : 1) };
+    }).filter((x) => x.s >= 2).sort((a, b) => b.rank - a.rank || b.n.at - a.n.at).slice(0, k);
     if (scored.length) track(scored.map(({ n }) => n), { job, ticket, via });
     return scored.map(({ n }) => project(n));
   }
@@ -292,6 +292,30 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
     (data.meta ||= {}).curationLog = [...(data.meta.curationLog || []), ...log.map((l) => ({ ...l, at: now(), by }))].slice(-2000);
     save(); return log;
   }
+  // Lesson retirement (Keir 8.x): reversible, audited in meta.retireLog and the note's own history.
+  const retiredToday = () => (data.meta?.retireLog || []).filter((e) => e.op === "retired" && now() - e.at < 86400000).length;
+  function retire(items, { by = "lesson-retire", dailyCap = 5, backup = true } = {}) {
+    const done = [];
+    for (const it of items || []) {
+      if (retiredToday() + done.length >= dailyCap) break;
+      const n = data.notes.find((x) => x.id === it.id && live(x));
+      if (!n || n.kind !== "lesson") continue;
+      if (!done.length && backup && fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak-${new Date(now()).toISOString().replace(/[:.]/g, "-")}`);
+      recordHistory(n, "retired", { reason: it.reason, rule: it.rule, by }); n.retiredAt = now(); done.push({ op: "retired", id: n.id, rule: it.rule, reason: it.reason, at: now(), by });
+    }
+    if (done.length) { (data.meta ||= {}).retireLog = [...(data.meta.retireLog || []), ...done].slice(-2000); save(); }
+    return done;
+  }
+  function restore(id, { by = "lesson-retire" } = {}) {
+    const n = data.notes.find((x) => x.id === id && x.retiredAt && !x.supersededBy);
+    if (!n || n.history?.[n.history.length - 1]?.op !== "retired") return false;
+    recordHistory(n, "restored", { by }); delete n.retiredAt;
+    (data.meta ||= {}).retireLog = [...(data.meta.retireLog || []), { op: "restored", id, at: now(), by }].slice(-2000);
+    save(); return true;
+  }
+  // Outcome record per lesson id (lessonretire.recordMultipliers); set by the operator after each report.
+  let boost = new Map();
+  const setBoost = (m) => { boost = m instanceof Map ? m : new Map(); };
   function notesFor(player, k = 8) { return data.notes.filter((n) => live(n) && n.player === String(player)).sort((a, b) => b.at - a.at).slice(0, k).map(project); }
   // A changed document invalidates the whole merged note, including dependencies
   // on other docs. Preserve the old receipt instead of silently deleting it.
@@ -368,7 +392,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
     }
     return results;
   }
-  return { flush, recallLog, curate, remember, recall, forget, notesFor, forgetDoc, invalidateDoc, replaceDoc, queueStale, refresh, all: () => data.notes.filter(live), archive: () => data.notes.filter((n) => !live(n)), meta: () => (data.meta ||= {}), save };
+  return { flush, recallLog, retire, restore, setBoost, curate, remember, recall, forget, notesFor, forgetDoc, invalidateDoc, replaceDoc, queueStale, refresh, all: () => data.notes.filter(live), archive: () => data.notes.filter((n) => !live(n)), meta: () => (data.meta ||= {}), save };
 }
 
 // ---------- Code checks (2.1: replaced the Haiku second look) ----------
