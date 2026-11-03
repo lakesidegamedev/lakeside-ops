@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.2.9 (2026-11-02)
+
+- A task cannot finish done while its repository snapshot holds unpublished changes; it publishes them with publish_patch or reverts and dismisses. Ticket 1757's tested bond-interest deduction finished "left uncommitted for the supervisor" and was deleted with the workspace.
+
 ## 7.2.8 (2026-11-03)
 
 - A link to a report Keir published as public may go in a player's ticket; every other ops address is still refused. The owner's tax audit link for ticket 1757 was refused as an "internal URL".
