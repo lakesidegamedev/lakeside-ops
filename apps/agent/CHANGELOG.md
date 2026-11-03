@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.6.1 (2026-11-03)
+
 - A raw game-record read asked for the sandbox now reads the sandbox. Every heal_query, heal_count and heal_collections call was rewritten to prod, so a question about the test server got production data back without saying so (ticket 1740). Any env other than prod or sandbox is refused by name.
 - A raw read that finds nothing while a filter gives a record id as plain text is retried with it as a record id, and the answer says which it was. A plain-text id never matches, and the empty result was twice reported to a player as "nothing is signed" while three agreements existed (ticket 1742). If the retry also finds nothing, the answer says to check the filter against a known record before saying none exist.
 - A task left blocked while its developer handoff is still open now waits for the developer instead of being closed after six hours as "blocked with nothing pending". Closing it also closed the handoff, so the requested work was dropped (ticket 1760, handoff 255014). Five tasks were closed this way in three days.
