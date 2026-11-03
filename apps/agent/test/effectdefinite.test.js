@@ -80,3 +80,33 @@ test("MCP transport: connection refused is classed definite; a timeout or an HTT
     await assert.rejects(mcp.call("support", "x", {}, true), (e) => e.code === undefined, "a reset mid-request may have been processed");
   } finally { globalThis.fetch = real; }
 });
+
+// Probe P5 of the effects audit, now a test: the status card's message id is saved with its receipt.
+test("status card: the posted card is recorded in the same save that closes the receipt, so a lost final save does not post a second card", async () => {
+  const { ledger, config } = mk(); const posts = [], patches = []; let clock = 5000;
+  const discord = async (method, route, body) => {
+    if (method === "GET" && /\/guilds\//.test(route)) return [{ id: "777777777777777777", name: "ticket-bug-x-123", guild_id: config.guildId }];
+    if (method === "GET" && /\/users\/@me$/.test(route)) return { id: config.botId, avatar: null };
+    if (method === "GET" && /\/channels\/777777777777777777$/.test(route)) return { id: "777777777777777777", name: "ticket-bug-x-123", guild_id: config.guildId };
+    if (method === "GET" && /messages\?limit=100/.test(route)) return [];
+    if (method === "GET" && /messages\?limit=1$/.test(route)) return posts.length ? [{ id: String(900 + posts.length) }] : [];
+    if (method === "POST" && /messages$/.test(route)) { posts.push(body); return { id: String(900 + posts.length) }; }
+    if (method === "PATCH") { patches.push(route); return {}; }
+    return []; };
+  const broker = createBroker({ ledger, config, mcp: { servers: () => ["support"], list: async () => [], call: async () => ({ ok: true }) }, discord, sandbox: {}, now: () => (clock += 1000), exec: async () => "" });
+  const t = ledger.createJob("ticket:123", { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-x-123" }, deadline: 9e15 }); t.state = "waiting";
+  ledger.data.seen["ticket:123"] = t.id; t.investigatedReads = 5;
+  // Snapshot what is on disk at every save after the card POST.
+  const saves = []; const realSave = ledger.save;
+  ledger.save = (...a) => { if (posts.length) saves.push(JSON.parse(JSON.stringify(ledger.data.statusCards || null))); return realSave.apply(ledger, a); };
+  const items = [{ name: "Factory panel shows zero", stage: "found", blocked: false, note: "" }];
+  await broker.adminStatusCard(123, { items, status: "" });
+  assert.equal(posts.length, 1);
+  assert.equal(saves[0]?.[123]?.messageId, "901", "the first save after the POST already holds the card");
+  assert.deepEqual(saves[0][123].items ?? [], [], "items stay as they were, so a resumed update still sees the change");
+  // Crash: only that first save survived.
+  ledger.data.statusCards = saves[0];
+  await broker.adminStatusCard(123, { items, status: "" });
+  assert.equal(posts.length, 1, "no second card");
+  assert.equal(patches.length, 1, "the card is edited in place instead");
+});

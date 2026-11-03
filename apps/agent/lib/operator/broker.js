@@ -862,7 +862,16 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const ch = channelId && await discord("GET", `/channels/${channelId}`);
       if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== Number(ticketNo)) throw new Error("status card channel does not match this ticket");
       const seq = (card.seq || 0) + 1;
-      const sent = await effect(effectJob, `status-card:${ticketNo}:${seq}`, () => discord("POST", `/channels/${channelId}/messages`, { ...body, nonce: `card${ticketNo}-${seq}`, enforce_nonce: true }));
+      // Keir 8: the card's message id is written inside the effect, so the same save that closes
+      // the receipt also records the card. The receipt lives on a throwaway notice task, so a lost
+      // card record used to mean the next update posted a second card. Only the id is recorded here:
+      // items and status stay as they were, so a resumed update still sees the change (stage note,
+      // live notice) and edits this card in place.
+      const sent = await effect(effectJob, `status-card:${ticketNo}:${seq}`, async () => {
+        const posted = await discord("POST", `/channels/${channelId}/messages`, { ...body, nonce: `card${ticketNo}-${seq}`, enforce_nonce: true });
+        if (posted?.id) cards[ticketNo] = { ...card, messageId: posted.id, channelId, seq };
+        return posted;
+      });
       messageId = sent.id; card.seq = seq;
     }
     const stageChanged = JSON.stringify((card.items || []).map((i) => [i.name, i.stage, i.blocked])) !== JSON.stringify(items.map((i) => [i.name, i.stage, i.blocked]));
