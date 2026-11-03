@@ -2281,7 +2281,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (input.action === "ci_failures") {
         // The actual failing output, so a red check is diagnosed, not guessed.
         const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]);
-        const runs = ((await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`])).check_runs || []).filter((r) => r.status === "completed" && !["success", "neutral", "skipped"].includes(r.conclusion))
+        const runs = require("./github").redChecks((await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`])).check_runs || [])
           .sort((a, b) => (a.name === "verify") - (b.name === "verify"));
         const out = [];
         for (const r of runs.slice(0, 4)) {
@@ -2386,7 +2386,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       async function gate(pr) {
         const runs = (await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`])).check_runs || [];
         const pending = runs.filter((r) => r.status !== "completed").map((r) => r.name);
-        const failed = runs.filter((r) => r.status === "completed" && !["success", "neutral", "skipped"].includes(r.conclusion)).map((r) => `${r.name}: ${r.conclusion}`);
+        const failed = require("./github").redChecks(runs).map((r) => `${r.name}: ${r.conclusion}`);
         const qualification = failed.length ? { qualified: false } : await require("./qualification").promotionQualification({ api, pr, runs, repository: repo });
         return { checks: runs.length, pending, failed, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
           ...(qualification.qualified ? { qualification } : {}),
