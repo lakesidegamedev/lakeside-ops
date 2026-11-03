@@ -13,6 +13,23 @@ const { icon } = require("../ui-kit");
 const { AREAS } = require("../kanban-store");
 
 const DAY = 864e5;
+
+// One icon and one color per area and per class, so a card's kind reads at a
+// glance before its title does.
+const AREA_STYLE = {
+  economy: ["coins", "#3fb950"], politics: ["vote", "#f472b6"], turns: ["cpu", "#4cc2d4"], apps: ["package", "#a371f7"],
+  web: ["globe", "#58a6ff"], support: ["life-buoy", "#db8a3a"], releases: ["git-branch", "#8b949e"], keir: ["bot", "#7dd3e0"],
+  infra: ["database", "#8b949e"], world: ["map", "#d29922"], capabilities: ["zap", "#d29922"], ops: ["settings", "#8b949e"],
+  ask: ["message-circle", "#58a6ff"], game: ["compass", "#3fb950"], platforms: ["package", "#a371f7"],
+};
+const CLASS_STYLE = { project: ["layers", "#a371f7", "Project"], issue: ["alert-circle", "#f85149", "Issue"], idea: ["lightbulb", "#d29922", "Idea"] };
+function visuals() {
+  const svg = (name, size = 12) => icon(name, { size, stroke: 2.2 });
+  return {
+    area: Object.fromEntries(Object.entries(AREA_STYLE).map(([k, [i, c]]) => [k, { svg: svg(i), color: c }])),
+    cls: Object.fromEntries(Object.entries(CLASS_STYLE).map(([k, [i, c, l]]) => [k, { svg: svg(i), color: c, label: l }])),
+  };
+}
 const QUIET_DAYS = 5;
 
 // Actor strings drift (token names, model suffixes, casing). Show people a name.
@@ -41,7 +58,8 @@ function buildBoard(store) {
   const now = Date.now();
   const since7 = new Date(now - 7 * DAY).toISOString();
   const db = store.db;
-  const done = db.prepare(`SELECT id FROM kanban_items WHERE lane = 'done' AND closed_at >= ? ORDER BY closed_at DESC LIMIT 200`).all(since7)
+  // Shipped means finished work: housekeeping closes (expired, decluttered) do not count.
+  const done = db.prepare(`SELECT id FROM kanban_items i WHERE lane = 'done' AND closed_at >= ? AND NOT EXISTS (SELECT 1 FROM kanban_events e WHERE e.item_id = i.id AND e.event_type IN ('closed', 'expired') AND e.created_at >= i.closed_at) ORDER BY closed_at DESC LIMIT 200`).all(since7)
     .map((r) => store.get(r.id, { events: 0 })).filter(Boolean);
   const created = new Map(db.prepare(`SELECT item_id, actor FROM kanban_events WHERE event_type = 'created'`).all().map((r) => [r.item_id, r.actor]));
   const touched = new Set(db.prepare(`SELECT DISTINCT item_id FROM kanban_events WHERE event_type IN ('started','progress','blocked','completed')`).all().map((r) => r.item_id));
@@ -88,6 +106,7 @@ function buildBoard(store) {
     at: now, quietDays: QUIET_DAYS,
     products: store.products().filter((p) => !p.archived).map((p) => ({ slug: p.slug, name: p.name })),
     areas: AREAS,
+    ui: visuals(),
     monitors, progress, next, inbox, blocked, backlog,
     done: done.map(card).sort((a, b) => b.closedAt - a.closedAt),
     shippedByDay, counts: { shipped: done.length, progress: progress.length, stuck: stuck.length + blocked.length, next: next.length, inbox: inbox.length, backlog: backlog.length },
@@ -146,6 +165,45 @@ const BOARD_CSS = `
 .wb-list .r span{color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wb-list .r b{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wb-empty{padding:18px 8px;text-align:center;color:var(--text-3);font-size:12px}
+/* card v2 */
+.col-h h2 .icon{color:var(--text-3)}
+.col-h[data-lane=now] h2 .icon{color:var(--accent)}
+.col-h[data-lane=blocked] h2 .icon{color:var(--red)}
+.col-h[data-lane=done] h2 .icon{color:var(--green)}
+.col-b{gap:8px;padding:10px}
+.ah{display:flex;align-items:center;gap:7px;padding:6px 2px 0;font-size:11.5px;font-weight:550;color:var(--text-2)}
+.ah .ai{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;color:var(--ac);background:color-mix(in srgb,var(--ac) 15%,transparent)}
+.ah .n{margin-left:auto;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.kc2{display:flex;flex-direction:column;gap:9px;width:100%;padding:11px 12px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);cursor:pointer;text-align:left;font:inherit;color:inherit;transition:border-color var(--t),background var(--t)}
+.kc2:hover{border-color:var(--border-3);background:var(--surface-2)}
+.kc2.hot{box-shadow:inset 3px 0 0 var(--red)}
+.kc2.quiet{box-shadow:inset 3px 0 0 var(--amber)}
+.kc2 .top{display:flex;align-items:center;gap:6px;min-width:0}
+.bdg{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px 0 5px;border-radius:6px;font-size:11px;font-weight:550;color:color-mix(in srgb,var(--bc) 82%,var(--pill-mix));background:color-mix(in srgb,var(--bc) 13%,transparent);border:1px solid color-mix(in srgb,var(--bc) 24%,transparent);white-space:nowrap}
+.bdg .icon{color:var(--bc)}
+.bdg.ic{width:20px;padding:0;justify-content:center}
+.kc2 .pd{width:7px;height:7px;border-radius:50%;background:var(--pc);flex:none}
+.kc2 .tt{font-size:13.5px;font-weight:580;line-height:1.35;letter-spacing:-.01em;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.trk{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+.trk i{height:4px;border-radius:2px;background:rgb(var(--ink)/.08)}
+.trk i.on{background:var(--tc)}
+.stp{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-2);font-variant-numeric:tabular-nums}
+.stp .sb{flex:1;height:6px;border-radius:999px;background:rgb(var(--ink)/.08);overflow:hidden}
+.stp .sb i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.kc2 .ft{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-3)}
+.kc2 .ft .who{display:inline-flex;align-items:center;gap:5px;color:var(--text-2)}
+.kc2 .ft .av{width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:8.5px;font-weight:650;background:var(--surface-3);color:var(--text-2);border:1px solid var(--border-2)}
+.kc2 .ft .sp{flex:1}
+.kc2 .ft .gh{font-family:var(--mono);font-size:10.5px}
+.kc2.attn{min-width:270px;max-width:300px}
+.grp2{display:flex;align-items:center;gap:7px;padding:6px 2px 0;font-size:11.5px;font-weight:550;color:var(--text-2)}
+.grp2 .av{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:650;background:var(--surface-3);border:1px solid var(--border-2)}
+.grp2 .n{margin-left:auto;font-size:11px;color:var(--text-3)}
+.wb-list .r2{display:grid;grid-template-columns:auto minmax(0,1fr) auto 70px;gap:10px;align-items:center;padding:8px 14px;border-top:1px solid var(--border);font-size:12.5px;cursor:pointer}
+.wb-list .r2:hover{background:rgb(var(--ink)/.022)}
+.wb-list .r2 b{font-weight:520;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wb-list .r2 span.d{color:var(--text-3);font-size:11px;text-align:right}
+.wb-sum{display:flex;flex-wrap:wrap;gap:5px;padding:0 14px 10px}
 dialog.wb-dlg{width:min(720px,94vw);max-height:86vh;border:1px solid var(--border-2);border-radius:var(--r-lg);background:var(--surface);color:var(--text);padding:0;box-shadow:var(--e3)}
 dialog.wb-dlg::backdrop{background:rgba(0,0,0,.55)}
 .dlg-h{display:flex;gap:10px;align-items:flex-start;padding:14px 16px;border-bottom:1px solid var(--border)}
@@ -178,10 +236,10 @@ function makeBoardBody(board) {
 <div class="statbar" id="wbStats"></div>
 <div id="wbAttnWrap"></div>
 <div class="wb-cols">
-<section class="col"><div class="col-h"><h2>In progress</h2><span class="count" id="cProgress"></span><span class="hint">grouped by who holds it</span></div><div class="col-b" id="lProgress"></div></section>
-<section class="col"><div class="col-h"><h2>Next</h2><span class="count" id="cNext"></span><span class="hint">committed</span></div><div class="col-b" id="lNext"></div></section>
-<section class="col"><div class="col-h"><h2>Blocked</h2><span class="count" id="cBlocked"></span><span class="hint">oldest first</span></div><div class="col-b" id="lBlocked"></div></section>
-<section class="col"><div class="col-h"><h2>Done</h2><span class="count" id="cDone"></span><span class="hint">last 7 days</span></div><div class="col-b" id="lDone"></div></section>
+<section class="col"><div class="col-h" data-lane="now"><h2>${icon("activity", { size: 14 })}In progress</h2><span class="count" id="cProgress"></span><span class="hint">grouped by who holds it</span></div><div class="col-b" id="lProgress"></div></section>
+<section class="col"><div class="col-h" data-lane="next"><h2>${icon("arrow-right", { size: 14 })}Next</h2><span class="count" id="cNext"></span><span class="hint">committed</span></div><div class="col-b" id="lNext"></div></section>
+<section class="col"><div class="col-h" data-lane="blocked"><h2>${icon("alert-triangle", { size: 14 })}Blocked</h2><span class="count" id="cBlocked"></span><span class="hint">oldest first</span></div><div class="col-b" id="lBlocked"></div></section>
+<section class="col"><div class="col-h" data-lane="done"><h2>${icon("check-circle", { size: 14 })}Done</h2><span class="count" id="cDone"></span><span class="hint">last 7 days</span></div><div class="col-b" id="lDone"></div></section>
 </div>
 <div class="wb-more">
 <details id="dInbox"><summary>Inbox<span class="count" id="cInbox"></span><span class="hint">filed but not picked up. Open one to move it to Next (give it an owner) or close it.</span></summary><div class="wb-list" id="lInbox"></div></details>
@@ -205,10 +263,20 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){retur
 function rel(t){if(!t)return'';var s=Math.round((Date.now()-t)/1000);if(s<60)return'just now';if(s<3600)return Math.round(s/60)+'m ago';if(s<86400)return Math.round(s/3600)+'h ago';return Math.round(s/86400)+'d ago'}
 function ini(n){var p=String(n||'?').split(/[\\s._-]+/).filter(Boolean);return((p[0]||'?')[0]+(p[1]?p[1][0]:'')).toUpperCase()}
 function ok(c){if(st.product&&c.product!==st.product)return false;if(st.cls&&c.cls!==st.cls)return false;if(st.area&&c.area!==st.area)return false;if(st.q){var h=(c.title+' '+c.progress+' '+c.owner+' '+(PN[c.product]||'')).toLowerCase();var w=st.q.toLowerCase().split(/\\s+/);for(var i=0;i<w.length;i++)if(h.indexOf(w[i])<0)return false}return true}
-function card(c,extra){var q=c.lane==='now'&&c.quietDays>=B.quietDays;var kd=c.kids?'<div class="kids"><span>'+esc(c.kids.done)+'/'+esc(c.kids.done+c.kids.open)+' steps</span><span class="kb"><i style="width:'+esc(Math.round(100*c.kids.done/Math.max(1,c.kids.done+c.kids.open)))+'%"></i></span></div>':'';
-return'<button class="kc'+(extra?' '+extra:'')+'" type="button" data-id="'+c.id+'" style="--pc:'+(PC[c.product]||'#8b949e')+'"><b>'+esc(c.title)+'</b>'+(c.progress?'<p>'+esc(c.progress)+'</p>':'')+kd+'<div class="meta">'+(c.cls?'<span class="cls" style="color:'+CC[c.cls]+'">'+esc(c.cls)+'</span>':'')+'<span class="pn">'+esc(areaName(c)||PN[c.product]||c.product)+'</span>'+(c.impact==='high'?'<span class="pill" style="--c:#f85149;height:18px">high</span>':'')+(c.github?'<span>#'+c.github.n+'</span>':'')+(c.evidence&&c.lane==='done'?'<span>evidence</span>':'')+'<span class="sp"></span>'+(q?'<span class="quiet">quiet '+c.quietDays+'d</span>':'<span>'+rel(c.lane==='done'?c.closedAt:c.lastAt)+'</span>')+'</div></button>'}
-function row(c){return'<div class="r" data-id="'+c.id+'" style="--pc:'+(PC[c.product]||'#8b949e')+'"><i></i><b>'+esc(c.title)+'</b><span class="h">'+(c.cls?'<span style="color:'+CC[c.cls]+'">'+esc(c.cls)+'</span> · ':'')+esc(areaName(c)||PN[c.product]||c.product)+'</span><span class="h">'+(c.by?'filed by '+esc(c.by):'')+'</span><span>'+rel(c.lastAt)+'</span></div>'}
-function byArea(a){var g={},order=[];a.forEach(function(c){var k=areaName(c)||PN[c.product]||'Other';if(!g[k]){g[k]=[];order.push(k)}g[k].push(c)});order.sort(function(x,y){return g[y].length-g[x].length});return order.map(function(k){return'<div class="area-h">'+esc(k)+' · '+esc(g[k].length)+'</div>'+g[k].map(function(c){return card(c)}).join('')}).join('')}
+var UI=B.ui;
+function badgeArea(c,iconOnly){var a=UI.area[c.area],n=areaName(c);if(!a||!n)return'';return'<span class="bdg'+(iconOnly?' ic':'')+'" style="--bc:'+a.color+'" title="'+esc(n)+'">'+a.svg+(iconOnly?'':esc(n))+'</span>'}
+function badgeCls(c){var k=UI.cls[c.cls];if(!k)return'';return'<span class="bdg" style="--bc:'+k.color+'">'+k.svg+esc(k.label)+'</span>'}
+var STAGE={backlog:0,inbox:1,next:2,blocked:3,now:3,done:4},TC={blocked:'var(--red)',done:'var(--green)'};
+var SN={backlog:'Backlog',inbox:'Filed',next:'Next',now:'In progress',blocked:'Blocked',done:'Done'};
+function track(c){var n=STAGE[c.lane]||0,col=TC[c.lane]||'var(--accent)',h='';for(var i=1;i<=4;i++)h+='<i class="'+(i<=n?'on':'')+'"></i>';return'<div class="trk" style="--tc:'+col+'" title="'+esc(SN[c.lane]||'')+'">'+h+'</div>'}
+function steps(c){var t=c.kids.done+c.kids.open;return'<div class="stp"><span>'+esc(c.kids.done)+' of '+esc(t)+' steps</span><span class="sb"><i style="width:'+esc(Math.round(100*c.kids.done/Math.max(1,t)))+'%"></i></span></div>'}
+function card(c,extra){var q=c.lane==='now'&&c.quietDays>=B.quietDays;var cls='kc2'+(extra?' '+extra:'')+(q?' quiet':'');
+var when=q?'<span style="color:var(--amber)">quiet '+esc(c.quietDays)+'d</span>':'<span>'+rel(c.lane==='done'?c.closedAt:c.lastAt)+'</span>';
+return'<button class="'+cls+'" type="button" data-id="'+esc(c.id)+'" style="--pc:'+(PC[c.product]||'#8b949e')+'" title="'+esc(c.progress||c.title)+'"><div class="top">'+(st.product?'':'<span class="pd" title="'+esc(PN[c.product]||'')+'"></span>')+badgeArea(c)+'<span style="flex:1"></span>'+badgeCls(c)+'</div><div class="tt">'+esc(c.title)+'</div>'+(c.kids?steps(c):track(c))+'<div class="ft">'+(c.owner?'<span class="who"><span class="av">'+esc(ini(c.owner))+'</span>'+esc(c.owner)+'</span>':'<span>Unassigned</span>')+'<span class="sp"></span>'+(c.github?'<span class="gh">#'+esc(c.github.n)+'</span>':'')+when+'</div></button>'}
+function row(c){return'<div class="r2" data-id="'+esc(c.id)+'">'+badgeArea(c,true)+'<b>'+esc(c.title)+'</b>'+badgeCls(c)+'<span class="d">'+rel(c.lastAt)+'</span></div>'}
+function byArea(a){var g={},order=[];a.forEach(function(c){var k=c.area&&UI.area[c.area]?c.product+':'+c.area:'_'+c.product;if(!g[k]){g[k]=[];order.push(k)}g[k].push(c)});order.sort(function(x,y){return g[y].length-g[x].length});
+return order.map(function(k){var c0=g[k][0],a=UI.area[c0.area],n=areaName(c0)||PN[c0.product]||'Other';return'<div class="ah" style="--ac:'+(a?a.color:'#8b949e')+'"><span class="ai">'+(a?a.svg:'')+'</span>'+esc(n)+'<span class="n">'+esc(g[k].length)+'</span></div>'+g[k].map(function(c){return card(c)}).join('')}).join('')}
+function summary(a){var g={};a.forEach(function(c){var n=areaName(c)||'Other';g[n]=g[n]||{n:0,c:c};g[n].n++});return'<div class="wb-sum">'+Object.keys(g).sort(function(x,y){return g[y].n-g[x].n}).map(function(n){var a=UI.area[g[n].c.area];return'<span class="bdg" style="--bc:'+(a?a.color:'#8b949e')+'">'+(a?a.svg:'')+esc(n)+' '+esc(g[n].n)+'</span>'}).join('')+'</div>'}
 function list(arr,id,empty){var a=arr.filter(ok);setHtml($(id),a.length?byArea(a):'<div class="wb-empty">'+empty+'</div>');return a.length}
 function render(){
 var as=$('wbArea'),seen={},opts='<option value="">All areas</option>';Object.keys(B.areas).forEach(function(p){if(st.product&&p!==st.product)return;var t=B.areas[p];Object.keys(t).forEach(function(k){if(seen[k])return;seen[k]=1;opts+='<option value="'+esc(k)+'">'+esc(t[k])+'</option>'})});setHtml(as,opts);as.value=st.area;
@@ -226,11 +294,11 @@ var quiet=B.progress.filter(function(c){return c.quietDays>=B.quietDays&&ok(c)})
 setHtml($('wbAttnWrap'),quiet.length?'<div class="sec-h" style="margin-top:0"><h2>Gone quiet</h2><span class="count">'+quiet.length+'</span><span style="font-size:11.5px;color:var(--text-3)">in progress but no update for '+B.quietDays+'+ days. Open one to move it back to Next.</span></div><div class="wb-attn">'+quiet.map(function(c){return card(c,'attn')}).join('')+'</div>':'');
 var prog=B.progress.filter(function(c){return ok(c)&&!(c.quietDays>=B.quietDays)});var groups={};prog.forEach(function(c){var o=c.owner||'Unassigned';(groups[o]=groups[o]||[]).push(c)});
 var names=Object.keys(groups).sort(function(a,b){return groups[b].length-groups[a].length});
-setHtml($('lProgress'),names.length?names.map(function(n){return'<div class="grp"><span class="av">'+esc(ini(n))+'</span>'+esc(n)+' · '+groups[n].length+'</div>'+groups[n].map(function(c){return card(c)}).join('')}).join(''):'<div class="wb-empty">Nothing in progress.</div>');
+setHtml($('lProgress'),names.length?names.map(function(n){return'<div class="grp2"><span class="av">'+esc(ini(n))+'</span>'+esc(n)+'<span class="n">'+esc(groups[n].length)+'</span></div>'+groups[n].map(function(c){return card(c)}).join('')}).join(''):'<div class="wb-empty">Nothing in progress.</div>');
 $('cProgress').textContent=prog.length;
 $('cNext').textContent=list(B.next,'lNext','Nothing queued.');$('cBlocked').textContent=list(B.blocked,'lBlocked','Nothing blocked.');$('cDone').textContent=list(B.done,'lDone','Nothing shipped this week yet.');
 var ib=B.inbox.filter(ok),bl=B.backlog.filter(ok);$('cInbox').textContent=ib.length;$('cBacklog').textContent=bl.length;
-$('lInbox').innerHTML=ib.slice(0,300).map(row).join('')||'<div class="wb-empty">Inbox is empty.</div>';$('lBacklog').innerHTML=bl.slice(0,300).map(row).join('')||'<div class="wb-empty">Backlog is empty.</div>'}
+setHtml($('lInbox'),ib.length?summary(ib)+ib.slice(0,300).map(row).join(''):'<div class="wb-empty">Inbox is empty.</div>');setHtml($('lBacklog'),bl.length?summary(bl)+bl.slice(0,300).map(row).join(''):'<div class="wb-empty">Backlog is empty.</div>')}
 render();
 $('wbCls').addEventListener('click',function(e){var b=e.target.closest('button');if(b){st.cls=b.getAttribute('data-c')||'';render()}});
 $('wbArea').addEventListener('change',function(){st.area=this.value;render()});
