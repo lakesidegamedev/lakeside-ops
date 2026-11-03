@@ -598,13 +598,22 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return get(realId, { events: 5 });
   }
 
-  function report({ id, event, summary, evidence_url = null, actor = "agent", idempotency_key = null, no_evidence_reason = null, force = false }) {
+  function report(input) {
+    return db.transaction(() => recordReport(input)).immediate();
+  }
+
+  function recordReport({ id, event, summary, evidence_url = null, actor = "agent", idempotency_key = null, no_evidence_reason = null, force = false }) {
     if (!REPORT_EVENTS.includes(event)) throw badInput(`event must be one of ${REPORT_EVENTS.join(", ")}`);
     actor = normalizeActor(actor) || "unnamed";
     let text = clean(summary, 4000);
     if (!text) throw badInput("summary is required");
     const realId = resolveId(id);
     const current = rowById(realId);
+    if (event === "started" && current.assigned_to && current.assigned_to !== actor && !force) {
+      const error = new Error("This task is already assigned; coordinate a handoff with its owner");
+      error.status = 409;
+      throw error;
+    }
     // Monitors are always-on processes: a heartbeat updates the card's status
     // and leaves at most one history event an hour.
     if (current.kind === "monitor" && event === "progress") {
@@ -643,6 +652,31 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       logEvent({ item_id: realId, product: row.product, event_type: event, actor, summary: text, evidence_url: evidence, idempotency_key: key, created_at: stamp });
     })();
     return { duplicate: false, item: get(realId, { events: 5 }) };
+  }
+
+  // Restricted collaboration uses the authenticated identity, never a supplied
+  // assignee. IMMEDIATE keeps the ownership check and mutation atomic across
+  // the dashboard, MCP and sync processes sharing this SQLite file.
+  function collaborate({ id, action, summary, evidence_url, actor }) {
+    actor = normalizeActor(actor);
+    if (!actor) throw badInput("A signed-in identity is required");
+    if (!["claim", "release", "progress", "blocked", "resume", "completed"].includes(action))
+      throw badInput("Unknown collaboration action");
+    return db.transaction(() => {
+      const row = rowById(resolveId(id));
+      const reject = (message, status = 409) => { const error = new Error(message); error.status = status; throw error; };
+      if (row.kind === "monitor" || row.lane === "done") reject("This task is not available for collaboration");
+      if (action === "claim") {
+        if (row.assigned_to && row.assigned_to !== actor) reject("This task is already assigned; coordinate a handoff with its owner");
+        return report({ id: row.id, event: "started", summary: summary || "Claimed task", actor });
+      }
+      if (row.assigned_to !== actor) reject("Claim this task before updating it", 403);
+      if (action === "release") {
+        report({ id: row.id, event: "progress", summary, evidence_url, actor });
+        return { item: update(row.id, { lane: "inbox", assigned_to: "" }, { actor }) };
+      }
+      return report({ id: row.id, event: action === "resume" ? "started" : action, summary, evidence_url, actor });
+    }).immediate();
   }
 
   // What an agent (or person) needs at the start of work, short: your own
@@ -827,6 +861,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     add,
     update,
     report,
+    collaborate,
     brief,
     maintain,
     board,

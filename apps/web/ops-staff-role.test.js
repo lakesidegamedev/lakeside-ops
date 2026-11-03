@@ -17,7 +17,7 @@ test('dashboard Junior Developer is independent of game role and flags', () => {
   assert.equal(opsStaffRole({ isModerator: true }), 'moderator');
 });
 
-test('Junior Developer has explicit read views and logout only', () => {
+test('Junior Developer has explicit read views, logout and scoped task collaboration', () => {
   for (const path of ['/', '/kanban', '/api/kanban', '/api/kanban/items/12', '/project-guide',
     '/api/project-guide', '/reports', '/economy', '/commodity-report', '/reports/extraction-capacity',
     '/api/extraction-audit', '/engine', '/api/me']) {
@@ -28,6 +28,9 @@ test('Junior Developer has explicit read views and logout only', () => {
     }
   }
   assert.equal(juniorDeveloperRequestAllowed('POST', '/api/logout'), true);
+  assert.equal(juniorDeveloperRequestAllowed('POST', '/api/kanban/items/12/collaborate'), true);
+  assert.equal(juniorDeveloperRequestAllowed('POST', '/api/kanban/items/12/report'), false);
+  assert.equal(juniorDeveloperRequestAllowed('DELETE', '/api/kanban/items/12/collaborate'), false);
 });
 
 test('HTTP guard denies private, production and unknown routes before dispatch', async () => {
