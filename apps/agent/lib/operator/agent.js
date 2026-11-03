@@ -227,16 +227,40 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   // turn; a task keeps its runner for life so its context never switches model.
   const DEFAULT_MODEL = { agy: () => config.agyModel || "gemini-3.8-flash", cursor: () => "auto", muse: () => config.museModel || "muse-wonder-1.0", codex: () => "gpt-6-luna", opencode: () => "opencode/glm-5.3-flash-free", ollama: () => "deepseek-v4.1-flash", deepseek: () => "deepseek-flash", claude: () => config.model };
   const PROVIDER_LABEL = { agy: "antigravity-cli-subscription", cursor: "cursor-subscription", muse: "muse-cli-subscription", codex: "codex-cli-chatgpt-subscription", opencode: "opencode-cli", ollama: "ollama-cloud-subscription", deepseek: "deepseek-api", claude: "claude-cli-subscription" };
+  const USAGE_LIMIT = /usage limit|limit exceeded|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credit|balance)|out of credit/i;
+  const COOLDOWN_MS = 30 * 60000;
+  const cooled = (runner) => (ledger.data.routeCooldown?.[runner] || 0) > Date.now();
+  // Returns true when the job was moved to another route and requeued.
+  function switchOnUsageLimit(job, text) {
+    const runner = job.provider?.runner;
+    if (!runner || !USAGE_LIMIT.test(text) || Object.values(job.effects || {}).some((x) => x.state === "started")) return false;
+    (ledger.data.routeCooldown ||= {})[runner] = Date.now() + COOLDOWN_MS;
+    const next = fallbackSpec(job);
+    if (!next || (job.usageLimitSwitches || 0) >= 3) { ledger.audit("usage_limit_no_fallback", { job: job.id, runner }); return false; }
+    const [spec, effort] = next.split("@"), [r, model] = spec.split(":");
+    if (r === runner) return false;
+    job.usageLimitSwitches = (job.usageLimitSwitches || 0) + 1;
+    job.provider = { lane: job.provider.lane || "worker", runner: r, model: model || DEFAULT_MODEL[r](), ...(effort ? { effort, routeEffort: effort } : {}), at: Date.now(), assignedBy: "usage-limit-fallback" };
+    job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "provider-fallback", summary: `${runner} hit a usage limit; continuing on ${r}. Approvals and ownership still apply.` }].slice(-20);
+    job.state = "queued"; delete job.wakeAt;
+    ledger.audit("usage_limit_provider_fallback", { job: job.id, ticket: job.ticket, from: runner, to: r });
+    return true;
+  }
+  function fallbackSpec(job) {
+    const spec = config.fallbackProvider;
+    return spec && DEFAULT_MODEL[String(spec).split(/[:@]/)[0]] && !cooled(String(spec).split(/[:@]/)[0]) ? spec : null;
+  }
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
-    const list = String((lane === "quick" ? config.quickProvider : config.workerProvider) || "claude").split(",").map((x) => x.trim()).filter((x) => DEFAULT_MODEL[x.split(/[:@]/)[0]]);
+    const configured = String((lane === "quick" ? config.quickProvider : config.workerProvider) || "claude").split(",").map((x) => x.trim()).filter((x) => DEFAULT_MODEL[x.split(/[:@]/)[0]]);
+    const list = configured;
     // A pinned route that left the configured list (a retired provider after a route switch) is re-chosen, otherwise an old job keeps failing on it forever.
     const stale = job.provider && (lane === "quick" ? config.quickProvider : config.workerProvider) && !job.provider.ownerSelected && !job.provider.vision && !job.provider.assignedBy && !list.some((x) => x.split("@")[0].split(":")[0] === job.provider.runner);
     if (job.provider?.lane !== lane || stale) {
       const rr = (ledger.data.providerTurn ||= {}), i = (rr[lane] || 0) % Math.max(1, list.length);
       rr[lane] = i + 1;
       // runner[:model][@effort]; Jev chooses effort for each activation.
-      const [spec, pinned] = (list[i] || "claude").split("@"), [runner, model] = spec.split(":");
+      const pick = list[i] || "claude", [spec, pinned] = ((cooled(pick.split(/[:@]/)[0]) && fallbackSpec(job)) || pick).split("@"), [runner, model] = spec.split(":");
       job.provider = { lane, runner, model: model || DEFAULT_MODEL[runner](), ...(pinned ? { effort: pinned, routeEffort: pinned } : {}), at: Date.now() };
       ledger.save();
     }
@@ -479,6 +503,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     } finally { close(); clearTimeout(nudge); if (liveness) clearInterval(liveness); }
     recordUsage(job, result, Date.now() - startedAt, effortUsed, session);
     job.rounds += result.num_turns || session.calls || 1; job.updatedAt = Date.now(); ledger.save();
+    // Keir 8: a provider that ran out of quota or is rate limiting is skipped for a while and the job
+    // moves to the fallback route, instead of every job retrying the dead route (OpenCode Go, 2026-11-03).
+    if (result.is_error && result.subtype !== "error_max_turns" && switchOnUsageLimit(job, String(result.result || result.subtype || ""))) { ledger.save(); return; }
     if (result.is_error && result.subtype !== "error_max_turns") throw new Error("model request failed: " + redactSecrets(String(result.result || result.subtype || "unknown error")).slice(0, 600));
     // 2026-10-19 03:00-07:00 ET: Claude runs returned "success" in about a
     // second with zero tokens and no tool call. Each looked like a finished

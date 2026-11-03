@@ -2881,3 +2881,20 @@ test("a support write refused at connect is rejected and repeatable; a reset mid
   assert.equal(k.state, "blocked");
   assert.equal(Object.values(k.effects).at(-1).state, "started");
 });
+
+test("a provider usage limit moves the job to the fallback route and cools the runner", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 321, summary: "Checking a report.", provider: { lane: "worker", runner: "opencode", model: "opencode-go/deepseek-v4.1-flash" } });
+ const attempts = []; let current = null; const running_job = () => current;
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash", fallbackProvider: "ollama:deepseek-v4.1-flash@low" },
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "opencode") return { subtype: "error", is_error: true, result: "Error: Go usage limit exceeded", num_turns: 1 }; await f.broker.tool(running_job(), "finish", { state: "done", summary: "Checked." }); return { subtype: "success", result: "", num_turns: 1 }; } });
+ current = j; await agent.run(j, new AbortController().signal);
+ assert.equal(j.state, "queued");
+ assert.equal(j.provider.runner, "ollama");
+ assert.equal(j.provider.assignedBy, "usage-limit-fallback");
+ assert.ok(f.ledger.data.routeCooldown.opencode > Date.now());
+ // A second job meant for the cooled runner is routed to the fallback up front.
+ const k = running(f, { kind: "ticket", role: "support", ticket: 322, summary: "Another." });
+ current = k; await agent.run(k, new AbortController().signal);
+ assert.deepEqual(attempts, ["opencode", "ollama"]);
+});

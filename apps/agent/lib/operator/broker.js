@@ -714,7 +714,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (pending) {
       // A status card is edited in place, not a message to the player: it never uses the one
       // notice (KBX5 held-player, 2026-11-03: a card edit after the player's question blocked the answer).
-      const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at && !/^\[status card\]/.test(p.text || "")).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
+      const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at && !isCardPost(p)).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
       if (noticed && !question && !playerSpokeAfter(noticed.at))
         throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. No further posts until the decision lands or the player writes; update the status card if the stage changed.`);
     }
@@ -725,7 +725,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // or two sentences and is never followed by the long version.
     // The progress card is edited in place and is not a message, so it does not
     // hold back the answer it announces (ticket 1540).
-    const mine = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.jobId === job.id && !String(p.text || "").startsWith("[status card]")).at(-1);
+    const mine = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.jobId === job.id && !isCardPost(p)).at(-1);
     if (!answeringStaff && mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
       throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
     // The same question again (1592 asked one question four times in 31
@@ -751,7 +751,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // A status card is edited in place and a human question deserves an answer,
     // so neither holds a reply back (ticket 1602: the owner asked twice, Keir
     // drafted twice and stayed silent behind the coordinator's card).
-    const other = answeringStaff ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !String(p.text || "").startsWith("[status card]") && !playerSpokeAfter(p.at)).at(-1);
+    const other = answeringStaff ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !isCardPost(p) && !playerSpokeAfter(p.at)).at(-1);
     if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
     const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6);
     if (dup) throw new Error(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
@@ -881,7 +881,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // The public receipt keeps the history the card overwrites.
       const text = items.map((i) => `${i.name}: ${i.blocked ? `paused${i.note ? ` (${i.note})` : ""}` : (i.stage === "confirmed" ? "Live, confirmed in game" : i.stage === "answered" ? "Answered, no fix needed" : statusCard.labelOf(i.stage))}`).join("; ");
       mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
-      recordTicketPost(effectJob, ticketNo, `[status card] ${text}`);
+      recordTicketPost(effectJob, ticketNo, text, "status_card");
     }
     await liveNotice(effectJob, ticketNo, card.items || [], items);
     return { messageId, channelId, posted: !card.messageId || card.messageId !== messageId, bumped };
@@ -897,7 +897,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const fresh = after.filter((i) => live(i) && !told.has(i.name));
     if (!fresh.length) return false;
     card.liveNotified = [...told, ...fresh.map((i) => i.name)].slice(-20); ledger.save();
-    const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !/^\[status card\]/.test(p.text) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
+    const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
     const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
@@ -1002,19 +1002,23 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     for (const q of questionsIn(message)) most = Math.max(most, prior.filter((p) => similar(q, p) >= 0.5).length);
     return most;
   }
-  function recordTicketPost(job, ticketNo, message) {
+  // Keir 8: a post carries its kind. The old check read a "[status card]" prefix off the text, so a
+// reply that happened to start with it was treated as a card. Records without a kind are legacy.
+function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.text || "").startsWith("[status card]"); }
+  function recordTicketPost(job, ticketNo, message, kind = "reply") {
+    const card = kind === "status_card";
     if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
     }
-    if (!/^\[status card\]/.test(message)) {
+    if (!card) {
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
     }
-    if (String(message || "").trim() && !/^\[status card\]/.test(message)) { job.lastAskAt = now(); delete job.replyRefusedPending; }
-    if (!/^\[status card\]/.test(message) && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
+    if (String(message || "").trim() && !card) { job.lastAskAt = now(); delete job.replyRefusedPending; }
+    if (!card && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
     const posts = (d.ticketPosts ||= {});
-    posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, text: message.slice(0, 600) }].slice(-10);
+    posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 3600000), { at: now(), jobId: job.id, kind, text: message.slice(0, 600) }].slice(-10);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
     // Keir 4.0: consecutive Keir posts since the player last spoke, kept
     // beyond the one-hour post window so a slow monologue still counts.
@@ -1022,7 +1026,6 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const human = humanAt(ticketNo);
     const cur = runs[ticketNo];
     // Status card edits are neither a message in the monologue run nor the decision notice.
-    const card = /^\[status card\]/.test(message);
     runs[ticketNo] = { humanAt: human, count: cur && cur.humanAt === human ? cur.count + (card ? 0 : 1) : card ? 0 : 1, at: now(),
       decisionNoticeAt: !card && Object.values(d.decisions || {}).some((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo) ? now() : cur?.decisionNoticeAt };
     for (const n of Object.keys(runs)) if (now() - (runs[n].at || 0) > 7 * 86400000) delete runs[n];

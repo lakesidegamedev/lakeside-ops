@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A provider that hits a usage limit or rate limit (for example the OpenCode Go monthly cap on 2026-11-03) is skipped for 30 minutes. A job that hits the limit moves to the fallback route in `KEIR_FALLBACK_PROVIDER` and carries on from its checkpoint instead of blocking, at most three times, and never once an effect has started.
+- Posts on a ticket now carry a kind, so a status card edit is recognised by its kind and no longer by a "[status card]" prefix in the text. A reply that starts with those words is no longer mistaken for a card.
+
 - Keir now DMs the owner when a developer's AHDGame pull request has passed every check except the owner's own approval, once per commit, with a link. Four pull requests sat for hours behind that one button because nobody told the owner.
 
 - A job pinned to a provider that was removed from the configured routes now gets a new route instead of failing on the old one for ever. After the OpenCode quota switch, six old jobs kept retrying the retired route every few minutes and paging the owner.
