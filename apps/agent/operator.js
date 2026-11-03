@@ -130,6 +130,10 @@ const effectShadow = createEffectShadow({ ledger, config });
 const bootTime = Date.now();
 const log = (s) => console.log(new Date().toISOString(), redactSecrets(s));
 const selfRecovery = require("./lib/operator/selfrecovery").createRecovery({ ledger, config, log });
+try {
+  const retried = require("./lib/operator/releaseretry").retryBlockedOwnerWork(ledger.data, { ownerId: config.ownerId, releaseId });
+  if (retried.length) { ledger.audit("release_retry", { release: releaseId, jobs: retried }); ledger.save(); log(`release retry: ${retried.join(", ")}`); }
+} catch (e) { log(`release retry: ${e.message}`); }
 // Keir 3.0 observability wiring (read-only): report how the v1 ledger maps
 // onto canonical work records at startup. This changes no behavior; the
 // coordinator becomes the intake owner only at the canary step.

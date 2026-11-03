@@ -2795,3 +2795,19 @@ test("a developer task holding the ticket does not leave the ticket task owing a
   await assert.rejects(f.broker.tool(ticketTask, "channel_reply", { message: "Impeachment filing will work the same way as bills." }), /developer's own task/);
   assert.equal(ticketTask.replyRefusedPending, undefined);
 });
+
+test("a task that just promised the player more checking cannot park for six hours on their reply (ticket 1759)", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.startedAt = 4000;
+  (f.ledger.data.ticketPosts ||= {})[123] = [{ at: 4500, jobId: j.id, text: "Another clinic bought its supplies. I am still checking what stopped the buying." }];
+  await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Posted." }), /still checking something/);
+  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", wakeAfterMinutes: 20, summary: "Checking again in 20 minutes." });
+  assert.equal(j.state, "waiting");
+});
+
+test("a ticket waiting out its closure grace wakes when the grace ends, not hours later (ticket 1755)", async () => {
+  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.closeReadyAt = 5000 + 30 * 60000;
+  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; closing after the grace period." });
+  assert.ok(j.wakeAt <= j.closeReadyAt + 60000, `wakes at +${(j.wakeAt - 5000) / 60000} min`);
+});

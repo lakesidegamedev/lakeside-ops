@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket task that just told the player it is still checking something cannot finish with a long wait for their reply; it does the check or comes back within 30 minutes. Ticket 1759 promised a check at 00:47 and slept six hours.
+- A ticket waiting out its closure grace wakes when the grace ends. Ticket 1755 was due to close two hours after its fix and slept nine.
+- After a Keir release, the owner's own requests from the last day that ended blocked are retried once (the blocker is often a tool the release added). The owner's public tax report stayed unpublished after publish_report shipped.
+
 - "A developer's own task is handling a request in this ticket" no longer marks an answer as owed. The ticket task could then neither post nor finish (ticket 1761, 2026-11-03).
 
 ## 7.2.6 (2026-11-03)
