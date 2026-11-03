@@ -13,8 +13,8 @@ const { createSandbox } = require("./lib/operator/sandbox");
 const { createPresence } = require("./lib/operator/presence");
 const { createDiscord, createScanHealth } = require("./lib/operator/discord");
 const { createConversation, isQuick } = require("./lib/operator/conversation");
-const { recoverRejectedWrites, recoverAuthBlocked, retryReadFailure } = require("./lib/operator/recovery");
-const humanInbox = (j) => (j.inbox || []).some((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup)$/.test(String(m.authorId || "")));
+const { recoverRejectedWrites, recoverAuthBlocked } = require("./lib/operator/recovery");
+const lifecycle = require("./lib/operator/lifecycle");
 const { LANES, emptyLanes, pickForLanes, laneTimeoutMs, laneClass } = require("./lib/operator/lanes");
 const { createSupportOwner } = require("./lib/operator/supportowner");
 const { createReopenedTickets } = require("./lib/operator/reopened");
@@ -549,15 +549,7 @@ async function scan() {
           if (category) ledger.data.channels[ch.id] = { ...ledger.data.channels[ch.id], category };
           for (const msg of rows) gateway.ingest(ch, msg, { historical: true });
           // A newly opened ticket may have only bot intake messages.
-          if (!staff && !ledger.data.channels[ch.id]?.claimedBy && category !== "moderation" && category !== "incident" && !ledger.data.seen[`ticket:${ticketNumber(ch.name)}`]) {
-            const card = rows.find((m) => m.author.id === config.botId && m.embeds?.length);
-            if (card) {
-              const number = ticketNumber(ch.name);
-              const job = ledger.createJob(`ticket:${number}`, { kind: "ticket", role: "support", ticket: number, channelId: ch.id,
-                source: { channelId: ch.id, channelName: ch.name, content: "New ticket intake; read support_get and ticket_history before acting.", at: card.timestamp }, deadline: Date.now() + config.taskLifetimeMs });
-              job.summary = "New ticket needs investigation.";
-            }
-          }
+          lifecycle.adoptFromIntake(ledger, ch, rows, { staff, category, number: ticketNumber(ch.name), config, now: Date.now() });
           ledger.data.cursors[ch.id] = rows.at(-1)?.id || ch.last_message_id;
         } else {
           if (ch.last_message_id) ledger.data.cursors[ch.id] = ch.last_message_id;
@@ -585,54 +577,13 @@ async function scan() {
   // Standing sweep: every open ticket channel has an owner. A channel with no
   // task at all (opened while Keir was down, or adopted before a restart) gets
   // a support task so nothing sits unanswered (owner, 2026-10-13).
-  for (const ch of channels) {
-    const n = ticketNumber(ch.name);
-    if (!n || (["moderation", "incident"].includes(ledger.data.channels[ch.id]?.category) && !ledger.data.channels[ch.id]?.ownerDirectedAt) || ledger.data.channels[ch.id]?.claimedBy) continue;
-    const known = ledger.data.jobs[ledger.data.seen[`ticket:${n}`]];
-    if (known?.channelClosed && known.channelId !== ch.id) {
-      try { await reopenedTickets.adopt(n, ch); } catch (e) { log(`reopened ticket ${n}: ${e.message}`); }
-    }
-    // A ticket adopted from a handoff before its channel was seen gets it now.
-    if (known && (!known.channelId || (!known.replyChannel && known.channelId === ch.id))) {
-      known.channelId ||= ch.id;
-      known.replyChannel ||= ch.id;
-      known.source = { ...known.source, channelId: ch.id, channelName: ch.name };
-      ledger.save();
-    }
-    if (ledger.data.seen[`ticket:${n}`]) continue;
-    // A live task already working this channel may not be filed under the ticket number
-    // yet (intake keys it by message first). Adopting again ran two tasks on ticket 1757
-    // (2026-11-02, about 14.5M tokens between them); register the existing one instead.
-    const holder = require("./lib/operator/channellesstickets").liveTaskForChannel(ledger.data.jobs, ch.id);
-    if (holder) { ledger.data.seen[`ticket:${n}`] = holder.id; ledger.save(); continue; }
-    const job = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId: ch.id, source: { content: `Open ticket channel #${ch.name} with no Keir task; adopted by the sweep. Read its history and pick it up.`, channelId: ch.id, at: new Date().toISOString() }, deadline: Date.now() + config.taskLifetimeMs });
-    ledger.audit("ticket_adopted_by_sweep", { job: job.id, ticket: n }); ledger.save();
-  }
+  for (const ch of channels) await lifecycle.adoptOpenChannel(ch, { ledger, config, now: Date.now(), ticketNumber, adoptReopened: (n, c) => reopenedTickets.adopt(n, c), log });
+  const sweepCtx = { liveChannels, readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(8000)),
+    channelGone: async (id) => { try { await discord("GET", `/channels/${id}`); return false; } catch (e) { return e.status === 404; } } };
   for (const job of Object.values(ledger.data.jobs)) {
-    if (job.ticket && !liveChannels.has(job.channelId) && !["done", "cancelled"].includes(job.state)) {
-      // A ticket adopted from a handoff after its channel was already gone has no
-      // channel id, so the Discord check below can never return 404 and the task
-      // woke every fifteen minutes for 29 hours (ticket 1730, 2026-11-01: 128
-      // activations, 15M tokens, every read refused). Ask the support record instead.
-      if (!job.channelId) {
-        const readTicket = (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(8000));
-        if (!(await require("./lib/operator/channellesstickets").closeIfTicketClosed(job, readTicket))) continue;
-        ledger.audit("ticket_closed_without_channel", { job: job.id, ticket: job.ticket });
-        for (const slot of Object.values(active)) if (slot?.job.id === job.id) slot.controller.abort();
-        continue;
-      }
-      // The guild list is read once at the start of the scan; a ticket channel
-      // created since (ticket 1555, opened by Keir mid-scan) is missing from it
-      // without being closed. Only Discord saying the channel is gone closes it.
-      try { await discord("GET", `/channels/${job.channelId}`); continue; }
-      catch (e) { if (e.status !== 404) continue; }
-      job.state = "done"; job.channelClosed = true; job.summary = "Ticket channel was closed externally; stopped work.";
-      if (job.resolutionSubmitted) {
-        job.resolved = true; job.summary = "Resolution receipt recorded and ticket-channel closure verified.";
-        // Verified closure is routine; no owner DM.
-      }
-      for (const slot of Object.values(active)) if (slot?.job.id === job.id) slot.controller.abort();
-    }
+    const { closed, effects } = await lifecycle.sweepClosedChannel(job, sweepCtx);
+    lifecycle.applyEffects(ledger, effects);
+    if (closed) for (const slot of Object.values(active)) if (slot?.job.id === job.id) slot.controller.abort();
   }
   // Performance sensors must not delay intake or the next support scan.
   if (!performanceReconciliation) {
@@ -724,47 +675,13 @@ function drain() {
   const now = Date.now();
   require("./lib/operator/workqueue").reviewWaits(ledger, config, now);
   selfRecovery.tick(active, { supportDeferred: (j) => config.supportDeferred(j), setTicketOwner: (t, o) => supportOwner.setTicketOwner(t, o, "self-recovery", {}), canRun: (j) => !(j.ticketPaused || config.supportDeferred(j) || d.channels[j.channelId]?.claimedBy || broker.supportDirectiveHeld(j) || staffHeld(j)) });
+  const wakeCtx = { now, config, claimedBy: (id) => d.channels[id]?.claimedBy, directiveHeld: (j) => broker.supportDirectiveHeld(j) };
   for (const j of Object.values(d.jobs)) {
     if (j.codingParent && !j.operatorRole) {
       const role = rootJob(j, d.jobs).operatorRole;
       if (["watchkeeper", "engineering"].includes(role)) j.operatorRole = role;
     }
-    if (j.role !== "owner" && !["command", "conversation"].includes(j.kind) && j.ticket && !["done", "cancelled"].includes(j.state)) {
-      if (d.channels[j.channelId]?.claimedBy) { j.state = "deferred"; j.summary = "Staff owns this ticket; automatic work is deferred."; continue; }
-      // A player or staff message still reaches the conversation wake below:
-      // this used to "continue" first, so a ticket held on an owner decision
-      // never answered its player (review 2026-10-19: 1613, 1619, 1625 sat
-      // 5 to 7 hours overnight).
-      if (j.ownerDecisionPending && !(j.kind === "ticket" && !j.channelClosed && humanInbox(j))) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; continue; }
-      if (j.ownerDecisionPending) j.state = "blocked";
-    }
-    if (j.resolutionSubmitted && !j.resolved && !["done", "cancelled", "blocked"].includes(j.state)) {
-      if (now - j.resolutionSubmittedAt > 20 * 60000) {
-        j.state = "blocked"; j.summary = "Resolution is recorded, but the bot has not closed the ticket channel after 20 minutes. Inspect receipt delivery.";
-        ledger.notify(`close-stalled:${j.id}`, "owner", `Ticket ${j.ticket}: ${j.summary}`);
-      } else { j.state = "waiting"; }
-      continue;
-    }
-    // Keir 4.0: Keir clears its own dead ends. A blocked probe or benchmark
-    // run is dismissed after an hour; a blocked subworker whose report already
-    // reached its parent is dismissed after half an hour.
-    if (j.state === "blocked" && (((j.internalProbe || j.kind === "probe") && now - (j.updatedAt || 0) > 3600000) || (j.codingParent && j.codingReported && now - (j.updatedAt || 0) > 30 * 60000))) {
-      j.state = "dismissed"; j.summary = `Dismissed automatically: ${j.codingParent ? "its report already reached the parent task" : "a probe or benchmark left blocked"}. Was: ${String(j.summary || "").slice(0, 300)}`;
-      ledger.audit("job_dismissed", { job: j.id, by: "keir", reason: j.codingParent ? "subworker_reported" : "probe_blocked" }); continue;
-    }
-    if (broker.supportDirectiveHeld(j)) continue;
-    if (j.state === "waiting" && (j.wakeAt <= now || (j.inbox?.length && !j.debounceWake))) { j.state = "queued"; delete j.debounceWake; }
-    // A message that arrived while the task was running (a handoff, a staff
-    // note) is still unread when that run settles as blocked; it must wake the
-    // task rather than wait for a human (ticket 1522, 2026-10-14).
-    else if (j.state === "blocked" && j.inbox?.length && !j.ownerDecisionPending && !j.codingParent && !j.internalProbe && !j.channelClosed) { j.state = "queued"; ledger.audit("requeued_for_inbox", { job: j.id, ticket: j.ticket || null, messages: j.inbox.length }); }
-    // Keir 5.6 (owner, 2026-10-16): an open owner decision holds writes and
-    // closure, never the conversation. A player or staff message still wakes
-    // the ticket so it gets an answer; supportAuthority keeps effects held.
-    else if (j.state === "blocked" && j.ownerDecisionPending && j.kind === "ticket" && !j.channelClosed && humanInbox(j)) { j.state = "queued"; ledger.audit("requeued_for_conversation", { job: j.id, ticket: j.ticket || null }); }
-    const expiry = require("./lib/operator/deadline").expireDeadline(j, now, { lifetimeMs: config.taskLifetimeMs });
-    if (expiry === "extended") ledger.audit("deadline_extended", { job: j.id, ticket: j.ticket || null, until: j.deadline });
-    else if (expiry === "blocked") ledger.notify(`deadline:${j.id}`, "owner", `Task ${j.id}: ${j.summary}`);
+    lifecycle.applyEffects(ledger, lifecycle.wakeStep(j, wakeCtx));
   }
   ledger.save();
   // Keir 3.0 admission: reserved conversation and owner capacity, aging so
@@ -780,25 +697,11 @@ function drain() {
     const controller = new AbortController(), startedAt = Date.now(); active[lane] = { job, controller, startedAt };
     const deadline = setTimeout(() => controller.abort(), laneTimeoutMs(lane, config.maxTurnMs));
     agent.run(job, controller.signal).catch((e) => {
-      // A self-recovery park sets "waiting" or "blocked" before aborting: not an error.
-      if (["done", "cancelled", "queued", "paused"].includes(job.state) || (["waiting", "blocked"].includes(job.state) && /^Self-recovery:/.test(job.summary || ""))) return;
-      // Only a write this activation started makes an abort uncertain; an older
-      // unsettled receipt is effect recovery's job (a restart blocked ticket 1578).
-      const startedHere = Object.values(job.effects).some((e) => e.state === "started" && (e.at || 0) >= startedAt);
-      if (controller.signal.aborted && require("./lib/operator/ticketpause").pauseFor(d, job)) { job.state = "paused"; delete job.wakeAt; }
-      // A stop counts even when the abort arrived as the CLI child dying
-      // before the grace period aborted the controller (2026-11-01).
-      else if ((controller.signal.aborted || stopping) && (d.paused || config.supportDeferred(job) || stopping || staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && d.channels[job.channelId]?.claimedBy)) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(Date.now() + 60000, rootJob(job, d.jobs).staffActiveUntil || 0); }
-      else if (retryReadFailure(job, e)) {
-        ledger.audit("transient_retry", {job:job.id, attempt:job.transientFailures, emptyWaits: job.emptyWaits});
-        // One owner alert an hour while the provider answers with nothing.
-        if (/^model request failed: empty activation/.test(e.message)) ledger.notify(`empty-provider:${Math.floor(Date.now() / 3600000)}`, "owner", `The model provider is returning empty replies (task ${job.id}). Tasks retry every 15 minutes; check the provider login or quota.`);
-      }
-      else {
-        job.state = "blocked"; job.summary = redactSecrets(e.message);
-        ledger.notify(`error:${job.id}:${job.rounds}`, "owner", `Task ${job.id} stopped: ${job.summary}`);
-        if (job.kind === "command" && job.replyChannel) ledger.notify(`error-reply:${job.id}:${job.rounds}`, `channel:${job.id}`, "I hit an error and stopped on this one. Ask again and I'll pick it back up.");
-      }
+      const out = lifecycle.onRunError(job, e, { now: Date.now(), aborted: controller.signal.aborted, stopping, paused: d.paused, startedAt,
+        supportDeferred: (j) => config.supportDeferred(j), staffHeld, claimedBy: (id) => d.channels[id]?.claimedBy,
+        pauseFor: (j) => require("./lib/operator/ticketpause").pauseFor(d, j), staffActiveUntil: (j) => rootJob(j, d.jobs).staffActiveUntil || 0, redact: redactSecrets });
+      if (!out) return;
+      lifecycle.applyEffects(ledger, out.effects);
       ledger.save();
     }).finally(() => { broker.codingComplete?.(job); clearTimeout(deadline); stopTyping(); active[lane] = null; });
   }

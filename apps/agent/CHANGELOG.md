@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Nothing changes for players or staff. The rules that decide when a ticket job wakes, waits, is held, times out or is closed now live in one module (`lib/operator/lifecycle.js`) whose header describes the whole state machine, with 98 tests pinning today's behavior, instead of being spread through `operator.js`.
+
 ## 7.6.0 (2026-11-03)
 
 - What Keir authors on GitHub now shows as its own account, keir-bot, when `KEIR_GITHUB_TOKEN` is set: the branch it pushes for a patch (git is told to use the token for that push only), the pull request it opens or edits, the issues and comments it files, duplicates it closes, issues it closes after a fix is live, closed pull requests and the promote pull requests it opens. Merges, branch deletion and every read keep using the box's own login, the owner's, behind the owner's approval. `KEIR_GIT_EMAIL` sets the commit email so commits link to the account. Until now 35 of Keir's last 40 issues and pull requests on AHDGame read as the owner's.
