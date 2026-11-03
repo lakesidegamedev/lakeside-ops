@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir now DMs the owner when a developer's AHDGame pull request has passed every check except the owner's own approval, once per commit, with a link. Four pull requests sat for hours behind that one button because nobody told the owner.
+
 - A job pinned to a provider that was removed from the configured routes now gets a new route instead of failing on the old one for ever. After the OpenCode quota switch, six old jobs kept retrying the retired route every few minutes and paging the owner.
 
 ## 7.7.0 (2026-11-03)
