@@ -347,6 +347,26 @@ test("ticket closure waits for delivered answer and refuses a new unread player 
   await assert.rejects(late.tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }), /new player reply/);
 });
 
+// Self-review 2026-11-03: the closure grace refusal was the day's most repeated one and
+// named nothing (9 calls, 6 tasks). It must say what unlocks support_resolve.
+test("the closure grace refusal names the remaining wait and the step that starts it", async () => {
+  const f = fixture();
+  const job = (key, fields) => { const j = f.ledger.createJob(key, { role: "support", ticket: 123, channelId: "777777777777777777", deadline: 9999999999999, source: {}, ...fields }); j.state = "running"; return j; };
+  const resolve = { tool: "support_resolve", args: { message: "Resolved." } };
+  const delivered = job("fixture:delivered", { lastPublishedAt: 1, resolutionReadyAt: 1 });
+  const inside = await f.broker.tool(delivered, "support_action", resolve).catch((e) => e);
+  assert.match(inside.message, /Nothing more needs posting/);
+  assert.match(inside.message, /wakeAfterMinutes 60/);
+  assert.doesNotMatch(inside.message, /^give the player the final answer/);
+  assert.equal(delivered.closeReadyAt, 3600001, "the refusal pins the wake to the end of the grace");
+  const unrecorded = job("fixture:unrecorded", { lastPublishedAt: 1 });
+  await assert.rejects(f.broker.tool(unrecorded, "support_action", resolve),
+    /no final answer is on record[\s\S]*checkpoint with finalAnswerDelivered true/);
+  const silent = job("fixture:silent");
+  await assert.rejects(f.broker.tool(silent, "support_action", resolve),
+    /the player has no answer from you[\s\S]*support_public_update/);
+});
+
 // Review 2026-10-19: 1610 was resolved one minute after "live" and 1611 52
 // minutes after, before either player could see the fix.
 test("ticket closure waits after a fix goes live unless the player has replied since", async () => {
