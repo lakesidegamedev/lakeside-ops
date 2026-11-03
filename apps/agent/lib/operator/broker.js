@@ -156,6 +156,23 @@ function idMatch(field, ids) {
     { $gt: [{ $size: { $filter: { input: path, cond: { $in: [asText("$$this"), ids] } } } }, 0] },
     { $in: [asText(path), ids] }] };
 }
+// A record id typed as plain text never matches an ObjectId field, and the
+// empty answer read as "nothing exists" (ticket 1742: three live supply
+// agreements reported as none, twice). Returns the filter with those values
+// as record ids, or null when there are none.
+const HEX_ID = /^[0-9a-f]{24}$/i;
+function hexIdFilter(filter) {
+  if (!filter || typeof filter !== "object" || Array.isArray(filter)) return null;
+  const out = {}, fields = [];
+  const hex = (x) => typeof x === "string" && HEX_ID.test(x);
+  for (const [k, v] of Object.entries(filter)) {
+    if (!k.startsWith("$") && hex(v)) { out[k] = { $oid: v }; fields.push(k); }
+    else if (!k.startsWith("$") && v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && Array.isArray(v.$in) && v.$in.some(hex)) { out[k] = { $in: v.$in.map((x) => (hex(x) ? { $oid: x } : x)) }; fields.push(k); }
+    else out[k] = v;
+  }
+  return fields.length ? { filter: oidFilter(out), fields } : null;
+}
+const emptyRead = (r) => Boolean(r) && (Array.isArray(r.docs) ? r.docs.length === 0 : r.count === 0);
 function oidFilter(filter) {
   const out = {}, match = [];
   for (const [k, v] of Object.entries(filter)) {
@@ -1792,7 +1809,16 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (result === undefined) throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
       }
       if (signal?.aborted && input.server === "ops-knowledge" && input.tool.startsWith("knowledge_")) throw new Error("knowledge read cancelled");
-      if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool)) return redactRaw(result);
+      if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool)) {
+        const asIds = emptyRead(result) ? hexIdFilter(args.filter) : null;
+        if (asIds) {
+          const again = await mcp.call(input.server, input.tool, { ...args, filter: asIds.filter }, false, signal).catch(() => null);
+          const names = asIds.fields.join(", ");
+          if (again && !emptyRead(again)) return redactRaw({ ...again, note: `Nothing matched ${names} as plain text; these rows match it as a record id.` });
+          return redactRaw({ ...result, note: `Nothing matched, including ${names} read as a record id. Check the filter against a record you know exists before saying none exist.` });
+        }
+        return redactRaw(result);
+      }
       if (job.role === "player" && input.server === "support") {
         const cardId = result.intake?.cardMessageId;
         if (!cardId) throw new Error("backend ticket identity is unconfirmed; use the visible ticket history");
@@ -3491,4 +3517,4 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { coerceArgs, oidFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };

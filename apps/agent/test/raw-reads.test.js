@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert");
-const { rawReadArgs } = require("../lib/operator/broker");
+const { rawReadArgs, hexIdFilter } = require("../lib/operator/broker");
 
 test("raw game-record reads default to prod and are capped", () => {
   const a = rawReadArgs("heal_query", { collection: "corporations", filter: { name: "X" }, limit: 500 });
@@ -66,4 +66,15 @@ test("closed contact fields do not swallow game fields that merely contain the s
   assert.doesNotThrow(() => rawReadArgs("heal_query", { collection: "corporations", filter: { ownership: { $gt: 0 } }, projection: { membership: 1, leadership: 1, totalShares: 1 } }));
   assert.deepEqual(redactRaw({ ownership: 1.35, membership: 2, ip: "1.2.3.4", ipAddress: "x", address: "y", passwordHash: "z" }), { ownership: 1.35, membership: 2 });
   for (const field of ["email", "discordId", "sessionToken", "phone", "lastIp"]) assert.throws(() => rawReadArgs("heal_query", { collection: "characters", filter: { [field]: "x" } }), /closed/);
+});
+
+test("a record id given as plain text is retried as a record id", () => {
+  const id = "6a88c39d1b9523d08f751cad";
+  const r = hexIdFilter({ supplierCorpId: id, status: "active" });
+  assert.deepStrictEqual(r.fields, ["supplierCorpId"]);
+  assert.equal(r.filter.status, "active");
+  assert.ok(JSON.stringify(r.filter.$expr).includes(id));
+  assert.deepStrictEqual(hexIdFilter({ buyerCorpId: { $in: [id, "x"] } }).fields, ["buyerCorpId"]);
+  assert.equal(hexIdFilter({ name: "Exxon", turn: 5 }), null);
+  assert.equal(hexIdFilter({ $or: [{ a: id }] }), null);
 });
