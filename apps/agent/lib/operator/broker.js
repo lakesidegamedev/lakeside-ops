@@ -56,7 +56,7 @@ const SUPPORT_READS = {
   community: ["community_search"],
   // Keir 5.6: raw read-only game records. Ticket tasks filed "developer
   // handoffs" for single-document reads that nobody claimed, and stalled for
-  // hours. Guarded below: prod only, game collections only, no secret fields.
+  // hours. Guarded below: prod or sandbox, game collections only, no secret fields.
   "heal-ops": ["heal_query", "heal_count", "heal_collections"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
   turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_failure_detail"],
@@ -171,8 +171,18 @@ function oidFilter(filter) {
   out.$expr = all.length === 1 ? all[0] : { $and: all };
   return out;
 }
+// The test server is a separate world players ask about. Reading it is as safe
+// as reading prod; silently swapping it for prod answered a sandbox question
+// with production data (ticket 1740), so any other env is refused by name.
+const RAW_READ_ENVS = new Set(["prod", "sandbox"]);
+function rawReadEnv(env) {
+  if (env === undefined || env === null || env === "") return "prod";
+  if (!RAW_READ_ENVS.has(env)) throw new Error(`env "${env}" is not readable here: use "prod" for the live game or "sandbox" for the test server`);
+  return env;
+}
 function rawReadArgs(tool, args) {
-  if (tool === "heal_collections") return { env: "prod" };
+  const env = rawReadEnv(args.env);
+  if (tool === "heal_collections") return { env };
   const collection = String(args.collection || "");
   if (!collection) throw new Error("collection: name the game collection to read; heal_collections lists them");
   if (RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads: ${RAW_READ_CLOSED_NOTE}`);
@@ -181,7 +191,7 @@ function rawReadArgs(tool, args) {
   // Server-side JavaScript is never a read a support task needs.
   const script = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_OPERATOR_CLOSED.test(k) || script(x));
   if (script(args.filter) || script(args.sort)) throw new Error("server-side script operators are closed to support reads");
-  const out = { env: "prod", collection, filter: args.filter || {} };
+  const out = { env, collection, filter: args.filter || {} };
   if (tool === "heal_query") {
     out.limit = Math.min(Math.max(Number(args.limit) || 25, 1), 50);
     if (args.projection) out.projection = args.projection;

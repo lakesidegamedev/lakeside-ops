@@ -96,8 +96,11 @@ function createWatchkeeper({ stateFile = "/var/lib/keir-watchkeeper/state.json",
         recover(`sensor:${name}`);
         return result;
       } catch (e) {
-        state.sensors[name] = { ...state.sensors[name], failedAt: at, error: e.message };
-        observe(`sensor:${name}`, name === "operator" ? "operator_unavailable" : "sensor_stale", `${name} observation unavailable`, { error: e.message, lastSuccessAt: state.sensors[name].succeededAt || null });
+        // One slow read that the next minute's run answers is not an outage;
+        // raise only on the second failure in a row.
+        const failures = (state.sensors[name]?.failures || 0) + 1;
+        state.sensors[name] = { ...state.sensors[name], failedAt: at, error: e.message, failures };
+        if (failures >= 2) observe(`sensor:${name}`, name === "operator" ? "operator_unavailable" : "sensor_stale", `${name} observation unavailable`, { error: e.message, failures, lastSuccessAt: state.sensors[name].succeededAt || null });
         return null;
       }
     }

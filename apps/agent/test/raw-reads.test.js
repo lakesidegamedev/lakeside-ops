@@ -3,11 +3,17 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { rawReadArgs } = require("../lib/operator/broker");
 
-test("raw game-record reads are forced to prod and capped", () => {
-  const a = rawReadArgs("heal_query", { env: "dev", collection: "corporations", filter: { name: "X" }, limit: 500 });
+test("raw game-record reads default to prod and are capped", () => {
+  const a = rawReadArgs("heal_query", { collection: "corporations", filter: { name: "X" }, limit: 500 });
   assert.deepStrictEqual(a, { env: "prod", collection: "corporations", filter: { name: "X" }, limit: 50 });
   assert.deepStrictEqual(rawReadArgs("heal_count", { collection: "financialTxLog", filter: {} }), { env: "prod", collection: "financialTxLog", filter: {} });
-  assert.deepStrictEqual(rawReadArgs("heal_collections", { env: "dev" }), { env: "prod" });
+  assert.deepStrictEqual(rawReadArgs("heal_collections", {}), { env: "prod" });
+});
+
+test("a sandbox read stays on the sandbox and other envs are refused by name", () => {
+  assert.deepStrictEqual(rawReadArgs("heal_query", { env: "sandbox", collection: "gameState", filter: { _id: "current" } }), { env: "sandbox", collection: "gameState", filter: { _id: "current" }, limit: 25 });
+  assert.deepStrictEqual(rawReadArgs("heal_collections", { env: "sandbox" }), { env: "sandbox" });
+  assert.throws(() => rawReadArgs("heal_query", { env: "dev", collection: "corporations" }), /"dev" is not readable here/);
 });
 
 test("account, ticket and credential collections stay closed", () => {
