@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.0.0 (2026-11-03)
+
+Keir 8: recovery, reliability and a learning loop.
+
+Keir now has release gates written as code (no action after a stop, no unapproved repair, no duplicate answer, no wake loop, no unanswered player, no promise without a receipt), a 30 minute benchmark that runs a simulated day per trial, an extracted and tested ticket lifecycle, its own GitHub identity for authored actions, lesson recall accounting, a provider fallback for usage limits, and a DM to the owner when a developer's PR waits only on the owner's approval. Everything from 7.3.0 to 7.7.0 below is part of it.
+
 - A provider that hits a usage limit or rate limit (for example the OpenCode Go monthly cap on 2026-11-03) is skipped for 30 minutes. A job that hits the limit moves to the fallback route in `KEIR_FALLBACK_PROVIDER` and carries on from its checkpoint instead of blocking, at most three times, and never once an effect has started.
 - Posts on a ticket now carry a kind, so a status card edit is recognised by its kind and no longer by a "[status card]" prefix in the text. A reply that starts with those words is no longer mistaken for a card.
 
