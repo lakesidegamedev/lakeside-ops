@@ -301,8 +301,13 @@ function createMcp(configFile, readToken) {
     const c = servers[server];
     const url = localMcpUrl(c?.url);
     if (!url) throw new Error("unavailable local MCP server");
+    // Keir 8: a refused or unresolvable connection means the request never left
+    // this box, so a write that fails this way provably wrote nothing.
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: write ? c.headers.Authorization : `Bearer ${readToken}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) }).catch((e) => {
+      const code = e?.cause?.code || e?.code;
+      if (code === "ECONNREFUSED" || code === "ENOTFOUND") e.code = "MCP_CONNECT_REFUSED";
+      throw e; });
     const j = parseRpc(await res.text());
     if (!res.ok || j.error || j.result?.isError) {
       const error = new Error(redactSecrets(JSON.stringify(j.error || j.result || {}).slice(0, 2000)));
@@ -453,7 +458,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     active(job, states);
     return messages;
   }
-  async function effect(job, key, fn) {
+  async function effect(job, key, fn, settle = null) {
     active(job);
     const old = job.effects[key];
     if (old?.state === "done") return old.result;
@@ -462,8 +467,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (old && old.state !== "rejected") throw new Error(require("./effectrecovery").MERGE_KEY.test(key)
       ? "This merge's outcome is being checked against GitHub automatically within ten minutes. Do not ask the owner about it: finish waiting with a wakeup of about ten minutes, then re-read the PR."
       : "external action outcome is uncertain; owner inspection required");
-    if (old?.state === "rejected" && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
-    job.effects[key] = { state: "started", at: now() }; ledger.save();
+    if (old?.state === "rejected" && !old.retryable && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
+    job.effects[key] = { state: "started", at: now(), ...(settle ? { settle } : {}) }; ledger.save();
     try {
       require("./supporttakeover").assertCanAct(d, job);
       const result = await fn();
@@ -483,6 +488,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         ledger.audit("effect_rejected", { job: job.id, key, reason: e.code === "EXTERNAL_WRITE_REFUSED" ? "remote access refused before execution" : "argument validation before execution" }); ledger.save();
         throw e;
       }
+      if (["MCP_CONNECT_REFUSED", "EFFECT_NOT_STARTED"].includes(e.code)) {
+        // Keir 8: nothing left this box (connection refused) or nothing was pushed yet
+        // (publishing's local steps), so the same call may simply be repeated.
+        job.effects[key].state = "rejected"; job.effects[key].retryable = true;
+        ledger.audit("effect_rejected", { job: job.id, key, reason: e.code === "MCP_CONNECT_REFUSED" ? "connection refused before the request was sent; nothing written" : "failed before anything was pushed; nothing written" }); ledger.save();
+        throw e;
+      }
       // Even a network error can follow a committed remote mutation.
       job.state = "blocked"; job.summary = "External action needs receipt inspection: " + redactSecrets(e.message);
       // Merge outcomes are settled from GitHub by effectrecovery.js; no owner DM.
@@ -491,6 +503,28 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ledger.save();
       throw e;
     }
+  }
+  // Keir 8: posts a public comment at most once per marker. GitHub is the receipt: the issue's
+  // own comments are read first (a failed read posts nothing), and a comment already carrying the
+  // marker settles a receipt that was left "started" by a crash or timeout instead of repeating it.
+  async function commentOnce(job, key, read, issueRoute, marker, post) {
+    let found = false;
+    for (let page = 1; page <= 5 && !found; page++) {
+      const rows = await read([`${issueRoute}/comments?per_page=100&page=${page}`]);
+      if (!Array.isArray(rows)) throw new Error("could not read the issue's comments; nothing was posted rather than risk a repeat");
+      found = rows.some((c) => String(c?.body || "").includes(marker));
+      if (!found && rows.length < 100) break;
+      if (!found && page === 5) throw new Error("the issue has too many comments to check for an earlier closing note; nothing was posted");
+    }
+    if (found) {
+      const old = job.effects[key];
+      if (old && old.state !== "done") {
+        job.effects[key] = { ...old, state: "done", at: now(), result: { reconciled: true } };
+        ledger.audit("effect_reconciled", { job: job.id, key, outcome: "commented" }); ledger.save();
+      }
+      return { skipped: "already commented" };
+    }
+    return effect(job, key, () => post(marker));
   }
   function publicText(value) {
     if (typeof value !== "string" || !value.trim() || value.length > 5000) throw new Error("invalid player text");
@@ -828,7 +862,16 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const ch = channelId && await discord("GET", `/channels/${channelId}`);
       if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== Number(ticketNo)) throw new Error("status card channel does not match this ticket");
       const seq = (card.seq || 0) + 1;
-      const sent = await effect(effectJob, `status-card:${ticketNo}:${seq}`, () => discord("POST", `/channels/${channelId}/messages`, { ...body, nonce: `card${ticketNo}-${seq}`, enforce_nonce: true }));
+      // Keir 8: the card's message id is written inside the effect, so the same save that closes
+      // the receipt also records the card. The receipt lives on a throwaway notice task, so a lost
+      // card record used to mean the next update posted a second card. Only the id is recorded here:
+      // items and status stay as they were, so a resumed update still sees the change (stage note,
+      // live notice) and edits this card in place.
+      const sent = await effect(effectJob, `status-card:${ticketNo}:${seq}`, async () => {
+        const posted = await discord("POST", `/channels/${channelId}/messages`, { ...body, nonce: `card${ticketNo}-${seq}`, enforce_nonce: true });
+        if (posted?.id) cards[ticketNo] = { ...card, messageId: posted.id, channelId, seq };
+        return posted;
+      });
       messageId = sent.id; card.seq = seq;
     }
     const stageChanged = JSON.stringify((card.items || []).map((i) => [i.name, i.stage, i.blocked])) !== JSON.stringify(items.map((i) => [i.name, i.stage, i.blocked]));
@@ -862,7 +905,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     try {
       guardPlayerRegister(effectJob, ticketNo, message);
       const key = `live-notice:${ticketNo}:${crypto.createHash("sha1").update(names.join("|")).digest("hex").slice(0, 10)}`;
-      await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true));
+      await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
       effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
       ledger.audit("live_notice", { job: effectJob.id, ticket: ticketNo, items: names.length }); ledger.save();
       return true;
@@ -1129,6 +1172,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const branch = revise ? revise.branch : `keir/task-${job.id}-${a.id}`;
     const local = revise ? `keir/revise-${job.id}-${a.id}` : branch;
     const wt = path.join(repo, "worktrees", `keir-${job.id}-${a.id}`);
+    const bodyFile = path.join(config.stateDir, "artifacts", `${a.id}-pr.md`);
+    // Keir 8: every step before the first push only touches this box, so a failure
+    // there is a definite "nothing written" (the receipt can be retried), not an
+    // uncertain write that blocks the task for a person. The leftover worktree
+    // and branch are removed so the retry starts clean.
+    try {
     await exec("/usr/bin/git", ["-C", repo, "fetch", "--quiet", "origin", target], { signal, timeout: 120000 });
     await exec("/usr/bin/git", ["-C", repo, "worktree", "add", "--no-track", "-b", local, wt, `origin/${target}`], { signal });
     await exec("/usr/bin/git", ["-C", wt, "apply", "--check", a.args.patchFile], { signal }).catch(async (e) => {
@@ -1140,9 +1189,17 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     });
     await exec("/usr/bin/git", ["-C", wt, "apply", "--index", a.args.patchFile], { signal });
     await exec("/usr/bin/git", ["-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Keir", "-c", `user.email=${config.keirGitEmail || "keir@localhost"}`, "commit", "-m", a.args.title + "\n\nPrepared by Keir for task " + job.id + "."], { signal });
-    const bodyFile = path.join(config.stateDir, "artifacts", `${a.id}-pr.md`);
     a.args.title = noDashes(a.args.title); a.args.body = noDashes(a.args.body);
     fs.writeFileSync(bodyFile, a.args.body, { mode: 0o600 });
+    } catch (e) {
+      // child_process errors carry a numeric exit code, so test for our own classes, not for "no code".
+      if (!["MCP_ARGUMENT_REJECTED", "EXTERNAL_WRITE_REFUSED"].includes(e.code)) {
+        try { await exec("/usr/bin/git", ["-C", repo, "worktree", "remove", "--force", wt]); } catch {}
+        try { await exec("/usr/bin/git", ["-C", repo, "branch", "-D", local]); } catch {}
+        e.code = "EFFECT_NOT_STARTED";
+      }
+      throw e;
+    }
     let url;
     if (revise) {
       await exec("/usr/bin/git", ["-C", wt, ...keirGit(), "push", "--force", "origin", `HEAD:refs/heads/${branch}`], asKeir({ signal }));
@@ -1467,7 +1524,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           const candidates = (found?.items || []).map((i) => ({ number: i.number, title: i.title, score: similarity(`${i.title} ${String(i.body || "").slice(0, 600)}`, `${built.title} ${built.body.slice(0, 600)}`) })).filter((i) => i.score >= 0.08).sort((a, b) => b.score - a.score).slice(0, 3);
           if (candidates.length) return { raised: false, issueCandidates: candidates.map(({ number, title }) => ({ number, title })), instruction: "These open GitHub issues may be the same problem. If one is, call raise_to_developers again with issueNumber set to it and your evidence in issue. If none is, call again with force: true." };
         }
-        const created = await effect(job, `issue:${hash({ t: built.title, b: built.body })}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues`, "-f", `title=${built.title}`, "-f", `body=${built.body}`, ...built.labels.flatMap((l) => ["-f", `labels[]=${l}`])]));
+        // Keir 8: a hidden marker lets an uncertain filing be found again on GitHub.
+        const issueHash = hash({ t: built.title, b: built.body }), issueMarker = `<!-- keir:issue:${issueHash} -->`;
+        const created = await effect(job, `issue:${issueHash}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues`, "-f", `title=${built.title}`, "-f", `body=${built.body}\n\n${issueMarker}`, ...built.labels.flatMap((l) => ["-f", `labels[]=${l}`])]), { kind: "issue", repo: "AHDGame", marker: issueMarker });
         filedIssue = { number: created.number, url: created.html_url };
         recordIssue(created.number, created.html_url, false);
         d.keirIssues[created.number].title = built.title; ledger.save();
@@ -1662,7 +1721,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
           const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
-          const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal));
+          const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: message });
           const delivery = result.delivery;
           const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
           if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
@@ -2398,10 +2457,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           if ((issue.labels || []).some((l) => /status: partial/i.test(l.name || l))) continue;
           // A reopened issue must not reuse a receipt from its prior closure.
           const generation = issue.updated_at || issue.created_at || "initial";
-          await effect(job, `close-issue:${number}:${prNumber}:${generation}`, async () => {
-            await apiKeir(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}`]);
-            return apiKeir(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]);
-          });
+          // Keir 8: the comment and the close are two receipts. The comment is keyed on the issue
+          // and the PR only (it used to include updated_at, which the comment itself changes, so a
+          // failed close made the retry post a second comment) and carries a hidden marker that is
+          // looked for before posting. Only the close keeps the reopen generation.
+          await commentOnce(job, `close-issue-comment:${number}:${prNumber}`, api, `repos/${repo}/issues/${number}`, `<!-- keir:closed:${number}:${prNumber} -->`,
+            (marker) => apiKeir(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}\n\n${marker}`]));
+          await effect(job, `close-issue:${number}:${prNumber}:${generation}`, () => apiKeir(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]));
           if (d.keirIssues?.[number]) { d.keirIssues[number].state = "closed"; d.keirIssues[number].closedAt = now(); d.keirIssues[number].fixedBy = prNumber; }
           ledger.audit("issue_closed_fixed", { job: job.id, issue: number, pr: prNumber, turn });
           closed.push(number);
@@ -2790,8 +2852,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (incidentAsk) {
         // An incident is a staff catch-all: no reporter channel to reuse, no
         // per-player intake. Repeat tickets join it with merge_into_incident.
+        const incidentMarker = requestMessageId ? `Request message: ${requestMessageId}` : null;
         const result = await effect(job, `incident:${requestMessageId}`, () => mcp.call("support", "support_create_ticket", { category: "incident", title: publicText(input.title).slice(0, 200),
-          description: publicText(input.description).slice(0, 5000), source_channel_id: job.source.channelId }, true, signal));
+          description: `${publicText(input.description).slice(0, 4900)}${incidentMarker ? `\n\n${incidentMarker}` : ""}`, source_channel_id: job.source.channelId }, true, signal),
+        incidentMarker ? { kind: "ticket", marker: incidentMarker, needsChannel: false } : null);
         const number = result.ticketNumber || result.number || result.ticket?.number;
         if (!number) throw new Error("ticket API did not return a number; inspect receipt");
         ledger.audit("incident_opened", { job: job.id, ticket: number, by: job.actorId, from: job.ticket || null });
@@ -2847,7 +2911,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         category: ["bug", "account", "gameplay", "other"].includes(input.category) ? input.category : "bug", source_channel_id: reportChannelId,
         image_urls: (original.attachments || []).filter((a) => /^image\//.test(a.content_type || "")).map((a) => a.url).slice(0, 10) };
       d.intake.push({ at: now(), source: original.id, directed: developerTask(job) }); ledger.save();
-      const result = await effect(job, commanded ? `intake:${reportId}` : "intake", () => mcp.call("support", "support_create_ticket", args, true, signal));
+      const result = await effect(job, commanded ? `intake:${reportId}` : "intake", () => mcp.call("support", "support_create_ticket", args, true, signal),
+        original.id && args.description.includes(`/${original.id}`) ? { kind: "ticket", marker: `/${reportChannelId}/${original.id}`, needsChannel: true } : null);
       const number = result.ticketNumber || result.number || result.ticket?.number;
       const channelId = result.channelId || result.channel?.id || result.discordChannelId;
       if (!number || !channelId) throw new Error("ticket API did not return a number and channel; inspect receipt");
@@ -2927,7 +2992,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!ticket.trackerItemId) throw new Error("Ticket has no linked tracker item. Use support_tracker_sync first, then support_tracker_note with body; investigation and public updates can continue meanwhile.");
       }
       if (input.tool === "support_tracker_sync" && args.status && !["open", "active", "blocked"].includes(args.status)) throw new Error("terminal tracker statuses require a resolution receipt");
-      const result = await effect(job, hash({ tool: input.tool, args }), () => mcp.call("support", input.tool, args, true, signal));
+      const result = await effect(job, hash({ tool: input.tool, args }), () => mcp.call("support", input.tool, args, true, signal),
+        input.tool === "support_public_update" && args.kind === "ticket" && typeof args.message === "string" && args.message.trim() ? { kind: "reply", ticket: Number(job.ticket), text: args.message } : null);
       if (["support_tracker_sync", "support_tracker_note"].includes(input.tool)) { job.trackerRaised = true; ledger.save(); }
       if (input.tool === "support_public_update") {
         const delivered = ["sent", "delivered", "posted", "already_posted"].includes(result.delivery?.status) || result.delivery?.alreadyPosted === true || result.delivery?.posted === true || result.delivery?.delivery?.status === "posted";
@@ -3452,10 +3518,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const gh = (args) => exec("/usr/bin/gh", ["api", ...args], isKeirWrite(args) ? asKeir({ timeout: 60000 }) : { timeout: 60000 }).then((o) => JSON.parse(o || "null"));
         const issue = await gh([`repos/${GITHUB_OWNER}/AHDGame/issues/${number}`]).catch(() => null);
         if (issue && issue.state === "open" && !issue.pull_request) {
-          await effect(job, `close-duplicate:${number}:${canonical}`, async () => {
-            await gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=Same root cause as #${canonical}, which tracks the fix. Closing this one as a duplicate.`]);
-            return gh(["-X", "PATCH", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}`, "-f", "state=closed", "-f", "state_reason=not_planned"]);
-          });
+          await commentOnce(job, `close-duplicate-comment:${number}:${canonical}`, gh, `repos/${GITHUB_OWNER}/AHDGame/issues/${number}`, `<!-- keir:duplicate:${number}:${canonical} -->`,
+            (marker) => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=Same root cause as #${canonical}, which tracks the fix. Closing this one as a duplicate.\n\n${marker}`]));
+          await effect(job, `close-duplicate:${number}:${canonical}`, () => gh(["-X", "PATCH", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}`, "-f", "state=closed", "-f", "state_reason=not_planned"]));
         }
         if (!issue || issue.state !== "open" || job.effects?.[`close-duplicate:${number}:${canonical}`]?.state === "done") {
           d.keirIssues[number].state = "closed"; d.keirIssues[number].closedAt = now(); d.keirIssues[number].duplicateOf = canonical;

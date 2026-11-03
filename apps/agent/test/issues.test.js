@@ -56,12 +56,13 @@ test("an issue refuses names, Discord ids, ticket numbers, internal hosts and th
   assert.equal(issues.build({ ...good, kind: "enhancement", expected: "Show last turn's output with a note.", actual: "" }).labels[0], "enhancement");
 });
 
-function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false, issueVersion = { updated_at: "2026-10-23T10:00:00Z" } } = {}) {
+function fixture({ commentsUnreadable = false, failClose = 0, failPost = false, search = [], pr = null, compare = {}, unreadableFiles = false, issueVersion = { updated_at: "2026-10-23T10:00:00Z" } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-issues-")); dirs.push(dir);
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [],
     taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
-  const calls = [], gh = [];
+  const calls = [], gh = [], comments = [];
+  let closeFailures = failClose;
   const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => [], call: async (server, toolName, args) => {
     calls.push([server, toolName, args]);
     if (toolName === "support_get") return { number: 9, reporter: { characterName: "Lord Fixture" } };
@@ -76,17 +77,21 @@ function fixture({ search = [], pr = null, compare = {}, unreadableFiles = false
     const method = a[0] === "-X" ? a[1] : "GET";
     const route = a[0] === "-X" ? a[2] : a[0];
     if (route.startsWith("search/issues")) return JSON.stringify({ items: search });
+    if (method === "POST" && route === "repos/lakesidegamedev/AHDGame/issues" && failPost) throw new Error("request timed out");
     if (method === "POST" && route === "repos/lakesidegamedev/AHDGame/issues") return JSON.stringify({ number: 501, html_url: "https://github.com/lakesidegamedev/AHDGame/issues/501" });
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+\/files/.test(route)) { if (unreadableFiles) throw new Error("fixture unavailable files"); return JSON.stringify((pr?.files || []).map((filename) => ({ filename }))); }
     if (/^repos\/lakesidegamedev\/AHDGame\/pulls\/\d+$/.test(route)) return JSON.stringify(pr);
     if (/^repos\/lakesidegamedev\/AHDGame\/deployments\?/.test(route)) return JSON.stringify([]);
     if (/^repos\/lakesidegamedev\/AHDGame\/compare\//.test(route)) { const base = decodeURIComponent(route.split("/compare/")[1].split("...")[0]), b = BRANCH_OF[base] || base; return JSON.stringify({ status: compare[b] || "diverged" }); }
+    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+\/comments\?/.test(route) && method === "GET") return commentsUnreadable ? "null" : JSON.stringify(comments.map((body) => ({ body })));
+    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+\/comments$/.test(route) && method === "POST") { comments.push(a.find((x) => x.startsWith("body=")).slice(5)); issueVersion.updated_at = `${issueVersion.updated_at}+`; return JSON.stringify({}); }
+    if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "PATCH" && closeFailures-- > 0) throw new Error("gh: HTTP 502");
     if (/^repos\/lakesidegamedev\/AHDGame\/issues\/\d+$/.test(route) && method === "GET") return JSON.stringify({ number: Number(route.split("/").pop()), state: "open", labels: [], ...issueVersion });
     return JSON.stringify({ ok: true });
   };
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: {}, now: () => 5000, exec });
   const job = ledger.createJob("t", { kind: "ticket", role: "support", ticket: 9, repository: "AHDGame", source: { author: "fixtureuser" }, deadline: 9e15 }); job.state = "running";
-  return { ledger, broker, calls, gh, job, mcp };
+  return { ledger, broker, calls, gh, job, mcp, comments };
 }
 const detail = "Output panel reads last turn's cached zero after retool; see OutputPanel.tsx and the retool command.";
 
@@ -234,4 +239,60 @@ test("github deployed reports the running web and worker commits and site health
   assert.deepEqual(out.worker, { sha: DEPLOYED.worker, source: "live-probe" });
   assert.equal(out.health.ok, true);
   assert.ok(f.gh.some((a) => a[0].includes("environment=box%2Fahd-us-web")));
+});
+
+test("a filed issue carries a hidden marker and its receipt can be settled from GitHub", async () => {
+  const f = fixture();
+  const { title, kind, ...issue } = good;
+  await f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, force: false });
+  const post = f.gh.find((a) => a[0] === "-X" && a[1] === "POST" && a[2] === "repos/lakesidegamedev/AHDGame/issues");
+  const body = post.find((x) => x.startsWith("body="));
+  assert.match(body, /\n\n<!-- keir:issue:[0-9a-f]{64} -->$/);
+  assert.ok(Object.keys(f.job.effects).includes(`issue:${/keir:issue:([0-9a-f]{64})/.exec(body)[1]}`), "the receipt key is the marker hash");
+});
+
+test("an issue filing whose result is lost leaves a started receipt that names the marker", async () => {
+  const f = fixture({ failPost: true });
+  const { title, kind, ...issue } = good;
+  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, force: false }), /timed out/);
+  const [key, receipt] = Object.entries(f.job.effects).find(([k]) => k.startsWith("issue:"));
+  assert.equal(receipt.state, "started");
+  assert.deepEqual(receipt.settle, { kind: "issue", repo: "AHDGame", marker: `<!-- keir:issue:${key.slice(6)} -->` });
+});
+
+// Probe P1 of the effects audit, now a test: the closing comment is posted once.
+const merged = { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Refs #501", files: ["src/components/OutputPanel.tsx"] };
+const closePosts = (f) => f.gh.filter((a) => a[1] === "POST" && /issues\/501\/comments$/.test(a[2])).length;
+test("close_issue: a failed close after the comment does not post a second comment on retry, in this task or another", async () => {
+  const f = fixture({ failClose: 1, pr: merged, compare: { main: "identical" } });
+  await assert.rejects(f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 }), /502/);
+  assert.equal(closePosts(f), 1);
+  const keys = Object.keys(f.job.effects);
+  assert.ok(keys.some((k) => k === "close-issue-comment:501:600") && keys.some((k) => /^close-issue:501:600:/.test(k)), "two receipts, the comment key has no updated_at");
+  assert.equal(f.job.effects["close-issue-comment:501:600"].state, "done");
+  f.job.state = "running";
+  await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  const other = f.ledger.createJob("t2", { kind: "ticket", role: "support", ticket: 9, repository: "AHDGame", source: {}, deadline: 9e15 }); other.state = "running";
+  await f.broker.tool(other, "github", { action: "close_issue", number: 501, fix: 600 });
+  assert.equal(closePosts(f), 1, "one closing comment on the issue");
+  assert.equal(f.gh.filter((a) => a[1] === "PATCH" && a[2] === "repos/lakesidegamedev/AHDGame/issues/501").length >= 2, true);
+  assert.match(f.comments[0], /<!-- keir:closed:501:600 -->$/);
+});
+
+test("close_issue: a comment already carrying the marker settles a started receipt instead of posting again", async () => {
+  const f = fixture({ pr: merged, compare: { main: "identical" } });
+  f.comments.push("Fixed in #600, now live.\n\n<!-- keir:closed:501:600 -->");
+  f.job.effects["close-issue-comment:501:600"] = { state: "started", at: 1, error: "timed out" };
+  await f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 });
+  assert.equal(closePosts(f), 0);
+  assert.equal(f.job.effects["close-issue-comment:501:600"].state, "done");
+  assert.ok(f.ledger.data.audit.some((r) => r.kind === "effect_reconciled" && r.key === "close-issue-comment:501:600"));
+});
+
+test("close_issue: if the issue's comments cannot be read nothing is posted and nothing is held", async () => {
+  const f = fixture({ pr: merged, compare: { main: "identical" }, commentsUnreadable: true });
+  await assert.rejects(f.broker.tool(f.job, "github", { action: "close_issue", number: 501, fix: 600 }), /nothing was posted/);
+  assert.equal(closePosts(f), 0);
+  assert.equal(Object.keys(f.job.effects).length, 0, "no receipt started, so the task is not held");
+  assert.equal(f.job.state, "running");
 });

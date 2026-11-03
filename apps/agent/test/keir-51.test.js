@@ -194,7 +194,7 @@ test("force does not skip Keir's own recent issues; distinctFrom does, after rea
 
 test("duplicate Keir issues of one root cause close into the lowest number", async () => {
   const state = { 4140: "open", 4141: "open", 4142: "open" };
-  const f = brokerFixture([[/issues\/(\d+)$/, (route, args) => { const n = /(\d+)$/.exec(route)[1]; if (args.includes("PATCH")) state[n] = "closed"; return { number: Number(n), state: state[n] }; }], [/comments$/, {}]]);
+  const f = brokerFixture([[/issues\/(\d+)$/, (route, args) => { const n = /(\d+)$/.exec(route)[1]; if (args.includes("PATCH")) state[n] = "closed"; return { number: Number(n), state: state[n] }; }], [/comments(\?.*)?$/, (route, args) => (args.includes("POST") ? {} : [])]]);
   f.w.observe({ fp: "turn:loc", sensor: "turns", hard: true, title: "LOC", evidence: "e", cause: LOC });
   f.w.observe({ fp: "turn:loc2", sensor: "turns", hard: true, title: "LOC2", evidence: "e" });
   f.w.promote();
@@ -300,4 +300,27 @@ test("the issue sweep follows merged PRs from any author that reference a Keir i
   await f.b.issueSweep();
   assert.ok(f.calls.some((a) => a.some((v) => /pulls\/4153$/.test(v))), "the referencing PR was checked");
   assert.ok(!f.calls.some((a) => a.some((v) => /pulls\/4999/.test(v))), "unmerged references are not");
+});
+
+test("duplicate sweep: the hourly task does not repeat the duplicate comment when the close failed or the receipt is lost", async () => {
+  const state = { 4140: "open", 4142: "open" }, comments = []; let failClose = 1;
+  const f = brokerFixture([
+    [/issues\/(\d+)\/comments(\?.*)?$/, (route, args) => { if (args.includes("POST")) { comments.push(args.find((x) => x.startsWith("body=")).slice(5)); return {}; } return comments.map((body) => ({ body })); }],
+    [/issues\/(\d+)$/, (route, args) => { const n = /(\d+)$/.exec(route)[1]; if (args.includes("PATCH")) { if (failClose-- > 0) throw new Error("gh: HTTP 502"); state[n] = "closed"; } return { number: Number(n), state: state[n] }; }]]);
+  f.w.observe({ fp: "turn:loc", sensor: "turns", hard: true, title: "LOC", evidence: "e", cause: LOC });
+  f.w.observe({ fp: "turn:loc2", sensor: "turns", hard: true, title: "LOC2", evidence: "e" });
+  f.w.promote();
+  const a = f.l.data.watch.findings["turn:loc"], b = f.l.data.watch.findings["turn:loc2"];
+  b.correlatedWith = "turn:loc"; b.priorJobs = ["jb"];
+  f.l.data.keirIssues = { 4140: { number: 4140, state: "open", jobId: "jb" }, 4142: { number: 4142, state: "open", jobId: a.jobId } };
+  const sweep = () => { const j = f.l.createJob(`dedupe${Math.random()}`, { kind: "command", role: "support", internalProbe: true, repository: "AHDGame", deadline: 9e15, source: {} }); j.state = "running"; return j; };
+  const first = sweep();
+  await assert.rejects(f.b.closeDuplicateIssues(first), /502/);
+  assert.equal(comments.length, 1);
+  assert.equal(first.effects["close-duplicate-comment:4142:4140"].state, "done");
+  const second = sweep();   // the next hourly sweep: a new task with empty receipts
+  const closed = await f.b.closeDuplicateIssues(second);
+  assert.equal(comments.length, 1, "no second 'Closing as a duplicate' comment");
+  assert.deepEqual(closed, [4142]);
+  assert.match(comments[0], /<!-- keir:duplicate:4142:4140 -->$/);
 });
