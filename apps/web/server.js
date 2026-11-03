@@ -3006,7 +3006,7 @@ const { makeKnowledgeGraphBody } = require('./knowledge-graph');
 const { makeGraphifyBody, readGraphHTML } = require('./graphify-viewer');
 const { makeIdeasBody } = require('./ideas-page');
 const { makeEngineBody } = require('./engine-page');
-const { makeEconomyBody, readFeed: readEconomyFeed } = require('./economy-page');
+const { handleEconomyRoute } = require('./economy/routes');
 const { makeTrackerBody } = require('./tracker-page');
 const { handleKanbanRoute } = require("./kanban-routes");
 const { handleSuggestionSwipeRoute } = require("./suggestion-swipe-routes");
@@ -4924,16 +4924,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Engine — Game Engine Observatory (simulation health).
-  if ((req.method === "GET" || req.method === "HEAD") && pathname === "/economy") {
-    const session = await resolveSession(req);
-    if (!canReadDeveloperView(session, pathname)) return denyHtml();
-    const q = new URL(req.url, "http://x").searchParams;
-    const { extraCss, body } = makeEconomyBody({ ...readEconomyFeed(), tab: q.get("tab") || "overview", range: q.get("range") || "reset" });
-    addSecurityHeaders(res);
-    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
-    res.end(req.method === "HEAD" ? "" : renderShell({ title: "Economy", active: "/economy", role: session.role, extraCss, body }));
-    return;
-  }
+  if (await handleEconomyRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, denyHtml, json })) return;
+
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/engine") {
     const session = await resolveSession(req);
     if (!canReadDeveloperView(session, pathname)) return denyHtml();
