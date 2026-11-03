@@ -75,3 +75,8 @@ test('coarse charts remain bounded with sparse history and do not invent missing
  assert.ok(m.points.length<=601);assert.equal(m.points.reduce((n,p)=>n+p.count,0),2501);assert.ok(m.points.some(p=>p.gap));
  assert.equal(METRICS['macro.growth'].aggregation,'mean');
 }));
+test('confirmed annotations override inferred resets and historical windows stop before later resets',()=>memory(s=>{
+ const f=fixture();f.history.events=[{kind:'economy_reset',turn:3,label:'Operator reset receipt',confidence:'confirmed: test receipt'}];s.ingest(f);
+ const reset=s.select(params()).events.find(e=>e.kind==='economy_reset');assert.equal(reset.label,'Operator reset receipt');assert.match(reset.confidence,/confirmed/);
+ const old=s.select(new URLSearchParams({tab:'macro',to:'2'}));assert.equal(old.from,0);assert.equal(old.to,2);assert.equal(old.recent[0].turn,2);
+}));

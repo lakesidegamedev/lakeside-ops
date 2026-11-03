@@ -12,3 +12,12 @@ test('automatic capture is idempotent and retains past iterations independently 
 test('capture refuses mismatched source world files instead of mixing their turn numbers',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'econ-mismatch-'));try{const source=path.join(dir,'turns.json'),feed=path.join(dir,'feed.json'),output=path.join(dir,'store.sqlite');fs.writeFileSync(source,JSON.stringify({worldId:'new',completedThrough:1,turns:{}}));fs.writeFileSync(feed,JSON.stringify({worldId:'old',completedThrough:1}));assert.throws(()=>collect({feed,source,output}),/identities/)}finally{fs.rmSync(dir,{recursive:true,force:true})}
 });
+test('archives without completed boundaries do not prevent current capture',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'econ-old-archive-'));try{
+  const source=path.join(dir,'turns.json'),feed=path.join(dir,'feed.json'),output=path.join(dir,'store.sqlite');
+  fs.writeFileSync(path.join(dir,'turns-legacy.json'),JSON.stringify({worldId:'legacy',turns:{1:{macro:{growth:1}}}}));
+  fs.writeFileSync(source,JSON.stringify({worldId:'current',completedThrough:1,turns:{1:{macro:{growth:2}}}}));
+  fs.writeFileSync(feed,JSON.stringify({worldId:'current',completedThrough:1}));
+  const result=collect({feed,source,output});assert.equal(result.worlds,1);assert.match(result.updated[0].reason,/completed/);
+ }finally{fs.rmSync(dir,{recursive:true,force:true})}
+});
