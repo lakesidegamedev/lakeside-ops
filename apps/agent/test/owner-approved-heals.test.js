@@ -131,3 +131,16 @@ test("a changed amount between approval and payment is still refused", async (t)
   await assert.rejects(f.broker.tool(f.job, "execute_action", { action: request.action }), /changed since confirmation/);
   assert.ok(!f.calls.some((c) => c.name === "heal_compensate_apply"));
 });
+
+test("a refused stale approval is withdrawn and no longer wakes the task (KBX5)", async (t) => {
+  const f = fixture(t);
+  const request = await f.broker.tool(f.job, "request_heal", payment);
+  await f.answer(f.send());
+  f.setAmount(27000);
+  f.job.state = "running";
+  await assert.rejects(f.broker.tool(f.job, "execute_action", { action: request.action }), /changed since confirmation/);
+  const action = f.ledger.data.actions[request.action];
+  assert.equal(action.state, "withdrawn", "an approval that can never run again is withdrawn");
+  await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Fresh plan needs a decision." });
+  assert.ok(f.job.wakeAt - Date.now() > 60 * 60000 || f.job.state !== "waiting", `no 15-minute subscription wake for a withdrawn approval (wakeAt in ${Math.round((f.job.wakeAt - Date.now()) / 60000)} min)`);
+});
