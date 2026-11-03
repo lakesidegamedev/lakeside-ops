@@ -2863,7 +2863,20 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const answerAt = sharedAnswerAt || job.resolutionReadyAt;
         // The task wakes when the grace ends, not on a long reply wait (ticket 1755 was due to
         // close two hours after its fix and slept nine).
-        if (!answerAt || now() - answerAt < config.closeGraceMs) { if (answerAt) job.closeReadyAt = answerAt + config.closeGraceMs; throw new Error("give the player the final answer and wait for the closure grace period"); }
+        // Self-review 2026-11-03: this was the day's most repeated refusal (9 calls, 6 tasks) and
+        // it named neither the wait nor the step that starts it. When the answer was already
+        // delivered it told the model to give the answer, which it had just done, so it posted
+        // again, hit the pacing guard, and burned a turn. Say exactly what unlocks closure.
+        const graceMinutes = Math.max(1, Math.round(config.closeGraceMs / 60000));
+        if (!answerAt) throw new Error(`Not closed yet: ${job.lastPublishedAt
+          ? "the player has your latest update, but no final answer is on record"
+          : "the player has no answer from you"}. Post the outcome with support_action support_public_update, then checkpoint with finalAnswerDelivered true, which starts the ${graceMinutes} minute closure grace. support_resolve is refused until that grace ends.`);
+        if (now() - answerAt < config.closeGraceMs) {
+          job.closeReadyAt = answerAt + config.closeGraceMs;
+          const waited = Math.max(0, Math.floor((now() - answerAt) / 60000));
+          const remaining = Math.max(1, Math.ceil((job.closeReadyAt - now()) / 60000));
+          throw new Error(`Not closed yet: the player has had the final answer for ${waited} of the ${graceMinutes} minute closure grace. Nothing more needs posting. Finish waiting, waitFor "player_reply", wakeAfterMinutes ${remaining}, and support_resolve succeeds on that wake.`);
+        }
         // Review 2026-10-19: 1610 resolved one minute after "live", 1611 52
         // minutes after (the player's deliveries had fallen), 1630 before the
         // change shipped. After a fix goes live the player gets a turn to see

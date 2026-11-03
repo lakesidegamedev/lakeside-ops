@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- The closure grace refusal now names the wait and the step that starts it. When the final answer is already delivered it says how many minutes of the grace have passed, that nothing more needs posting, and to finish waiting with `waitFor "player_reply"` and the remaining `wakeAfterMinutes`; when no final answer is on record it asks for `support_action support_public_update` and then `checkpoint` with `finalAnswerDelivered true`. The old text said only "give the player the final answer", which the model had just done, so it posted again and hit the pacing guard.
+
 ## 7.4.0 (2026-11-03)
 
 - A maintainer who writes @keir-bot (or @Keir) in a comment on an AHDGame pull request gets a Keir review on it: specific suggestions and a verdict line (looks good, needs changes or blocking issue), posted as the keir-bot account when its token is configured. Only people who can push to the repository can ask; the ops webhook forwards only ids and Keir re-reads the comment, the asker's access and the PR from GitHub. One review per PR commit, a 👀 reaction acknowledges the request, and the task can only read that PR and the code and post one comment: no merges, heals or other posts.
