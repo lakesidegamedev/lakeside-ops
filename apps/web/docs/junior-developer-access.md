@@ -9,6 +9,7 @@ keep their admin role.
 
 The role opens a dedicated development landing page and navigation. It can read
 the work board and item history, the project guide, public technical docs,
+the live economy tracker at `/economy` (all six tabs and time ranges),
 commodity and extraction reports, and engine diagnostics. On the board it can
 claim unassigned tasks and report progress, blockers, resumption, completion or
 release on tasks it owns. Completion requires an evidence URL; release requires
