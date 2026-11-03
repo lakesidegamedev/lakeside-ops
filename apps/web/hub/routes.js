@@ -102,6 +102,8 @@ async function route(req, res, url, ctx) {
   }
   const dirs = { publishedDir, legacyDir };
   const session = await resolveSession(req);
+  // Junior Developers use the scoped development views in server.js.
+  if (session?.role === "junior_dev") return false;
   const isAdmin = !!(session && session.role === "admin");
 
   const send = (status, type, bodyText, extra = {}) => {

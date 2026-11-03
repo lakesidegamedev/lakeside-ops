@@ -63,7 +63,10 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
     res.end();
     return true;
   }
-  if (session.role !== "admin") return isPage ? notFound() : send(404, { error: "Not found" });
+  if (!["admin", "junior_dev"].includes(session.role)) return isPage ? notFound() : send(404, { error: "Not found" });
+
+  const readOnly = session.role === "junior_dev";
+  if (readOnly && !["GET", "HEAD"].includes(req.method)) return send(403, { error: "The Junior Developer work board is read-only" });
 
   const actor = String(session.email || "admin").slice(0, 120);
   const fail = (error) => {
@@ -79,7 +82,7 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
       let board = null;
       let error = null;
       try { board = store().board(); } catch (e) { error = e.message; }
-      const { extraCss, body } = makeKanbanBody({ board, error });
+      const { extraCss, body } = makeKanbanBody({ board, error, readOnly });
       addSecurityHeaders(res);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       res.end(req.method === "HEAD" ? "" : renderShell({ title: "Work board", active: "/kanban", role: session.role, extraCss, body }));

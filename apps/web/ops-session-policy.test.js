@@ -104,3 +104,15 @@ test('an identity-store outage is distinguishable from an invalid session', asyn
   await check(session, { ...options(null), onUnavailable: () => { unavailable = true; }, getDb: async () => { throw Error('offline'); } });
   assert.equal(unavailable, true);
 });
+
+
+test('Junior Developer grants, removal and revocation follow current account state', async () => {
+  const junior = { ...session, role: 'junior_dev' };
+  const user = { opsRole: 'junior_dev', isAdmin: false, email: session.email };
+  assert.equal((await check(junior, options(user))).role, 'junior_dev');
+  assert.equal(await check(junior, options({ ...user, opsRole: undefined })), null);
+  assert.equal(await check(junior, options({ ...user, isBanned: true })), null);
+  assert.equal(await check(junior, options({ ...user, authRevokedAt: new Date(now) })), null);
+  assert.equal(await check(junior, options(null)), null);
+  assert.equal((await check(session, options(user))).role, 'junior_dev');
+});

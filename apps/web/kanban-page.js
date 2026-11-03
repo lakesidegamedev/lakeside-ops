@@ -73,6 +73,7 @@ const KANBAN_JS = `
 const LANES=[["now","Now"],["next","Next"],["blocked","Blocked"],["backlog","Backlog"]];
 const ALL_LANES=LANES.concat([["done","Done"]]);
 let board=JSON.parse(document.getElementById('kb-data').textContent);
+const readOnly=document.getElementById('kb-data').dataset.readOnly==='true';
 const st={product:'',stale:false,q:''};
 const $=s=>document.querySelector(s);
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -107,7 +108,7 @@ function card(i,showLane){
    +(ev?'<a href="'+esc(ev)+'" target="_blank" rel="noopener">evidence</a>':'')
    +(i.assigned_to?'<span>'+esc(i.assigned_to)+'</span>':'')
    +'<span title="'+esc(i.updated_at)+'">'+esc(ago(i.updated_at))+'</span>'
-   +'<select class="kb-move" data-move="'+i.id+'" aria-label="Move">'+moves+'</select>'
+   +(readOnly?'':'<select class="kb-move" data-move="'+i.id+'" aria-label="Move">'+moves+'</select>')
    +'</div></div>';
 }
 function render(){
@@ -146,6 +147,7 @@ async function openItem(id){
   $('#kb-edit-head').innerHTML=headHtml;
   const histHtml=(item.events||[]).map(e=>'<div><time>'+esc((e.created_at||'').slice(0,16).replace('T',' '))+'</time> <b>'+esc(e.event_type)+'</b> '+esc(e.actor)+': '+esc(e.summary)+(safeUrl(e.evidence_url)?' <a href="'+esc(e.evidence_url)+'" target="_blank" rel="noopener">evidence</a>':'')+'</div>').join('')||'<div>No history.</div>';
   $('#kb-hist').innerHTML=histHtml;
+  f.querySelectorAll('input,select,textarea,button[type=submit]').forEach(el=>{el.disabled=readOnly});
   $('#kb-edit').showModal();
 }
 document.addEventListener('click',e=>{const t=e.target.closest('[data-open]');if(t)openItem(t.dataset.open)});
@@ -154,7 +156,7 @@ document.addEventListener('change',async e=>{
   try{await api('POST','/api/kanban/items/'+m.dataset.move,{lane:m.value});await reload();flash('')}catch(err){flash(err.message)}
 });
 $('#kb-edit-form').addEventListener('submit',async e=>{
-  e.preventDefault();const f=e.target;const id=f.dataset.id;
+  e.preventDefault();if(readOnly)return;const f=e.target;const id=f.dataset.id;
   try{
     await api('POST','/api/kanban/items/'+id,{title:f.title.value,detail:f.detail.value,product:f.product.value,lane:f.lane.value,impact:f.impact.value,needs_owner:f.needs_owner.checked,assigned_to:f.assigned_to.value,github:f.github.value,evidence_url:f.evidence_url.value});
     if(f.note.value.trim())await api('POST','/api/kanban/items/'+id+'/report',{event:'progress',summary:f.note.value});
@@ -179,13 +181,13 @@ render();
 const LANE_OPTIONS = '<option value="now">Now</option><option value="next">Next</option><option value="blocked">Blocked</option><option value="backlog">Backlog</option>';
 const IMPACT_OPTIONS = '<option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>';
 
-function makeKanbanBody({ board, error = null }) {
+function makeKanbanBody({ board, error = null, readOnly = false }) {
   // JSON inside <script type="application/json">: escape "<" so no value can
   // close the element.
   const data = JSON.stringify(board || { products: [], items: [], github_sources: [], stale_days: 5 }).replace(/</g, "\\u003c");
   const body = `<div class="kb-wrap">
-  <div class="kb-head"><div><h1>Work board</h1><div class="kb-sub" id="kb-sync"></div></div>
-    <div class="kb-bar"><select id="kb-product" aria-label="Product"></select><input type="search" id="kb-q" placeholder="Filter" aria-label="Filter"><button class="kb-btn" id="kb-stale" type="button">Stale only</button><button class="kb-btn primary" id="kb-add-btn" type="button">Add item</button></div></div>
+  <div class="kb-head"><div><h1>Work board${readOnly ? ' (read-only)' : ''}</h1><div class="kb-sub" id="kb-sync"></div></div>
+    <div class="kb-bar"><select id="kb-product" aria-label="Product"></select><input type="search" id="kb-q" placeholder="Filter" aria-label="Filter"><button class="kb-btn" id="kb-stale" type="button">Stale only</button><button class="kb-btn primary" id="kb-add-btn" type="button" ${readOnly ? 'hidden disabled' : ''}>Add item</button></div></div>
   ${error ? `<div class="kb-err">Kanban store unavailable: ${String(error).replace(/[&<>"']/g, "")}</div>` : ""}
   <div class="kb-err" id="kb-msg" hidden></div>
   <div class="kb-stats" id="kb-stats"></div>
@@ -221,7 +223,7 @@ function makeKanbanBody({ board, error = null }) {
   </div>
   <div class="kb-actions"><button class="kb-btn" type="button" data-close>Cancel</button><button class="kb-btn primary" type="submit">Add</button></div>
 </form></dialog>
-<script type="application/json" id="kb-data">${data}</script>
+<script type="application/json" id="kb-data" data-read-only="${readOnly}">${data}</script>
 <script>${KANBAN_JS}</script>`;
   return { extraCss: KANBAN_CSS, body };
 }
