@@ -517,10 +517,7 @@ const { authorizeOpsSession, credentialVersion, sessionToken } = require("./ops-
 async function checkSession(req) {
   const token = sessionToken(req);
   if (!token) return null;
-  // Reuse the live check only within this HTTP request. Every new request
-  // still revalidates current role, ban and revocation state.
-  if (!req.opsSessionPromise) req.opsSessionPromise = authorizeOpsSession(sessions.get(token), { getDb, users: USERS, allowLocal: AUTH_MODE === "password", onUnavailable: () => { req.opsAuthUnavailable = true; } });
-  return req.opsSessionPromise;
+  return authorizeOpsSession(sessions.get(token), { getDb, users: USERS, allowLocal: AUTH_MODE === "password", onUnavailable: () => { req.opsAuthUnavailable = true; } });
 }
 
 // ─── Cross-subdomain SSO with the main game site ─────────────────────
