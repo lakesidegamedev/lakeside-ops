@@ -82,7 +82,7 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
       const { extraCss, body } = makeKanbanBody({ board, error });
       addSecurityHeaders(res);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(req.method === "HEAD" ? "" : renderShell({ title: "Kanban", active: "/kanban", role: session.role, extraCss, body }));
+      res.end(req.method === "HEAD" ? "" : renderShell({ title: "Work board", active: "/kanban", role: session.role, extraCss, body }));
       return true;
     }
     if (req.method === "GET" && pathname === "/api/kanban") return send(200, store().board());
