@@ -66,14 +66,65 @@ describe("kanban store", () => {
     assert.equal(k.get(id).stale, true);
   });
 
-  it("brief separates needs-owner items from their lanes", () => {
-    k.add({ product: "ahd", title: "Decide: casino limits", lane: "next", needs_owner: true });
-    k.add({ product: "ahd", title: "Building", lane: "now" });
-    const brief = k.brief({ product: "AHDGame" });
-    assert.equal(brief.counts.needs_owner, 1);
-    assert.equal(brief.counts.next, 0);
+  it("brief leads with the rules and leaves monitors out of the lanes", () => {
+    k.add({ product: "ahd", title: "Building the casino", lane: "now" }, { actor: "codex" });
+    const mon = k.add({ product: "ahd", title: "Watchkeeper heartbeat", lane: "now", kind: "monitor" }, { actor: "keir" });
+    const brief = k.brief({ product: "AHDGame", actor: "codex" });
+    assert.match(brief.rules, /start:true/);
     assert.equal(brief.counts.now, 1);
-    assert.equal(brief.needs_owner[0].title, "Decide: casino limits");
+    assert.equal(brief.now[0].title, "Building the casino");
+    assert.equal(brief.monitors[0].id, mon.id);
+    assert.equal(brief.needs_owner, undefined);
+  });
+
+  it("Next needs an owner: unowned filings land in the inbox", () => {
+    const filed = k.add({ product: "ahd", title: "Keir filed a follow-up", lane: "next" }, { actor: "keir" });
+    assert.equal(filed.lane, "inbox");
+    const owned = k.add({ product: "ahd", title: "Committed work item", lane: "next", assigned_to: "codex" }, { actor: "owner@example.com" });
+    assert.equal(owned.lane, "next");
+  });
+
+  it("returns an existing open card instead of adding a near-duplicate", () => {
+    const first = k.add({ product: "ahd", title: "Ticket 1757: power output shown as unsold" }, { actor: "keir" });
+    const again = k.add({ product: "ahd", title: "Ticket 1757 power output shown as unsold" }, { actor: "keir" });
+    assert.equal(again.duplicate, true);
+    assert.equal(again.duplicate_of, first.id);
+    assert.notEqual(k.add({ product: "ahd", title: "Ticket 1757 power output shown as unsold", force: true }, { actor: "keir" }).id, first.id);
+  });
+
+  it("caps cards in progress per actor, exempting keir, with force to override", () => {
+    for (let n = 0; n < 3; n += 1) k.add({ product: "ahd", title: `codex task number ${n} alpha`, start: true }, { actor: "codex" });
+    assert.throws(() => k.add({ product: "ahd", title: "codex fourth task beta", start: true }, { actor: "Codex" }), /cap 3/);
+    assert.equal(k.add({ product: "ahd", title: "codex fourth task beta", start: true, force: true }, { actor: "codex" }).lane, "now");
+    for (let n = 0; n < 4; n += 1) k.add({ product: "ahd", title: `keir ticket job ${n} gamma`, start: true }, { actor: "keir" });
+  });
+
+  it("normalizes actors, rejects owner questions, JSON progress and evidence-free completion", () => {
+    const { id } = k.add({ product: "ahd", title: "Plain work item", start: true }, { actor: "claude-opus-5-5" });
+    assert.equal(k.get(id).assigned_to, "claude");
+    assert.throws(() => k.add({ product: "ahd", title: "Decision: merge or hold?" }, { actor: "claude" }), /owner/);
+    assert.throws(() => k.report({ id, event: "progress", summary: '{"role":{"enabled":true}}', actor: "claude" }), /plain sentence/);
+    assert.throws(() => k.report({ id, event: "completed", summary: "done", actor: "claude" }), /evidence/);
+    assert.equal(k.report({ id, event: "completed", summary: "done", actor: "claude", no_evidence_reason: "config-only change" }).item.lane, "done");
+  });
+
+  it("monitor heartbeats update the card and log at most one event an hour", () => {
+    const mon = k.add({ product: "ahd", title: "Engineering monitor", lane: "now", kind: "monitor" }, { actor: "keir" });
+    for (let n = 0; n < 5; n += 1) k.report({ id: mon.id, event: "progress", summary: '{"capacity":1}', actor: "keir" });
+    const events = k.get(mon.id, { events: 50 }).events.filter((e) => e.event_type === "heartbeat");
+    assert.equal(events.length, 1);
+  });
+
+  it("maintain releases quiet Now cards and inboxes unowned untouched Next cards", () => {
+    const quiet = k.add({ product: "ahd", title: "Quiet card in progress", start: true }, { actor: "muse" });
+    const next = k.add({ product: "ahd", title: "Unowned next card", lane: "next", assigned_to: "x" }, { actor: "owner@example.com" });
+    k.update(next.id, { assigned_to: "" }, { actor: "owner@example.com" });
+    days(4);
+    const out = k.maintain();
+    assert.ok(out.released >= 1);
+    assert.equal(k.get(quiet.id).lane, "next");
+    assert.equal(k.get(quiet.id).assigned_to, null);
+    assert.equal(k.get(next.id).lane, "inbox");
   });
 
   it("aliases resolve folded ids to the survivor", () => {

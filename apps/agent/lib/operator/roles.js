@@ -116,7 +116,7 @@ function createRoles({ ledger, engineering, config = {}, now = () => Date.now(),
       const summary = role === "watchkeeper" ? JSON.stringify(status().watchkeeper) : JSON.stringify(engineering.status());
       const version = digest(summary);
       if (s.reports[role]?.version === version || now() - (s.reports[role]?.at || 0) < 5 * 60000) continue;
-      try { await mcp.call("ops-knowledge", "work_report", { id, event: "progress", summary: `${role} role: ${summary}`.slice(0, 3900) }, true); s.reports[role] = { version, at: now() }; }
+      try { await mcp.call("ops-knowledge", "work_report", { id, event: "progress", actor: "keir", summary: `${role} role: ${summary}`.slice(0, 3900) }, true); s.reports[role] = { version, at: now() }; }
       catch (e) { log(`role board delivery: ${String(e.message).slice(0, 160)}`); }
     }
     ledger.save();

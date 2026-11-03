@@ -1,5 +1,21 @@
 # Ops web changelog
 
+## 4.3.0 (2026-11-03)
+
+The work board's rules, from the kanban audit. These apply to agents (MCP tools) and people (the board) alike.
+
+- **Inbox lane.** Next now means committed work with an owner. Cards filed into Next without an owner, and new cards by default, land in the inbox. Unowned Next cards nobody has picked up move to the inbox after a day.
+- **Quiet cards are released.** A card in progress with no update for 3 days goes back to Next with its owner cleared and a `released` event. Untouched local backlog cards close as `expired` after 90 days.
+- **Monitors.** Always-on agent cards are kind `monitor` (detected automatically from heartbeat volume). A heartbeat updates the card and records at most one history event an hour. Monitors stay out of lanes, briefs and staleness.
+- **One name per agent.** Actors are normalized (claude-opus-5-5, Opus and Claude all become claude; `name:session` keeps parallel sessions apart). The shared token name is never used as an actor; a write without an actor is recorded as unnamed with a warning.
+- **Cap on work in progress.** Three cards in progress per actor; `force: true` overrides. Keir is exempt.
+- **Duplicate guard.** Adding a card that matches an open one in the same product returns the existing card (`duplicate: true`) instead of a copy; `force: true` adds anyway.
+- **Plain progress, real evidence.** Progress that looks like a JSON dump is refused. `completed` needs `evidence_url` or `no_evidence_reason`. Titles that are questions for the owner are refused; owners are asked in chat.
+- **Fixed kinds.** bug, feature, ops, balance, support, capability, audit, task, monitor; synonyms map automatically.
+- **Shorter brief.** `kanban_brief` leads with the rules and returns your own cards (pass `actor`), released cards, blocked, in progress, next, shipped in 3 days and monitor heartbeats. `kanban_list` filters by `assigned_to` and `kind` and says when it truncated.
+- **GitHub imports** carry the first 500 characters of the issue body and a kind from labels.
+- The GitHub sync job runs board hygiene after each sync (`--no-maintain` skips it).
+
 ## 4.2.0 (2026-11-03)
 
 The hub takes the Lakeside Platform look and every view was rebuilt around how the studio works now.

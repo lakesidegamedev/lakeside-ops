@@ -5,13 +5,16 @@
 // token; writes need a token with write scope.
 
 const { z } = require("zod");
-const { sharedKanban, OPEN_LANES, LANES, REPORT_EVENTS } = require("../kanban-store");
+const { sharedKanban, OPEN_LANES, LANES, REPORT_EVENTS, KINDS, WIP_CAP, RELEASE_DAYS, normalizeActor } = require("../kanban-store");
 
 const PRODUCT_HELP = 'Product slug or alias, e.g. "a-house-divided" (aliases: ahd, AHDGame, adhd-bot), "margin-of-victory" (mov), "metroforge" (mf), "grand-century" (gc), "foreshore", "verdigris", "lakeside-mcp" (mcp: MCP/tool capability requests, kind capability).';
 
 function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sharedKanban }) {
   const canWrite = auth && auth.scopes && auth.scopes.write === true;
-  const actorFor = (actor) => String(actor || (auth && auth.name) || "agent").slice(0, 120);
+  // The token name is shared by many agents, so it is never used as an actor.
+  const actorFor = (actor) => normalizeActor(actor) || "unnamed";
+  const ACTOR = z.string().max(120).optional().describe("Who you are: claude, codex, keir, muse or deepseek, plus :session when several run at once (e.g. claude:7f3a). Always send it.");
+  const withWarning = (result, actor) => (normalizeActor(actor) ? result : { ...result, warning: "No actor given, so this was recorded as 'unnamed'. Send actor on every write." });
 
   async function guarded(fn, { write = false } = {}) {
     if (write && !canWrite) return errorResult("this token has no write scope");
@@ -26,20 +29,24 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
 
   server.tool(
     "kanban_brief",
-    "Product kanban brief: what needs the owner, what is in progress (now), blocked, up next, what is stale, and recent progress. Start product work here.",
+    "Start here. Short brief: the board rules, your own open cards (pass actor), cards released for going quiet, blocked, in progress, next, shipped in 3 days, monitor heartbeats and recent progress.",
     {
       product: z.string().optional().describe(`${PRODUCT_HELP} Omit for every product.`),
       limit: z.number().int().min(1).max(50).optional().default(10),
+      actor: ACTOR,
     },
-    async ({ product, limit }) => guarded((k) => k.brief({ product, limit })),
+    async ({ product, limit, actor }) => guarded((k) => k.brief({ product, limit, actor })),
   );
 
   server.tool(
     "kanban_list",
-    "List kanban items with updated_at, age_days, stale and needs_owner flags. Open lanes by default; filter by product, lane, staleness, needs_owner or text.",
+    "List kanban items. Open lanes by default (now, next, blocked, inbox, backlog); filter by product, lane, assigned_to, kind, staleness or text. A truncated result includes a hint.",
     {
       product: z.string().optional().describe(PRODUCT_HELP),
-      lane: z.enum(LANES).optional().describe("now | next | blocked | backlog | done (done = closed history)"),
+      lane: z.enum(LANES).optional().describe("now (in progress) | next (committed, has an owner) | blocked | inbox (filed, not picked up) | backlog | done"),
+      assigned_to: z.string().optional().describe("Cards held by this actor (e.g. claude, keir)"),
+      kind: z.enum(KINDS).optional(),
+      include_monitors: z.boolean().optional().describe("Default true; false hides always-on monitor cards"),
       stale: z.boolean().optional().describe("true: only stale items (in now with no update for 5+ days, or flagged); false: exclude them"),
       needs_owner: z.boolean().optional(),
       q: z.string().optional().describe("Substring match on title, detail, progress"),
@@ -57,29 +64,30 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
 
   server.tool(
     "kanban_add",
-    "Add a kanban item. Set start:true to add it straight into now, assigned to you, with a started event (one call instead of add + work_report).",
+    `Add a kanban item. start:true puts it straight into now, assigned to you (cap ${WIP_CAP} in progress per actor). lane next needs an owner; without one it lands in inbox. If an open card already covers the same work it is returned with duplicate:true instead of adding a copy (force:true to add anyway). Never file a question for the owner; ask in chat.`,
     {
       product: z.string().describe(PRODUCT_HELP),
       title: z.string().min(1).max(300),
       detail: z.string().max(20000).optional(),
-      lane: z.enum(OPEN_LANES).optional().default("backlog"),
+      lane: z.enum(OPEN_LANES).optional().default("inbox"),
       impact: z.enum(["high", "medium", "low"]).optional().default("medium"),
-      kind: z.string().max(40).optional().describe("feature | bug | ops | audit | task | capability (capability: an MCP/tool capability request on product lakeside-mcp) ..."),
+      kind: z.string().max(40).optional().describe(`One of ${KINDS.join(", ")} (synonyms like issue or enhancement are mapped). capability: an MCP/tool request on product lakeside-mcp.`),
       github: z.string().optional().describe("Link a GitHub issue: owner/repo#N or the issue URL"),
       evidence_url: z.string().url().optional(),
       assigned_to: z.string().optional(),
       start: z.boolean().optional().describe("Add and mark started in one call"),
       summary: z.string().max(4000).optional().describe("Started summary when start:true"),
-      actor: z.string().optional().describe("Who you are (claude, codex, muse...); recorded on events"),
+      force: z.boolean().optional().describe("Add even if a similar open card exists or you are at the in-progress cap"),
+      actor: ACTOR,
     },
     // Agents never flag owner decisions here: the owner is asked in chat and the
     // answer is recorded on the card afterwards (owner rule, 2026-10-17).
-    async ({ actor, ...input }) => guarded((k) => k.add({ ...input, needs_owner: false }, { actor: actorFor(actor) }), { write: true }),
+    async ({ actor, ...input }) => guarded((k) => withWarning(k.add({ ...input, needs_owner: false }, { actor: actorFor(actor) }), actor), { write: true }),
   );
 
   server.tool(
     "kanban_update",
-    "Edit or move a kanban item: title, detail, lane, impact, assigned_to, evidence_url, github link, product. needs_owner can only be cleared (false). Any update clears a stale flag; stale:true re-flags it.",
+    "Edit or move a kanban item: title, detail, lane, impact, kind, assigned_to, evidence_url, github link, product. To release a card you will not finish: lane next and assigned_to \"\". Any update clears a stale flag.",
     {
       id: z.number().int().positive(),
       title: z.string().max(300).optional(),
@@ -93,30 +101,33 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       github: z.string().optional().describe("owner/repo#N or issue URL; empty string unlinks"),
       product: z.string().optional(),
       stale: z.boolean().optional(),
-      actor: z.string().optional(),
+      force: z.boolean().optional().describe("Move into now even at the in-progress cap"),
+      actor: ACTOR,
     },
-    async ({ id, actor, ...patch }) => guarded((k) => k.update(id, patch.needs_owner === true ? { ...patch, needs_owner: undefined } : patch, { actor: actorFor(actor) }), { write: true }),
+    async ({ id, actor, ...patch }) => guarded((k) => withWarning(k.update(id, patch.needs_owner === true ? { ...patch, needs_owner: undefined } : patch, { actor: actorFor(actor) }), actor), { write: true }),
   );
 
   server.tool(
     "work_report",
-    "Report work on a kanban item. started -> lane now and assigned to you; progress -> summary only; blocked -> lane blocked; decision_requested -> progress note only (ask the owner in chat, never via the kanban); completed -> done. Pass evidence_url (PR, deploy, report) whenever you have one. idempotency_key makes retries safe.",
+    `Report work on a kanban item. started -> now, assigned to you (cap ${WIP_CAP} per actor). progress -> a plain sentence people read (no JSON). blocked -> blocked. decision_requested -> progress note only (ask the owner in chat). completed -> done, needs evidence_url or no_evidence_reason. Cards with no update for ${RELEASE_DAYS} days are released back to next automatically. idempotency_key makes retries safe.`,
     {
       id: z.number().int().positive(),
       event: z.enum(REPORT_EVENTS),
       summary: z.string().min(1).max(4000),
       evidence_url: z.string().url().optional(),
-      actor: z.string().optional(),
+      no_evidence_reason: z.string().max(300).optional().describe("Required on completed when there is no evidence_url: why there is no link"),
+      force: z.boolean().optional().describe("started even at the in-progress cap"),
+      actor: ACTOR,
       idempotency_key: z.string().max(200).optional(),
     },
-    async ({ actor, ...input }) => guarded((k) => k.report(input.event === "decision_requested"
+    async ({ actor, ...input }) => guarded((k) => withWarning(k.report(input.event === "decision_requested"
       ? { ...input, event: "progress", summary: `Decision pending with the owner in chat: ${input.summary}`.slice(0, 4000), actor: actorFor(actor) }
-      : { ...input, actor: actorFor(actor) }), { write: true }),
+      : { ...input, actor: actorFor(actor) }), actor), { write: true }),
   );
 
   server.tool(
     "kanban_github_sync",
-    "Pull GitHub issues into the kanban now (the timer also runs every 15 minutes): new open issues land in backlog, closed linked issues move to done.",
+    "Pull GitHub issues into the kanban now (the timer also runs every 15 minutes, followed by board hygiene): new open issues land in backlog with an excerpt of the issue body, closed linked issues move to done.",
     { repo: z.string().optional().describe("owner/name; omit for every source repo") },
     async ({ repo }) => guarded(async (k) => ({ synced: await k.syncGithub({ repo: repo || null }) }), { write: true }),
   );
