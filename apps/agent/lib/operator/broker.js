@@ -11,6 +11,7 @@ const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in 
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
+const prMention = require("./prmention");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const crypto = require("node:crypto");
@@ -1274,6 +1275,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       return config.roleSnapshot();
     }
     if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)) throw new Error("finding tasks never post in Discord or execute privileged actions");
+    if (job.prMention && !prMention.PR_MENTION_TOOLS.includes(name)) throw new Error("A PR review task only reads the pull request and the code, and posts one review comment on it");
     if (job.codingParent && !childTools(job).includes(name)) throw new Error(job.investigation ? "Investigators only read: code in the snapshot, live game state, history and past tickets. The worker handles fixes, publication and communication." : "Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.");
     if (name === "recent_changes") return capabilities.recentChanges({ days: input.days, query: input.query, path: input.path });
     if (name === "view_page") {
@@ -1923,16 +1925,24 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const desktop = (input.repository || job.repository) === "AHDClient";
       const repo = desktop ? repositoryName("AHDClient") : GAME_REPO;
       const api = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000 }) || "null");
+      // A PR review asked for by @mention reads that one PR and posts one review on it.
+      if (job.prMention) {
+        if (!prMention.PR_MENTION_GITHUB.includes(input.action)) throw new Error("A PR review task only reads the pull request and posts one review on it");
+        if (input.repository && input.repository !== "AHDGame") throw new Error("A PR review task stays in AHDGame");
+        if (["review", "review_comment", "status", "ci_failures"].includes(input.action) && Number(input.number) !== job.prMention.number) throw new Error(`This task reviews pull request ${job.prMention.number} only`);
+      }
       // Keir 7.2.1 (2026-11-02): a review a developer asked for is posted on the PR itself.
       // Keir had to say "GitHub is read-only from here" and ask the owner to paste its review.
       // A plain comment: never an approval, a requested change, a merge or a sign-off.
       if (input.action === "review_comment") {
-        if (job.role === "player" || !(developerTask(job) || ownerDirected(job))) throw new Error("review_comment needs a task the owner or a developer gave you");
+        if (job.role === "player" || !(developerTask(job) || ownerDirected(job) || job.prMention)) throw new Error("review_comment needs a task the owner or a developer gave you");
+        if (job.prMention?.posted) throw new Error("The review is already posted on the pull request; finish done");
         const number = Number(input.number);
         if (!number) throw new Error("review_comment needs the PR number");
         const raw = String(input.comment || "").trim();
         if (raw.length < 20) throw new Error("review_comment needs the review text in comment");
         if (raw.length > 6000) throw new Error("review_comment is at most 6000 characters; keep the points that matter");
+        if (job.prMention && !prMention.VERDICT.test(raw)) throw new Error('End the review with a verdict line: "Verdict: looks good", "Verdict: needs changes" or "Verdict: blocking issue"');
         // Checked before redaction: a leaking review is rewritten, not posted with holes in it.
         const bad = require("./issues").leak(raw, []) || publicPatchLeak(`+${raw.replace(/\n/g, "\n+")}`);
         if (bad) throw new Error(`The repository is public: the review mentions "${bad}". Remove it and post again.`);
@@ -1941,7 +1951,11 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!pr || pr.state !== "open") throw new Error(`PR ${number} is not open`);
         const head = String(pr.head?.sha || "").slice(0, 10);
         const text = `Review from Keir at ${head}:\n\n${body}\n\n_Advice only: this is not an approval._`;
-        const posted = await effect(job, `pr-review-comment:${repo}:${number}:${hash(text)}`, () => api(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${text}`]));
+        // Posted as Keir's own GitHub account when its token is configured, so the
+        // review does not appear under the shared agent identity.
+        const as = config.githubReviewerToken ? { env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", GH_TOKEN: config.githubReviewerToken } } : {};
+        const posted = await effect(job, `pr-review-comment:${repo}:${number}:${hash(text)}`, async () => JSON.parse(await exec("/usr/bin/gh", ["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${text}`], { timeout: 60000, ...as }) || "null"));
+        if (job.prMention) job.prMention.posted = posted?.html_url || true;
         ledger.audit("pr_review_comment", { job: job.id, repository: repo, number, head });
         return { posted: true, number, head, url: posted?.html_url || pr.html_url };
       }

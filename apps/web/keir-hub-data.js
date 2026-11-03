@@ -477,6 +477,18 @@ async function probeKeir({ fetchImpl = fetch, envPath = PATHS.env } = {}) {
   if (!res.ok) throw new Error(`operator answered ${res.status}`);
   return res.json();
 }
+// An @keir-bot mention on a PR comment: forward only the ids; Keir re-reads and
+// re-checks everything from GitHub before it reviews anything.
+async function forwardPrMention({ repository, number, commentId, kind }, { fetchImpl = fetch, envPath = PATHS.env } = {}) {
+  const env = fs.readFileSync(envPath, "utf8");
+  const token = /^KEIR_OPERATOR_ADMIN_TOKEN=(.*)$/m.exec(env)?.[1]?.trim().replace(/^["']|["']$/g, "");
+  const port = /^KEIR_OPERATOR_PORT=(\d+)$/m.exec(env)?.[1] || "9765";
+  if (!token) throw new Error("operator admin token not readable");
+  const res = await fetchImpl(`http://127.0.0.1:${port}/v5/github/mention`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ repository, number, commentId, kind }), signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`operator answered ${res.status}`);
+  return res.json();
+}
 async function operatorMetrics(endpoint, { days = 30, fetchImpl = fetch, envPath = PATHS.env } = {}) {
   if (!Number.isFinite(days) || days <= 0 || days > 3650) throw new Error("Invalid days");
   const env = fs.readFileSync(envPath, "utf8");
@@ -496,4 +508,4 @@ function probeState(ledgerPath, task) {
   return { state: j.state, summary: String(j.summary || "").slice(0, 400), provider: j.provider || null, rounds: j.rounds || 0, updatedAt: j.updatedAt || null };
 }
 
-module.exports = { buildHubState, buildStream, narrate, liveTails, attemptLabel, toolOf, incidentList, jevAnalytics, readAttempt, mergeTicket, probeKeir, ticketPerformance, releaseEfficiency, probeState, activityByHour, readUsage, ciState, summarizeJob, PATHS, RUNNERS, _cache: cache, _cached: cached, _mcpCall: mcpCall };
+module.exports = { buildHubState, buildStream, narrate, liveTails, attemptLabel, toolOf, incidentList, jevAnalytics, readAttempt, mergeTicket, probeKeir, forwardPrMention, ticketPerformance, releaseEfficiency, probeState, activityByHour, readUsage, ciState, summarizeJob, PATHS, RUNNERS, _cache: cache, _cached: cached, _mcpCall: mcpCall };

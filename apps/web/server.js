@@ -3718,6 +3718,17 @@ const server = http.createServer(async (req, res) => {
         console.log("[cicd] workflow_run", JSON.stringify({ repo: repoFull, run: run.run_number, conclusion, branch }));
         return;
       }
+      // "@keir-bot" (or "@Keir") in a PR comment asks Keir for a review.
+      if (event === "issue_comment" || event === "pull_request_review_comment") {
+        let cp;
+        try { cp = JSON.parse(raw.toString()); } catch { return; }
+        const number = event === "issue_comment" ? (cp.issue?.pull_request ? cp.issue.number : null) : cp.pull_request?.number;
+        if (cp.action !== "created" || !number || !/@keir(?:-bot)?(?![\w-])/i.test(String(cp.comment?.body || ""))) return;
+        require("./keir-hub-data").forwardPrMention({ repository: cp.repository?.full_name, number, commentId: cp.comment?.id, kind: event === "issue_comment" ? "issue_comment" : "review_comment" })
+          .then((r) => console.log("[keir-mention]", JSON.stringify({ number, ...r })))
+          .catch((e) => console.error("[keir-mention] forward failed:", e.message));
+        return;
+      }
       if (event !== "pull_request") return;
       let payload;
       try { payload = JSON.parse(raw.toString()); } catch { return; }

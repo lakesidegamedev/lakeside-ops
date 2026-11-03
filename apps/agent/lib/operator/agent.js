@@ -11,6 +11,7 @@ const { spawn } = require("node:child_process");
 const { createToolServer } = require("./toolserver");
 const { invokeCli } = require("./cli-runner");
 const { childTools } = require("./delegation");
+const { PR_MENTION_TOOLS } = require("./prmention");
 const { roleGuard, roleOf } = require("./roles");
 
 function schema(properties, required = []) { return { type: "object", properties, required, additionalProperties: false }; }
@@ -392,7 +393,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     context.operatorRole = roleOf(job, ledger.data.jobs);
     context.evidenceReceipts = (job.evidenceBatches || []).slice(-6);
     const permitted = (t) => { try { roleGuard(job, t.name, {}, ledger.data.jobs); return true; } catch { return ["read_tools", "read_tool", "github", "raise_to_developers"].includes(t.name) && roleOf(job, ledger.data.jobs) === "engineering" || ["read_tools", "read_tool"].includes(t.name) && roleOf(job, ledger.data.jobs) === "watchkeeper"; } };
-    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (!job.codingParent || childTools(job).includes(t.name)) && (!quick || QUICK_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app") && (t.name !== "present_choices" || job.role === "owner") && permitted(t));
+    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (!job.codingParent || childTools(job).includes(t.name)) && (!job.prMention || PR_MENTION_TOOLS.includes(t.name)) && (!quick || QUICK_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app") && (t.name !== "present_choices" || job.role === "owner") && permitted(t));
     if (contextProfile === "focused") {
       const conversation = broker.context?.(job);
       context.sharedConversation = conversation ? { ...conversation, messages: (conversation.messages || []).slice(-6).map(m => ({ role: m.role, text: String(m.text || m.content || "").slice(0, 1000), at: m.at })) } : undefined;
@@ -564,7 +565,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   // session is the same loopback endpoint a Claude activation gets, bound to
   // the job, a named tool subset and the caller's abort signal.
   function openToolSession(job, names, signal) {
-    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (t.name !== "present_choices" || job.role === "owner") && names.includes(t.name) && (!job.codingParent || childTools(job).includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app"));
+    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (t.name !== "present_choices" || job.role === "owner") && names.includes(t.name) && (!job.codingParent || childTools(job).includes(t.name)) && (!job.prMention || PR_MENTION_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app"));
     return toolServer.open(job, tools, signal);
   }
   return { run, canRun: () => true, openToolSession };
