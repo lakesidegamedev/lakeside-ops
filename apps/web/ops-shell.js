@@ -1,3 +1,4 @@
+const { JUNIOR_NAV } = require("./ops-staff-role");
 // ops-shell.js — the shared Ops platform shell: persistent sidebar, command
 // palette, page wrapper (renderShell) and legacy/immersive wrapper (injectNav).
 // Single source of truth so the dashboard AND standalone apps (docs, etc.)
@@ -350,7 +351,7 @@ function renderSidebar(active, role, opts = {}) {
   };
   const abs = (h) => (base && h.startsWith("/") ? base + h : h);
   const featured = sidebarForFeatures();
-  const groups = isAdmin ? featured : featured.map((g) => ({ label: g.label, items: g.items.filter((it) => it.mod) })).filter((g) => g.items.length);
+  const groups = role === "junior_dev" ? JUNIOR_NAV : isAdmin ? featured : featured.map((g) => ({ label: g.label, items: g.items.filter((it) => it.mod) })).filter((g) => g.items.length);
   const nav = groups
     .map((g, index) => `<details class="sb-group" ${!isAdmin || index === 0 || g.items.some((it) => it.href === active) ? "open" : ""}><summary class="sb-group-label">${escHtml(g.label)}<span class="sb-group-chevron" aria-hidden="true">⌄</span></summary><div class="sb-links">${g.items
       .map((it) => {
@@ -375,7 +376,7 @@ function renderSidebar(active, role, opts = {}) {
   const publicSettings = role === "public" ? `<div class="sb-foot" style="margin-top:auto;display:block;padding:16px 20px"><div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin-bottom:12px">Settings</div><div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">${themeToggle()}<span style="font-size:.82rem;color:var(--text-2)">Light / dark mode</span></div><a href="https://lakesidegames.net/account" style="display:flex;align-items:center;gap:8px;color:var(--text-2);font-size:.85rem">${icon("user", { size: 16 })}<span>Lakeside account profile</span></a></div>` : "";
   const brand = brandMeta();
   return `<aside class="ahd-sb">
-    <a class="sb-brand" href="${escHtml(abs(isAdmin ? "/" : "/ask"))}"><span class="sb-brand-mark" aria-hidden="true">${escHtml(brand.shortName.slice(0, 1).toUpperCase())}<img class="sb-brand-logo" src="${escHtml(abs(safeLink(brand.logoUrl) || "/logo.svg"))}" alt="" onerror="this.remove()"></span><span class="sb-brand-copy"><strong>${escHtml(brand.shortName)}</strong><small>Operations workspace</small></span></a>
+    <a class="sb-brand" href="${escHtml(abs(isAdmin || role === "junior_dev" ? "/" : "/ask"))}"><span class="sb-brand-mark" aria-hidden="true">${escHtml(brand.shortName.slice(0, 1).toUpperCase())}<img class="sb-brand-logo" src="${escHtml(abs(safeLink(brand.logoUrl) || "/logo.svg"))}" alt="" onerror="this.remove()"></span><span class="sb-brand-copy"><strong>${escHtml(brand.shortName)}</strong><small>Operations workspace</small></span></a>
     <nav class="sb-nav" aria-label="Main navigation">${nav}</nav>
     ${role === "public" ? publicSettings : `<details class="sb-portfolio"><summary>Projects <span aria-hidden="true">⌄</span></summary><div class="sb-games">${gameLinks}</div></details>
     <div class="sb-foot"><span class="sb-version">v${escHtml(APP_VERSION)}</span>${modBtn}${themeToggle()}</div>`}
@@ -385,7 +386,9 @@ function renderSidebar(active, role, opts = {}) {
 // Slim top bar kept for immersive full-screen apps (ask, code session).
 function renderNavbar(active, role) {
   const isAdmin = role === "admin";
-  const links = (isAdmin
+  const links = (role === "junior_dev"
+    ? [["/", "Junior Developer", "home"], ["/kanban", "Work board", "check-square"], ["/reports", "Economy reports", "newspaper"]]
+    : isAdmin
     ? [["/", "Dashboard", "home"], ["/reports", "Reports", "newspaper"], ["/ask", "Ask", "message"]]
     : [["/status", "Status", "activity"], ["/ask", "Ask", "message"]]
   )
@@ -396,7 +399,7 @@ function renderNavbar(active, role) {
     .join("");
   const brand = brandMeta();
   return `<nav class="ahd-nav">
-    <a class="brand" href="${isAdmin ? "/" : "/ask"}"><img class="brand-logo" src="${brand.logoUrl}" alt="${escHtml(brand.name)}"><em>Ops</em></a>
+    <a class="brand" href="${isAdmin || role === "junior_dev" ? "/" : "/ask"}"><img class="brand-logo" src="${brand.logoUrl}" alt="${escHtml(brand.name)}"><em>Ops</em></a>
     <div class="nav-links">${links}</div>
     <div class="nav-right">${gameLinks}</div>
   </nav>`;
@@ -447,7 +450,7 @@ if(document.readyState!=='loading')init();else document.addEventListener('DOMCon
 function renderCommandPalette(role, base = "") {
   const b = (base || "").replace(/\/+$/, "");
   const abs = (h) => (b && h.startsWith("/") ? b + h : h);
-  const groups = role === "admin" ? sidebarForFeatures() : sidebarForFeatures().map((g) => ({ label: g.label, items: g.items.filter((it) => it.mod) })).filter((g) => g.items.length);
+  const groups = role === "junior_dev" ? JUNIOR_NAV : role === "admin" ? sidebarForFeatures() : sidebarForFeatures().map((g) => ({ label: g.label, items: g.items.filter((it) => it.mod) })).filter((g) => g.items.length);
   const cmds = [];
   groups.forEach((g) => g.items.forEach((it) => cmds.push({ label: it.label, href: abs(it.href), icon: icon(it.icon, { size: 16 }), ext: !!it.ext, group: g.label })));
   const json = JSON.stringify(cmds).replace(/</g, "\\u003c");
@@ -468,7 +471,7 @@ function renderShell(opts) {
   const brand = brandMeta();
   // Ops pages (no base path) render inside the hub bar: work board, library,
   // tickets. Pages served under a base path (docs, Keir) keep the sidebar.
-  if (!b && product !== "keir") {
+  if (!b && product !== "keir" && role !== "junior_dev") {
     const { renderHubPage, viewFor } = require("./hub/shell");
     return renderHubPage({ title, active: viewFor(active), body: `<div class="hub-legacy">${body}</div>`, extraCss: BASE_CSS + CMDK_CSS + extraCss + HUB_COMPAT_CSS, head: clientBootstrapScript() });
   }

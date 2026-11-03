@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
+const { opsStaffRole } = require('./ops-staff-role');
 const source = fs.readFileSync(require.resolve('./server.js'), 'utf8');
 function opsHarness({ checked, staff, failure } = {}) {
   let calls = 0;
@@ -46,7 +47,7 @@ test('Docs rejects banned, revoked, nonstaff and unavailable issuer sessions', a
   const start = text.indexOf('async function gameCookieStrategy');
   const end = text.indexOf('// Ops-dashboard session.', start);
   for (const user of [null, { isAdmin: true, isBanned: true }, { isAdmin: true, authRevokedAt: new Date(10000) }, {}]) {
-    const context = { verifyProductionGameSession: async () => checked, require: () => ({ ObjectId: class { constructor(id) { assert.equal(id, checked.identity.id); } } }) };
+    const context = { opsStaffRole, verifyProductionGameSession: async () => checked, require: () => ({ ObjectId: class { constructor(id) { assert.equal(id, checked.identity.id); } } }) };
     vm.runInNewContext(text.slice(start,end) + '\nthis.check = gameCookieStrategy;', context);
     assert.equal(await context.check({ collection: () => ({ findOne: async () => user }) }, req), null);
   }
@@ -55,7 +56,7 @@ test('Docs accepts currently authorized staff only after live verification', asy
   const text = fs.readFileSync(require.resolve('./docs-app/server.js'), 'utf8');
   const start = text.indexOf('async function gameCookieStrategy');
   const end = text.indexOf('// Ops-dashboard session.', start);
-  const context = { verifyProductionGameSession: async () => checked, require: () => ({ ObjectId: class {} }) };
+  const context = { opsStaffRole, verifyProductionGameSession: async () => checked, require: () => ({ ObjectId: class {} }) };
   vm.runInNewContext(text.slice(start,end) + '\nthis.check = gameCookieStrategy;', context);
   const db = { collection: () => ({ findOne: async () => ({ isModerator: true, email: 'staff@example.test' }) }) };
   assert.equal((await context.check(db, req)).role, 'moderator');

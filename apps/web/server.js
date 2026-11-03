@@ -512,6 +512,7 @@ async function getDb() {
   return client.db("a-house-divided");
 }
 
+const { opsStaffRole, guardJuniorDeveloperRequest, canReadDeveloperView, juniorDeveloperHome, juniorEconomyReports, juniorDeveloperRequestAllowed } = require("./ops-staff-role");
 const { authorizeOpsSession, credentialVersion, sessionToken } = require("./ops-session-policy");
 async function checkSession(req) {
   const token = sessionToken(req);
@@ -595,16 +596,14 @@ async function resolveStaffFromAhdUser(userId, opts = {}) {
   try {
     user = await db.collection("users").findOne(
       { _id },
-      { projection: { email: 1, isAdmin: 1, isModerator: 1, isBanned: 1, authRevokedAt: 1 } }
+      { projection: { email: 1, isAdmin: 1, isModerator: 1, opsRole: 1, isBanned: 1, authRevokedAt: 1 } }
     );
   } catch {
     return null;
   }
   if (!user || user.isBanned === true) return null;
   if (user.authRevokedAt && opts.iat && user.authRevokedAt.getTime() >= opts.iat * 1000) return null;
-  let role = null;
-  if (user.isAdmin === true) role = "admin";
-  else if (user.isModerator === true) role = "moderator";
+  const role = opsStaffRole(user);
   if (!role) return null;
   return { email: user.email || opts.emailFallback, role, source: "game", userId, revocationVersion: user.authRevokedAt ? new Date(user.authRevokedAt).getTime() : 0 };
 }
@@ -3609,6 +3608,8 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
+  if (await guardJuniorDeveloperRequest(req, res, pathname, { resolveSession, json })) return;
+
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/settings/credentials") {
     const session = await resolveSession(req);
     if (!session) {
@@ -4211,6 +4212,12 @@ const server = http.createServer(async (req, res) => {
       res.end(req.method === "HEAD" ? "" : renderDashboard(session, metrics, reports, gamesHealth, warming));
       return;
     }
+    if (session?.role === "junior_dev") {
+      addSecurityHeaders(res);
+      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+      res.end(req.method === "HEAD" ? "" : renderShell({ title: "Junior Developer", active: "/", role: session.role, body: juniorDeveloperHome() }));
+      return;
+    }
     if (session && session.role === "moderator") {
       // Minimal moderator landing — no admin widgets (usage bar, triage button,
       // DB/game metrics, error internals, ticket/suggestion KPIs are all omitted).
@@ -4387,7 +4394,7 @@ const server = http.createServer(async (req, res) => {
   // GET /reports/extraction-capacity — live extraction-capacity remediation report (admin)
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/reports/extraction-capacity") {
     const session = await resolveSession(req);
-    if (!session || session.role !== "admin") { addSecurityHeaders(res); res.writeHead(403, { "Content-Type": "text/plain" }); res.end("Forbidden"); return; }
+    if (!canReadDeveloperView(session, pathname)) { addSecurityHeaders(res); res.writeHead(403, { "Content-Type": "text/plain" }); res.end("Forbidden"); return; }
     addSecurityHeaders(res);
     try {
       const audit = await computeExtractionAudit(await getDb());
@@ -4404,7 +4411,7 @@ const server = http.createServer(async (req, res) => {
   // GET /api/extraction-audit — JSON per-state extraction audit (admin)
   if (req.method === "GET" && pathname === "/api/extraction-audit") {
     const session = await resolveSession(req);
-    if (!session || session.role !== "admin") { addSecurityHeaders(res); res.writeHead(403, { "Content-Type": "application/json" }); res.end('{"error":"forbidden"}'); return; }
+    if (!canReadDeveloperView(session, pathname)) { addSecurityHeaders(res); res.writeHead(403, { "Content-Type": "application/json" }); res.end('{"error":"forbidden"}'); return; }
     addSecurityHeaders(res);
     try {
       const audit = await computeExtractionAudit(await getDb());
@@ -4843,7 +4850,13 @@ const server = http.createServer(async (req, res) => {
   // Reports — full daily operations reports page (carousel + actions).
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/reports") {
     const session = await resolveSession(req);
-    if (!session || session.role !== "admin") return denyHtml();
+    if (!canReadDeveloperView(session, pathname)) return denyHtml();
+    if (session?.role === "junior_dev") {
+      addSecurityHeaders(res);
+      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+      res.end(req.method === "HEAD" ? "" : renderShell({ title: "Economy reports", active: "/reports", role: session.role, body: juniorEconomyReports() }));
+      return;
+    }
     let reports = [];
     try { reports = await dailyReport.getReports(await getDb(), 30); } catch { /* empty */ }
     const { extraCss, body } = renderReportsFull(reports, { simReports: buildSimReportLibrary(), replayReports: buildReplayReportLibrary(), publishedReports: buildPublishedReportLibrary() });
@@ -4912,7 +4925,7 @@ const server = http.createServer(async (req, res) => {
   // Engine — Game Engine Observatory (simulation health).
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/engine") {
     const session = await resolveSession(req);
-    if (!session || session.role !== "admin") return denyHtml();
+    if (!canReadDeveloperView(session, pathname)) return denyHtml();
     try {
       const health = await enginePageSnapshot.get();
       const { extraCss, body } = makeEngineBody({ health });
@@ -8400,6 +8413,10 @@ ${sourceContext}`;
     return json(res, 401, { error: "Unauthorized" });
   }
 
+  if (session.role === "junior_dev" && !juniorDeveloperRequestAllowed(req.method, pathname)) {
+    return json(res, 403, { error: "Junior Developer access is limited to development views" });
+  }
+
   // Role-based access: moderators can only access the Q&A portal endpoints
   const isModerator = session.role === "moderator";
   const moderatorAllowed = pathname === "/api/ask" || pathname === "/api/ask/feedback" ||
@@ -9585,7 +9602,7 @@ ${indexContext}${pinnedContext ? `\n\nThe user has PINNED these files — their 
   // GET /api/project-guide — Read the dynamic project guide (admin only)
   if (req.method === "GET" && pathname === "/api/project-guide") {
     const session = await resolveSession(req);
-    if (!session || session.role !== "admin") return json(res, 403, { error: "Forbidden" });
+    if (!canReadDeveloperView(session, pathname)) return json(res, 403, { error: "Forbidden" });
     try {
       const fsPromises = require("fs").promises;
       const guidePath = path.join(process.env.HOME || "/root", ".hermes", "docs", "PROJECT_GUIDE.md");
@@ -9607,7 +9624,7 @@ ${indexContext}${pinnedContext ? `\n\nThe user has PINNED these files — their 
   // GET /project-guide — Project guide reader page (admin only)
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/project-guide") {
     const session = await resolveSession(req);
-    if (!session || session.role !== "admin") { addSecurityHeaders(res); res.writeHead(403, { "Content-Type": "text/plain" }); res.end("Forbidden"); return; }
+    if (!canReadDeveloperView(session, pathname)) { addSecurityHeaders(res); res.writeHead(403, { "Content-Type": "text/plain" }); res.end("Forbidden"); return; }
     addSecurityHeaders(res);
     res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
     try {

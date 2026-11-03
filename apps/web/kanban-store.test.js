@@ -199,6 +199,23 @@ describe("kanban routes", () => {
     assert.equal(res.status, 404);
   });
 
+  it("lets Junior Developers read the board and detail but rejects all writes", async () => {
+    const item = k.add({ product: "ahd", title: "Developer task" });
+    for (const path of ["/kanban", "/api/kanban", "/api/kanban/brief", "/api/kanban/items/" + item.id]) {
+      const res = fakeRes();
+      await handleKanbanRoute(fakeReq(), res, path, ctx({ role: "junior_dev" }));
+      assert.equal(res.status, 200, path);
+      if (path === "/kanban") {
+        assert.ok(res.body.includes('data-read-only="true"'));
+        assert.ok(res.body.includes('hidden disabled'));
+      }
+    }
+    const res = fakeRes();
+    await handleKanbanRoute(fakeReq({ method: "POST", body: { lane: "done" }, headers: { "x-requested-with": "ops-dashboard", origin: "https://ops.example.com" } }), res, "/api/kanban/items/" + item.id, ctx({ role: "junior_dev" }));
+    assert.equal(res.status, 403);
+    assert.equal(k.get(item.id).lane, item.lane);
+  });
+
   it("renders for admins and requires the same-origin header to write", async () => {
     k.add({ product: "ahd", title: "<script>x</script>" });
     let res = fakeRes();

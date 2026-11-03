@@ -11,6 +11,7 @@
 require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
 const express = require("express");
 const store = require("../knowledge-store");
+const { opsStaffRole } = require("../ops-staff-role");
 const { renderShell } = require("../ops-shell");
 
 const OPS_BASE = (process.env.OPS_PUBLIC_URL || "https://ops.ahousedividedgame.com").replace(/\/+$/, "");
@@ -28,13 +29,12 @@ async function gameCookieStrategy(db, req) {
   let user;
   try {
     user = await db.collection("users").findOne({ _id: new ObjectId(checked.identity.id) },
-      { projection: { email: 1, isAdmin: 1, isModerator: 1, isBanned: 1, authRevokedAt: 1 } });
+      { projection: { email: 1, isAdmin: 1, isModerator: 1, opsRole: 1, isBanned: 1, authRevokedAt: 1 } });
   } catch { return null; }
   if (!user || user.isBanned === true) return null;
   if (user.authRevokedAt && user.authRevokedAt.getTime() >= checked.issuedAt * 1000) return null;
-  if (user.isAdmin === true) return { email: user.email, role: "admin" };
-  if (user.isModerator === true) return { email: user.email, role: "moderator" };
-  return null;
+  const role = opsStaffRole(user);
+  return role ? { email: user.email, role } : null;
 }
 
 // Ops-dashboard session. The dashboard mints `ops_session` scoped to the parent

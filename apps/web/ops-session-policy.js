@@ -1,3 +1,4 @@
+const { opsStaffRole } = require('./ops-staff-role');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
 const TTL = 86400000;
@@ -36,11 +37,11 @@ async function authorizeOpsSession(session, { getDb, users, allowLocal = true, o
   try {
     const db = await getDb();
     const user = await db.collection('users').findOne({ _id: new ObjectId(session.userId) },
-      { projection: { email: 1, isAdmin: 1, isModerator: 1, isBanned: 1, authRevokedAt: 1 }, maxTimeMS: 5000 });
+      { projection: { email: 1, isAdmin: 1, isModerator: 1, opsRole: 1, isBanned: 1, authRevokedAt: 1 }, maxTimeMS: 5000 });
     if (!user || user.isBanned === true) return null;
     const revoked = user.authRevokedAt == null ? 0 : new Date(user.authRevokedAt).getTime();
     if (!Number.isFinite(revoked) || revoked !== session.revocationVersion || revoked >= session.created) return null;
-    const role = user.isAdmin === true ? 'admin' : user.isModerator === true ? 'moderator' : null;
+    const role = opsStaffRole(user);
     return role ? { ...session, email: user.email, role } : null;
   } catch { onUnavailable?.(); return null; }
 }

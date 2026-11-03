@@ -10,7 +10,7 @@ class Socket extends EventEmitter {
 const initial = { source: 'game', userId: 'a'.repeat(24), role: 'admin' };
 const req = { headers: { cookie: 'ops_session=' + 'a'.repeat(64) } };
 test('downgrade, deletion and identity switching terminate established connections', async () => {
-  for (const result of [null, { ...initial, role: 'moderator' }, { ...initial, userId: 'b'.repeat(24) }]) {
+  for (const result of [null, { ...initial, role: 'moderator' }, { ...initial, role: 'junior_dev' }, { ...initial, userId: 'b'.repeat(24) }]) {
     const guards = new OpsWebSocketAuth(); const ws = new Socket();
     guards.attach(ws, req, initial, async () => result);
     assert.equal(await ws.authorize(), false);
