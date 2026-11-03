@@ -454,11 +454,24 @@ function renderCommandPalette(role, base = "") {
   return `<div class="cmdk" id="cmdk"><div class="cmdk-backdrop"></div><div class="cmdk-box"><div class="cmdk-inwrap">${icon("search", { size: 16 })}<input class="cmdk-input" id="cmdk-input" placeholder="Search pages…" autocomplete="off" spellcheck="false"></div><div class="cmdk-list" id="cmdk-list"></div><div class="cmdk-foot"><span><kbd>↑</kbd><kbd>↓</kbd> navigate</span><span><kbd>↵</kbd> open</span><span><kbd>esc</kbd> close</span></div></div></div><script>window.__CMDS=${json};</script>${CMDK_JS}`;
 }
 
+// Older page bodies assumed the sidebar layout; give them room under the bar.
+const HUB_COMPAT_CSS = `
+body.hub{padding-left:0}
+.hub-legacy{min-height:calc(100vh - var(--hub-h))}
+body.hub .hub-bar a,body.hub .hub-tabs a{text-decoration:none}
+`;
+
 function renderShell(opts) {
   const { title = "Ops", active = "/", role = "admin", body = "", extraCss = "", base = "", product = "ops" } = opts || {};
   const b = (base || "").replace(/\/+$/, "");
   const asset = (h) => (b ? b + h : h);
   const brand = brandMeta();
+  // Ops pages (no base path) render inside the hub bar: work board, library,
+  // tickets. Pages served under a base path (docs, Keir) keep the sidebar.
+  if (!b && product !== "keir") {
+    const { renderHubPage, viewFor } = require("./hub/shell");
+    return renderHubPage({ title, active: viewFor(active), body: `<div class="hub-legacy">${body}</div>`, extraCss: BASE_CSS + CMDK_CSS + extraCss + HUB_COMPAT_CSS, head: clientBootstrapScript() });
+  }
   const section = sidebarForFeatures().find((group) => group.items.some((item) => item.href === active))?.label || "Workspace";
   return `<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">

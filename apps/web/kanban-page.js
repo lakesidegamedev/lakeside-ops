@@ -184,7 +184,7 @@ function makeKanbanBody({ board, error = null }) {
   // close the element.
   const data = JSON.stringify(board || { products: [], items: [], github_sources: [], stale_days: 5 }).replace(/</g, "\\u003c");
   const body = `<div class="kb-wrap">
-  <div class="kb-head"><div><h1>Kanban</h1><div class="kb-sub" id="kb-sync"></div></div>
+  <div class="kb-head"><div><h1>Work board</h1><div class="kb-sub" id="kb-sync"></div></div>
     <div class="kb-bar"><select id="kb-product" aria-label="Product"></select><input type="search" id="kb-q" placeholder="Filter" aria-label="Filter"><button class="kb-btn" id="kb-stale" type="button">Stale only</button><button class="kb-btn primary" id="kb-add-btn" type="button">Add item</button></div></div>
   ${error ? `<div class="kb-err">Kanban store unavailable: ${String(error).replace(/[&<>"']/g, "")}</div>` : ""}
   <div class="kb-err" id="kb-msg" hidden></div>

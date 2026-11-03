@@ -40,11 +40,19 @@ describe('v4 operations navigation', () => {
     assert.doesNotMatch(html, /href="\/(?:tickets|worktrees|events|grafana\/|reports\/worldsim-audit-program)/);
   });
 
-  it('keeps search and page context available in the shared shell', () => {
+  it('renders ops pages inside the hub bar with search and the active view', () => {
     const html = renderShell({ title: 'Tickets', active: '/tickets', role: 'admin', body: '<p>Ticket list</p>' });
-    assert.match(html, /class="tb-section">Operate/);
+    assert.match(html, /<title>Tickets · Lakeside Ops<\/title>/);
+    assert.match(html, /class="hub-view on" href="\/tickets"/);
+    for (const href of ['/kanban', '/library', '/tickets']) assert.match(html, new RegExp(`class="hub-view[^"]*" href="${href.replace('/', '\\/')}"`));
+    assert.match(html, /id="hubSearch"/);
+    assert.match(html, /id="hubPalIn"/);
+    assert.match(html, /<p>Ticket list<\/p>/);
+  });
+
+  it('keeps the sidebar for pages served under a base path', () => {
+    const html = renderShell({ title: 'Docs', active: '/', role: 'admin', body: '<p>x</p>', base: '/docs' });
     assert.match(html, /id="cmdk-trigger"/);
-    assert.match(html, /id="cmdk-input"/);
-    assert.match(html, /window\.__CMDS=/);
+    assert.doesNotMatch(html, /class="hub-bar"/);
   });
 });

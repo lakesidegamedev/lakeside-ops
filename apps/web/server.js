@@ -41,6 +41,7 @@ const { makeFinderBody } = require("./finder-page");
 const Database = require("better-sqlite3");
 const { LakesideAuthClient } = require("./lakeside-auth-client");
 const { loadConfig, getConfig } = require("./src/core/config");
+const { handleHubRoute } = require("./hub/routes");
 const { listStatusServices, getSsoHosts, getTenant, getPrimaryProject } = require("./src/services/projectRegistry");
 const { mcpPublicBase, primaryRepoDir, hermesHomeDir, resolveBinary } = require("./src/core/paths");
 const { isEnabled } = require("./src/services/featureFlags");
@@ -4180,6 +4181,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   // GET / — HTML dashboard
+  // Ops hub: work board, library and ticket hub (hub/routes.js).
+  if (await handleHubRoute(req, res, url, {
+    resolveSession, addSecurityHeaders, getDb, knowledgeStore, getConfig,
+    publishedDir: PUBLISHED_REPORTS_DIR, legacyDir: require("path").join(__dirname, "reports"),
+    kanban: require("./kanban-store").sharedKanban,
+  })) return;
+
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/") {
     const session = await resolveSession(req);
     if (session && session.role === "admin") {
