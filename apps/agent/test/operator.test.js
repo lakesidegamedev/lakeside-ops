@@ -2838,3 +2838,16 @@ test("an @keir-bot PR review task reads its own PR, posts one verdict review and
   assert.equal(r.posted, true);
   await assert.rejects(f.broker.tool(j, "github", { action: "review_comment", number: 5400, comment: `${review} again\n\nVerdict: needs changes` }), /already posted/);
 });
+
+test("Keir's GitHub review posts carry no em or en dashes", async () => {
+  const OWNER = "111111111111111111";
+  const f = githubFixture([
+    [/pulls\/5377$/, { number: 5377, state: "open", head: { sha: "f647c267b9ce" } }],
+    [/issues\/5377\/comments$/, { html_url: "https://github.com/lakesidegamedev/AHDGame/pull/5377#issuecomment-3" }],
+  ]);
+  const owner = running(f, { role: "owner", kind: "command", actorId: OWNER, source: { authorId: OWNER } });
+  await f.broker.tool(owner, "github", { action: "review_comment", number: 5377, comment: "**1. Lockfile edit is minimal and correct** — one jose entry changes, lines 3–5." });
+  const body = f.calls.find((c) => c.includes("POST")).find((a) => a.startsWith("body="));
+  assert.doesNotMatch(body, /[–—]/);
+  assert.match(body, /correct\*\*, one jose entry changes, lines 3-5\./);
+});

@@ -1,5 +1,5 @@
 "use strict";
-const { GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
+const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
 // Minutes between checks for a task waiting with nothing subscribed and no
 // reply owed: the first is a normal look, then it settles into a slow recheck.
 const QUIET_WAITS = [15, 30, 60, 120];
@@ -1106,6 +1106,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     await exec("/usr/bin/git", ["-C", wt, "apply", "--index", a.args.patchFile], { signal });
     await exec("/usr/bin/git", ["-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Keir", "-c", "user.email=keir@localhost", "commit", "-m", a.args.title + "\n\nPrepared by Keir for task " + job.id + "."], { signal });
     const bodyFile = path.join(config.stateDir, "artifacts", `${a.id}-pr.md`);
+    a.args.title = noDashes(a.args.title); a.args.body = noDashes(a.args.body);
     fs.writeFileSync(bodyFile, a.args.body, { mode: 0o600 });
     let url;
     if (revise) {
@@ -1394,7 +1395,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (!target || target.pull_request || target.state !== "open") throw new Error(`#${number} is not an open AHDGame issue`);
         const reporter = await reporterOf(job, signal);
         if (job.ticket && !reporter?.name) throw new Error("public issue publication needs a verified reporter identity");
-        const note = issues.render({ kind: input.kind === "enhancement" ? "enhancement" : "bug", fields: { summary: `Another report of this. ${String(input.issue?.summary || "").trim()}`.trim(), expected: input.issue?.expected || "", actual: input.issue?.actual || "", steps: input.issue?.steps, where: input.issue?.where, impact: input.issue?.impact || "Same as above.", notes: input.issue?.notes } });
+        const note = noDashes(issues.render({ kind: input.kind === "enhancement" ? "enhancement" : "bug", fields: { summary: `Another report of this. ${String(input.issue?.summary || "").trim()}`.trim(), expected: input.issue?.expected || "", actual: input.issue?.actual || "", steps: input.issue?.steps, where: input.issue?.where, impact: input.issue?.impact || "Same as above.", notes: input.issue?.notes } }));
         const bad = issues.leak(note, [reporter?.name, job.source?.author]);
         if (bad) throw new Error(`AHDGame is public: the comment mentions "${bad}". Remove it and add it again.`);
         await effect(job, `issue-comment:${number}:${hash(note)}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=${note}`]));
@@ -1408,6 +1409,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const reporter = await reporterOf(job, signal);
         if (job.ticket && !reporter?.name) throw new Error("public issue publication needs a verified reporter identity");
         const built = issues.build({ ...input.issue, title, kind: input.kind }, [reporter?.name, job.source?.author], { origin: job.kind === "finding" ? "watch" : "report" });
+        built.title = noDashes(built.title); built.body = noDashes(built.body);
         // Keir 5.1: a finding whose root cause already has an open issue joins
         // it. Three findings of one line of credit fault filed #4140, #4141 and
         // #4142 within two minutes (2026-10-14).
@@ -1939,7 +1941,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         if (job.prMention?.posted) throw new Error("The review is already posted on the pull request; finish done");
         const number = Number(input.number);
         if (!number) throw new Error("review_comment needs the PR number");
-        const raw = String(input.comment || "").trim();
+        const raw = noDashes(String(input.comment || "").trim());
         if (raw.length < 20) throw new Error("review_comment needs the review text in comment");
         if (raw.length > 6000) throw new Error("review_comment is at most 6000 characters; keep the points that matter");
         if (job.prMention && !prMention.VERDICT.test(raw)) throw new Error('End the review with a verdict line: "Verdict: looks good", "Verdict: needs changes" or "Verdict: blocking issue"');
@@ -2322,7 +2324,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]);
         if (!/^keir\//.test(pr.head.ref)) throw new Error("Keir only closes its own PRs (branches starting keir/)");
         if (pr.state !== "open") return { number: pr.number, state: pr.state };
-        if (input.comment) await exec("/usr/bin/gh", ["api", "-X", "POST", `repos/${repo}/issues/${pr.number}/comments`, "-f", `body=${redactSecrets(String(input.comment)).slice(0, 2000)}`]);
+        if (input.comment) await exec("/usr/bin/gh", ["api", "-X", "POST", `repos/${repo}/issues/${pr.number}/comments`, "-f", `body=${noDashes(redactSecrets(String(input.comment))).slice(0, 2000)}`]);
         await effect(job, `close-pr:${pr.number}`, () => api(["-X", "PATCH", `repos/${repo}/pulls/${pr.number}`, "-f", "state=closed"]));
         try { await exec("/usr/bin/gh", ["api", "-X", "DELETE", `repos/${repo}/git/refs/heads/${pr.head.ref}`]); } catch {}
         return { number: pr.number, closed: true };

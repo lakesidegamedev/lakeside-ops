@@ -25,4 +25,7 @@ function redChecks(runs) {
   return (runs || []).filter((r) => r.status === "completed" && !["success", "neutral", "skipped"].includes(r.conclusion)
     && !(r.conclusion === "cancelled" && runs.some((o) => o !== r && o.name === r.name && o.conclusion !== "cancelled")));
 }
-module.exports = { redChecks, GITHUB_OWNER, GAME_REPO, CI_REPOSITORIES, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber };
+// Owner rule: no em or en dashes in anything Keir writes, GitHub included (the
+// first @keir-bot review on AHDGame #5377 had one). A range keeps a hyphen.
+const noDashes = (text) => String(text ?? "").replace(/(\d)\s*[\u2013\u2014]\s*(\d)/g, "$1-$2").replace(/^([ \t]*)[\u2013\u2014][ \t]*/gm, "$1").replace(/[ \t]*[\u2013\u2014][ \t]*/g, ", ").replace(/, ([,.;:!?])/g, "$1");
+module.exports = { noDashes, redChecks, GITHUB_OWNER, GAME_REPO, CI_REPOSITORIES, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber };
