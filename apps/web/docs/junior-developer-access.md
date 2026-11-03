@@ -9,6 +9,7 @@ keep their admin role.
 
 The role opens a dedicated development landing page and navigation. It can read
 the work board and item history, the project guide, public technical docs,
+the live economy tracker at `/economy` (all six tabs and time ranges),
 commodity and extraction reports, and engine diagnostics. The board is read-only;
 contributors coordinate edits through GitHub. The reports directory shows only
 this role's economy links, not daily operations or private report libraries.
