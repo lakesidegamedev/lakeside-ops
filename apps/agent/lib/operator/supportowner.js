@@ -61,14 +61,20 @@ function createSupportOwner({ ledger, now = () => Date.now() }) {
     desk.acknowledge(handoff.id, "keir");
     const s = state();
     for (const n of h.tickets || []) {
+      const changedHands = (s.tickets[n] || s.owner || "keir") !== "keir";
       s.tickets[n] = "keir";
+      // A handoff for a ticket Keir already owns moves no ownership, so it keeps the owner's
+      // approved actions (2026-11-03: a wake-up note on ticket 1749 superseded an approved repair).
       // Approvals Keir held on this ticket from before the other operator
       // took over describe a world that has moved on (that operator may have
       // shipped the same change another way). None of them survive the
       // handoff: anything still needed is asked for again, fresh.
       const superseded = [];
+      // Unanswered questions are withdrawn either way; an action the owner already approved is
+      // only superseded when the ticket really changed hands.
+      const stale = changedHands ? ["pending", "approved"] : ["pending"];
       for (const j of Object.values(d.jobs).filter((x) => Number(x.ticket) === Number(n))) {
-        for (const a of Object.values(d.actions || {}).filter((x) => x.jobId === j.id && ["pending", "approved"].includes(x.state))) {
+        for (const a of Object.values(d.actions || {}).filter((x) => x.jobId === j.id && stale.includes(x.state))) {
           a.state = "superseded"; a.supersededBy = `handoff:${handoff.id}`; superseded.push(a.id);
         }
         for (const x of Object.values(d.decisions || {}).filter((x) => x.jobId === j.id && x.state === "pending")) {

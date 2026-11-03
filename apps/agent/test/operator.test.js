@@ -2737,3 +2737,41 @@ test("an approved action the task has not run keeps it on a short wake, not a qu
   await f.broker.tool(j, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Heal approved; a turn is running." });
   assert.ok(j.wakeAt - 5000 <= 15 * 60000, `woke in ${(j.wakeAt - 5000) / 60000} min`);
 });
+
+test("staff can hand a held ticket back to Keir in its channel, a player cannot (ticket 1757)", () => {
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1757" }, g = createGateway(f);
+  const parent = running(f, { kind: "ticket", role: "support", ticket: 1757, channelId: ch.id });
+  parent.state = "deferred";
+  f.ledger.data.supportOwner = { owner: "keir", tickets: { 1757: "claude-operator-1757" } };
+  g.ingest(ch, f.msg("Keir take this ticket back", "666666666666666691", "888888888888888888"));
+  assert.equal(f.ledger.data.supportOwner.tickets[1757], "claude-operator-1757", "a player cannot hand it back");
+  g.ingest(ch, f.msg(`<@${f.config.botId}> take this ticket back please`, "666666666666666692", f.config.staffIds[0]));
+  assert.equal(f.ledger.data.supportOwner.tickets[1757], "keir");
+  assert.equal(parent.state, "queued");
+  assert.ok(f.ledger.data.audit.some((a) => a.kind === "ticket_handed_back" && a.ticket === 1757));
+});
+
+test("publish_report: owner tasks publish public reports, leaks and non-staff tasks are refused", async () => {
+  const f = fixture(), calls = [];
+  const orig = f.mcp.call;
+  f.mcp.call = async (server, tool, args, ...rest) => { if (tool === "publish_report") { calls.push(args); return { url: `https://ops.lakesidegames.net/reports/${args.slug}` }; } return orig(server, tool, args, ...rest); };
+  const owner = running(f, { role: "owner", kind: "command", actorId: f.config.ownerId, source: { authorId: f.config.ownerId } });
+  const html = `<h1>Tax audit</h1><p>${"Federal revenue matches the ledger. ".repeat(10)}</p>`;
+  const r = await f.broker.tool(owner, "publish_report", { slug: "tax-audit-t624", title: "Tax audit", html, public: true });
+  assert.equal(r.published, true); assert.equal(r.public, true);
+  assert.equal(calls[0].public, true); assert.equal(calls[0].author, "keir");
+  await assert.rejects(f.broker.tool(owner, "publish_report", { slug: "tax-audit-leak", title: "Tax audit", html: html + "<p>see /root/projects/x</p>", public: true }), /Not published/);
+  const g = fixture(), player = running(g, { role: "player", kind: "ticket", ticket: 9 });
+  await assert.rejects(g.broker.tool(player, "publish_report", { slug: "x-report", title: "Tax audit", html }));
+});
+
+test("a handoff for a ticket Keir already owns keeps the owner's approvals (ticket 1749)", () => {
+  const { createSupportOwner } = require("../lib/operator/supportowner");
+  const f = fixture();
+  const owner = createSupportOwner({ ledger: f.ledger });
+  const t = f.ledger.createJob("ticket:1749", { kind: "ticket", role: "support", ticket: 1749, channelId: "c", source: {} });
+  t.state = "waiting";
+  f.ledger.data.actions.heal = { id: "heal", jobId: t.id, kind: "heal", state: "approved" };
+  owner.receive({ id: "wake-1749", from: "claude", scope: "1749", asks: ["run the approved heal"], tickets: [1749] }, { ensureTicketJob: () => t });
+  assert.equal(f.ledger.data.actions.heal.state, "approved");
+});

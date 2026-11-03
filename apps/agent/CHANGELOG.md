@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- `publish_report` publishes a finished HTML report to the Lakeside ops report library and returns its URL. Owner or developer tasks only; `public: true` only on the owner's own request; refused if it contains an internal host, path, account id, email or credential. The owner asked Keir for a public tax audit report and Keir had no way to publish one.
+- Staff can hand a ticket held by another operator back to Keir in its channel ("Keir, take this ticket back"). Before, only the host CLI could, and ticket 1757 sat for hours behind a session that had stopped.
+- A staff or developer request that lands on a held ticket gets a direct message naming who holds it and how to hand it back, instead of silence (three junior-developer requests on ticket 1757 went unanswered).
+- `github review` attaches the whole file at the PR head when a diff is cut off, so a review does not flag what the hidden part already fixes.
+- Suggestion filing accepts everyday wording ("send the suggestion", "make that a suggestion"); it was refused four times for a junior developer on ticket 1756.
+- The automatic "now live" notice is skipped when the task has just told the player the fix is working (ticket 1755 got a contradicting notice a minute later).
+- A handoff for a ticket Keir already owns no longer supersedes the owner's approvals on it (a wake-up note superseded the approved repair on ticket 1749).
+- The brief: investigate before diagnosing in public; one holding line, then the checked cause (ticket 1759 got three replacing explanations in half an hour).
+
 ## 7.2.4 (2026-11-03)
 
 Found by mining 30 hours of live refusals, audits and token use (2026-11-01/02), not by the benchmark:

@@ -4,7 +4,10 @@ const policy = require("./ownermuse-policy");
 const { isAppJob } = require("./appchannel");
 const { ownerText } = require("./privacy");
 const snowflake = value => /^\d{15,22}$/.test(String(value || ""));
-const requested = text => /\b(?:file|submit|create|open|log|record|raise)\b[\s\S]{0,100}\b(?:suggestion|feature request)\b/i.test(text) && !/\b(?:do not|don't|never)\b[\s\S]{0,30}\b(?:file|submit|create|open|log|record|raise)\b/i.test(text);
+// "Send the suggestion" (a junior developer, ticket 1756, 2026-11-02) was refused four times:
+// everyday verbs count as a request too.
+const VERBS = "file|submit|create|open|log|record|raise|send|make|post|add|put in";
+const requested = text => new RegExp(`\\b(?:${VERBS})\\b[\\s\\S]{0,100}\\b(?:suggestion|feature request)\\b`, "i").test(text) && !new RegExp(`\\b(?:do not|don't|never)\\b[\\s\\S]{0,30}\\b(?:${VERBS})\\b`, "i").test(text);
 
 async function openSuggestion({ ledger, config, mcp, discord, effect, supportAuthority, job, input, signal }) {
   if (config.supportDeferred(job)) throw new Error("Suggestion intake is held for the existing support owner");
@@ -60,4 +63,4 @@ async function openSuggestion({ ledger, config, mcp, discord, effect, supportAut
   if (job.ticket) require("./supportblockers").clear(ledger, job.ticket);
   return { ...result, instruction: "Native suggestion filed for the source author. Share its feedback link. This is a proposal, not an accepted design or a shipped fix. Do not create another GitHub enhancement for the same suggestion; its native intake owns optional GitHub mirroring." };
 }
-module.exports = { openSuggestion };
+module.exports = { requested, openSuggestion };
