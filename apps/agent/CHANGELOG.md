@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.3.0 (2026-11-02)
+
 - An owner approval whose plan changed after a turn is withdrawn when it is refused, and an expired approval no longer counts as a reason to wake. The stale approval used to keep the task waking every 15 minutes after the fresh plan had run.
 - A developer change that names a ticket leaves the release receipt for the stage it reached, so the line the merge watch asks for ("a fix is in testing on dev") is no longer refused, and the refused reply no longer blocks finish.
 - On an open ticket whose channel is gone, a reply that cannot be delivered no longer holds finish, so the task can wait for staff instead of being refused on every activation.
