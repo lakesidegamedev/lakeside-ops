@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.1.0 (2026-11-04)
+
 - Lesson retirement: capped, reversible, audited retirement of near-duplicate, stale and long-unused lessons (`bin/keir-lesson-retire.js`, dry run by default, `KEIR_LESSON_RETIRE=0` to disable), and recall ranking now favours lessons with a good ticket record.
 - A ticket held by staff claim or an owner directive past its deadline now tells the owner once by DM; Keir still does nothing on it and keeps it held.
 
