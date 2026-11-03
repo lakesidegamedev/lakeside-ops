@@ -229,8 +229,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   const PROVIDER_LABEL = { agy: "antigravity-cli-subscription", cursor: "cursor-subscription", muse: "muse-cli-subscription", codex: "codex-cli-chatgpt-subscription", opencode: "opencode-cli", ollama: "ollama-cloud-subscription", deepseek: "deepseek-api", claude: "claude-cli-subscription" };
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
-    if (job.provider?.lane !== lane) {
-      const list = String((lane === "quick" ? config.quickProvider : config.workerProvider) || "claude").split(",").map((x) => x.trim()).filter((x) => DEFAULT_MODEL[x.split(/[:@]/)[0]]);
+    const list = String((lane === "quick" ? config.quickProvider : config.workerProvider) || "claude").split(",").map((x) => x.trim()).filter((x) => DEFAULT_MODEL[x.split(/[:@]/)[0]]);
+    // A pinned route that left the configured list (a retired provider after a route switch) is re-chosen, otherwise an old job keeps failing on it forever.
+    const stale = job.provider && !job.provider.ownerSelected && !job.provider.vision && !list.some((x) => x.split("@")[0].split(":")[0] === job.provider.runner);
+    if (job.provider?.lane !== lane || stale) {
       const rr = (ledger.data.providerTurn ||= {}), i = (rr[lane] || 0) % Math.max(1, list.length);
       rr[lane] = i + 1;
       // runner[:model][@effort]; Jev chooses effort for each activation.
