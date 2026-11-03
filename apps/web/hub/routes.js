@@ -11,10 +11,13 @@
 // ticket receipt links, shared report links) are untouched.
 
 const fs = require("fs");
+const zlib = require("zlib");
 const path = require("path");
 const { renderHubPage } = require("./shell");
 const library = require("./library");
 const tickets = require("./tickets");
+const keir = require("./keir");
+const board = require("./board");
 const { renderMarkdown } = require("./markdown");
 
 // Admin-only dashboard pages folded into the three views.
@@ -27,13 +30,48 @@ const RETIRED = new Set([
 const SLUG_RE = /^\/reports\/([a-z0-9][a-z0-9-]{1,79})$/;
 const DOC_RE = /^\/library\/doc\/([^/]{1,120})$/;
 
+const STATIC = {
+  "/hub/fonts/geist-sans-latin.woff2": ["fonts/geist-sans-latin.woff2", "font/woff2"],
+  "/hub/fonts/geist-mono-latin.woff2": ["fonts/geist-mono-latin.woff2", "font/woff2"],
+  "/hub/assets/keir-M.png": ["assets/keir-M.png", "image/png"],
+  "/hub/assets/keir-L.png": ["assets/keir-L.png", "image/png"],
+  "/hub/assets/keir-frames.json": ["assets/keir-frames.min.json", "application/json"],
+};
+const staticCache = new Map();
+
 function isHubPath(p) {
-  return p === "/" || p === "/library" || p.startsWith("/library/") || p === "/reports" || SLUG_RE.test(p)
-    || p === "/tickets" || p.startsWith("/api/hub/") || RETIRED.has(p);
+  return p === "/" || Object.prototype.hasOwnProperty.call(STATIC, p) || p === "/library" || p.startsWith("/library/") || p === "/reports" || SLUG_RE.test(p)
+    || p === "/tickets" || p === "/kanban" || p.startsWith("/api/hub/") || RETIRED.has(p);
 }
 
 let countsCache = { at: 0, v: null };
-let ticketCache = { at: 0, v: null };
+const DATA_DIR = path.join(__dirname, "..", "data");
+// Small stale-while-revalidate cache: a stale value is served at once and
+// refreshed in the background, so slow sources never block a page.
+const valueCache = new Map();
+async function cachedValue(key, ttl, fn) {
+  const hit = valueCache.get(key);
+  const refresh = () => {
+    if (hit && hit.pending) return hit.pending;
+    const p = Promise.resolve().then(fn).then((v) => { valueCache.set(key, { at: Date.now(), v }); return v; })
+      .catch((e) => { const cur = valueCache.get(key); if (cur) cur.pending = null; throw e; });
+    valueCache.set(key, { ...(hit || {}), pending: p });
+    return p;
+  };
+  if (hit && "v" in hit) {
+    if (Date.now() - hit.at > ttl && !hit.pending) refresh().catch(() => {});
+    return hit.v;
+  }
+  return refresh();
+}
+let keirDataMod = null;
+function keirData() { return keirDataMod || (keirDataMod = require("../keir-hub-data")); }
+// Keir's own snapshot (ledger, jobs, routing, sensors). Never waits more than
+// six seconds on a cold start; the page renders without Keir rather than hang.
+async function keirHub() {
+  const p = cachedValue("keir", 20_000, () => keirData().buildHubState({ kanban: null }));
+  return Promise.race([p.catch(() => null), new Promise((r) => setTimeout(() => r(null), 6000))]);
+}
 
 async function handleHubRoute(req, res, url, ctx) {
   try {
@@ -53,6 +91,15 @@ async function route(req, res, url, ctx) {
   if (!(req.method === "GET" || req.method === "HEAD")) return false;
   if (!isHubPath(pathname)) return false;
   const { resolveSession, addSecurityHeaders, getDb, knowledgeStore, publishedDir, legacyDir, kanban, getConfig } = ctx;
+  if (Object.prototype.hasOwnProperty.call(STATIC, pathname)) {
+    const [file, type] = STATIC[pathname];
+    let buf = staticCache.get(file);
+    if (!buf) { buf = fs.readFileSync(path.join(__dirname, file)); staticCache.set(file, buf); }
+    addSecurityHeaders(res);
+    res.writeHead(200, { "Content-Type": type, "Cache-Control": "public, max-age=604800, immutable" });
+    res.end(req.method === "HEAD" ? "" : buf);
+    return true;
+  }
   const dirs = { publishedDir, legacyDir };
   const session = await resolveSession(req);
   const isAdmin = !!(session && session.role === "admin");
@@ -60,8 +107,12 @@ async function route(req, res, url, ctx) {
   const send = (status, type, bodyText, extra = {}) => {
     addSecurityHeaders(res);
     for (const [k, v] of Object.entries(extra)) res.setHeader(k, v);
-    res.writeHead(status, { "Content-Type": type, "Cache-Control": "no-store" });
-    res.end(req.method === "HEAD" ? "" : bodyText);
+    const gz = /\bgzip\b/.test(req.headers["accept-encoding"] || "") && Buffer.byteLength(bodyText) > 8192;
+    const head = { "Content-Type": type, "Cache-Control": "no-store", Vary: "Accept-Encoding" };
+    if (gz) head["Content-Encoding"] = "gzip";
+    res.writeHead(status, head);
+    if (req.method === "HEAD") { res.end(); return true; }
+    res.end(gz ? zlib.gzipSync(bodyText, { level: 6 }) : bodyText);
     return true;
   };
   const html = (page) => send(200, "text/html; charset=utf-8", page);
@@ -121,10 +172,22 @@ async function route(req, res, url, ctx) {
     return json(200, { groups: await search(url.searchParams.get("q") || "", { getDb, knowledgeStore, kanban, dirs }) });
   }
 
+  if (pathname === "/kanban" || pathname === "/api/hub/board") {
+    const data = board.buildBoard(kanban());
+    if (pathname !== "/kanban") return json(200, data);
+    const { extraCss, body } = board.makeBoardBody(data);
+    return html(renderHubPage({ title: "Work board", active: "board", extraCss, body }));
+  }
+
+  if (pathname === "/api/hub/library/docs") {
+    const docs = await library.loadDocs(getDb, knowledgeStore);
+    return json(200, { items: docs.map(library.slim) });
+  }
+
   if (pathname === "/library") {
     const reports = library.loadReports(dirs);
-    const docs = await library.loadDocs(getDb, knowledgeStore);
-    const { extraCss, body } = library.makeLibraryBody({ reports, docs });
+    const docCount = await library.docCount(getDb, knowledgeStore);
+    const { extraCss, body } = library.makeLibraryBody({ reports, docCount });
     return html(renderHubPage({ title: "Library", active: "library", extraCss, body }));
   }
 
@@ -152,11 +215,39 @@ async function route(req, res, url, ctx) {
     return html(renderHubPage({ title: item.title, active: "library", extraCss, body }));
   }
 
-  if (pathname === "/tickets") {
-    if (!ticketCache.v || Date.now() - ticketCache.at > 30_000) ticketCache = { at: Date.now(), v: await tickets.loadTicketHub(await getDb()) };
-    const data = ticketCache.v;
-    const { extraCss, body } = tickets.makeTicketHubBody(data);
+  if (pathname === "/tickets" || pathname === "/api/hub/tickets/live") {
+    const [mongo, hub] = await Promise.all([cachedValue("mongo", 20_000, async () => tickets.loadMongo(await getDb())), keirHub()]);
+    const live = tickets.buildLive(mongo, hub);
+    keir.recordSnapshot(DATA_DIR, hub);
+    if (pathname !== "/tickets") return json(200, live);
+    const { extraCss, body } = tickets.makeTicketHubBody(live);
     return html(renderHubPage({ title: "Tickets", active: "tickets", extraCss, body }));
+  }
+
+  if (pathname === "/api/hub/tickets/history") {
+    const items = await cachedValue("history", 60_000, async () => tickets.loadHistory(await getDb()));
+    return json(200, { items });
+  }
+
+  if (pathname === "/api/hub/tickets/performance") {
+    const hist = await cachedValue("history", 60_000, async () => tickets.loadHistory(await getDb()));
+    const perf = await cachedValue("perf", 600_000, () => keirData().ticketPerformance({ days: 30 }).catch(() => null));
+    const usage = await cachedValue("usage", 120_000, async () => {
+      const kd = keirData();
+      return kd.readUsage(kd.PATHS.usage, Date.now() - 14 * 864e5);
+    });
+    const daily = keir.dailyUsage(usage, { days: 14 });
+    const models = {};
+    for (const d of daily) for (const [m, n] of Object.entries(d.models)) models[m] = (models[m] || 0) + n;
+    const week = Date.now() - 7 * 864e5;
+    return json(200, {
+      perf,
+      usage: daily.map((d) => ({ day: d.day, ok: d.runs - d.failed, failed: d.failed })),
+      models: Object.entries(models).map(([name, n]) => ({ name, n })).sort((a, b) => b.n - a.n).slice(0, 8),
+      closures: tickets.closureSeries(hist, { days: 42 }),
+      closed7: hist.filter((h) => h.d && Date.parse(h.d + "T23:59:59Z") > week).length,
+      tracker: keir.readTracker(DATA_DIR, { days: 90 }),
+    });
   }
 
   return false;

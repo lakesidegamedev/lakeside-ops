@@ -109,6 +109,20 @@ async function restartDashboard() { return activatePublishedReports(); }
 // The report tools on any MCP server: their own (below) and, since the MCP
 // fleet consolidation, the ops-knowledge server, which also answers as
 // ops-report-publish at /mcp/report-publish.
+// Every report needs a card description: what it is, and what it found.
+const LIBRARY_CATEGORIES = ["economy", "elections", "worldsims", "world", "design", "engine", "players", "tickets", "keir", "studio", "guides"];
+const REPORT_TYPES = ["Audit", "Plan", "Proposal", "Postmortem", "Research", "Report", "Data", "Tracker", "Recap", "Forecast", "Briefing", "Benchmark", "Guide", "Reference", "Preview", "Checkpoint", "Sim run", "Forensics"];
+function readLibraryOverlay() {
+  try { return JSON.parse(fs.readFileSync(path.join(PUBLISHED_DIR, "library.json"), "utf8")).items || {}; } catch { return {}; }
+}
+function describeProblems({ summary, takeaway }) {
+  const s = String(summary || "").trim(), t = String(takeaway || "").trim();
+  if (s.length < 40) return "summary is required: one plain sentence (40+ characters) saying what this report is and what it covers";
+  if (t.length < 20) return "takeaway is required: one plain sentence with the main finding, decision or result";
+  if (/[\u2013\u2014]/.test(s + t)) return "summary and takeaway must not contain em or en dashes";
+  return null;
+}
+
 function registerReportTools(server, auth) {
   ensureDir();
   const canWrite = !!auth && auth.scopes && auth.scopes.write === true;
@@ -119,16 +133,26 @@ function registerReportTools(server, auth) {
       slug: z.string().regex(SLUG_RE, "lowercase letters, digits and hyphens; 2-80 chars").describe("URL slug, e.g. 'labour-market-audit-t1050'. Served at /reports/<slug>."),
       title: z.string().min(3).max(160).describe("Report title shown in the library and browser tab"),
       html: z.string().min(1).max(8_000_000).describe("Full HTML document (starting with <!doctype or <html) OR an HTML body fragment to be wrapped"),
-      summary: z.string().max(600).optional().describe("One-paragraph description for the library card"),
-      category: z.string().max(60).optional().default("Published Reports").describe("Library category heading"),
+      summary: z.string().max(400).optional().describe("REQUIRED for a new report. One plain sentence saying what this report is and what it covers, for the library card. Example: 'Audit of commodity prices against their starting values from turn 94 to 334 in the 1953 world.'"),
+      takeaway: z.string().max(400).optional().describe("REQUIRED for a new report. One plain sentence with the main finding, decision or result. Example: 'Prices rose but supply did not respond, so shortages persisted for 240 turns.'"),
+      library_category: z.enum(LIBRARY_CATEGORIES).optional().describe("Library shelf: " + LIBRARY_CATEGORIES.join(", ") + ". Omit to file by keyword."),
+      report_type: z.enum(REPORT_TYPES).optional().describe("Kind of report: " + REPORT_TYPES.join(", ") + "."),
+      category: z.string().max(60).optional().default("Published Reports").describe("Legacy free-text heading; the library files by library_category"),
       icon: z.string().max(8).optional().default("📄").describe("Emoji icon for the library card"),
       badge: z.string().max(24).optional().describe("Optional badge label, e.g. 'Live' or a turn number"),
       author: z.string().max(80).optional().describe("Who/what produced the report, e.g. 'danica-agent'"),
       public: z.boolean().optional().describe("Make the report viewable without an admin session (default false = admin-only). Omitting this on a republish preserves the report's existing visibility."),
       restart: z.boolean().optional().default(false).describe("Deprecated compatibility field. Reports are live immediately; Ops is never restarted."),
     },
-    async ({ slug, title, html, summary, category, icon, badge, author, public: isPublic, restart }) => {
+    async ({ slug, title, html, summary, takeaway, library_category: libraryCategory, report_type: reportType, category, icon, badge, author, public: isPublic, restart }) => {
       if (!canWrite) return jsonResult({ error: "write-scoped token required to publish" });
+      // A republish may keep the description already on file; a new report must bring one.
+      const prior = readManifest().find((m) => m.slug === slug) || {};
+      const curated = (readLibraryOverlay()[slug]) || {};
+      summary = summary || prior.summary || curated.what || "";
+      takeaway = takeaway || prior.takeaway || curated.takeaway || "";
+      const missing = describeProblems({ summary, takeaway });
+      if (missing) return jsonResult({ error: missing });
       if (RESERVED_SLUGS.has(slug)) return jsonResult({ error: `slug '${slug}' is reserved by a built-in report route` });
 
       const trimmed = html.trimStart();
@@ -143,7 +167,10 @@ function registerReportTools(server, auth) {
       const existingIdx = manifest.findIndex((m) => m.slug === slug);
       const entry = {
         slug, title,
-        summary: summary || "",
+        summary: summary.trim(),
+        takeaway: takeaway.trim(),
+        ...(libraryCategory ? { libraryCategory } : {}),
+        ...(reportType ? { reportType } : {}),
         category: category || "Published Reports",
         icon: icon || "📄",
         badge: badge || "Published",
@@ -178,7 +205,10 @@ function registerReportTools(server, auth) {
       slug: z.string().regex(SLUG_RE),
       html: z.string().min(1).max(8_000_000).optional().describe("Replacement full HTML document or body fragment"),
       title: z.string().min(3).max(160).optional(),
-      summary: z.string().max(600).optional(),
+      summary: z.string().max(400).optional(),
+      takeaway: z.string().max(400).optional(),
+      library_category: z.enum(LIBRARY_CATEGORIES).optional(),
+      report_type: z.enum(REPORT_TYPES).optional(),
       category: z.string().max(60).optional(),
       icon: z.string().max(8).optional(),
       badge: z.string().max(24).optional(),
@@ -186,8 +216,10 @@ function registerReportTools(server, auth) {
       public: z.boolean().optional(),
       restart: z.boolean().optional().default(true),
     },
-    async ({ slug, html, title, summary, category, icon, badge, author, public: isPublic, restart }) => {
+    async ({ slug, html, title, summary, takeaway, library_category: libraryCategory, report_type: reportType, category, icon, badge, author, public: isPublic, restart }) => {
       if (!canWrite) return jsonResult({ error: "write-scoped token required to edit" });
+      const problem = (summary !== undefined || takeaway !== undefined) ? describeProblems({ summary: summary ?? "x".repeat(40), takeaway: takeaway ?? "x".repeat(20) }) : null;
+      if (problem) return jsonResult({ error: problem });
       const file = reportFile(slug);
       if (!fs.existsSync(file)) return jsonResult({ error: `no published report '${slug}'` });
       const manifest = readManifest();
@@ -199,7 +231,7 @@ function registerReportTools(server, auth) {
         fs.writeFileSync(file, buildDocument({ title: title || manifest[idx].title || slug, html, isFullDoc }));
       }
       const next = { ...manifest[idx] };
-      for (const [key, value] of Object.entries({ title, summary, category, icon, badge, author })) {
+      for (const [key, value] of Object.entries({ title, summary, takeaway, libraryCategory, reportType, category, icon, badge, author })) {
         if (value !== undefined) next[key] = value;
       }
       if (typeof isPublic === "boolean") next.public = isPublic;

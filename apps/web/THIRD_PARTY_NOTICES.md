@@ -30,3 +30,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Geist Sans and Geist Mono
+
+The ops hub typeface, self-hosted as woff2 in `hub/fonts/`.
+
+https://github.com/vercel/geist-font
+
+SIL Open Font License 1.1. The full license text is in `hub/fonts/OFL.txt`.
