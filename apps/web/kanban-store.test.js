@@ -273,17 +273,18 @@ describe("kanban routes", () => {
   });
 
   it("does not let collaboration reopen closed tasks, take monitors or bypass the work cap", () => {
-    const done = k.add({ product: "ahd", title: "Finished task", lane: "done" });
+    const done = k.add({ product: "ahd", title: "Finished task" });
+    k.update(done.id, { lane: "done" });
     const monitor = k.add({ product: "ahd", title: "Continuous health monitor", kind: "monitor" });
     for (const item of [done, monitor]) {
-      assert.throws(() => k.collaborate({ id: item.id, action: "claim", actor: "dev@example.com" }), /not available/);
+      assert.throws(() => k.collaborate({ id: item.id, action: "claim", actor: "codex:contributor" }), /not available/);
     }
     for (let index = 0; index < 3; index++) {
       const task = k.add({ product: "ahd", title: `Assigned delivery slice ${index}`, force: true });
-      k.collaborate({ id: task.id, action: "claim", actor: "dev@example.com" });
+      k.collaborate({ id: task.id, action: "claim", actor: "codex:contributor" });
     }
     const excess = k.add({ product: "ahd", title: "Fourth delivery slice", force: true });
-    assert.throws(() => k.collaborate({ id: excess.id, action: "claim", actor: "dev@example.com" }), /cap/);
+    assert.throws(() => k.collaborate({ id: excess.id, action: "claim", actor: "codex:contributor" }), /cap/);
     assert.equal(k.get(excess.id).assigned_to, null);
   });
 
