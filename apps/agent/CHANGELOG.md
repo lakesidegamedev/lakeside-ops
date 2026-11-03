@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 7.7.0 (2026-11-03)
+
 - A support-service outage can no longer keep a channel-less ticket waking every cycle (ticket 1730: 128 wakes, 15M tokens). While the ticket's support record cannot be read, the next check and the timer wake back off from 5 minutes, doubling to 6 hours, each failed check is logged, and the owner is told once after the fourth failure. A new message still wakes the job, and a successful read clears the backoff.
 - Turn-watch notes no longer count as a human message, so they cannot wake a ticket held on an owner decision. The wake rule and the unread watchdog now share one list.
 - A waiting job with no wake time now wakes after 4 hours instead of sleeping until a message arrives.
