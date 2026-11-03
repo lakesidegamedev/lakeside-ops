@@ -1,5 +1,12 @@
 # Ops web changelog
 
+## 4.6.0 (2026-11-03)
+
+- **Economy page.** The AHD macro tracker returns as a dashboard page under Monitor instead of a standalone report. Three scores (economic health, gameplay, commodities) sit on one strip; six tabs split the rest: Overview (every red or amber measure, world macro and activity charts), Markets (commodity health and a supply/demand and real-price table for every good), Companies, Players, Countries and Fixes.
+- Every measure is one table row: value, 12-turn change, healthy band and a trend line with the band shaded. A measure that counts in two scores is listed once.
+- Time range defaults to the latest economy reset; "Whole world" shows every turn since the world began. Reset turns are marked on the charts.
+- Server-rendered from one compact JSON feed (`ECONOMY_FEED_FILE`, default `/var/lib/ahd-economy/economy.json`) written by the tracker exporter each turn. No client script.
+
 ## 4.5.0 (2026-11-03)
 
 - **Work board cards, redesigned.** Each card leads with an icon badge for its area and one for its class (project, issue, idea), then the title in bold, then one progress bar: projects show steps done out of total, every other card shows its stage (filed, next, doing, done). Owner and age sit on one quiet line; the progress note moved to the tooltip and the card dialog.

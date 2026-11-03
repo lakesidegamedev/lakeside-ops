@@ -287,6 +287,7 @@ function buildSidebar() {
   { label: "Monitor", items: [
     { href: "/status", label: "Uptime", icon: "activity", mod: true, feature: "statusPage" },
     { href: "/engine", label: "Engine", icon: "cpu" },
+    { href: "/economy", label: "Economy", icon: "trending-up" },
     { href: "/observatory", label: "Observatory", icon: "eye" },
     { href: "/events", label: "Event Recovery", icon: "activity" },
     { href: "/security", label: "Security", icon: "shield" },
