@@ -58,9 +58,10 @@ test("the broker counts distinct reads only", async (t) => {
 
 test("findings read raw game records through the support guard", async (t) => {
   const f = fixture(t, { kind: "finding" });
-  await f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_query", args: { env: "dev", collection: "playerIncomeTaxAssessments", filter: { status: "unpaid" }, limit: 500 } });
+  await f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_query", args: { collection: "playerIncomeTaxAssessments", filter: { status: "unpaid" }, limit: 500 } });
   const [, tool, args] = f.calls.at(-1);
   assert.equal(tool, "heal_query"); assert.equal(args.env, "prod"); assert.equal(args.limit, 50);
+  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_query", args: { env: "dev", collection: "playerIncomeTaxAssessments" } }), /not readable here/);
   await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_query", args: { collection: "users" } }), /closed/);
   await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "heal-ops", tool: "heal_apply", args: {} }), /scope|read_tool is read-only/);
 });
