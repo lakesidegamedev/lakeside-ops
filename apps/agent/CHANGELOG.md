@@ -5,7 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
-- Nothing changes for players or staff. The rules that decide when a ticket job wakes, waits, is held, times out or is closed now live in one module (`lib/operator/lifecycle.js`) whose header describes the whole state machine, with 98 tests pinning today's behavior, instead of being spread through `operator.js`.
+- Nothing changes for players or staff. The rules that decide when a ticket job wakes, waits, is held, times out or is closed now live in one module (`lib/operator/lifecycle.js`) whose header describes the whole state machine, with 101 tests pinning today's behavior, instead of being spread through `operator.js`.
 
 ## 7.6.0 (2026-11-03)
 

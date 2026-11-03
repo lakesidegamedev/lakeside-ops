@@ -39,6 +39,10 @@ const WAKE = [
   ["resolution recorded 5 min ago waits, mail does not wake it", { state: "queued", inbox: [human], resolutionSubmitted: true, resolutionSubmittedAt: NOW - 5 * MIN }, {}, { state: "waiting", effects: [] }],
   ["a blocked job with a resolution is not re-stalled", { state: "blocked", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 99 * MIN }, {}, { state: "blocked", effects: [] }],
   ["a resolved job skips the stall rule", { state: "waiting", wakeAt: 0, resolutionSubmitted: true, resolved: true, resolutionSubmittedAt: NOW - 99 * MIN }, {}, { state: "queued", effects: [] }],
+  // ODDITY: the stall rule excludes only done, cancelled and blocked, so it also rewrites dismissed, paused and running jobs.
+  ["ODDITY a dismissed job with an unclosed resolution is turned back into waiting", { state: "dismissed", resolutionSubmitted: true, resolutionSubmittedAt: NOW - MIN }, {}, { state: "waiting", effects: [] }],
+  ["ODDITY an owner-paused job with an unclosed resolution is turned into waiting (admission still holds it)", { state: "paused", resolutionSubmitted: true, resolutionSubmittedAt: NOW - MIN }, {}, { state: "waiting", effects: [] }],
+  ["ODDITY mail wakes a job the owner paused from waiting; only admission keeps it from running", { state: "waiting", ticketPaused: { ticket: 5 }, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "queued", effects: [] }],
   ["staff claim outranks a resolution stall", { state: "queued", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 99 * MIN }, { claim: true }, { state: "deferred", effects: [] }],
   // dead ends
   ["a probe blocked 61 min is dismissed", { state: "blocked", kind: "probe", ticket: null, updatedAt: NOW - 61 * MIN, summary: "stuck" }, {}, { state: "dismissed", summary: /^Dismissed automatically: a probe or benchmark left blocked\. Was: stuck/, effects: ["audit:job_dismissed"] }],
