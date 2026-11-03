@@ -127,6 +127,16 @@ describe("kanban store", () => {
     assert.equal(k.get(next.id).lane, "inbox");
   });
 
+  it("groups cards by area and class, with child cards under a project", () => {
+    const proj = k.add({ product: "ahd", title: "Market rebuild program", class: "project", area: "economy" }, { actor: "claude" });
+    const step = k.add({ product: "ahd", title: "Market rebuild phase one relief", parent_id: proj.id, class: "issue", area: "economy" }, { actor: "claude" });
+    assert.equal(step.parent_id, proj.id);
+    assert.deepEqual(k.get(proj.id).children.map((c) => c.id), [step.id]);
+    assert.equal(k.list({ area: "economy", class: "project" }).items[0].id, proj.id);
+    assert.throws(() => k.add({ product: "ahd", title: "Bad area card here", area: "nowhere" }, { actor: "claude" }), /area for a-house-divided/);
+    assert.equal(k.update(step.id, { parent_id: 0 }, { actor: "claude" }).parent_id, null);
+  });
+
   it("aliases resolve folded ids to the survivor", () => {
     const { id } = k.add({ product: "ahd", title: "Survivor" });
     k.db.prepare("INSERT INTO kanban_item_aliases (alias_id, item_id) VALUES (999999, ?)").run(id);

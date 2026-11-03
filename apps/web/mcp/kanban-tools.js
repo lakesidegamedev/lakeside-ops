@@ -5,7 +5,9 @@
 // token; writes need a token with write scope.
 
 const { z } = require("zod");
-const { sharedKanban, OPEN_LANES, LANES, REPORT_EVENTS, KINDS, WIP_CAP, RELEASE_DAYS, normalizeActor } = require("../kanban-store");
+const { sharedKanban, OPEN_LANES, LANES, REPORT_EVENTS, KINDS, CLASSES, AREAS, WIP_CAP, RELEASE_DAYS, normalizeActor } = require("../kanban-store");
+const AREA_HELP = "Area inside the product. " + Object.entries(AREAS).map(([p, a]) => `${p}: ${Object.keys(a).join("/")}`).join("; ");
+const CLASS_HELP = "project (multi-step program; other cards can name it as parent_id), issue (something broken or owed: bug, ticket follow-up, release step) or idea (a proposal nobody committed to)";
 
 const PRODUCT_HELP = 'Product slug or alias, e.g. "a-house-divided" (aliases: ahd, AHDGame, adhd-bot), "margin-of-victory" (mov), "metroforge" (mf), "grand-century" (gc), "foreshore", "verdigris", "lakeside-mcp" (mcp: MCP/tool capability requests, kind capability).';
 
@@ -47,6 +49,9 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       assigned_to: z.string().optional().describe("Cards held by this actor (e.g. claude, keir)"),
       kind: z.enum(KINDS).optional(),
       include_monitors: z.boolean().optional().describe("Default true; false hides always-on monitor cards"),
+      area: z.string().optional().describe(AREA_HELP),
+      class: z.enum(CLASSES).optional().describe(CLASS_HELP),
+      parent_id: z.number().int().positive().optional().describe("Child cards of this project"),
       stale: z.boolean().optional().describe("true: only stale items (in now with no update for 5+ days, or flagged); false: exclude them"),
       needs_owner: z.boolean().optional(),
       q: z.string().optional().describe("Substring match on title, detail, progress"),
@@ -77,6 +82,9 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       assigned_to: z.string().optional(),
       start: z.boolean().optional().describe("Add and mark started in one call"),
       summary: z.string().max(4000).optional().describe("Started summary when start:true"),
+      area: z.string().optional().describe(AREA_HELP),
+      class: z.enum(CLASSES).optional().describe(CLASS_HELP),
+      parent_id: z.number().int().positive().optional().describe("The project card this belongs to"),
       force: z.boolean().optional().describe("Add even if a similar open card exists or you are at the in-progress cap"),
       actor: ACTOR,
     },
@@ -101,6 +109,9 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       github: z.string().optional().describe("owner/repo#N or issue URL; empty string unlinks"),
       product: z.string().optional(),
       stale: z.boolean().optional(),
+      area: z.string().optional().describe(AREA_HELP + ". Empty string clears."),
+      class: z.enum(CLASSES).optional(),
+      parent_id: z.number().int().min(0).optional().describe("Project card id; 0 clears"),
       force: z.boolean().optional().describe("Move into now even at the in-progress cap"),
       actor: ACTOR,
     },

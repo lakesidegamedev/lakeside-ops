@@ -33,6 +33,34 @@ const INBOX_AFTER_DAYS = 1; // unassigned, untouched Next cards fall back to Inb
 const WIP_CAP = Number(process.env.KANBAN_WIP_CAP || 3);
 const WIP_EXEMPT = /^(keir|system|github-sync)\b/;
 const MONITOR_EVENT_EVERY_MS = 60 * 60_000;
+// Grouping: a card is a project (multi-step program, may have child cards),
+// an issue (something broken or owed: a bug, a ticket follow-up, a release
+// step) or an idea (a proposal nobody has committed to). Areas group cards
+// inside a product.
+const CLASSES = ["project", "issue", "idea"];
+const AREAS = {
+  "a-house-divided": { economy: "Economy & markets", politics: "Elections & politics", turns: "Turn engine & performance", apps: "Apps & native clients", web: "Web pages & UI", support: "Player tickets & support", releases: "Releases & deploys", keir: "Keir", infra: "Infrastructure & tooling", world: "Worlds, seeds & resets" },
+  "lakeside-mcp": { keir: "Keir", capabilities: "MCP tools & reads", ops: "Ops & tooling", ask: "Ask" },
+  "corporate-warfare": { game: "Game", platforms: "Platforms & release" },
+  "margin-of-victory": { game: "Game", platforms: "Platforms & release" },
+  metroforge: { game: "Game", platforms: "Platforms & release" },
+  "grand-century": { game: "Game", platforms: "Platforms & release" },
+  verdigris: { game: "Game" },
+  foreshore: { game: "Game" },
+};
+function areaFor(product, area) {
+  const a = String(area || "").trim().toLowerCase();
+  if (!a) return null;
+  const table = AREAS[product] || { game: "Game" };
+  if (!(a in table)) throw badInput(`area for ${product} must be one of ${Object.keys(table).join(", ")}`);
+  return a;
+}
+function classFor(value) {
+  const c = String(value || "").trim().toLowerCase();
+  if (!c) return null;
+  if (!CLASSES.includes(c)) throw badInput(`class must be one of ${CLASSES.join(", ")}`);
+  return c;
+}
 // Fixed kind vocabulary; synonyms map onto it.
 const KINDS = ["bug", "feature", "ops", "balance", "support", "capability", "audit", "task", "monitor"];
 const KIND_SYNONYMS = { issue: "bug", defect: "bug", enhancement: "feature", operations: "ops", infra: "ops", infrastructure: "ops", economy: "balance", ticket: "support", research: "audit", investigation: "audit", chore: "task", docs: "task" };
@@ -120,7 +148,10 @@ CREATE TABLE IF NOT EXISTS kanban_items (
   legacy_hub_id    INTEGER,
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
-  closed_at        TEXT
+  closed_at        TEXT,
+  area             TEXT,
+  class            TEXT,
+  parent_id        INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_github ON kanban_items(github_repo, github_number) WHERE github_repo IS NOT NULL;
 CREATE INDEX IF NOT EXISTS kanban_items_lane ON kanban_items(lane, updated_at);
@@ -299,6 +330,10 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   db.pragma("busy_timeout = 5000");
   db.exec(SCHEMA);
   migrateLanes(db);
+  const cols = new Set(db.prepare("PRAGMA table_info(kanban_items)").all().map((c) => c.name));
+  if (!cols.has("area")) db.exec("ALTER TABLE kanban_items ADD COLUMN area TEXT");
+  if (!cols.has("class")) db.exec("ALTER TABLE kanban_items ADD COLUMN class TEXT");
+  if (!cols.has("parent_id")) db.exec("ALTER TABLE kanban_items ADD COLUMN parent_id INTEGER");
 
   const iso = () => now().toISOString();
 
@@ -365,6 +400,9 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       updated_at: row.updated_at,
       age_days: ageDays,
       closed_at: row.closed_at || null,
+      area: row.area || null,
+      class: row.class || null,
+      parent_id: row.parent_id || null,
     };
     if (full) {
       item.detail = row.detail;
@@ -387,7 +425,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
 
   const STALE_SQL = `(stale_flagged_at IS NOT NULL OR (lane = 'now' AND julianday(?) - julianday(updated_at) >= ${STALE_DAYS}))`;
 
-  function list({ product, lane, lanes, stale, needs_owner, include_done = false, q, source, assigned_to, kind, include_monitors = true, limit = 200 } = {}) {
+  function list({ product, lane, lanes, stale, needs_owner, include_done = false, q, source, assigned_to, kind, include_monitors = true, area, class: cls, parent_id, limit = 200 } = {}) {
     const where = [];
     const params = [];
     if (product) { where.push("product = ?"); params.push(resolveProduct(product)); }
@@ -407,6 +445,9 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     if (assigned_to) { where.push("(assigned_to = ? OR assigned_to LIKE ?)"); const a = normalizeActor(assigned_to) || assigned_to; params.push(a, `${a}:%`); }
     if (kind) { where.push("kind = ?"); params.push(normalizeKind(kind)); }
     if (!include_monitors) where.push("kind != 'monitor'");
+    if (area) { where.push("area = ?"); params.push(String(area).toLowerCase()); }
+    if (cls) { where.push("class = ?"); params.push(classFor(cls)); }
+    if (parent_id) { where.push("parent_id = ?"); params.push(Number(parent_id)); }
     if (q) { where.push("(title LIKE ? OR detail LIKE ? OR progress_summary LIKE ?)"); const like = `%${q}%`; params.push(like, like, like); }
     const max = Math.min(Math.max(Number(limit) || 200, 1), 1000);
     const rows = db.prepare(`SELECT * FROM kanban_items ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
@@ -421,6 +462,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     const realId = resolveId(id);
     const item = present(rowById(realId), { full: true });
     item.aliases = db.prepare("SELECT alias_id, reason FROM kanban_item_aliases WHERE item_id = ?").all(realId);
+    item.children = db.prepare("SELECT id, title, lane FROM kanban_items WHERE parent_id = ? ORDER BY CASE lane WHEN 'done' THEN 1 ELSE 0 END, id").all(realId);
     item.events = db.prepare("SELECT event_type, actor, summary, evidence_url, created_at FROM kanban_events WHERE item_id = ? ORDER BY created_at DESC, id DESC LIMIT ?").all(realId, events);
     return item;
   }
@@ -481,12 +523,13 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     // Next means committed: someone owns it. Unowned filings wait in the inbox.
     if (lane === "next" && !assigned) { lane = "inbox"; laneNote = " (Next needs an owner, so this waits in the inbox)"; }
     const id = db.transaction(() => {
+      const parent = input.parent_id ? resolveId(input.parent_id) : null;
       const info = db.prepare(`INSERT INTO kanban_items (product, title, detail, lane, impact, kind, needs_owner, assigned_to, evidence_url,
-          github_repo, github_number, github_url, github_state, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          github_repo, github_number, github_url, github_state, created_at, updated_at, area, class, parent_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(product, title, clean(input.detail, 20000) || "", lane, impact, normalizeKind(input.kind), input.needs_owner ? 1 : 0,
           assigned, checkUrl(input.evidence_url, "evidence_url"), github?.repo || null, github?.number || null, github?.url || null,
-          github ? "open" : null, stamp, stamp);
+          github ? "open" : null, stamp, stamp, areaFor(product, input.area), classFor(input.class), parent);
       const newId = Number(info.lastInsertRowid);
       logEvent({ item_id: newId, product, event_type: "created", actor, summary: `Added to ${lane}${laneNote}`, created_at: stamp });
       if (start) logEvent({ item_id: newId, product, event_type: "started", actor, summary: clean(input.summary, 4000) || "Started", created_at: stamp });
@@ -495,7 +538,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return get(id, { events: 5 });
   }
 
-  const UPDATABLE = ["title", "detail", "lane", "impact", "kind", "needs_owner", "assigned_to", "evidence_url", "github", "product", "progress_summary", "stale", "force"];
+  const UPDATABLE = ["title", "detail", "lane", "impact", "kind", "needs_owner", "assigned_to", "evidence_url", "github", "product", "progress_summary", "stale", "force", "area", "class", "parent_id"];
 
   function update(id, patch = {}, { actor = "agent" } = {}) {
     actor = normalizeActor(actor) || "unnamed";
@@ -515,6 +558,13 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     }
     if (patch.impact !== undefined) { if (!IMPACTS.includes(patch.impact)) throw badInput(`impact must be one of ${IMPACTS.join(", ")}`); changes.impact = patch.impact; }
     if (patch.kind !== undefined) changes.kind = normalizeKind(patch.kind);
+    if (patch.area !== undefined) changes.area = patch.area ? areaFor(patch.product ? resolveProduct(patch.product) : row.product, patch.area) : null;
+    if (patch.class !== undefined) changes.class = patch.class ? classFor(patch.class) : null;
+    if (patch.parent_id !== undefined) {
+      const p = patch.parent_id ? resolveId(patch.parent_id) : null;
+      if (p === realId) throw badInput("a card cannot be its own parent");
+      changes.parent_id = p;
+    }
     if (patch.needs_owner !== undefined) changes.needs_owner = patch.needs_owner ? 1 : 0;
     if (patch.assigned_to !== undefined) changes.assigned_to = normalizeActor(clean(patch.assigned_to, 120)) || clean(patch.assigned_to, 120);
     if (changes.lane === "now" && row.lane !== "now" && row.kind !== "monitor") checkWip(changes.assigned_to || row.assigned_to, { force: patch.force, exceptId: realId });
@@ -806,6 +856,8 @@ module.exports = {
   IMPACTS,
   REPORT_EVENTS,
   KINDS,
+  CLASSES,
+  AREAS,
   WIP_CAP,
   RELEASE_DAYS,
   normalizeActor,
