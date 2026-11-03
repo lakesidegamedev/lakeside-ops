@@ -37,9 +37,10 @@ test("an owner-directed moderation ticket is no longer treated as moderation-onl
 // Review 2026-10-19: a ticket held on an owner decision skipped the loop
 // before the conversation wake, so its player went unanswered for hours.
 test("a player message wakes a ticket held on an owner decision", () => {
-  const src = fs.readFileSync(path.join(__dirname, "../operator.js"), "utf8");
+  // The rule lives in lib/operator/lifecycle.js (behavior is pinned in lifecycle-rules.test.js).
+  const src = fs.readFileSync(path.join(__dirname, "../lib/operator/lifecycle.js"), "utf8");
   assert.match(src, /if \(j\.ownerDecisionPending && !\(j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\)\) \{/);
-  assert.match(src, /j\.ownerDecisionPending && j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\) \{ j\.state = "queued"; ledger\.audit\("requeued_for_conversation"/);
+  assert.match(src, /j\.ownerDecisionPending && j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\) \{ j\.state = "queued"; effects\.push\(audit\("requeued_for_conversation"/);
 });
 
 test("an unread ticket message pages the owner after 30 minutes with the hold that keeps it", () => {

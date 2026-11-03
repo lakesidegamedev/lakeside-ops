@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Nothing changes for players or staff. The rules that decide when a ticket job wakes, waits, is held, times out or is closed now live in one module (`lib/operator/lifecycle.js`) whose header describes the whole state machine, with 101 tests pinning today's behavior, instead of being spread through `operator.js`.
+
 ## 7.6.1 (2026-11-03)
 
 - A raw game-record read asked for the sandbox now reads the sandbox. Every heal_query, heal_count and heal_collections call was rewritten to prod, so a question about the test server got production data back without saying so (ticket 1740). Any env other than prod or sandbox is refused by name.
