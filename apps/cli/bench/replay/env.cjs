@@ -16,18 +16,21 @@ const { createSandbox } = require(AGENT + '/lib/operator/sandbox');
 const OWNER = '111111111111111111', STAFF = '222222222222222222', BOT = '333333333333333333', GUILD = '444444444444444444', PLAYER_ID = '777000000000000001';
 const T0 = Date.parse('2026-10-19T09:00:00Z');
 
-function createEnv({ scenario: sc, dir, configOverrides = {} }) {
+function createEnv({ scenario: sc, dir, configOverrides = {}, clock: clk = { t: T0 } }) {
+  // KBX5: a day simulation passes its own clock ({ t }) so replay time and scheduler time agree.
   fs.mkdirSync(dir, { recursive: true });
   // KBX3: non-ticket jobs (owner commands, findings) set sc.job; sc.actor 'owner' writes as the owner.
   const ticketJob = !sc.job, ACTOR = sc.actor === 'owner' ? OWNER : PLAYER_ID, ACTOR_NAME = sc.actor === 'owner' ? 'egg3901' : sc.player;
   const events = [], channelId = '9000000000' + String(sc.ticket || 9999).padStart(8, '0'), channelName = ticketJob ? `ticket-${sc.category || 'bug'}-${sc.player}-${sc.ticket}` : (sc.channelName || 'keir-ops');
   const issues = JSON.parse(JSON.stringify(sc.issues || [])), created = [];
-  let msgSeq = 1, clock = T0;
-  const now = () => (clock += 1000);
+  let msgSeq = 1;
+  const now = () => (clk.t += 1000);
+  // KBX5 world state: a deleted channel answers 404 like Discord does.
+  const world = { channelGone: false };
   const CHARACTER_ID = 4242;
   const card = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: BOT, username: 'Keir', bot: true }, content: ticketJob ? `Ticket #${sc.ticket} opened by ${sc.player}. Category: ${sc.category || 'bug'}.` : 'Keir is online.', timestamp: new Date(T0 - 1000).toISOString(), channel_id: channelId };
   const messages = [card, { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: ACTOR, username: ACTOR_NAME, bot: false }, content: sc.opening, timestamp: new Date(T0).toISOString(), channel_id: channelId, ...(sc.openingAttachments ? { attachments: JSON.parse(JSON.stringify(sc.openingAttachments)) } : {}) }];
-  const record = (kind, detail) => { const e = { kind, at: clock, ...detail }; events.push(e); return e; };
+  const record = (kind, detail) => { const e = { kind, at: clk.t, ...detail }; events.push(e); return e; };
   const post = (content, via) => { const m = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: BOT, username: 'Keir', bot: true }, content: String(content), timestamp: new Date(now()).toISOString(), channel_id: channelId }; messages.push(m); record('post', { via, text: m.content, messageId: m.id }); return m; };
 
   const ticketRecord = () => ({ ticket: { number: sc.ticket }, number: sc.ticket, kind: 'ticket', status: state.status, category: sc.category || 'bug', title: sc.title || sc.opening.slice(0, 80),
@@ -118,6 +121,7 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
       if (method === 'POST') return post(body?.content || '', 'discord');
       return [...messages].reverse();
     }
+    if (world.channelGone && route.startsWith(`/channels/${channelId}`)) throw Object.assign(new Error('Discord 404: Unknown Channel'), { status: 404 });
     if (/^\/channels\/(\d+)$/.test(route)) return { id: channelId, name: channelName, type: 0, guild_id: GUILD };
     return {};
   };
@@ -200,7 +204,7 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
     finally {
       // openDecision stamps the wall clock; the replay runs on its own clock, so
       // restamp it or every later post compares against a time from another day.
-      for (const [id, x] of Object.entries(ledger.data.decisions || {})) if (!seenDecisions.has(id)) { x.at = clock; ledger.save(); record('decision', { id, question: x.question, actionId: x.actionId || null }); }
+      for (const [id, x] of Object.entries(ledger.data.decisions || {})) if (!seenDecisions.has(id)) { x.at = clk.t; ledger.save(); record('decision', { id, question: x.question, actionId: x.actionId || null }); }
       for (const [id, a] of Object.entries(ledger.data.actions || {})) if (!seenActions.has(id)) record('action', { id, actionKind: a.kind, actionState: a.state, args: a.args });
     }
   };
@@ -216,14 +220,14 @@ function createEnv({ scenario: sc, dir, configOverrides = {} }) {
 
   // The player answers a question between activations, the way the gateway queues a new message.
   function playerReply(text) {
-    clock += 5 * 60000; // the player answers a few minutes later
+    clk.t += 5 * 60000; // the player answers a few minutes later
     const m = { id: '5000000000000000' + String(msgSeq++).padStart(2, '0'), author: { id: ACTOR, username: ACTOR_NAME, bot: false }, content: text, timestamp: new Date(now()).toISOString(), channel_id: channelId };
     messages.push(m); record('player', { text });
     (job.inbox ||= []).push({ content: text, authorId: ACTOR, author: ACTOR_NAME, messageId: m.id, at: m.timestamp });
     job.lastPlayerAt = job.observedPlayerAt = Date.parse(m.timestamp); ledger.save();
     return m;
   }
-  return { broker, ledger, config, job, mcp, discord, exec, events, messages, state, issues, created, playerReply, channelId, now };
+  return { broker, ledger, config, job, mcp, discord, exec, events, messages, state, issues, created, playerReply, channelId, now, clock: clk, world, record, OWNER, STAFF, BOT, PLAYER_ID };
 }
 
 module.exports = { createEnv, OWNER, PLAYER_ID };
