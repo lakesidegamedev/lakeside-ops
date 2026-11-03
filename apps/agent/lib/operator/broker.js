@@ -471,6 +471,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (clean !== value || /<@|@everyone|@here/.test(clean)) throw new Error("player text contains private details, forbidden punctuation or mentions");
     return clean;
   }
+  // Keir's own GitHub account (keir-bot, KEIR_GITHUB_TOKEN): what Keir authors on GitHub (its pushed branch, PR,
+  // issues, comments, reviews, closing its own duplicates, promote PRs) shows as Keir. Merges, branch deletion and
+  // every read keep using the box's own login, the owner's, behind the owner's approval. No token set: all of it
+  // stays on the box login, as before.
+  const asKeir = (opts = {}) => (config.githubReviewerToken ? { ...opts, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", GH_TOKEN: config.githubReviewerToken } } : opts);
+  // git uses a stored credential, not GH_TOKEN, so a push as Keir overrides the helper for that command only.
+  const keirGit = () => (config.githubReviewerToken ? ["-c", "credential.helper=", "-c", "credential.helper=!f() { echo username=keir-bot; echo \"password=$GH_TOKEN\"; }; f"] : []);
+  const isKeirWrite = (args) => { const i = args.indexOf("-X"); return i >= 0 && /^(POST|PATCH)$/i.test(String(args[i + 1])); };
   const ticketOf = (j) => j.ticket || ticketNumberOf(j.source?.channelName);
   // Keir 4.2: the yes that covers this task's ticket, if any. The owner's own
   // request is its own yes.
@@ -1104,18 +1112,18 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       err.code = "MCP_ARGUMENT_REJECTED"; throw err;
     });
     await exec("/usr/bin/git", ["-C", wt, "apply", "--index", a.args.patchFile], { signal });
-    await exec("/usr/bin/git", ["-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Keir", "-c", "user.email=keir@localhost", "commit", "-m", a.args.title + "\n\nPrepared by Keir for task " + job.id + "."], { signal });
+    await exec("/usr/bin/git", ["-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Keir", "-c", `user.email=${config.keirGitEmail || "keir@localhost"}`, "commit", "-m", a.args.title + "\n\nPrepared by Keir for task " + job.id + "."], { signal });
     const bodyFile = path.join(config.stateDir, "artifacts", `${a.id}-pr.md`);
     a.args.title = noDashes(a.args.title); a.args.body = noDashes(a.args.body);
     fs.writeFileSync(bodyFile, a.args.body, { mode: 0o600 });
     let url;
     if (revise) {
-      await exec("/usr/bin/git", ["-C", wt, "push", "--force", "origin", `HEAD:refs/heads/${branch}`], { signal });
-      await exec("/usr/bin/gh", ["api", "-X", "PATCH", `repos/${repositoryName(a.args.repository)}/pulls/${revise.number}`, "-f", `title=${a.args.title}`, "-F", `body=@${bodyFile}`], { signal });
+      await exec("/usr/bin/git", ["-C", wt, ...keirGit(), "push", "--force", "origin", `HEAD:refs/heads/${branch}`], asKeir({ signal }));
+      await exec("/usr/bin/gh", ["api", "-X", "PATCH", `repos/${repositoryName(a.args.repository)}/pulls/${revise.number}`, "-f", `title=${a.args.title}`, "-F", `body=@${bodyFile}`], asKeir({ signal }));
       url = revise.url;
     } else {
-      await exec("/usr/bin/git", ["-C", wt, "push", "--set-upstream", "origin", branch], { signal });
-      url = await exec("/usr/bin/gh", ["pr", "create", "--base", target, "--head", branch, "--title", a.args.title, "--body-file", bodyFile], { cwd: wt, signal });
+      await exec("/usr/bin/git", ["-C", wt, ...keirGit(), "push", "--set-upstream", "origin", branch], asKeir({ signal }));
+      url = await exec("/usr/bin/gh", ["pr", "create", "--base", target, "--head", branch, "--title", a.args.title, "--body-file", bodyFile], asKeir({ cwd: wt, signal }));
     }
     // The branch lives on GitHub now; the local worktree and branch are clutter.
     try { await exec("/usr/bin/git", ["-C", repo, "worktree", "remove", "--force", wt]); await exec("/usr/bin/git", ["-C", repo, "branch", "-D", local]); } catch {}
@@ -1134,7 +1142,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       try {
         await exec("/usr/bin/git", ["-C", repository, "archive", "--format=tar", `--output=${tar}`, sha], { timeout: 120000 });
         await exec("/usr/bin/tar", ["-xf", tar, "-C", tmp], { timeout: 120000 });
-        const g = ["-C", tmp, "-c", "user.name=Keir", "-c", "user.email=keir@localhost"];
+        const g = ["-C", tmp, "-c", "user.name=Keir", "-c", `user.email=${config.keirGitEmail || "keir@localhost"}`];
         await exec("/usr/bin/git", ["-C", tmp, "init", "-q"]); await exec("/usr/bin/git", [...g, "add", "-A"], { timeout: 120000 }); await exec("/usr/bin/git", [...g, "commit", "-qm", "baseline"], { timeout: 120000 });
         await exec("/usr/bin/chmod", ["-R", "a+rX", tmp], { timeout: 120000 });
         fs.writeFileSync(path.join(tmp, ".git", "keir-ready"), sha);
@@ -1363,7 +1371,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       };
       // Keir 4.2: a bug or enhancement is a public AHDGame issue in the house
       // shape, linked from the developers' queue. Questions stay queue-only.
-      const gh = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000, signal }) || "null");
+      const gh = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], isKeirWrite(args) ? asKeir({ timeout: 60000, signal }) : { timeout: 60000, signal }) || "null");
       const recordIssue = (number, url, appended) => {
         const old = d.keirIssues?.[number];
         (d.keirIssues ||= {})[number] = { ...(old || {}), number, url, ticket: old?.ticket || n || null, tickets: [...new Set([...(old?.tickets || []), ...(old?.ticket ? [old.ticket] : []), ...(n ? [n] : [])])], jobId: job.id, at: old?.at || now(), state: "open" };
@@ -1927,6 +1935,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const desktop = (input.repository || job.repository) === "AHDClient";
       const repo = desktop ? repositoryName("AHDClient") : GAME_REPO;
       const api = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000 }) || "null");
+      const apiKeir = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], asKeir({ timeout: 60000 })) || "null");
       // A PR review asked for by @mention reads that one PR and posts one review on it.
       if (job.prMention) {
         if (!prMention.PR_MENTION_GITHUB.includes(input.action)) throw new Error("A PR review task only reads the pull request and posts one review on it");
@@ -2324,8 +2333,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]);
         if (!/^keir\//.test(pr.head.ref)) throw new Error("Keir only closes its own PRs (branches starting keir/)");
         if (pr.state !== "open") return { number: pr.number, state: pr.state };
-        if (input.comment) await exec("/usr/bin/gh", ["api", "-X", "POST", `repos/${repo}/issues/${pr.number}/comments`, "-f", `body=${noDashes(redactSecrets(String(input.comment))).slice(0, 2000)}`]);
-        await effect(job, `close-pr:${pr.number}`, () => api(["-X", "PATCH", `repos/${repo}/pulls/${pr.number}`, "-f", "state=closed"]));
+        if (input.comment) await exec("/usr/bin/gh", ["api", "-X", "POST", `repos/${repo}/issues/${pr.number}/comments`, "-f", `body=${noDashes(redactSecrets(String(input.comment))).slice(0, 2000)}`], asKeir());
+        await effect(job, `close-pr:${pr.number}`, () => apiKeir(["-X", "PATCH", `repos/${repo}/pulls/${pr.number}`, "-f", "state=closed"]));
         try { await exec("/usr/bin/gh", ["api", "-X", "DELETE", `repos/${repo}/git/refs/heads/${pr.head.ref}`]); } catch {}
         return { number: pr.number, closed: true };
       }
@@ -2354,8 +2363,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           // A reopened issue must not reuse a receipt from its prior closure.
           const generation = issue.updated_at || issue.created_at || "initial";
           await effect(job, `close-issue:${number}:${prNumber}:${generation}`, async () => {
-            await api(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}`]);
-            return api(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]);
+            await apiKeir(["-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${issues.closingComment({ pr: prNumber, sha: pr.merge_commit_sha })}`]);
+            return apiKeir(["-X", "PATCH", `repos/${repo}/issues/${number}`, "-f", "state=closed", "-f", "state_reason=completed"]);
           });
           if (d.keirIssues?.[number]) { d.keirIssues[number].state = "closed"; d.keirIssues[number].closedAt = now(); d.keirIssues[number].fixedBy = prNumber; }
           ledger.audit("issue_closed_fixed", { job: job.id, issue: number, pr: prNumber, turn });
@@ -2481,7 +2490,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const ahead = await api([`repos/${repo}/compare/${to}...${from}`]);
         if (!ahead.ahead_by) return { promoted: false, reason: `${from} has nothing new for ${to}` };
         let pr = (await api([`repos/${repo}/pulls?state=open&base=${to}&head=${GITHUB_OWNER}:${from}`]))[0];
-        if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => api(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}`]));
+        if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => apiKeir(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}`]));
         const result = await mergeWhenGreen(pr.number, "merge", to);
         return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Promote to main once staging looks right." : "Check with github deployed that the main server (and the turn worker for turn code) runs the new commit, then tell the requester.") : result.nextMove };
       }
@@ -3404,7 +3413,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const canonical = sorted[0];
       const root = watch.rootOf(rootFp); if (root) root.issue = canonical;
       for (const number of sorted.slice(1)) {
-        const gh = (args) => exec("/usr/bin/gh", ["api", ...args], { timeout: 60000 }).then((o) => JSON.parse(o || "null"));
+        const gh = (args) => exec("/usr/bin/gh", ["api", ...args], isKeirWrite(args) ? asKeir({ timeout: 60000 }) : { timeout: 60000 }).then((o) => JSON.parse(o || "null"));
         const issue = await gh([`repos/${GITHUB_OWNER}/AHDGame/issues/${number}`]).catch(() => null);
         if (issue && issue.state === "open" && !issue.pull_request) {
           await effect(job, `close-duplicate:${number}:${canonical}`, async () => {
