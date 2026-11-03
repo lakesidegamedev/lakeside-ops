@@ -607,7 +607,8 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   };
   function guardPlayerRegister(job, ticketNo, text) {
     require("./supportblockers").guard(ledger, ticketNo, text, now());
-    const leak = playerLeak(text);
+    const publicReports = (d.audit || []).filter((a) => a.kind === "report_published" && a.public).map((a) => a.slug);
+    const leak = playerLeak(text, { publicReports });
     if (leak) throw new Error(`Not posted: "${leak.match}" is a ${leak.kind}. Players never see paths, repositories, hosts, model or provider names or internal tools. Say what it means for them instead.`);
     const jg = JARGON.exec(String(text || ""));
     if (jg) throw new Error(`Not posted: "${jg[0]}" is internal or engine jargon. Rewrite it the way you would tell a friend who plays the game: the words on the game's own screens, one idea per sentence, what happened, what it means for them and what they can do.`);
