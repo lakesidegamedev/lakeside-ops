@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A job pinned to a provider that was removed from the configured routes now gets a new route instead of failing on the old one for ever. After the OpenCode quota switch, six old jobs kept retrying the retired route every few minutes and paging the owner.
+
 ## 7.7.0 (2026-11-03)
 
 - A support-service outage can no longer keep a channel-less ticket waking every cycle (ticket 1730: 128 wakes, 15M tokens). While the ticket's support record cannot be read, the next check and the timer wake back off from 5 minutes, doubling to 6 hours, each failed check is logged, and the owner is told once after the fourth failure. A new message still wakes the job, and a successful read clears the backoff.
