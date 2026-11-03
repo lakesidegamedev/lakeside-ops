@@ -2811,3 +2811,14 @@ test("a ticket waiting out its closure grace wakes when the grace ends, not hour
   await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; closing after the grace period." });
   assert.ok(j.wakeAt <= j.closeReadyAt + 60000, `wakes at +${(j.wakeAt - 5000) / 60000} min`);
 });
+
+test("done refuses unpublished snapshot changes, so housekeeping cannot delete tested work", async () => {
+  const f = fixture(), j = running(f, { repository: "AHDGame" });
+  let porcelain = " M src/lib/turn/corporation/sectorCalculations.ts\n?? content/changelog/unreleased/bond.md\n";
+  const b = createBroker({ ...f, sandbox: { run: async () => ({ code: 0, output: porcelain }) }, now: () => 5000 });
+  await assert.rejects(b.tool(j, "finish", { state: "done", summary: "Written and tested, left uncommitted." }), /unpublished changes.*sectorCalculations\.ts.*publish_patch/s);
+  assert.equal(j.state, "running");
+  porcelain = "";
+  await b.tool(j, "finish", { state: "done", summary: "Reverted the experiment; nothing to publish." });
+  assert.equal(j.state, "done");
+});

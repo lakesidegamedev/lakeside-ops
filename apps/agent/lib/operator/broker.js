@@ -3131,6 +3131,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (["done", "dismissed"].includes(state) && require("./voiceturn").voiceRoot(d, job) && !require("./voiceturn").finalReplyQueued(d, job)) throw new Error("This voice turn needs its own reply. Call channel_reply with the answer or a specific blocker before finishing. An earlier turn's answer or a handoff acknowledgement does not count.");
       if (state === "done" && job.codingContract) await require("./edit-verify").createEditVerify({sandbox,ledger,now}).assertFresh(job,signal);
       if (state === "done" && job.resultSchema) validateArguments(input.result, job.resultSchema, "result");
+      // Ticket 1757 (2026-11-03): a worker wrote and tested the bond-interest deduction, finished
+      // done "left uncommitted for the supervisor", and housekeeping deleted the workspace with it.
+      if (state === "done" && job.repository && !job.codingParent && !Object.values(d.actions || {}).some((a) => a.jobId === job.id && a.kind === "publish_patch" && a.state === "done")) {
+        const dirty = await sandbox.run(job.id, "cd repo 2>/dev/null && git status --porcelain --untracked-files=normal | head -20", signal, { timeoutMs: 30000 }).catch(() => null);
+        if (dirty?.code === 0 && String(dirty.output || "").trim()) throw new Error(`Not finished: the repository snapshot has unpublished changes (${String(dirty.output).trim().split("\n").slice(0, 4).map((l) => l.trim()).join("; ")}). Finishing done deletes them. No other agent will commit them for you: publish them now with publish_patch, which opens a PR and never merges or deploys. If the change is not wanted, revert it with shell (git checkout -- . && git clean -fd) and finish dismissed with the reason.`);
+      }
       if (isAppJob(job) && ["done", "dismissed"].includes(state)) {
         const questionPending = appQuestions?.list(job.appThread || "main").some((q) => q.jobId === job.id && q.state === "pending");
         const approvalPending = Object.values(d.actions || {}).some((a) => a.jobId === job.id && ["pending", "executing"].includes(a.state)) || Object.values(d.decisions || {}).some((x) => x.jobId === job.id && x.state === "pending");
