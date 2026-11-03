@@ -301,8 +301,13 @@ function createMcp(configFile, readToken) {
     const c = servers[server];
     const url = localMcpUrl(c?.url);
     if (!url) throw new Error("unavailable local MCP server");
+    // Keir 8: a refused or unresolvable connection means the request never left
+    // this box, so a write that fails this way provably wrote nothing.
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: write ? c.headers.Authorization : `Bearer ${readToken}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) }).catch((e) => {
+      const code = e?.cause?.code || e?.code;
+      if (code === "ECONNREFUSED" || code === "ENOTFOUND") e.code = "MCP_CONNECT_REFUSED";
+      throw e; });
     const j = parseRpc(await res.text());
     if (!res.ok || j.error || j.result?.isError) {
       const error = new Error(redactSecrets(JSON.stringify(j.error || j.result || {}).slice(0, 2000)));
@@ -481,6 +486,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (["MCP_ARGUMENT_REJECTED", "EXTERNAL_WRITE_REFUSED"].includes(e.code)) {
         job.effects[key].state = "rejected";
         ledger.audit("effect_rejected", { job: job.id, key, reason: e.code === "EXTERNAL_WRITE_REFUSED" ? "remote access refused before execution" : "argument validation before execution" }); ledger.save();
+        throw e;
+      }
+      if (["MCP_CONNECT_REFUSED", "EFFECT_NOT_STARTED"].includes(e.code)) {
+        // Keir 8: nothing left this box (connection refused) or nothing was pushed yet
+        // (publishing's local steps), so the same call may simply be repeated.
+        job.effects[key].state = "rejected"; job.effects[key].retryable = true;
+        ledger.audit("effect_rejected", { job: job.id, key, reason: e.code === "MCP_CONNECT_REFUSED" ? "connection refused before the request was sent; nothing written" : "failed before anything was pushed; nothing written" }); ledger.save();
         throw e;
       }
       // Even a network error can follow a committed remote mutation.
@@ -1129,6 +1141,12 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const branch = revise ? revise.branch : `keir/task-${job.id}-${a.id}`;
     const local = revise ? `keir/revise-${job.id}-${a.id}` : branch;
     const wt = path.join(repo, "worktrees", `keir-${job.id}-${a.id}`);
+    const bodyFile = path.join(config.stateDir, "artifacts", `${a.id}-pr.md`);
+    // Keir 8: every step before the first push only touches this box, so a failure
+    // there is a definite "nothing written" (the receipt can be retried), not an
+    // uncertain write that blocks the task for a person. The leftover worktree
+    // and branch are removed so the retry starts clean.
+    try {
     await exec("/usr/bin/git", ["-C", repo, "fetch", "--quiet", "origin", target], { signal, timeout: 120000 });
     await exec("/usr/bin/git", ["-C", repo, "worktree", "add", "--no-track", "-b", local, wt, `origin/${target}`], { signal });
     await exec("/usr/bin/git", ["-C", wt, "apply", "--check", a.args.patchFile], { signal }).catch(async (e) => {
@@ -1140,9 +1158,17 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     });
     await exec("/usr/bin/git", ["-C", wt, "apply", "--index", a.args.patchFile], { signal });
     await exec("/usr/bin/git", ["-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Keir", "-c", `user.email=${config.keirGitEmail || "keir@localhost"}`, "commit", "-m", a.args.title + "\n\nPrepared by Keir for task " + job.id + "."], { signal });
-    const bodyFile = path.join(config.stateDir, "artifacts", `${a.id}-pr.md`);
     a.args.title = noDashes(a.args.title); a.args.body = noDashes(a.args.body);
     fs.writeFileSync(bodyFile, a.args.body, { mode: 0o600 });
+    } catch (e) {
+      // child_process errors carry a numeric exit code, so test for our own classes, not for "no code".
+      if (!["MCP_ARGUMENT_REJECTED", "EXTERNAL_WRITE_REFUSED"].includes(e.code)) {
+        try { await exec("/usr/bin/git", ["-C", repo, "worktree", "remove", "--force", wt]); } catch {}
+        try { await exec("/usr/bin/git", ["-C", repo, "branch", "-D", local]); } catch {}
+        e.code = "EFFECT_NOT_STARTED";
+      }
+      throw e;
+    }
     let url;
     if (revise) {
       await exec("/usr/bin/git", ["-C", wt, ...keirGit(), "push", "--force", "origin", `HEAD:refs/heads/${branch}`], asKeir({ signal }));
