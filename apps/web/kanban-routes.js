@@ -5,7 +5,8 @@
 //
 //   if (await handleKanbanRoute(req, res, pathname, ctx)) return;
 //
-// Access: admins only. Signed-out visitors are sent to "/" (the sign-in page);
+// Admins manage the board; Junior Developers claim and report their own work.
+// Signed-out visitors are sent to "/" (the sign-in page);
 // a signed-in non-admin gets a plain 404, so the page does not advertise
 // itself. Writes additionally require X-Requested-With: ops-dashboard and a
 // same-origin Origin header (the same check as event replay).
@@ -15,6 +16,7 @@ const { makeKanbanBody } = require("./kanban-page");
 
 const ITEM_RE = /^\/api\/kanban\/items\/(\d+)$/;
 const REPORT_RE = /^\/api\/kanban\/items\/(\d+)\/report$/;
+const COLLABORATE_RE = /^\/api\/kanban\/items\/(\d+)\/collaborate$/;
 
 function isKanbanPath(pathname) {
   return pathname === "/kanban" || pathname === "/api/kanban" || pathname.startsWith("/api/kanban/");
@@ -66,7 +68,10 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
   if (!["admin", "junior_dev"].includes(session.role)) return isPage ? notFound() : send(404, { error: "Not found" });
 
   const readOnly = session.role === "junior_dev";
-  if (readOnly && !["GET", "HEAD"].includes(req.method)) return send(403, { error: "The Junior Developer work board is read-only" });
+  const collaborationMatch = pathname.match(COLLABORATE_RE);
+  if (readOnly && !["GET", "HEAD"].includes(req.method) && !(req.method === "POST" && collaborationMatch))
+    return send(403, { error: "Junior Developers can claim tasks and report their own work" });
+  if (readOnly && !session.email) return send(403, { error: "A signed-in identity is required" });
 
   const actor = String(session.email || "admin").slice(0, 120);
   const fail = (error) => {
@@ -82,7 +87,7 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
       let board = null;
       let error = null;
       try { board = store().board(); } catch (e) { error = e.message; }
-      const { extraCss, body } = makeKanbanBody({ board, error, readOnly });
+      const { extraCss, body } = makeKanbanBody({ board, error, readOnly, collaborator: readOnly ? actor : "" });
       addSecurityHeaders(res);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       res.end(req.method === "HEAD" ? "" : renderShell({ title: "Work board", active: "/kanban", role: session.role, extraCss, body }));
@@ -96,6 +101,13 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
     if (req.method === "POST") {
       if (!sameOrigin(req)) return send(403, { error: "Invalid request origin" });
       const body = await readJson(req);
+      if (collaborationMatch) {
+        if (!body || typeof body !== "object" || Array.isArray(body)) return send(400, { error: "Expected an object" });
+        const allowed = new Set(["action", "summary", "evidence_url"]);
+        if (Object.keys(body).some(key => !allowed.has(key))) return send(400, { error: "Unsupported collaboration field" });
+        return send(200, store().collaborate({ id: Number(collaborationMatch[1]), action: body.action,
+          summary: body.summary, evidence_url: body.evidence_url, actor }));
+      }
       if (pathname === "/api/kanban/items") return send(201, store().add(body, { actor }));
       if (itemMatch) return send(200, store().update(Number(itemMatch[1]), body, { actor }));
       const reportMatch = pathname.match(REPORT_RE);

@@ -56,7 +56,7 @@ dialog.kb-dlg::backdrop{background:rgba(0,0,0,.55)}
 .kb-form label.check{flex-direction:row;align-items:center;gap:8px}
 .kb-form input,.kb-form select,.kb-form textarea{padding:.45rem .6rem;border:1px solid var(--border);border-radius:8px;background:var(--bg,var(--surface));color:var(--text);font:500 .85rem var(--font);text-transform:none;letter-spacing:0}
 .kb-form textarea{min-height:120px;resize:vertical}
-.kb-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+.kb-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:12px}
 .kb-hist{margin-top:14px;border-top:1px solid var(--border);padding-top:10px;max-height:240px;overflow:auto;font-size:.78rem}
 .kb-hist div{padding:4px 0;border-bottom:1px solid var(--border);color:var(--text-2)}
 .kb-hist b{color:var(--text)}
@@ -74,6 +74,7 @@ const LANES=[["now","Now"],["next","Next"],["blocked","Blocked"],["backlog","Bac
 const ALL_LANES=LANES.concat([["done","Done"]]);
 let board=JSON.parse(document.getElementById('kb-data').textContent);
 const readOnly=document.getElementById('kb-data').dataset.readOnly==='true';
+const collaborator=JSON.parse(document.getElementById('kb-collab-actor').textContent);
 const st={product:'',stale:false,q:''};
 const $=s=>document.querySelector(s);
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -137,20 +138,40 @@ async function openItem(id){
   try{item=await api('GET','/api/kanban/items/'+id)}catch(e){return flash(e.message)}
   const f=$('#kb-edit-form');
   f.dataset.id=item.id;
-  f.title.value=item.title;f.detail.value=item.detail||'';
-  f.product.innerHTML=productOptions(item.product);
-  f.lane.value=item.lane;f.impact.value=item.impact;
-  f.needs_owner.checked=item.needs_owner;f.assigned_to.value=item.assigned_to||'';
-  f.github.value=item.github?item.github.url:'';f.evidence_url.value=item.evidence_url||'';
-  f.note.value='';
+  f.elements.title.value=item.title;f.elements.detail.value=item.detail||'';
+  f.elements.product.innerHTML=productOptions(item.product);
+  f.elements.lane.value=item.lane;f.elements.impact.value=item.impact;
+  f.elements.needs_owner.checked=item.needs_owner;f.elements.assigned_to.value=item.assigned_to||'';
+  f.elements.github.value=item.github?item.github.url:'';f.elements.evidence_url.value=item.evidence_url||'';
+  f.elements.note.value='';
   const headHtml='#'+esc(item.id)+(item.stale?' <span class="kb-chip stale">stale: '+esc(item.stale_reason)+'</span>':'')+(item.aliases&&item.aliases.length?' <span class="kb-sub">merged from '+item.aliases.map(a=>'#'+esc(a.alias_id)).join(', ')+'</span>':'');
   $('#kb-edit-head').innerHTML=headHtml;
   const histHtml=(item.events||[]).map(e=>'<div><time>'+esc((e.created_at||'').slice(0,16).replace('T',' '))+'</time> <b>'+esc(e.event_type)+'</b> '+esc(e.actor)+': '+esc(e.summary)+(safeUrl(e.evidence_url)?' <a href="'+esc(e.evidence_url)+'" target="_blank" rel="noopener">evidence</a>':'')+'</div>').join('')||'<div>No history.</div>';
   $('#kb-hist').innerHTML=histHtml;
   f.querySelectorAll('input,select,textarea,button[type=submit]').forEach(el=>{el.disabled=readOnly});
+  const own=item.assigned_to===collaborator;
+  const available=!item.assigned_to||own;
+  const active=item.lane!=='done'&&item.kind!=='monitor';
+  document.querySelectorAll('[data-collaborate]').forEach(el=>{
+    el.hidden=!collaborator||!active||(el.dataset.collaborate==='claim'?!available:!own);
+  });
+  $('#kb-collab-note').value='';$('#kb-collab-evidence').value='';
+  $('#kb-collab-note').disabled=!own;$('#kb-collab-evidence').disabled=!own;
   $('#kb-edit').showModal();
 }
 document.addEventListener('click',e=>{const t=e.target.closest('[data-open]');if(t)openItem(t.dataset.open)});
+document.querySelectorAll('[data-collaborate]').forEach(button=>button.addEventListener('click',async()=>{
+  const id=$('#kb-edit-form').dataset.id;
+  const action=button.dataset.collaborate;
+  const summary=$('#kb-collab-note').value.trim();
+  const evidence_url=$('#kb-collab-evidence').value.trim()||undefined;
+  if(action!=='claim'&&!summary)return alert('Add a progress or handoff note first.');
+  button.disabled=true;
+  try{
+    await api('POST','/api/kanban/items/'+id+'/collaborate',{action,summary:summary||'Claimed task',evidence_url});
+    $('#kb-edit').close();await reload();
+  }catch(error){alert(error.message)}finally{button.disabled=false}
+}));
 document.addEventListener('change',async e=>{
   const m=e.target.closest('[data-move]');if(!m)return;
   try{await api('POST','/api/kanban/items/'+m.dataset.move,{lane:m.value});await reload();flash('')}catch(err){flash(err.message)}
@@ -158,15 +179,15 @@ document.addEventListener('change',async e=>{
 $('#kb-edit-form').addEventListener('submit',async e=>{
   e.preventDefault();if(readOnly)return;const f=e.target;const id=f.dataset.id;
   try{
-    await api('POST','/api/kanban/items/'+id,{title:f.title.value,detail:f.detail.value,product:f.product.value,lane:f.lane.value,impact:f.impact.value,needs_owner:f.needs_owner.checked,assigned_to:f.assigned_to.value,github:f.github.value,evidence_url:f.evidence_url.value});
-    if(f.note.value.trim())await api('POST','/api/kanban/items/'+id+'/report',{event:'progress',summary:f.note.value});
+    await api('POST','/api/kanban/items/'+id,{title:f.elements.title.value,detail:f.elements.detail.value,product:f.elements.product.value,lane:f.elements.lane.value,impact:f.elements.impact.value,needs_owner:f.elements.needs_owner.checked,assigned_to:f.elements.assigned_to.value,github:f.elements.github.value,evidence_url:f.elements.evidence_url.value});
+    if(f.elements.note.value.trim())await api('POST','/api/kanban/items/'+id+'/report',{event:'progress',summary:f.elements.note.value});
     $('#kb-edit').close();await reload();
   }catch(err){alert(err.message)}
 });
-$('#kb-add-btn').addEventListener('click',()=>{const f=$('#kb-add-form');f.reset();f.product.innerHTML=productOptions(st.product||'a-house-divided');$('#kb-add').showModal()});
+$('#kb-add-btn').addEventListener('click',()=>{const f=$('#kb-add-form');f.reset();f.elements.product.innerHTML=productOptions(st.product||'a-house-divided');$('#kb-add').showModal()});
 $('#kb-add-form').addEventListener('submit',async e=>{
   e.preventDefault();const f=e.target;
-  try{await api('POST','/api/kanban/items',{product:f.product.value,title:f.title.value,detail:f.detail.value,lane:f.lane.value,impact:f.impact.value,needs_owner:f.needs_owner.checked,github:f.github.value||undefined});$('#kb-add').close();await reload()}
+  try{await api('POST','/api/kanban/items',{product:f.elements.product.value,title:f.elements.title.value,detail:f.elements.detail.value,lane:f.elements.lane.value,impact:f.elements.impact.value,needs_owner:f.elements.needs_owner.checked,github:f.elements.github.value||undefined});$('#kb-add').close();await reload()}
   catch(err){alert(err.message)}
 });
 document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));
@@ -174,6 +195,7 @@ const pf=$('#kb-product');const productFilterHtml='<option value="">All products
 pf.addEventListener('change',()=>{st.product=pf.value;render()});
 $('#kb-stale').addEventListener('click',e=>{st.stale=!st.stale;e.target.classList.toggle('on',st.stale);render()});
 $('#kb-q').addEventListener('input',e=>{st.q=e.target.value;render()});
+$('#kb-refresh').addEventListener('click',()=>reload().catch(error=>flash(error.message)));
 render();
 })();
 `;
@@ -181,13 +203,13 @@ render();
 const LANE_OPTIONS = '<option value="now">Now</option><option value="next">Next</option><option value="blocked">Blocked</option><option value="backlog">Backlog</option>';
 const IMPACT_OPTIONS = '<option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>';
 
-function makeKanbanBody({ board, error = null, readOnly = false }) {
+function makeKanbanBody({ board, error = null, readOnly = false, collaborator = "" }) {
   // JSON inside <script type="application/json">: escape "<" so no value can
   // close the element.
   const data = JSON.stringify(board || { products: [], items: [], github_sources: [], stale_days: 5 }).replace(/</g, "\\u003c");
   const body = `<div class="kb-wrap">
-  <div class="kb-head"><div><h1>Work board${readOnly ? ' (read-only)' : ''}</h1><div class="kb-sub" id="kb-sync"></div></div>
-    <div class="kb-bar"><select id="kb-product" aria-label="Product"></select><input type="search" id="kb-q" placeholder="Filter" aria-label="Filter"><button class="kb-btn" id="kb-stale" type="button">Stale only</button><button class="kb-btn primary" id="kb-add-btn" type="button" ${readOnly ? 'hidden disabled' : ''}>Add item</button></div></div>
+  <div class="kb-head"><div><h1>Work board${readOnly && !collaborator ? ' (read-only)' : ''}</h1><div class="kb-sub" id="kb-sync"></div></div>
+    <div class="kb-bar"><select id="kb-product" aria-label="Product"></select><input type="search" id="kb-q" placeholder="Filter" aria-label="Filter"><button class="kb-btn" id="kb-refresh" type="button">Refresh</button><button class="kb-btn" id="kb-stale" type="button">Stale only</button><button class="kb-btn primary" id="kb-add-btn" type="button" ${readOnly ? 'hidden disabled' : ''}>Add item</button></div></div>
   ${error ? `<div class="kb-err">Kanban store unavailable: ${String(error).replace(/[&<>"']/g, "")}</div>` : ""}
   <div class="kb-err" id="kb-msg" hidden></div>
   <div class="kb-stats" id="kb-stats"></div>
@@ -209,6 +231,12 @@ function makeKanbanBody({ board, error = null, readOnly = false }) {
     <label class="wide">Add a progress note<input name="note" maxlength="4000" placeholder="Optional"></label>
   </div>
   <div class="kb-actions"><button class="kb-btn" type="button" data-close>Cancel</button><button class="kb-btn primary" type="submit">Save</button></div>
+  <section id="kb-collaboration" ${collaborator ? '' : 'hidden'}>
+    <p>Claim an unassigned task before coding. Add a note for progress, blockers or handoff; completion requires an evidence link.</p>
+    <div class="kb-form"><label class="wide">Progress or handoff note<textarea id="kb-collab-note" maxlength="4000"></textarea></label>
+    <label class="wide">Evidence URL<input id="kb-collab-evidence" type="url" placeholder="https://..."></label></div>
+    <div class="kb-actions">${["claim", "progress", "blocked", "resume", "release", "completed"].map(action => `<button class="kb-btn" type="button" data-collaborate="${action}">${({ claim: "Claim task", progress: "Post progress", blocked: "Mark blocked", resume: "Resume", release: "Release task", completed: "Complete" })[action]}</button>`).join("")}</div>
+  </section>
   <div class="kb-hist" id="kb-hist"></div>
 </form></dialog>
 <dialog class="kb-dlg" id="kb-add"><form id="kb-add-form" method="dialog">
@@ -224,6 +252,7 @@ function makeKanbanBody({ board, error = null, readOnly = false }) {
   <div class="kb-actions"><button class="kb-btn" type="button" data-close>Cancel</button><button class="kb-btn primary" type="submit">Add</button></div>
 </form></dialog>
 <script type="application/json" id="kb-data" data-read-only="${readOnly}">${data}</script>
+<script type="application/json" id="kb-collab-actor">${JSON.stringify(collaborator).replace(/</g, "\\u003c")}</script>
 <script>${KANBAN_JS}</script>`;
   return { extraCss: KANBAN_CSS, body };
 }

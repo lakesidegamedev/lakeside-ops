@@ -30,7 +30,7 @@ const JUNIOR_READ_PATHS = new Set([
 ]);
 
 function juniorDeveloperRequestAllowed(method, pathname) {
-  if (method === "POST") return pathname === "/api/logout";
+  if (method === "POST") return pathname === "/api/logout" || /^\/api\/kanban\/items\/\d+\/collaborate$/.test(pathname);
   if (method !== "GET" && method !== "HEAD") return false;
   return JUNIOR_READ_PATHS.has(pathname) || /^\/api\/kanban\/items\/\d+$/.test(pathname);
 }
@@ -53,7 +53,7 @@ function juniorDeveloperHome() {
   return `<section style="max-width:900px;margin:32px auto;padding:24px"><h1>Junior Developer</h1>
 <p>Your development workspace includes the work board, project documentation, economy reports and read-only engine diagnostics.</p>
 <ul>${JUNIOR_NAV[0].items.slice(1).map(item => `<li><a href="${item.href}">${item.label}</a></li>`).join("")}</ul>
-<p>The work board is read-only. Coordinate changes through the linked GitHub issues.</p></section>`;
+<p>Claim an unassigned task on the work board before coding. Post progress and PR links on your task, or release it with a handoff note. Specifications stay in the linked GitHub issues.</p></section>`;
 }
 
 function juniorEconomyReports() {

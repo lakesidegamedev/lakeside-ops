@@ -199,11 +199,11 @@ describe("kanban routes", () => {
     assert.equal(res.status, 404);
   });
 
-  it("lets Junior Developers read the board and detail but rejects all writes", async () => {
+  it("lets Junior Developers read the board and detail but rejects administrative edits", async () => {
     const item = k.add({ product: "ahd", title: "Developer task" });
     for (const path of ["/kanban", "/api/kanban", "/api/kanban/brief", "/api/kanban/items/" + item.id]) {
       const res = fakeRes();
-      await handleKanbanRoute(fakeReq(), res, path, ctx({ role: "junior_dev" }));
+      await handleKanbanRoute(fakeReq(), res, path, ctx({ role: "junior_dev", email: "dev@example.com" }));
       assert.equal(res.status, 200, path);
       if (path === "/kanban") {
         assert.ok(res.body.includes('data-read-only="true"'));
@@ -214,6 +214,77 @@ describe("kanban routes", () => {
     await handleKanbanRoute(fakeReq({ method: "POST", body: { lane: "done" }, headers: { "x-requested-with": "ops-dashboard", origin: "https://ops.example.com" } }), res, "/api/kanban/items/" + item.id, ctx({ role: "junior_dev" }));
     assert.equal(res.status, 403);
     assert.equal(k.get(item.id).lane, item.lane);
+  });
+
+  it("lets a Junior Developer claim, report, block, resume, release and complete their own task", async () => {
+    const item = k.add({ product: "ahd", title: "Shared economy work" });
+    const context = ctx({ role: "junior_dev", email: "dev@example.com" });
+    const post = async body => {
+      const res = fakeRes();
+      await handleKanbanRoute(fakeReq({ method: "POST", body, headers: {
+        "x-requested-with": "ops-dashboard", origin: "https://ops.example.com",
+      } }), res, `/api/kanban/items/${item.id}/collaborate`, context);
+      return res;
+    };
+    assert.equal((await post({ action: "claim" })).status, 200);
+    assert.equal(k.get(item.id).assigned_to, "dev@example.com");
+    for (const action of ["progress", "blocked", "resume"]) {
+      assert.equal((await post({ action, summary: "Verified current receipts" })).status, 200);
+    }
+    assert.equal((await post({ action: "release", summary: "Remaining query work needs a new owner" })).status, 200);
+    assert.equal(k.get(item.id).assigned_to, null);
+    assert.equal(k.get(item.id).lane, "inbox");
+    await post({ action: "claim" });
+    assert.equal((await post({ action: "completed", summary: "Done" })).status, 400);
+    assert.equal((await post({ action: "completed", summary: "Verified repair", evidence_url: "https://github.com/example/game/pull/1" })).status, 200);
+    assert.equal(k.get(item.id).lane, "done");
+    assert.ok(k.get(item.id).events.every(event => event.actor !== "admin"));
+  });
+
+  it("rejects taking another owner's task, spoofing fields, and cross-origin collaboration", async () => {
+    const item = k.add({ product: "ahd", title: "Claimed work", start: true }, { actor: "codex:other" });
+    const headers = { "x-requested-with": "ops-dashboard", origin: "https://ops.example.com" };
+    for (const [body, requestHeaders, expected] of [
+      [{ action: "claim" }, headers, 409],
+      [{ action: "progress", summary: "Mine now" }, headers, 403],
+      ...["blocked", "resume", "release", "completed"].map(action => [{ action, summary: "Mine now" }, headers, 403]),
+      [{ action: "claim", actor: "codex:other" }, headers, 400],
+      [{ action: "claim", force: true }, headers, 400],
+      [{ action: "claim", assigned_to: "dev@example.com" }, headers, 400],
+      [{ action: "claim" }, { ...headers, origin: "https://attacker.example" }, 403],
+    ]) {
+      const res = fakeRes();
+      await handleKanbanRoute(fakeReq({ method: "POST", body, headers: requestHeaders }), res,
+        `/api/kanban/items/${item.id}/collaborate`, ctx({ role: "junior_dev", email: "dev@example.com" }));
+      assert.equal(res.status, expected, JSON.stringify(body));
+      assert.equal(k.get(item.id).assigned_to, "codex:other");
+    }
+  });
+
+  it("serializes claims across database connections and MCP started reports cannot steal them", () => {
+    const item = k.add({ product: "ahd", title: "Concurrent ownership" });
+    const other = openKanban(k.path);
+    try {
+      k.collaborate({ id: item.id, action: "claim", actor: "dev@example.com" });
+      assert.throws(() => other.collaborate({ id: item.id, action: "claim", actor: "other@example.com" }), /already assigned/);
+      assert.throws(() => other.report({ id: item.id, event: "started", summary: "Starting", actor: "codex" }), /already assigned/);
+      assert.equal(other.get(item.id).assigned_to, "dev@example.com");
+    } finally { other.close(); }
+  });
+
+  it("does not let collaboration reopen closed tasks, take monitors or bypass the work cap", () => {
+    const done = k.add({ product: "ahd", title: "Finished task", lane: "done" });
+    const monitor = k.add({ product: "ahd", title: "Continuous health monitor", kind: "monitor" });
+    for (const item of [done, monitor]) {
+      assert.throws(() => k.collaborate({ id: item.id, action: "claim", actor: "dev@example.com" }), /not available/);
+    }
+    for (let index = 0; index < 3; index++) {
+      const task = k.add({ product: "ahd", title: `Assigned delivery slice ${index}`, force: true });
+      k.collaborate({ id: task.id, action: "claim", actor: "dev@example.com" });
+    }
+    const excess = k.add({ product: "ahd", title: "Fourth delivery slice", force: true });
+    assert.throws(() => k.collaborate({ id: excess.id, action: "claim", actor: "dev@example.com" }), /cap/);
+    assert.equal(k.get(excess.id).assigned_to, null);
   });
 
   it("renders for admins and requires the same-origin header to write", async () => {
