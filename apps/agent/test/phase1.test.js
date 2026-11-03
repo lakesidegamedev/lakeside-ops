@@ -151,6 +151,17 @@ test("blocked on the owner: one notice, then silence until the decision or the p
   assert.equal((await say(f, "Thanks, that narrows it to the supplier change. The owner still has the decision.")).published, true, "the player wrote, so Keir may answer");
 });
 
+test("a status card edit is not the decision notice: the player's question still gets its answer (KBX5)", async () => {
+  const f = fixture();
+  f.ledger.data.decisions = { dec1: { id: "dec1", jobId: f.job.id, state: "pending", at: 4000, question: "Refund the voided contract?" } };
+  assert.equal((await say(f, "This needs the owner's go before anything changes. I will post when it moves.")).published, true);
+  f.tick(2 * 3600000);
+  f.job.observedPlayerAt = Date.now() - 60000;
+  // The card is edited in place after the player's message; it must not count as the notice.
+  (f.ledger.data.ticketPosts[1522] ||= []).push({ at: Date.now(), jobId: f.job.id, text: "[status card] Refund decision: with the developers" });
+  assert.equal((await say(f, "The refund is still with the developers; they have not decided yet. I will tell you here when they do.")).published, true);
+});
+
 test("monologue cap: three Keir posts with no human reply, then the card only", async () => {
   const f = fixture();
   for (const m of ["The budget check is being investigated against your corporation.", "The mismatch is between two revenue figures the page and the save use.", "Confirmed: the save check reads an older revenue figure than the page."]) {

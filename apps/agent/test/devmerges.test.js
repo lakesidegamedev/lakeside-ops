@@ -45,3 +45,23 @@ test("a change merged before the watermark is not reported again after a restart
   await s.dm.tick();
   assert.equal(t.inbox, undefined);
 });
+
+test("a named merge leaves the release receipt its message relies on; an unnamed one leaves none (KBX5)", async () => {
+  let stage = "behind";
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  const s = setup({ prs: [pr(16, "fix: budget page (ticket 1560)", { merge_commit_sha: sha })], compare: (r) => (r.endsWith("...staging") && stage !== "behind" ? "ahead" : "behind") });
+  const t = s.ticket(1560);
+  await s.dm.tick();
+  assert.deepEqual({ development: t.releaseEvidence["0123456789"].development, staging: t.releaseEvidence["0123456789"].staging, main: t.releaseEvidence["0123456789"].main }, { development: true, staging: false, main: false });
+  t.state = "waiting"; stage = "staging";
+  await s.dm.tick();
+  assert.equal(t.releaseEvidence["0123456789"].staging, true, "the stage move updates the receipt");
+  assert.equal(t.releaseEvidence["0123456789"].main, false);
+
+  const ask = async () => ({ answers: { t1561: { noul: 0.8 } } });
+  const u = setup({ ask, prs: [pr(17, "feat: related change", { merge_commit_sha: sha })] });
+  const j = u.ticket(1561);
+  await u.dm.tick();
+  assert.match(j.inbox[0].content, /looks related/);
+  assert.equal(j.releaseEvidence, undefined, "an unnamed change is not a receipt for this ticket");
+});

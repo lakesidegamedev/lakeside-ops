@@ -21,6 +21,16 @@ function createDevMerges({ ledger, api, ask = defaultAsk, now = () => Date.now()
   const ownPrs = () => new Set(Object.values(d.jobs).flatMap((j) => (j.pullRequests || []).map((u) => Number(String(u).split("/").pop()))));
   const ticketText = (j) => [String(j.evidenceText || "").slice(0, 600), j.summary].filter(Boolean).join(" ").slice(0, 900);
 
+  // The watch read GitHub itself: a change that names the ticket is a receipt for the stage
+  // it reached, the same receipt github where would leave. Without it the line this watch asks
+  // for ("a fix is in testing on dev") was refused by the release-claim guard, and the refused
+  // reply then blocked finish (KBX5 quiet-wait, 2026-11-03). Unnamed changes get no receipt.
+  function receipt(job, sha, stage) {
+    if (!/^[0-9a-f]{7,40}$/i.test(sha || "")) return;
+    const key = String(sha).slice(0, 10), prior = job.releaseEvidence?.[key] || {};
+    (job.releaseEvidence ||= {})[key] = { ...prior, at: now(), development: true, staging: prior.staging === true || stage >= 1, main: prior.main === true || stage >= 2,
+      repository: prior.repository || "AHDGame", turnWorker: prior.turnWorker === true, source: prior.source || "dev-merges" };
+  }
   function tell(job, text) {
     (job.inbox ||= []).push({ authorId: "dev-merges", role: "system", content: text, at: new Date(now()).toISOString() });
     if (["waiting", "blocked"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
@@ -61,8 +71,9 @@ function createDevMerges({ ledger, api, ask = defaultAsk, now = () => Date.now()
       if (PROMOTE_HEADS.has(pr.head?.ref) || /\[bot\]$/.test(pr.user?.login || "") || mine.has(pr.number) || state.links[pr.number]) continue;
       const matches = await link(pr);
       if (!matches.length) continue;
-      state.links[pr.number] = { title: pr.title, author: pr.user?.login, sha: pr.merge_commit_sha, stage: 0, tickets: matches.map((m) => m.job.ticket), at: now() };
+      state.links[pr.number] = { title: pr.title, author: pr.user?.login, sha: pr.merge_commit_sha, stage: 0, tickets: matches.map((m) => m.job.ticket), named: matches.filter((m) => m.named).map((m) => m.job.ticket), at: now() };
       for (const { job, named } of matches) {
+        if (named) receipt(job, pr.merge_commit_sha, 0);
         tell(job, `A developer change was merged (PR #${pr.number} by ${pr.user?.login}: "${pr.title}"). ${named ? "It names this ticket." : "It looks related to this ticket; check before saying so."} If it changes or fixes what the player reported, tell them in one plain line that a fix is ${STAGES[0][1]}, without PR numbers. If it is unrelated, say nothing. You will hear again as it reaches the sandbox and the main server.`);
         ledger.audit("dev_merge_linked", { pr: pr.number, ticket: job.ticket, named });
       }
@@ -76,6 +87,7 @@ function createDevMerges({ ledger, api, ask = defaultAsk, now = () => Date.now()
       l.stage = stage;
       for (const t of l.tickets) {
         const job = openTickets().find((j) => j.ticket === t);
+        if (job && l.named?.includes(t)) receipt(job, l.sha, stage);
         if (job) tell(job, `The developer change "${l.title}" is now ${STAGES[stage][1]}. If you told the player about it, update them in one plain line; if it was unrelated, say nothing.${stage === STAGES.length - 1 ? " Once it is live, verify the reported behaviour before calling it fixed." : ""}`);
       }
       ledger.audit("dev_merge_stage", { pr: Number(number), stage: STAGES[stage][0] });

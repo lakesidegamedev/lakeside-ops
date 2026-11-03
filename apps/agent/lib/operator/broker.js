@@ -642,7 +642,9 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     }
     const pending = Object.values(d.decisions || {}).find((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo);
     if (pending) {
-      const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
+      // A status card is edited in place, not a message to the player: it never uses the one
+      // notice (KBX5 held-player, 2026-11-03: a card edit after the player's question blocked the answer).
+      const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at && !/^\[status card\]/.test(p.text || "")).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
       if (noticed && !question && !playerSpokeAfter(noticed.at))
         throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. No further posts until the decision lands or the player writes; update the status card if the stage changed.`);
     }
@@ -940,8 +942,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const runs = (d.monologue ||= {});
     const human = humanAt(ticketNo);
     const cur = runs[ticketNo];
-    runs[ticketNo] = { humanAt: human, count: cur && cur.humanAt === human ? cur.count + 1 : 1, at: now(),
-      decisionNoticeAt: Object.values(d.decisions || {}).some((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo) ? now() : cur?.decisionNoticeAt };
+    // Status card edits are neither a message in the monologue run nor the decision notice.
+    const card = /^\[status card\]/.test(message);
+    runs[ticketNo] = { humanAt: human, count: cur && cur.humanAt === human ? cur.count + (card ? 0 : 1) : card ? 0 : 1, at: now(),
+      decisionNoticeAt: !card && Object.values(d.decisions || {}).some((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo) ? now() : cur?.decisionNoticeAt };
     for (const n of Object.keys(runs)) if (now() - (runs[n].at || 0) > 7 * 86400000) delete runs[n];
   }
   function sharedWork() {
@@ -1166,7 +1170,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, ...(name === "read_tool" && input?.server && input?.tool ? { target: `${input.server}/${input.tool}` } : {}), error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
       // Keir 6.1: a refused answer to the player is owed until one is posted
       // (KBX3: Sonnet's reply was refused for length, then it finished done).
-      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
+      // A reply that can never be delivered (no channel) owes nothing: arming the refused-reply
+      // hold there left finish refused too, so an open channel-less ticket could only end
+      // blocked (KBX5 channelless--open, 2026-11-03).
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
@@ -3066,7 +3073,14 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
         const refusal = heal.planRefusal(plan);
         // Actions created before plan identities still carry a whole-plan digest.
         const samePlan = a.ownerMuse ? musePolicy.digest(plan.plan) === a.args.planDigest : [hash(heal.planIdentity(plan.plan)), hash(plan.plan)].includes(a.args.planDigest);
-        if (refusal || heal.affectedOf(plan) !== a.args.affected || !samePlan) throw new Error("Heal target or plan changed since confirmation; create and confirm a fresh plan.");
+        if (refusal || heal.affectedOf(plan) !== a.args.affected || !samePlan) {
+          // The approval can never run again, so it is withdrawn: an approved action is a wake
+          // reason (subscription below), and leaving it approved woke the task every 15 minutes
+          // for nothing after the fresh plan ran (KBX5 approval--superseded, 2026-11-03).
+          a.state = "withdrawn"; a.withdrawnReason = "plan changed since confirmation"; a.withdrawnAt = now();
+          ledger.audit("action_withdrawn", { job: job.id, action: a.id, reason: "plan_changed" }); ledger.save();
+          throw new Error("Heal target or plan changed since confirmation; create and confirm a fresh plan.");
+        }
         healApply = heal.applyCall(a.args.spec, plan.token, `Discord developer ${a.approvedBy} via Keir`);
       }
       if (a.kind === "computer_input") {
@@ -3214,7 +3228,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       // An action the owner approved but this task has not run yet is something to do, not
       // a reason to sleep: ticket 1749's approved bank repair (2026-11-02 22:05Z) was parked
       // for twelve hours behind a quiet developer wait after the player was told "after this turn".
-      const subscription = job.turnWatch || Object.keys(job.ciWatch || {}).length || job.promotionHoldUntil > now() || pendingDecision || pendingQuestion || Object.values(d.actions || {}).some((a) => a.jobId === job.id && ["pending", "approved", "executing"].includes(a.state));
+      const subscription = job.turnWatch || Object.keys(job.ciWatch || {}).length || job.promotionHoldUntil > now() || pendingDecision || pendingQuestion || Object.values(d.actions || {}).some((a) => a.jobId === job.id && (["pending", "executing"].includes(a.state) || (a.state === "approved" && !(a.expiresAt <= now()))));
       // Keir 5.6: a developer_reply wait needs someone else to reply. Keir's
       // own cards have no other owner, so waiting on them stalls forever.
       const openCards = (job.raisedToDevelopers || []).filter((r) => r.blocking && !r.releasedAt);
