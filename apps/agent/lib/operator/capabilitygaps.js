@@ -70,9 +70,9 @@ function createCapabilityGaps({ ledger, mcp, events = null, now = () => Date.now
       const detail = `${g.what}\n\nSeen ${g.hits} times across ${g.tasks.size} tasks in the last 7 days.${g.samples.length ? `\nExamples:\n${g.samples.map((x) => `- ${x}`).join("\n")}` : ""}\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.`;
       try {
         if (known?.kanbanId) {
-          await mcp.call("ops-knowledge", "work_report", { id: known.kanbanId, event: "progress", summary: `Now ${g.hits} hits across ${g.tasks.size} tasks in 7 days.`, idempotency_key: `gap:${g.sig}:${g.hits}` }, true);
+          await mcp.call("ops-knowledge", "work_report", { id: known.kanbanId, event: "progress", actor: "keir", summary: `Now ${g.hits} hits across ${g.tasks.size} tasks in 7 days.`, idempotency_key: `gap:${g.sig}:${g.hits}` }, true);
         } else {
-          const card = await mcp.call("ops-knowledge", "kanban_add", { product: "lakeside-mcp", kind: "capability", lane: "next", impact: g.hits >= 10 ? "high" : "medium", title: g.title.slice(0, 280), detail: detail.slice(0, 19000) }, true);
+          const card = await mcp.call("ops-knowledge", "kanban_add", { product: "lakeside-mcp", kind: "capability", lane: "inbox", actor: "keir", impact: g.hits >= 10 ? "high" : "medium", title: g.title.slice(0, 280), detail: detail.slice(0, 19000) }, true);
           state[g.sig] = { ...(state[g.sig] || {}), kanbanId: Number(card?.id) || null };
         }
         state[g.sig] = { ...state[g.sig], hits: g.hits, tasks: g.tasks.size, at: now() };

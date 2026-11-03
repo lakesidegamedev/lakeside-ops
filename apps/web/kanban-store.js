@@ -20,11 +20,64 @@ const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 
-const OPEN_LANES = ["now", "next", "blocked", "backlog"];
+// inbox: filed but not picked up (automatic intake). next: committed, has an owner.
+const OPEN_LANES = ["now", "next", "blocked", "inbox", "backlog"];
 const LANES = [...OPEN_LANES, "done"];
 const IMPACTS = ["high", "medium", "low"];
 const REPORT_EVENTS = ["started", "progress", "blocked", "decision_requested", "completed"];
 const STALE_DAYS = 5;
+// Board hygiene (owner, 2026-11-03, from the kanban audit).
+const RELEASE_DAYS = 3;     // Now cards with no update for this long go back to Next
+const EXPIRE_DAYS = 90;     // untouched local backlog cards close as expired
+const INBOX_AFTER_DAYS = 1; // unassigned, untouched Next cards fall back to Inbox
+const WIP_CAP = Number(process.env.KANBAN_WIP_CAP || 3);
+const WIP_EXEMPT = /^(keir|system|github-sync)\b/;
+const MONITOR_EVENT_EVERY_MS = 60 * 60_000;
+// Fixed kind vocabulary; synonyms map onto it.
+const KINDS = ["bug", "feature", "ops", "balance", "support", "capability", "audit", "task", "monitor"];
+const KIND_SYNONYMS = { issue: "bug", defect: "bug", enhancement: "feature", operations: "ops", infra: "ops", infrastructure: "ops", economy: "balance", ticket: "support", research: "audit", investigation: "audit", chore: "task", docs: "task" };
+function normalizeKind(kind) {
+  const k = String(kind || "").trim().toLowerCase();
+  if (!k) return "task";
+  if (KINDS.includes(k)) return k;
+  return KIND_SYNONYMS[k] || "task";
+}
+// One name per agent: "claude-opus-5-5", "Claude", "opus" all become "claude".
+// A session suffix after ":" or "#" is kept so parallel sessions stay apart.
+function normalizeActor(actor) {
+  const raw = String(actor || "").trim();
+  if (!raw) return "";
+  if (/@/.test(raw)) return raw.slice(0, 120);
+  const [base, ...rest] = raw.split(/[:#]/);
+  const b = base.toLowerCase();
+  if (/^platform-agents|token|^agent$/.test(b)) return "";
+  const name = /^(claude|opus|sonnet|haiku|fable)/.test(b) ? "claude" : /^(codex|gpt)/.test(b) ? "codex" : /^keir/.test(b) ? "keir"
+    : /^muse/.test(b) ? "muse" : /^(deepseek|ds-|opencode)/.test(b) ? "deepseek" : b.replace(/[^a-z0-9._-]+/g, "-").slice(0, 40);
+  const session = rest.join(":").replace(/[^\w.-]+/g, "").slice(0, 40);
+  return session ? `${name}:${session}` : name;
+}
+// Owner decisions are asked in chat, never filed as cards.
+function isDecisionTitle(title) {
+  return /^(decision|owner decision|ask (the )?owner)\b/i.test(title) || /\b(or hold|approve|should (we|i)|merge or)\b[^?]*\?\s*$/i.test(title);
+}
+function looksLikeJson(text) {
+  const t = String(text || "").trim();
+  return /^[{[]/.test(t) || /^\w[\w ]{0,30}:\s*\{/.test(t) || /"\w+":/.test(t.slice(0, 80));
+}
+const STOP = new Set(["a", "an", "the", "for", "to", "of", "and", "in", "on", "with", "without", "is", "be"]);
+function titleTokens(title) {
+  return new Set(String(title || "").toLowerCase().replace(/[^a-z0-9#]+/g, " ").split(" ").filter((w) => w && !STOP.has(w)));
+}
+function titleRefs(title) {
+  return (String(title || "").match(/(?:ticket\s*|#)(\d{2,6})/gi) || []).map((m) => m.replace(/\D/g, ""));
+}
+function similar(a, b) {
+  const A = titleTokens(a), B = titleTokens(b);
+  if (!A.size || !B.size) return 0;
+  let inter = 0;
+  for (const w of A) if (B.has(w)) inter += 1;
+  return inter / (A.size + B.size - inter);
+}
 const DAY_MS = 86_400_000;
 
 const SCHEMA = `
@@ -48,7 +101,7 @@ CREATE TABLE IF NOT EXISTS kanban_items (
   product          TEXT NOT NULL REFERENCES kanban_products(slug),
   title            TEXT NOT NULL,
   detail           TEXT NOT NULL DEFAULT '',
-  lane             TEXT NOT NULL DEFAULT 'backlog' CHECK (lane IN ('now','next','blocked','backlog','done')),
+  lane             TEXT NOT NULL DEFAULT 'backlog' CHECK (lane IN ('now','next','blocked','inbox','backlog','done')),
   impact           TEXT NOT NULL DEFAULT 'medium' CHECK (impact IN ('high','medium','low')),
   kind             TEXT NOT NULL DEFAULT 'task',
   needs_owner      INTEGER NOT NULL DEFAULT 0,
@@ -179,6 +232,17 @@ function laneForLabels(labels) {
   return "backlog";
 }
 
+function kindForLabels(labels) {
+  const names = labels.map((label) => String(label).toLowerCase());
+  if (names.includes("enhancement") || names.includes("feature")) return "feature";
+  if (names.includes("balance")) return "balance";
+  return "bug";
+}
+function issueExcerpt(body) {
+  const t = String(body || "").replace(/<!--[\s\S]*?-->/g, "").replace(/\r/g, "").trim();
+  return t.length > 500 ? `${t.slice(0, 497)}...` : t;
+}
+
 function impactForLabels(labels) {
   const names = labels.map((label) => String(label).toLowerCase());
   if (names.some((name) => /critical|urgent|p0|p1|high priority/.test(name))) return "high";
@@ -195,12 +259,35 @@ async function ghJson(args, run = execFileAsync) {
 }
 
 async function fetchOpenIssues(repo, run) {
-  return ghJson(["issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,title,url,labels,updatedAt"], run);
+  return ghJson(["issue", "list", "--repo", repo, "--state", "open", "--limit", "1000", "--json", "number,title,url,labels,updatedAt,body"], run);
 }
 
 async function fetchIssueState(repo, number, run) {
   const issue = await ghJson(["api", `repos/${repo}/issues/${number}`], run);
   return { state: String(issue.state || "").toLowerCase(), title: issue.title, url: issue.html_url, labels: (issue.labels || []).map((l) => l.name) };
+}
+
+// Older databases were created before the inbox lane existed. SQLite cannot
+// alter a CHECK constraint, so rebuild the table once (the documented
+// create-copy-drop-rename sequence, foreign keys off for the swap).
+function migrateLanes(db) {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'kanban_items'").get();
+  if (!row || row.sql.includes("'inbox'")) return false;
+  const create = /CREATE TABLE IF NOT EXISTS kanban_items \(([\s\S]*?)\n\);/.exec(SCHEMA)[0]
+    .replace("CREATE TABLE IF NOT EXISTS kanban_items (", "CREATE TABLE kanban_items_new (");
+  db.pragma("foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      db.exec(create);
+      db.exec("INSERT INTO kanban_items_new SELECT * FROM kanban_items");
+      db.exec("DROP TABLE kanban_items");
+      db.exec("ALTER TABLE kanban_items_new RENAME TO kanban_items");
+    })();
+  } finally {
+    db.pragma("foreign_keys = ON");
+  }
+  db.exec(SCHEMA);
+  return true;
 }
 
 function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
@@ -211,6 +298,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   db.pragma("foreign_keys = ON");
   db.pragma("busy_timeout = 5000");
   db.exec(SCHEMA);
+  migrateLanes(db);
 
   const iso = () => now().toISOString();
 
@@ -299,7 +387,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
 
   const STALE_SQL = `(stale_flagged_at IS NOT NULL OR (lane = 'now' AND julianday(?) - julianday(updated_at) >= ${STALE_DAYS}))`;
 
-  function list({ product, lane, lanes, stale, needs_owner, include_done = false, q, source, limit = 200 } = {}) {
+  function list({ product, lane, lanes, stale, needs_owner, include_done = false, q, source, assigned_to, kind, include_monitors = true, limit = 200 } = {}) {
     const where = [];
     const params = [];
     if (product) { where.push("product = ?"); params.push(resolveProduct(product)); }
@@ -316,13 +404,17 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     if (needs_owner === true) where.push("needs_owner = 1");
     if (needs_owner === false) where.push("needs_owner = 0");
     if (source) { where.push("source = ?"); params.push(source); }
+    if (assigned_to) { where.push("(assigned_to = ? OR assigned_to LIKE ?)"); const a = normalizeActor(assigned_to) || assigned_to; params.push(a, `${a}:%`); }
+    if (kind) { where.push("kind = ?"); params.push(normalizeKind(kind)); }
+    if (!include_monitors) where.push("kind != 'monitor'");
     if (q) { where.push("(title LIKE ? OR detail LIKE ? OR progress_summary LIKE ?)"); const like = `%${q}%`; params.push(like, like, like); }
     const max = Math.min(Math.max(Number(limit) || 200, 1), 1000);
     const rows = db.prepare(`SELECT * FROM kanban_items ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY CASE lane WHEN 'now' THEN 0 WHEN 'blocked' THEN 1 WHEN 'next' THEN 2 WHEN 'backlog' THEN 3 ELSE 4 END,
+      ORDER BY CASE lane WHEN 'now' THEN 0 WHEN 'blocked' THEN 1 WHEN 'next' THEN 2 WHEN 'inbox' THEN 3 WHEN 'backlog' THEN 4 ELSE 5 END,
         CASE impact WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, updated_at DESC LIMIT ?`).all(...params, max + 1);
     const at = now().getTime();
-    return { items: rows.slice(0, max).map((row) => present(row, { at })), truncated: rows.length > max };
+    const truncated = rows.length > max;
+    return { items: rows.slice(0, max).map((row) => present(row, { at })), truncated, ...(truncated ? { hint: "More items match. Narrow with product, lane, assigned_to or q, or raise limit." } : {}) };
   }
 
   function get(id, { events = 25 } = {}) {
@@ -333,10 +425,45 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return item;
   }
 
+  // Open Now cards (not monitors) held by one actor.
+  function heldBy(actor, exceptId = 0) {
+    if (!actor) return [];
+    return db.prepare("SELECT id, title FROM kanban_items WHERE lane = 'now' AND kind != 'monitor' AND assigned_to = ? AND id != ?").all(actor, exceptId);
+  }
+  function checkWip(actor, { force, exceptId = 0 } = {}) {
+    if (force || !actor || WIP_EXEMPT.test(actor) || /@/.test(actor)) return;
+    const held = heldBy(actor, exceptId);
+    if (held.length >= WIP_CAP) {
+      throw badInput(`${actor} already holds ${held.length} cards in progress (cap ${WIP_CAP}): ${held.map((h) => `#${h.id} ${h.title.slice(0, 60)}`).join("; ")}. Finish one (work_report completed), release one (kanban_update lane next, assigned_to ""), or pass force: true. Parallel sessions should send actor as name:session.`);
+    }
+  }
+  // Open cards in the same product that look like the same work.
+  function findDuplicates(product, title) {
+    const refs = titleRefs(title);
+    return db.prepare("SELECT id, title, lane FROM kanban_items WHERE product = ? AND lane != 'done'").all(product)
+      .map((row) => {
+        const score = similar(title, row.title);
+        const sameRef = refs.length && titleRefs(row.title).some((r) => refs.includes(r));
+        return { ...row, score: sameRef ? Math.max(score, 0.9) : score, sameRef };
+      })
+      .filter((row) => row.score >= 0.85 || (row.sameRef && row.score >= 0.5))
+      .sort((a, b) => b.score - a.score).slice(0, 3);
+  }
+
   function add(input = {}, { actor = "agent" } = {}) {
+    actor = normalizeActor(actor) || "unnamed";
     const product = resolveProduct(input.product);
     const title = clean(input.title, 300);
     if (!title) throw badInput("title is required");
+    if (isDecisionTitle(title)) throw badInput("this reads as a question for the owner. Ask the owner in chat, then file the work (or record the answer on the existing card).");
+    if (!input.force) {
+      const dupes = findDuplicates(product, title);
+      if (dupes.length) {
+        const existing = get(dupes[0].id, { events: 5 });
+        return { ...existing, duplicate: true, duplicate_of: dupes[0].id,
+          note: `An open card already covers this: #${dupes[0].id} "${dupes[0].title}" (${dupes[0].lane}). Returned it instead of adding a copy. Report on it with work_report, or pass force: true to add anyway.` };
+      }
+    }
     let lane = input.lane || "backlog";
     if (!OPEN_LANES.includes(lane)) throw badInput(`lane must be one of ${OPEN_LANES.join(", ")}`);
     const impact = input.impact || "medium";
@@ -347,27 +474,31 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       if (existing) throw badInput(`${github.repo}#${github.number} is already item ${existing.id}; update that item instead`);
     }
     const start = input.start === true;
-    if (start) lane = "now";
+    if (start) { lane = "now"; checkWip(actor, { force: input.force }); }
     const stamp = iso();
-    const assigned = clean(input.assigned_to, 120) || (start ? actor : null);
+    const assigned = normalizeActor(clean(input.assigned_to, 120)) || clean(input.assigned_to, 120) || (start ? actor : null);
+    let laneNote = "";
+    // Next means committed: someone owns it. Unowned filings wait in the inbox.
+    if (lane === "next" && !assigned) { lane = "inbox"; laneNote = " (Next needs an owner, so this waits in the inbox)"; }
     const id = db.transaction(() => {
       const info = db.prepare(`INSERT INTO kanban_items (product, title, detail, lane, impact, kind, needs_owner, assigned_to, evidence_url,
           github_repo, github_number, github_url, github_state, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(product, title, clean(input.detail, 20000) || "", lane, impact, clean(input.kind, 40) || "task", input.needs_owner ? 1 : 0,
+        .run(product, title, clean(input.detail, 20000) || "", lane, impact, normalizeKind(input.kind), input.needs_owner ? 1 : 0,
           assigned, checkUrl(input.evidence_url, "evidence_url"), github?.repo || null, github?.number || null, github?.url || null,
           github ? "open" : null, stamp, stamp);
       const newId = Number(info.lastInsertRowid);
-      logEvent({ item_id: newId, product, event_type: "created", actor, summary: `Added to ${lane}`, created_at: stamp });
+      logEvent({ item_id: newId, product, event_type: "created", actor, summary: `Added to ${lane}${laneNote}`, created_at: stamp });
       if (start) logEvent({ item_id: newId, product, event_type: "started", actor, summary: clean(input.summary, 4000) || "Started", created_at: stamp });
       return newId;
     })();
     return get(id, { events: 5 });
   }
 
-  const UPDATABLE = ["title", "detail", "lane", "impact", "kind", "needs_owner", "assigned_to", "evidence_url", "github", "product", "progress_summary", "stale"];
+  const UPDATABLE = ["title", "detail", "lane", "impact", "kind", "needs_owner", "assigned_to", "evidence_url", "github", "product", "progress_summary", "stale", "force"];
 
   function update(id, patch = {}, { actor = "agent" } = {}) {
+    actor = normalizeActor(actor) || "unnamed";
     const realId = resolveId(id);
     const row = rowById(realId);
     const changes = {};
@@ -375,7 +506,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       if (patch[key] === undefined) continue;
       if (!UPDATABLE.includes(key)) throw badInput(`cannot update "${key}"; allowed: ${UPDATABLE.join(", ")}`);
     }
-    if (patch.title !== undefined) { const t = clean(patch.title, 300); if (!t) throw badInput("title cannot be empty"); changes.title = t; }
+    if (patch.title !== undefined) { const t = clean(patch.title, 300); if (!t) throw badInput("title cannot be empty"); if (isDecisionTitle(t)) throw badInput("ask the owner in chat instead of putting the question in a card title"); changes.title = t; }
     if (patch.detail !== undefined) changes.detail = clean(patch.detail, 20000) || "";
     if (patch.lane !== undefined) {
       if (!LANES.includes(patch.lane)) throw badInput(`lane must be one of ${LANES.join(", ")}`);
@@ -383,9 +514,10 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       changes.closed_at = patch.lane === "done" ? (row.closed_at || iso()) : null;
     }
     if (patch.impact !== undefined) { if (!IMPACTS.includes(patch.impact)) throw badInput(`impact must be one of ${IMPACTS.join(", ")}`); changes.impact = patch.impact; }
-    if (patch.kind !== undefined) changes.kind = clean(patch.kind, 40) || "task";
+    if (patch.kind !== undefined) changes.kind = normalizeKind(patch.kind);
     if (patch.needs_owner !== undefined) changes.needs_owner = patch.needs_owner ? 1 : 0;
-    if (patch.assigned_to !== undefined) changes.assigned_to = clean(patch.assigned_to, 120);
+    if (patch.assigned_to !== undefined) changes.assigned_to = normalizeActor(clean(patch.assigned_to, 120)) || clean(patch.assigned_to, 120);
+    if (changes.lane === "now" && row.lane !== "now" && row.kind !== "monitor") checkWip(changes.assigned_to || row.assigned_to, { force: patch.force, exceptId: realId });
     if (patch.evidence_url !== undefined) changes.evidence_url = checkUrl(patch.evidence_url, "evidence_url");
     if (patch.progress_summary !== undefined) { changes.progress_summary = clean(patch.progress_summary, 4000) || ""; changes.last_progress_at = iso(); }
     if (patch.product !== undefined) changes.product = resolveProduct(patch.product);
@@ -416,18 +548,38 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return get(realId, { events: 5 });
   }
 
-  function report({ id, event, summary, evidence_url = null, actor = "agent", idempotency_key = null }) {
+  function report({ id, event, summary, evidence_url = null, actor = "agent", idempotency_key = null, no_evidence_reason = null, force = false }) {
     if (!REPORT_EVENTS.includes(event)) throw badInput(`event must be one of ${REPORT_EVENTS.join(", ")}`);
-    const text = clean(summary, 4000);
+    actor = normalizeActor(actor) || "unnamed";
+    let text = clean(summary, 4000);
     if (!text) throw badInput("summary is required");
     const realId = resolveId(id);
+    const current = rowById(realId);
+    // Monitors are always-on processes: a heartbeat updates the card's status
+    // and leaves at most one history event an hour.
+    if (current.kind === "monitor" && event === "progress") {
+      const stamp = iso();
+      db.prepare("UPDATE kanban_items SET progress_summary = ?, last_progress_at = ?, updated_at = ?, stale_flagged_at = NULL WHERE id = ?").run(text, stamp, stamp, realId);
+      const last = db.prepare("SELECT created_at FROM kanban_events WHERE item_id = ? AND event_type = 'heartbeat' ORDER BY created_at DESC, id DESC LIMIT 1").get(realId);
+      if (!last || Date.parse(stamp) - Date.parse(last.created_at) >= MONITOR_EVENT_EVERY_MS) {
+        logEvent({ item_id: realId, product: current.product, event_type: "heartbeat", actor, summary: looksLikeJson(text) ? "Status updated" : text.slice(0, 400), created_at: stamp });
+      }
+      return { duplicate: false, monitor: true, item: get(realId, { events: 3 }) };
+    }
+    if (looksLikeJson(text)) throw badInput("summary is read by people: write a plain sentence about what changed, not a JSON status dump");
+    if (event === "started") checkWip(actor, { force, exceptId: realId });
+    if (event === "completed" && !clean(evidence_url, 2000) && !WIP_EXEMPT.test(actor)) {
+      const reason = clean(no_evidence_reason, 300);
+      if (!reason) throw badInput("completed needs evidence_url (PR, deploy, report) or no_evidence_reason saying why there is none");
+      text = `${text} (No evidence link: ${reason})`.slice(0, 4000);
+    }
     const key = clean(idempotency_key, 200);
     if (key) {
       const seen = db.prepare("SELECT item_id FROM kanban_events WHERE idempotency_key = ?").get(key);
       if (seen) return { duplicate: true, item: get(seen.item_id, { events: 5 }) };
     }
     const evidence = checkUrl(evidence_url, "evidence_url");
-    const row = rowById(realId);
+    const row = current;
     const stamp = iso();
     const set = { updated_at: stamp, stale_flagged_at: null, progress_summary: text, last_progress_at: stamp };
     if (evidence) set.evidence_url = evidence;
@@ -443,32 +595,85 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return { duplicate: false, item: get(realId, { events: 5 }) };
   }
 
-  function brief({ product, limit = 10 } = {}) {
+  // What an agent (or person) needs at the start of work, short: your own
+  // cards, what was released for going quiet, what is blocked, what is in
+  // progress, what is next, and what shipped. Monitors are one line each.
+  function brief({ product, limit = 10, actor = null } = {}) {
     const slug = product ? resolveProduct(product) : null;
-    const pick = (opts) => list({ ...opts, product: slug || undefined, limit }).items;
-    const count = (where, ...params) => db.prepare(`SELECT COUNT(*) AS n FROM kanban_items WHERE ${where} ${slug ? "AND product = ?" : ""}`).get(...params, ...(slug ? [slug] : [])).n;
+    const me = normalizeActor(actor);
+    const pick = (opts) => list({ ...opts, product: slug || undefined, include_monitors: false, limit }).items.map(line);
+    const line = (it) => ({ id: it.id, title: it.title, product: it.product, lane: it.lane, owner: it.assigned_to, impact: it.impact,
+      age_days: it.age_days, stale: it.stale, progress: looksLikeJson(it.progress_summary) ? "" : String(it.progress_summary || "").slice(0, 160), github: it.github ? `${it.github.repo}#${it.github.number}` : null });
+    const count = (where, ...params) => db.prepare(`SELECT COUNT(*) AS n FROM kanban_items WHERE ${where} AND kind != 'monitor' ${slug ? "AND product = ?" : ""}`).get(...params, ...(slug ? [slug] : [])).n;
+    const since3 = new Date(now().getTime() - 3 * DAY_MS).toISOString();
     const stamp = iso();
+    const scoped = slug ? "AND e.product = ?" : "";
+    const sp = slug ? [slug] : [];
     return {
       scope: slug || "all products",
       generated_at: stamp,
+      rules: `Add with start:true before you write code. Send actor as your name (claude, codex, keir, muse, deepseek), with :session if several run at once. Cap: ${WIP_CAP} cards in progress per actor. Cards quiet ${RELEASE_DAYS} days go back to Next automatically. completed needs evidence_url or no_evidence_reason. Ask the owner in chat, never in a card.`,
       counts: {
-        now: count("lane = 'now' AND needs_owner = 0"),
-        next: count("lane = 'next' AND needs_owner = 0"),
-        blocked: count("lane = 'blocked' AND needs_owner = 0"),
-        backlog: count("lane = 'backlog' AND needs_owner = 0"),
-        needs_owner: count("lane != 'done' AND needs_owner = 1"),
-        stale: count(`lane != 'done' AND ${STALE_SQL}`, stamp),
+        now: count("lane = 'now'"), next: count("lane = 'next'"), blocked: count("lane = 'blocked'"),
+        inbox: count("lane = 'inbox'"), backlog: count("lane = 'backlog'"), stale: count(`lane != 'done' AND ${STALE_SQL}`, stamp),
+        shipped_3d: count("lane = 'done' AND closed_at >= ?", since3),
       },
-      needs_owner: pick({ needs_owner: true }),
-      now: pick({ lane: "now", needs_owner: false }),
-      blocked: pick({ lane: "blocked", needs_owner: false }),
-      next: pick({ lane: "next", needs_owner: false }),
-      stale: pick({ stale: true }),
+      ...(me ? { mine: list({ assigned_to: me, product: slug || undefined, include_monitors: false, limit }).items.filter((it) => it.lane !== "done").map(line) } : {}),
+      released: db.prepare(`SELECT e.item_id AS id, i.title, e.summary, e.created_at FROM kanban_events e JOIN kanban_items i ON i.id = e.item_id
+        WHERE e.event_type = 'released' AND e.created_at >= ? ${scoped} ORDER BY e.created_at DESC LIMIT ?`).all(since3, ...sp, limit),
+      blocked: pick({ lane: "blocked" }),
+      now: pick({ lane: "now" }),
+      next: pick({ lane: "next" }),
+      shipped: db.prepare(`SELECT id, title, product, evidence_url, closed_at FROM kanban_items WHERE lane = 'done' AND closed_at >= ? ${slug ? "AND product = ?" : ""} ORDER BY closed_at DESC LIMIT ?`).all(since3, ...sp, limit),
+      monitors: db.prepare("SELECT id, title, last_progress_at FROM kanban_items WHERE kind = 'monitor' AND lane != 'done' ORDER BY title").all()
+        .map((m) => ({ id: m.id, title: m.title, last_heartbeat: m.last_progress_at })),
       recent: db.prepare(`SELECT e.item_id, i.title, e.product, e.event_type, e.actor, e.summary, e.evidence_url, e.created_at
         FROM kanban_events e LEFT JOIN kanban_items i ON i.id = e.item_id
-        WHERE e.event_type IN ('started','progress','blocked','decision_requested','completed','created') ${slug ? "AND e.product = ?" : ""}
-        ORDER BY e.created_at DESC, e.id DESC LIMIT ?`).all(...(slug ? [slug] : []), limit),
+        WHERE e.event_type IN ('started','progress','blocked','completed','released') AND (i.kind IS NULL OR i.kind != 'monitor') ${scoped}
+        ORDER BY e.created_at DESC, e.id DESC LIMIT ?`).all(...sp, limit)
+        .map((e) => ({ ...e, summary: looksLikeJson(e.summary) ? "" : String(e.summary || "").slice(0, 200) })),
     };
+  }
+
+  // Daily hygiene, safe to run often: release quiet Now cards, move unowned
+  // untouched Next cards to the inbox, expire long-untouched local backlog,
+  // and fold kind synonyms into the fixed vocabulary.
+  function maintain({ releaseDays = RELEASE_DAYS, expireDays = EXPIRE_DAYS, inboxAfterDays = INBOX_AFTER_DAYS } = {}) {
+    const at = now().getTime();
+    const stamp = iso();
+    const before = (days) => new Date(at - days * DAY_MS).toISOString();
+    const out = { released: 0, inboxed: 0, expired: 0, kinds: 0, monitors: 0 };
+    db.transaction(() => {
+      // Heartbeat-only cards (30+ progress events in 3 days) are monitors, not work.
+      for (const row of db.prepare(`SELECT i.id, i.product FROM kanban_items i JOIN kanban_events e ON e.item_id = i.id
+          WHERE i.lane = 'now' AND i.kind != 'monitor' AND e.event_type = 'progress' AND e.created_at >= ? GROUP BY i.id HAVING COUNT(*) >= 30`).all(before(3))) {
+        db.prepare("UPDATE kanban_items SET kind = 'monitor' WHERE id = ?").run(row.id);
+        logEvent({ item_id: row.id, product: row.product, event_type: "updated", actor: "system", summary: "kind -> monitor (heartbeat card)", created_at: stamp });
+        out.monitors += 1;
+      }
+      for (const row of db.prepare("SELECT * FROM kanban_items WHERE lane = 'now' AND kind != 'monitor' AND updated_at < ?").all(before(releaseDays))) {
+        db.prepare("UPDATE kanban_items SET lane = 'next', assigned_to = NULL, updated_at = ?, stale_flagged_at = NULL WHERE id = ?").run(stamp, row.id);
+        logEvent({ item_id: row.id, product: row.product, event_type: "released", actor: "system",
+          summary: `No update for ${releaseDays}+ days; released from ${row.assigned_to || "nobody"} back to Next.`, created_at: stamp });
+        out.released += 1;
+      }
+      const touched = "SELECT 1 FROM kanban_events e WHERE e.item_id = kanban_items.id AND e.event_type IN ('started','progress','blocked','completed','released')";
+      for (const row of db.prepare(`SELECT id, product FROM kanban_items WHERE lane = 'next' AND (assigned_to IS NULL OR assigned_to = '') AND created_at < ? AND NOT EXISTS (${touched})`).all(before(inboxAfterDays))) {
+        db.prepare("UPDATE kanban_items SET lane = 'inbox' WHERE id = ?").run(row.id);
+        logEvent({ item_id: row.id, product: row.product, event_type: "moved", actor: "system", summary: "lane next -> inbox (no owner, never picked up)", created_at: stamp });
+        out.inboxed += 1;
+      }
+      for (const row of db.prepare("SELECT id, product FROM kanban_items WHERE lane = 'backlog' AND source = 'local' AND updated_at < ?").all(before(expireDays))) {
+        db.prepare("UPDATE kanban_items SET lane = 'done', closed_at = ?, updated_at = ? WHERE id = ?").run(stamp, stamp, row.id);
+        logEvent({ item_id: row.id, product: row.product, event_type: "expired", actor: "system", summary: `Untouched for ${expireDays}+ days; closed. Reopen by moving it to a lane.`, created_at: stamp });
+        out.expired += 1;
+      }
+      for (const row of db.prepare("SELECT id, kind FROM kanban_items WHERE lane != 'done'").all()) {
+        const k = normalizeKind(row.kind);
+        if (k !== row.kind) { db.prepare("UPDATE kanban_items SET kind = ? WHERE id = ?").run(k, row.id); out.kinds += 1; }
+      }
+    })();
+    return out;
   }
 
   function board() {
@@ -497,9 +702,9 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
             const labels = (issue.labels || []).map((label) => label.name);
             const existing = db.prepare("SELECT * FROM kanban_items WHERE github_repo = ? AND github_number = ?").get(source.repo, issue.number);
             if (!existing) {
-              const info = db.prepare(`INSERT INTO kanban_items (product, title, lane, impact, kind, source, github_repo, github_number, github_url, github_state, github_labels, github_synced_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'issue', 'github', ?, ?, ?, 'open', ?, ?, ?, ?)`)
-                .run(source.product, issue.title, laneForLabels(labels), impactForLabels(labels), source.repo, issue.number, issue.url, JSON.stringify(labels), stamp, stamp, stamp);
+              const info = db.prepare(`INSERT INTO kanban_items (product, title, detail, lane, impact, kind, source, github_repo, github_number, github_url, github_state, github_labels, github_synced_at, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'github', ?, ?, ?, 'open', ?, ?, ?, ?)`)
+                .run(source.product, issue.title, issueExcerpt(issue.body), laneForLabels(labels), impactForLabels(labels), kindForLabels(labels), source.repo, issue.number, issue.url, JSON.stringify(labels), stamp, stamp, stamp);
               logEvent({ item_id: Number(info.lastInsertRowid), product: source.product, event_type: "created", actor: "github-sync", summary: `Imported open issue ${source.repo}#${issue.number}`, created_at: stamp });
               result.added += 1;
               continue;
@@ -508,6 +713,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
             const titleChanged = existing.source === "github" && existing.title !== issue.title;
             const set = { github_state: "open", github_labels: JSON.stringify(labels), github_synced_at: stamp, github_url: issue.url };
             if (titleChanged) set.title = issue.title;
+            if (!existing.detail && issue.body) set.detail = issueExcerpt(issue.body);
             if (reopened) { set.lane = existing.lane === "done" ? "backlog" : existing.lane; set.closed_at = null; }
             if (titleChanged || reopened) set.updated_at = stamp;
             const keys = Object.keys(set);
@@ -572,6 +778,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     update,
     report,
     brief,
+    maintain,
     board,
     syncGithub,
     logEvent,
@@ -598,5 +805,11 @@ module.exports = {
   LANES,
   IMPACTS,
   REPORT_EVENTS,
+  KINDS,
+  WIP_CAP,
+  RELEASE_DAYS,
+  normalizeActor,
+  normalizeKind,
+  isDecisionTitle,
   STALE_DAYS,
 };

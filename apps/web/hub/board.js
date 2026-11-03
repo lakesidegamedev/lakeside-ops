@@ -63,11 +63,12 @@ function buildBoard(store) {
   for (const it of items) {
     const b = beats.get(it.id);
     const c = card(it);
-    if (it.lane === "now" && (it.kind === "monitor" || (b && b.n >= 30))) { monitors.push({ ...c, beats: b ? b.n : 0, lastBeat: b ? ms(b.last) : c.lastAt }); continue; }
+    if (it.kind === "monitor" || (it.lane === "now" && b && b.n >= 30)) { monitors.push({ ...c, beats: b ? b.n : 0, lastBeat: Math.max(ms(it.last_progress_at), b ? ms(b.last) : 0) || c.lastAt }); continue; }
     if (it.lane === "now") progress.push(c);
     else if (it.lane === "blocked") blocked.push(c);
     else if (it.lane === "backlog") backlog.push(c);
-    else if (it.lane === "next") (it.assigned_to || touched.has(it.id) ? next : inbox).push(c);
+    else if (it.lane === "inbox") inbox.push(c);
+    else if (it.lane === "next") next.push(c);
   }
   const byQuiet = (a, b) => (a.quietDays ?? 0) - (b.quietDays ?? 0);
   progress.sort(byQuiet);
@@ -167,7 +168,7 @@ function makeBoardBody(board) {
 <section class="col"><div class="col-h"><h2>Done</h2><span class="count" id="cDone"></span><span class="hint">last 7 days</span></div><div class="col-b" id="lDone"></div></section>
 </div>
 <div class="wb-more">
-<details id="dInbox"><summary>Inbox<span class="count" id="cInbox"></span><span class="hint">filed automatically, nobody has picked these up yet</span></summary><div class="wb-list" id="lInbox"></div></details>
+<details id="dInbox"><summary>Inbox<span class="count" id="cInbox"></span><span class="hint">filed but not picked up. Open one to move it to Next (give it an owner) or close it.</span></summary><div class="wb-list" id="lInbox"></div></details>
 <details id="dBacklog"><summary>Backlog<span class="count" id="cBacklog"></span><span class="hint">most recently touched first</span></summary><div class="wb-list" id="lBacklog"></div></details>
 </div>
 </div>
@@ -216,7 +217,7 @@ function api(method,url,body){return fetch(url,{method:method,credentials:'same-
 function reload(){fetch('/api/hub/board',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){B=d;render()})}
 var dlg=$('wbDlg');
 function openCard(id){setHtml(dlg,'<div class="dlg-b"><div class="wb-empty">Loading…</div></div>');dlg.showModal();api('GET','/api/kanban/items/'+id).then(function(it){
-var lanes=['now','next','blocked','backlog','done'],LN={now:'In progress',next:'Next',blocked:'Blocked',backlog:'Backlog',done:'Done'};
+var lanes=['now','next','blocked','inbox','backlog','done'],LN={now:'In progress',next:'Next',blocked:'Blocked',inbox:'Inbox',backlog:'Backlog',done:'Done'};
 var ev=(it.events||[]).filter(function(e){return !(e.event_type==='progress'&&/^[{[]|"\\w+":/.test(String(e.summary||'').slice(0,80)))}).slice(0,25).map(function(e){return'<div class="ev"><time>'+esc(String(e.created_at||'').slice(5,16).replace('T',' '))+'</time><div><b>'+esc(e.event_type)+'</b> <span style="color:var(--text-3)">'+esc(e.actor||'')+'</span>'+(e.summary?'<p>'+esc(String(e.summary).slice(0,600))+'</p>':'')+(e.evidence_url?'<p><a class="link" style="color:var(--accent)" href="'+esc(e.evidence_url)+'" target="_blank" rel="noopener">evidence</a></p>':'')+'</div></div>'}).join('');
 setHtml(dlg,'<div class="dlg-h"><div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--text-3);margin-bottom:4px">'+esc(PN[it.product]||it.product)+' · #'+it.id+' · '+esc(LN[it.lane]||it.lane)+'</div><h3>'+esc(it.title)+'</h3></div><button class="hub-icon-btn" type="button" data-close aria-label="Close">'+'✕'+'</button></div>'+
 '<div class="dlg-b"><div class="dlg-row"><span>Held by</span><div>'+esc(it.assigned_to||'Nobody')+'</div></div><div class="dlg-row"><span>Impact</span><div>'+esc(it.impact)+' · '+esc(it.kind||'')+'</div></div>'+(it.github?'<div class="dlg-row"><span>GitHub</span><div><a style="color:var(--accent)" href="'+esc(it.github.url)+'" target="_blank" rel="noopener">'+esc(it.github.repo)+'#'+it.github.number+'</a></div></div>':'')+(it.evidence_url?'<div class="dlg-row"><span>Evidence</span><div><a style="color:var(--accent)" href="'+esc(it.evidence_url)+'" target="_blank" rel="noopener">link</a></div></div>':'')+
@@ -229,7 +230,7 @@ dlg.querySelector('[data-release]').onclick=function(){api('POST','/api/kanban/i
 dlg.querySelector('[data-note]').onclick=function(){var v=$('dNote').value.trim();if(!v)return;api('POST','/api/kanban/items/'+it.id+'/report',{event:'progress',summary:v}).then(function(){dlg.close();reload()}).catch(err)}}).catch(function(e){dlg.innerHTML='<div class="dlg-b"><div class="wb-err">'+esc(e.message)+'</div></div>'})}
 document.addEventListener('click',function(e){var c=e.target.closest('[data-id]');if(c&&!dlg.contains(c))openCard(c.getAttribute('data-id'))});
 dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close()});
-$('wbAdd').addEventListener('click',function(){setHtml(dlg,'<div class="dlg-h"><h3 style="flex:1">Add a card</h3><button class="hub-icon-btn" type="button" data-close>✕</button></div><div class="dlg-b"><div class="form"><label class="wide">Title<input id="aT" maxlength="300"></label><label>Product<select id="aP">'+B.products.map(function(p){return'<option value="'+esc(p.slug)+'"'+(p.slug===st.product?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select></label><label>Lane<select id="aL"><option value="next">Next</option><option value="now">In progress</option><option value="backlog">Backlog</option><option value="blocked">Blocked</option></select></label><label>Impact<select id="aI"><option>medium</option><option>high</option><option>low</option></select></label><label class="wide">Detail<textarea id="aD"></textarea></label></div><div class="wb-err" id="aE"></div></div><div class="dlg-f"><span class="sp"></span><button class="hub-btn" type="button" id="aGo">Add</button></div>');dlg.showModal();
+$('wbAdd').addEventListener('click',function(){setHtml(dlg,'<div class="dlg-h"><h3 style="flex:1">Add a card</h3><button class="hub-icon-btn" type="button" data-close>✕</button></div><div class="dlg-b"><div class="form"><label class="wide">Title<input id="aT" maxlength="300"></label><label>Product<select id="aP">'+B.products.map(function(p){return'<option value="'+esc(p.slug)+'"'+(p.slug===st.product?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select></label><label>Lane<select id="aL"><option value="inbox">Inbox</option><option value="next">Next</option><option value="now">In progress</option><option value="backlog">Backlog</option><option value="blocked">Blocked</option></select></label><label>Impact<select id="aI"><option>medium</option><option>high</option><option>low</option></select></label><label class="wide">Detail<textarea id="aD"></textarea></label></div><div class="wb-err" id="aE"></div></div><div class="dlg-f"><span class="sp"></span><button class="hub-btn" type="button" id="aGo">Add</button></div>');dlg.showModal();
 dlg.querySelector('[data-close]').onclick=function(){dlg.close()};
 $('aGo').onclick=function(){var t=$('aT').value.trim();if(!t){$('aE').textContent='Give it a title.';return}api('POST','/api/kanban/items',{title:t,product:$('aP').value,lane:$('aL').value,impact:$('aI').value,detail:$('aD').value}).then(function(){dlg.close();reload()}).catch(function(e){$('aE').textContent=e.message})}});
 setInterval(function(){if(!document.hidden&&!dlg.open)reload()},60000);
