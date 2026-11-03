@@ -14,7 +14,7 @@ test("an open, unreadable or channel-backed ticket is left alone", async () => {
   assert.equal(await closeIfTicketClosed(open, async () => ({ status: "in_progress" })), false);
   assert.equal(open.state, "waiting");
   const unreadable = { ticket: 8, channelId: null, state: "waiting" };
-  assert.equal(await closeIfTicketClosed(unreadable, async () => { throw new Error("support down"); }), false);
+  assert.equal(await closeIfTicketClosed(unreadable, async () => { throw new Error("support down"); }), "unreadable");
   assert.equal(unreadable.state, "waiting");
   let read = false;
   const withChannel = { ticket: 9, channelId: "123", state: "waiting" };

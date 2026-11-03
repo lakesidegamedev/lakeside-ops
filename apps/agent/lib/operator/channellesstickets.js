@@ -9,9 +9,12 @@ const CLOSED = new Set(["closed", "resolved", "merged"]);
 async function closeIfTicketClosed(job, readTicket) {
   if (!job?.ticket || job.channelId || ["done", "cancelled"].includes(job.state)) return false;
   let ticket;
-  try { ticket = await readTicket(job.ticket); } catch { return false; }
+  // "unreadable" lets the sweep back off instead of retrying every pass.
+  try { ticket = await readTicket(job.ticket); } catch { return "unreadable"; }
   if (!CLOSED.has(String(ticket?.status || ""))) return false;
-  job.state = "done"; job.channelClosed = true;
+  job.channelClosed = true;
+  if (job.state === "dismissed") return true;
+  job.state = "done";
   job.summary = "Ticket is closed and has no channel; stopped work.";
   return true;
 }

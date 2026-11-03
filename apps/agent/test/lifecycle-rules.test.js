@@ -23,26 +23,28 @@ const WAKE = [
   ["staff claim does not defer an owner-role job", { state: "waiting", role: "owner", inbox: [human], wakeAt: NOW + MIN }, { claim: true }, { state: "queued", effects: [] }],
   ["staff claim does not defer a command", { state: "waiting", kind: "command", inbox: [human], wakeAt: NOW + MIN }, { claim: true }, { state: "queued", effects: [] }],
   ["staff claim does not touch a done ticket", { state: "done" }, { claim: true }, { state: "done", effects: [] }],
-  // ODDITY: dismissed is not excluded from the claim rule, so it comes back as deferred.
-  ["ODDITY a dismissed ticket under a claim becomes deferred", { state: "dismissed" }, { claim: true }, { state: "deferred", effects: [] }],
+  // Terminal and paused jobs are never relabelled by the claim rule.
+  ["staff claim does not relabel a dismissed ticket", { state: "dismissed" }, { claim: true }, { state: "dismissed", effects: [] }],
+  ["staff claim does not relabel an owner-paused ticket", { state: "paused" }, { claim: true }, { state: "paused", effects: [] }],
+  ["the claim marks the deferral as caused by the claim", { state: "queued" }, { claim: true }, { state: "deferred", deferredBy: "claim", effects: [] }],
   // owner decision
   ["owner decision with no mail blocks", { state: "queued", ownerDecisionPending: true }, {}, { state: "blocked", summary: /outstanding owner decision/, effects: [] }],
   ["owner decision, mail only from system sources, blocks", { state: "waiting", ownerDecisionPending: true, inbox: [{ authorId: "developer-watch" }, { role: "system", authorId: "x" }], wakeAt: 0 }, {}, { state: "blocked", effects: [] }],
   ["owner decision, player mail, wakes the conversation", { state: "waiting", ownerDecisionPending: true, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "queued", effects: ["audit:requeued_for_conversation"] }],
   ["owner decision, player mail, closed channel, stays blocked", { state: "waiting", ownerDecisionPending: true, channelClosed: true, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "blocked", effects: [] }],
   ["owner decision on a done ticket is left alone", { state: "done", ownerDecisionPending: true }, {}, { state: "done", effects: [] }],
-  // ODDITY: operator.js humanInbox does not exclude turn-watch mail; the unread watchdog does.
-  ["ODDITY turn-watch mail counts as a human message for an owner decision", { state: "blocked", ownerDecisionPending: true, inbox: [{ authorId: "turn-watch" }] }, {}, { state: "queued", effects: ["audit:requeued_for_conversation"] }],
+  // One definition of a human message: turn-watch mail is automatic, as in the unread watchdog.
+  ["turn-watch mail does not wake a ticket held on an owner decision", { state: "blocked", ownerDecisionPending: true, inbox: [{ authorId: "turn-watch" }] }, {}, { state: "blocked", effects: [] }],
   // resolution stall
   ["resolution recorded 21 min ago, channel still open: blocked and owner told", { state: "queued", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 21 * MIN }, {}, { state: "blocked", summary: /after 20 minutes/, effects: ["notify:close-stalled:j1"] }],
   ["resolution recorded exactly 20 min ago still waits", { state: "queued", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 20 * MIN }, {}, { state: "waiting", effects: [] }],
   ["resolution recorded 5 min ago waits, mail does not wake it", { state: "queued", inbox: [human], resolutionSubmitted: true, resolutionSubmittedAt: NOW - 5 * MIN }, {}, { state: "waiting", effects: [] }],
   ["a blocked job with a resolution is not re-stalled", { state: "blocked", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 99 * MIN }, {}, { state: "blocked", effects: [] }],
   ["a resolved job skips the stall rule", { state: "waiting", wakeAt: 0, resolutionSubmitted: true, resolved: true, resolutionSubmittedAt: NOW - 99 * MIN }, {}, { state: "queued", effects: [] }],
-  // ODDITY: the stall rule excludes only done, cancelled and blocked, so it also rewrites dismissed, paused and running jobs.
-  ["ODDITY a dismissed job with an unclosed resolution is turned back into waiting", { state: "dismissed", resolutionSubmitted: true, resolutionSubmittedAt: NOW - MIN }, {}, { state: "waiting", effects: [] }],
-  ["ODDITY an owner-paused job with an unclosed resolution is turned into waiting (admission still holds it)", { state: "paused", resolutionSubmitted: true, resolutionSubmittedAt: NOW - MIN }, {}, { state: "waiting", effects: [] }],
-  ["ODDITY mail wakes a job the owner paused from waiting; only admission keeps it from running", { state: "waiting", ticketPaused: { ticket: 5 }, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "queued", effects: [] }],
+  // The stall rule leaves terminal and paused jobs alone (a running job is still rewritten, left on purpose).
+  ["a dismissed job with an unclosed resolution stays dismissed", { state: "dismissed", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 99 * MIN }, {}, { state: "dismissed", effects: [] }],
+  ["an owner-paused job with an unclosed resolution stays paused", { state: "paused", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 99 * MIN }, {}, { state: "paused", effects: [] }],
+  ["LEFT ON PURPOSE mail wakes a job the owner paused from waiting; only admission keeps it from running", { state: "waiting", ticketPaused: { ticket: 5 }, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "queued", effects: [] }],
   ["staff claim outranks a resolution stall", { state: "queued", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 99 * MIN }, { claim: true }, { state: "deferred", effects: [] }],
   // dead ends
   ["a probe blocked 61 min is dismissed", { state: "blocked", kind: "probe", ticket: null, updatedAt: NOW - 61 * MIN, summary: "stuck" }, {}, { state: "dismissed", summary: /^Dismissed automatically: a probe or benchmark left blocked\. Was: stuck/, effects: ["audit:job_dismissed"] }],
@@ -56,15 +58,23 @@ const WAKE = [
   ["waiting before wakeAt, no mail, stays", { state: "waiting", wakeAt: NOW + MIN }, {}, { state: "waiting", effects: [] }],
   ["waiting with mail wakes before wakeAt", { state: "waiting", wakeAt: NOW + MIN, inbox: [human] }, {}, { state: "queued", effects: [] }],
   ["waiting with mail but debounceWake set stays", { state: "waiting", wakeAt: NOW + MIN, inbox: [human], debounceWake: true }, {}, { state: "waiting", keepDebounce: true, effects: [] }],
-  ["waiting with no wakeAt at all never wakes on time (NaN compare)", { state: "waiting" }, {}, { state: "waiting", effects: [] }],
+  ["waiting with no wakeAt gets a bounded default wake", { state: "waiting" }, {}, { state: "waiting", wakeAt: NOW + 4 * 60 * MIN, effects: [] }],
+  ["a waiting job with the default wake due then queues", { state: "waiting", wakeAt: NOW + 4 * 60 * MIN }, {}, { state: "waiting", effects: [] }],
+  ["waiting with no wakeAt but mail wakes at once", { state: "waiting", inbox: [human] }, {}, { state: "queued", effects: [] }],
+  ["waiting while the support record is unreadable does not wake on the timer", { state: "waiting", wakeAt: NOW - 1, closeReadFailures: 2, closeCheckAt: NOW + MIN }, {}, { state: "waiting", effects: [] }],
+  ["waiting wakes on the timer once the backoff has passed", { state: "waiting", wakeAt: NOW - 1, closeReadFailures: 2, closeCheckAt: NOW }, {}, { state: "queued", effects: [] }],
+  ["mail still wakes a job whose support record is unreadable", { state: "waiting", wakeAt: NOW + 9 * MIN, inbox: [human], closeReadFailures: 2, closeCheckAt: NOW + MIN }, {}, { state: "queued", effects: [] }],
   ["blocked with mail queues", { state: "blocked", inbox: [human, human] }, {}, { state: "queued", effects: ["audit:requeued_for_inbox"], auditDetail: { messages: 2, ticket: 5 } }],
   ["blocked with mail on a closed channel stays", { state: "blocked", channelClosed: true, inbox: [human] }, {}, { state: "blocked", effects: [] }],
   ["blocked subworker with mail stays", { state: "blocked", codingParent: "p", updatedAt: NOW, inbox: [human] }, {}, { state: "blocked", effects: [] }],
   ["blocked probe with mail stays", { state: "blocked", internalProbe: true, updatedAt: NOW, inbox: [human] }, {}, { state: "blocked", effects: [] }],
   ["blocked with nothing to read stays", { state: "blocked" }, {}, { state: "blocked", effects: [] }],
   ["a paused job is not woken by mail", { state: "paused", inbox: [human] }, {}, { state: "paused", effects: [] }],
-  // ODDITY: deferred has no way out in this module; gateway.js and supportowner.js lift it.
-  ["ODDITY a deferred job with the claim gone and mail stays deferred here", { state: "deferred", inbox: [human] }, {}, { state: "deferred", effects: [] }],
+  // Releasing a claim lifts the deferral the claim caused; other deferrals keep their own exit.
+  ["a job deferred by a claim that is gone is queued and the lift is recorded", { state: "deferred", deferredBy: "claim", inbox: [human] }, {}, { state: "queued", effects: ["audit:claim_release_lifted"] }],
+  ["a job deferred by a claim that is still held stays deferred", { state: "deferred", deferredBy: "claim" }, { claim: true }, { state: "deferred", effects: [] }],
+  ["a job deferred for another reason (coordinator takeover) is not lifted", { state: "deferred", inbox: [human] }, {}, { state: "deferred", effects: [] }],
+  ["a claim-deferred job whose channel closed is not lifted", { state: "deferred", deferredBy: "claim", channelClosed: true }, {}, { state: "deferred", effects: [] }],
   // deadline
   ["first deadline expiry extends a queued job", { state: "queued", deadline: NOW - 1 }, {}, { state: "queued", deadline: NOW + LIFE, effects: ["audit:deadline_extended"] }],
   ["first deadline expiry also wakes a waiting job", { state: "waiting", wakeAt: NOW + 99 * MIN, deadline: NOW - 1 }, {}, { state: "queued", effects: ["audit:deadline_extended"] }],
@@ -78,6 +88,8 @@ for (const [name, fields, holds, want] of WAKE) {
     const effects = lc.wakeStep(job, ctxFor({ claimedBy: () => holds.claim ? "staff1" : null, directiveHeld: () => !!holds.directive }));
     assert.equal(job.state, want.state);
     if (want.summary) assert.match(job.summary, want.summary);
+    if (want.deferredBy) assert.equal(job.deferredBy, want.deferredBy);
+    if (want.wakeAt) assert.equal(job.wakeAt, want.wakeAt);
     if (want.noDebounce) assert.equal("debounceWake" in job, false);
     if (want.keepDebounce) assert.equal(job.debounceWake, true);
     if (want.deadline) assert.equal(job.deadline, want.deadline);
@@ -163,12 +175,13 @@ const SWEEP = [
   ["a channel Discord reports gone closes the job", { channelId: "gone" }, { gone: true }, { closed: true, state: "done", summary: /closed externally/, channelClosed: true }],
   ["a gone channel with a recorded resolution is a verified close", { channelId: "gone", resolutionSubmitted: true }, { gone: true }, { closed: true, state: "done", summary: /closure verified/, resolved: true }],
   ["a blocked job whose channel is gone is closed too", { channelId: "gone", state: "blocked" }, { gone: true }, { closed: true, state: "done" }],
-  // ODDITY: only done and cancelled are skipped, so a dismissed ticket flips to done.
-  ["ODDITY a dismissed ticket whose channel is gone becomes done", { channelId: "gone", state: "dismissed" }, { gone: true }, { closed: true, state: "done" }],
+  // A dismissed ticket keeps its state but learns its channel is gone (reopen adoption needs that).
+  ["a dismissed ticket whose channel is gone stays dismissed but is marked channel-closed", { channelId: "gone", state: "dismissed" }, { gone: true }, { closed: true, state: "dismissed", channelClosed: true }],
+  ["a dismissed ticket already marked channel-closed is not swept again", { channelId: "gone", state: "dismissed", channelClosed: true }, { gone: true }, { closed: false, state: "dismissed" }],
   ["a channel-less ticket the support record shows closed ends", { channelId: null }, { status: "closed" }, { closed: true, state: "done", channelClosed: true, effects: ["audit:ticket_closed_without_channel"] }],
   ["a channel-less ticket resolved or merged ends too", { channelId: null }, { status: "merged" }, { closed: true, state: "done", effects: ["audit:ticket_closed_without_channel"] }],
   ["a channel-less ticket still open is kept", { channelId: null }, { status: "in_progress" }, { closed: false, state: "waiting" }],
-  ["a channel-less ticket whose record cannot be read is kept", { channelId: null }, { readFails: true }, { closed: false, state: "waiting" }],
+  ["a channel-less ticket whose record cannot be read is kept and logged", { channelId: null }, { readFails: true }, { closed: false, state: "waiting", effects: ["audit:ticket_close_check_failed"] }],
 ];
 for (const [name, fields, h, want] of SWEEP) {
   test(`sweepClosedChannel: ${name}`, async () => {
@@ -265,3 +278,43 @@ for (const [name, args, w] of [
     assert.deepEqual(ledger.data.jobs, {});
   });
 }
+
+// (a) a support outage must not wake a channel-less ticket every cycle
+test("sweepClosedChannel: an unreadable support record backs off, doubling to a cap, and stays quiet until the threshold", async () => {
+  const job = ticket({ state: "waiting", channelId: null, wakeAt: NOW });
+  let reads = 0, now = NOW;
+  const ctx = () => sweepCtx({ now, readTicket: async () => { reads++; throw new Error("support down"); } });
+  const waits = [], alerts = [];
+  for (let i = 0; i < 9; i++) {
+    const out = await lc.sweepClosedChannel(job, ctx());
+    waits.push(job.closeCheckAt - now);
+    alerts.push(...out.effects.filter((e) => e.type === "notify").map((e) => e.key));
+    assert.equal(out.closed, false);
+    assert.ok(job.wakeAt >= job.closeCheckAt, "the timer wake never precedes the next check");
+    now = job.closeCheckAt;
+  }
+  assert.deepEqual(waits.map((w) => w / MIN), [5, 10, 20, 40, 80, 160, 320, 360, 360]);
+  assert.deepEqual(alerts, ["close-check:j1"], "one owner alert, at the fourth failure");
+  assert.equal(reads, 9);
+});
+test("sweepClosedChannel: no read is made before the backoff is due, and none of its cost repeats", async () => {
+  const job = ticket({ state: "waiting", channelId: null, closeReadFailures: 3, closeCheckAt: NOW + 10 * MIN });
+  let reads = 0;
+  const out = await lc.sweepClosedChannel(job, sweepCtx({ now: NOW, readTicket: async () => { reads++; return { status: "closed" }; } }));
+  assert.equal(reads, 0); assert.equal(out.closed, false); assert.deepEqual(out.effects, []);
+});
+test("sweepClosedChannel: a readable record clears the failure count", async () => {
+  const job = ticket({ state: "waiting", channelId: null, closeReadFailures: 3, closeCheckAt: NOW - 1 });
+  const out = await lc.sweepClosedChannel(job, sweepCtx({ now: NOW, readTicket: async () => ({ status: "open" }) }));
+  assert.equal(out.closed, false); assert.equal("closeReadFailures" in job, false); assert.equal("closeCheckAt" in job, false);
+});
+test("a support outage cannot wake a channel-less job every cycle: wake, fail, wake attempts over a day", async () => {
+  const job = ticket({ state: "waiting", channelId: null, wakeAt: NOW });
+  let now = NOW, wakes = 0;
+  for (; now < NOW + 29 * 3600000; now += MIN) {
+    await lc.sweepClosedChannel(job, sweepCtx({ now, readTicket: async () => { throw new Error("support down"); } }));
+    lc.wakeStep(job, ctxFor({ now }));
+    if (job.state === "queued") { wakes++; job.state = "waiting"; job.wakeAt = now + 15 * MIN; }
+  }
+  assert.ok(wakes <= 14, `${wakes} wakes in 29 hours (was 128)`);
+});

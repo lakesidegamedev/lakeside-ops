@@ -578,7 +578,7 @@ async function scan() {
   // task at all (opened while Keir was down, or adopted before a restart) gets
   // a support task so nothing sits unanswered (owner, 2026-10-13).
   for (const ch of channels) await lifecycle.adoptOpenChannel(ch, { ledger, config, now: Date.now(), ticketNumber, adoptReopened: (n, c) => reopenedTickets.adopt(n, c), log });
-  const sweepCtx = { liveChannels, readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(8000)),
+  const sweepCtx = { liveChannels, get now() { return Date.now(); }, readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(8000)),
     channelGone: async (id) => { try { await discord("GET", `/channels/${id}`); return false; } catch (e) { return e.status === 404; } } };
   for (const job of Object.values(ledger.data.jobs)) {
     const { closed, effects } = await lifecycle.sweepClosedChannel(job, sweepCtx);
@@ -652,7 +652,7 @@ function legacyHandoff() {
 function unreadWatchdog(d, now, staffHeld) {
   for (const j of Object.values(d.jobs)) {
     if (j.ticketPaused || j.kind !== "ticket" || ["done", "cancelled", "dismissed", "running"].includes(j.state) || j.channelClosed) continue;
-    const oldest = (j.inbox || []).filter((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup|turn-watch)$/.test(String(m.authorId || ""))).map((m) => Date.parse(m.at || m.timestamp || "")).filter(Number.isFinite).sort((a, b) => a - b)[0];
+    const oldest = (j.inbox || []).filter((m) => m.role !== "system" && !lifecycle.NOT_HUMAN.test(String(m.authorId || ""))).map((m) => Date.parse(m.at || m.timestamp || "")).filter(Number.isFinite).sort((a, b) => a - b)[0];
     if (!oldest || now - oldest < 30 * 60000) continue;
     const why = broker.supportDirectiveHeld(j) ? "an owner directive is held" : d.channels[j.channelId]?.claimedBy ? "staff claimed it" : config.supportDeferred(j) ? "another coordinator owns support" : staffHeld(j) ? "staff are active in it" : j.ownerDecisionPending ? "an owner decision is pending" : `it is ${j.state}`;
     ledger.notify(`unread:${j.id}:${oldest}`, "owner", `Ticket ${j.ticket}: a message has been unread for ${Math.round((now - oldest) / 60000)} minutes because ${why}.`);

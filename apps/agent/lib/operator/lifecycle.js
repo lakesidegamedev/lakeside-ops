@@ -48,7 +48,17 @@
 
 const TERMINAL = ["done", "cancelled", "dismissed"];
 
-const humanInbox = (j) => (j.inbox || []).some((m) => m.role !== "system" && !/^(developer-watch|system|engineering-followup)$/.test(String(m.authorId || "")));
+// The one definition of "a human message", shared with the unread watchdog in
+// operator.js: automatic sources (including turn-watch mail) do not count.
+const NOT_HUMAN = /^(developer-watch|system|engineering-followup|turn-watch)$/;
+const humanInbox = (j) => (j.inbox || []).some((m) => m.role !== "system" && !NOT_HUMAN.test(String(m.authorId || "")));
+
+// A waiting job with no wake time would sleep until mail, a deadline or the hourly
+// wait review moved it. Give it a bounded default instead.
+const DEFAULT_WAKE_MS = 4 * 3600000;
+// A support-record read that keeps failing backs the next check and the timer wake
+// off (5 min, doubling, capped at 6 h); the owner hears about it once, at this count.
+const CLOSE_CHECK_BASE_MS = 5 * 60000, CLOSE_CHECK_MAX_MS = 6 * 3600000, CLOSE_CHECK_ALERT_AT = 4;
 
 const audit = (kind, detail) => ({ type: "audit", kind, detail });
 const notify = (key, destination, content) => ({ type: "notify", key, destination, content });
@@ -65,14 +75,17 @@ function applyEffects(ledger, effects) {
 // claimedBy(channelId), directiveHeld(job) }. Returns the effects to record.
 function wakeStep(j, ctx) {
   const { now } = ctx, effects = [];
-  if (j.role !== "owner" && !["command", "conversation"].includes(j.kind) && j.ticket && !["done", "cancelled"].includes(j.state)) {
-    if (ctx.claimedBy(j.channelId)) { j.state = "deferred"; j.summary = "Staff owns this ticket; automatic work is deferred."; return effects; }
+  if (j.role !== "owner" && !["command", "conversation"].includes(j.kind) && j.ticket && !["done", "cancelled", "dismissed", "paused"].includes(j.state)) {
+    if (ctx.claimedBy(j.channelId)) { j.state = "deferred"; j.deferredBy = "claim"; j.summary = "Staff owns this ticket; automatic work is deferred."; return effects; }
+    // Staff released the claim: lift the deferral the claim caused. A deferral for
+    // another reason (a coordinator took over the ticket) stays until its own exit.
+    if (j.state === "deferred" && j.deferredBy === "claim" && !j.channelClosed) { j.state = "queued"; j.wakeAt = 0; delete j.deferredBy; effects.push(audit("claim_release_lifted", { job: j.id, ticket: j.ticket })); }
     // A player or staff message still reaches the conversation wake below:
     // a ticket held on an owner decision must still answer its player.
     if (j.ownerDecisionPending && !(j.kind === "ticket" && !j.channelClosed && humanInbox(j))) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; return effects; }
     if (j.ownerDecisionPending) j.state = "blocked";
   }
-  if (j.resolutionSubmitted && !j.resolved && !["done", "cancelled", "blocked"].includes(j.state)) {
+  if (j.resolutionSubmitted && !j.resolved && !["done", "cancelled", "dismissed", "paused", "blocked"].includes(j.state)) {
     if (now - j.resolutionSubmittedAt > 20 * 60000) {
       j.state = "blocked"; j.summary = "Resolution is recorded, but the bot has not closed the ticket channel after 20 minutes. Inspect receipt delivery.";
       effects.push(notify(`close-stalled:${j.id}`, "owner", `Ticket ${j.ticket}: ${j.summary}`));
@@ -88,7 +101,11 @@ function wakeStep(j, ctx) {
     return effects;
   }
   if (ctx.directiveHeld(j)) return effects;
-  if (j.state === "waiting" && (j.wakeAt <= now || (j.inbox?.length && !j.debounceWake))) { j.state = "queued"; delete j.debounceWake; }
+  if (j.state === "waiting" && !Number.isFinite(j.wakeAt)) j.wakeAt = now + DEFAULT_WAKE_MS;
+  // While the support record cannot be read, the timer wake backs off with the check;
+  // a message still wakes the job.
+  const backedOff = j.closeReadFailures > 0 && now < (j.closeCheckAt || 0);
+  if (j.state === "waiting" && ((j.wakeAt <= now && !backedOff) || (j.inbox?.length && !j.debounceWake))) { j.state = "queued"; delete j.debounceWake; }
   // A message that arrived while the task was running (a handoff, a staff
   // note) is still unread when that run settles as blocked; it must wake the
   // task rather than wait for a human.
@@ -137,17 +154,37 @@ function onRunError(job, e, ctx) {
 async function sweepClosedChannel(job, ctx) {
   const none = { closed: false, effects: [] };
   if (!(job.ticket && !ctx.liveChannels.has(job.channelId) && !["done", "cancelled"].includes(job.state))) return none;
+  // A dismissed job keeps its state; it still learns its channel is gone so a
+  // reopened ticket can be adopted (reopened.js reads channelClosed).
+  if (job.state === "dismissed" && job.channelClosed) return none;
   // A ticket adopted from a handoff after its channel was already gone has no
   // channel id, so the Discord check can never return 404. Ask the support record.
   if (!job.channelId) {
-    if (!(await require("./channellesstickets").closeIfTicketClosed(job, ctx.readTicket))) return none;
+    const now = ctx.now ?? Date.now();
+    // Backing off after failed reads: do not ask again (or hold the scan for the
+    // read timeout) until the check is due.
+    if (job.closeReadFailures > 0 && now < (job.closeCheckAt || 0)) return none;
+    const outcome = await require("./channellesstickets").closeIfTicketClosed(job, ctx.readTicket);
+    if (outcome === "unreadable") {
+      const n = job.closeReadFailures = (job.closeReadFailures || 0) + 1;
+      const wait = Math.min(CLOSE_CHECK_BASE_MS * 2 ** (n - 1), CLOSE_CHECK_MAX_MS);
+      job.closeCheckAt = now + wait;
+      if (job.state === "waiting" && !(job.wakeAt > job.closeCheckAt)) job.wakeAt = job.closeCheckAt;
+      const effects = [audit("ticket_close_check_failed", { job: job.id, ticket: job.ticket, failures: n, retryInMs: wait })];
+      if (n === CLOSE_CHECK_ALERT_AT) effects.push(notify(`close-check:${job.id}`, "owner", `Ticket ${job.ticket} has no channel and its support record cannot be read (${n} tries). Its wake-ups are backing off to at most every ${CLOSE_CHECK_MAX_MS / 3600000} hours; check the support service.`));
+      return { closed: false, effects };
+    }
+    delete job.closeReadFailures; delete job.closeCheckAt;
+    if (!outcome) return none;
     return { closed: true, effects: [audit("ticket_closed_without_channel", { job: job.id, ticket: job.ticket })] };
   }
   // The guild list is read once at the start of the scan; a channel created
   // since is missing from it without being closed. Only Discord saying the
   // channel is gone closes it.
   if (!(await ctx.channelGone(job.channelId))) return none;
-  job.state = "done"; job.channelClosed = true; job.summary = "Ticket channel was closed externally; stopped work.";
+  job.channelClosed = true;
+  if (job.state === "dismissed") return { closed: true, effects: [] };
+  job.state = "done"; job.summary = "Ticket channel was closed externally; stopped work.";
   if (job.resolutionSubmitted) {
     job.resolved = true; job.summary = "Resolution receipt recorded and ticket-channel closure verified.";
     // Verified closure is routine; no owner DM.
@@ -195,4 +232,4 @@ function adoptFromIntake(ledger, ch, rows, { staff, category, number, config, no
   return job;
 }
 
-module.exports = { TERMINAL, humanInbox, applyEffects, wakeStep, onRunError, sweepClosedChannel, adoptOpenChannel, adoptFromIntake };
+module.exports = { TERMINAL, NOT_HUMAN, humanInbox, applyEffects, wakeStep, onRunError, sweepClosedChannel, adoptOpenChannel, adoptFromIntake };
