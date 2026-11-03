@@ -810,7 +810,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     const fresh = after.filter((i) => live(i) && !told.has(i.name));
     if (!fresh.length) return false;
     card.liveNotified = [...told, ...fresh.map((i) => i.name)].slice(-20); ledger.save();
-    const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !/^\[status card\]/.test(p.text) && /\blive\b/i.test(p.text));
+    const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !/^\[status card\]/.test(p.text) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
     const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
@@ -1190,7 +1190,15 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       job.state = job.kind === "command" ? "dismissed" : "deferred"; delete job.wakeAt; delete job.waitingFor;
       job.history = [...(job.history || []), { at: new Date(now()).toISOString(), kind: "finish", state: job.state,
         summary: `Standing down for ticket owner ${takeover.owner}; prior findings preserved.` }].slice(-20);
-      ledger.audit("takeover_activation_ended", { job: job.id, ...takeover }); ledger.save();
+      ledger.audit("takeover_activation_ended", { job: job.id, ...takeover });
+      // A staff or developer request on a held ticket used to end in silence (three of a
+      // junior developer's requests on ticket 1757, 2026-11-02). Tell them who holds it
+      // and how to hand it back; the channel reply itself stays suppressed.
+      if (job.kind === "command" && job.actorId && job.role !== "player" && !job.takeoverNoticeSent) {
+        job.takeoverNoticeSent = true;
+        ledger.notify(`takeover-notice:${job.id}`, job.actorId, `Ticket ${takeover.ticket} is being handled by ${takeover.owner}, so I'm standing back and didn't act on your request there. To give it back to me, say "Keir, take this ticket back" in the ticket channel.`);
+      }
+      ledger.save();
       return { state: job.state, takeover };
     }
     active(job);
@@ -1818,6 +1826,26 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ledger.save();
       return rows.map((m) => ({ id: m.id, author: m.author.username, authorId: m.author.id, bot: Boolean(m.author.bot), content: m.content, embeds: m.embeds, attachments: m.attachments, at: m.timestamp }));
     }
+    // 2026-11-03: the owner asked Keir for "a full forensic audit of the taxes ... as a public
+    // report link on lakeside ops" and Keir had no way to publish one.
+    if (name === "publish_report") {
+      if (!(ownerDirected(job) || developerTask(job))) throw new Error("publish_report is for tasks the owner or a developer gave you");
+      const slug = String(input.slug || "").trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9-]{1,79}$/.test(slug)) throw new Error("slug: lowercase letters, digits and hyphens, 2 to 80 characters");
+      const title = String(input.title || "").trim(), html = String(input.html || "");
+      if (title.length < 3) throw new Error("publish_report needs a title");
+      if (html.length < 200) throw new Error("publish_report needs the report HTML (body fragment or full document), with the working shown");
+      if (html.length > 2_000_000) throw new Error("report is too large; keep it under 2 MB");
+      const wantsPublic = input.public === true;
+      if (wantsPublic && !ownerDirected(job)) throw new Error("only the owner's own tasks publish public reports; publish it admin-only and tell the developer");
+      const bad = require("./issues").leak(`${title}\n${html}`, []);
+      if (bad) throw new Error(`Not published: the report contains "${bad}" (an internal host, path, account id, email or credential). Remove it and publish again.`);
+      const args = { slug, title, html, summary: String(input.summary || "").slice(0, 600), public: wantsPublic, author: "keir", category: "Keir reports", icon: "📊" };
+      const r = await effect(job, `publish-report:${slug}:${hash(html)}:${wantsPublic}`, () => mcp.call("ops-knowledge", "publish_report", args, true));
+      ledger.audit("report_published", { job: job.id, slug, public: wantsPublic, chars: html.length });
+      const url = r?.url || r?.liveUrl || `https://ops.lakesidegames.net/reports/${slug}`;
+      return { published: true, slug, public: wantsPublic, url, instruction: "Give the requester the URL in one line with the headline finding." };
+    }
     if (name === "sentry") {
       if (!developerTask(job) && !developerTicket(job) && job.kind !== "finding") throw new Error("Sentry reads are for developer-directed tasks and Keir's own findings");
       const token = process.env.SENTRY_API_TOKEN, base = (process.env.SENTRY_API_URL || "https://sentry.io").replace(/\/$/, ""), org = process.env.SENTRY_ORG;
@@ -2189,9 +2217,23 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
           return { file: f.filename, status: f.status, additions: f.additions, deletions: f.deletions, ...(f.previous_filename ? { renamedFrom: f.previous_filename } : {}),
             patch: patch.slice(0, keep), ...(keep < patch.length ? { truncated: true } : {}), ...(!patch && f.status !== "removed" ? { note: "binary or too large for an inline diff; read it with code_read on the head branch" } : {}) };
         });
+        // A cut-off diff hid code from the review (2026-11-02: a junior developer's fix sat past
+        // the 8,000-character cut, so Keir flagged a problem already solved). Attach the whole
+        // file at the PR head for every truncated, non-removed file, within a shared budget.
+        let fileBudget = 120000;
+        for (const c of changed) {
+          if (!c.truncated || c.status === "removed" || fileBudget <= 0) continue;
+          try {
+            const f = await api([`repos/${repo}/contents/${encodeURIComponent(c.file).replace(/%2F/g, "/")}?ref=${pr.head?.sha}`]);
+            const text = f?.encoding === "base64" ? Buffer.from(String(f.content || ""), "base64").toString("utf8") : "";
+            if (!text) continue;
+            const keep = Math.min(text.length, 40000, fileBudget); fileBudget -= keep;
+            c.headFile = text.slice(0, keep); if (keep < text.length) c.headFileTruncated = true;
+          } catch {}
+        }
         return { number, title: pr.title, author: pr.user?.login, state: pr.merged_at ? "merged" : pr.state, draft: Boolean(pr.draft), base: pr.base?.ref, head: pr.head?.ref, headSha: pr.head?.sha,
           body: String(pr.body || "").slice(0, 5000), filesComplete: Array.isArray(files), changed,
-          instruction: "Review the diff for bugs, regressions, missing tests and anything that touches money, economy, elections or turn processing. Give specific, file-referenced feedback in chat, and when the owner or a developer asked for a review, also post it on the PR with github review_comment. This review is advice: it never approves, merges, promotes or signs off the PR; shipping still needs the owner or the delegate." };
+          instruction: "Where a diff is truncated, headFile holds the whole file at the PR head: read it before flagging anything as missing. Review the diff for bugs, regressions, missing tests and anything that touches money, economy, elections or turn processing. Give specific, file-referenced feedback in chat, and when the owner or a developer asked for a review, also post it on the PR with github review_comment. This review is advice: it never approves, merges, promotes or signs off the PR; shipping still needs the owner or the delegate." };
       }
       if (input.action === "history") {
         // Who shipped what (2026-10-13: Keir told the owner to run git blame).

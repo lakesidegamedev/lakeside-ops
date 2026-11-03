@@ -118,6 +118,22 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       stopTicket(channel, nTicket, actor, message.id);
       d.seen[key] = "ticket-stop"; ledger.save(); return;
     }
+    // 2026-11-03: a ticket taken over by another operator could only be handed back
+    // from the host CLI. Ticket 1757 sat behind a session that had stopped, with the
+    // player unanswered for hours. Staff can now hand it back in the channel.
+    if (!historical && !summonTask && nTicket && role !== "player" && controlAddress &&
+        /^(?:please\s+)?(?:take (?:this|the) ticket back|take (?:it|this) back|you (?:own|have) this ticket(?: again)?|resume (?:this ticket|work here|this one))(?:[\s,]+(?:please|now|thanks|thank you|keir))*[.!]*$/i.test(controlText)) {
+      const key = `discord:${message.id}`;
+      if (d.seen[key]) return;
+      (d.supportOwner ||= { owner: "keir", since: now(), tickets: {} }).tickets ||= {};
+      d.supportOwner.tickets[nTicket] = "keir";
+      require("./supporttakeover").record(ledger, nTicket, "keir", actor, { correction: "Handed back in the ticket channel." }, now());
+      if (d.channels[channel.id]?.keirStopped) delete d.channels[channel.id].keirStopped;
+      const job = Object.values(d.jobs).filter((j) => Number(j.ticket) === nTicket && j.kind === "ticket" && !j.channelClosed).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0];
+      if (job && ["deferred", "waiting", "dismissed", "cancelled", "queued"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
+      ledger.audit("ticket_handed_back", { ticket: nTicket, by: actor, message: message.id, job: job?.id || null });
+      d.seen[key] = "ticket-handback"; ledger.save(); return;
+    }
     // Keir 4.0 sign-off: Egg or Ariane saying to ship, in a ticket channel or
     // naming a ticket, is the check-off for that ticket's next live promotion.
     if (!historical && authority.granter(config, actor) && SHIP_WORDS.test(s.content) && authority.isDirection(s.content)) {
