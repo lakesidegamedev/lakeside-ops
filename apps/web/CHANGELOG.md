@@ -1,5 +1,10 @@
 # Ops web changelog
 
+## 4.4.0 (2026-11-03)
+
+- **Grouping.** Cards carry an `area` (a fixed list per product, e.g. economy, politics, turns, apps for A House Divided), a `class` (project, issue or idea) and an optional `parent_id` that puts a card inside a project. `kanban_add`, `kanban_update` and `kanban_list` accept all three; `kanban_get` lists a project's child cards.
+- **Work board.** Filter by class and area. Next, Blocked and Done group by area. Child cards fold into their open project, which shows its step count and a progress bar; the card dialog lists the steps.
+
 ## 4.3.0 (2026-11-03)
 
 The work board's rules, from the kanban audit. These apply to agents (MCP tools) and people (the board) alike.

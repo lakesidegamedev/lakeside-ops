@@ -10,6 +10,7 @@
 // dialog, not on every card.
 
 const { icon } = require("../ui-kit");
+const { AREAS } = require("../kanban-store");
 
 const DAY = 864e5;
 const QUIET_DAYS = 5;
@@ -46,6 +47,9 @@ function buildBoard(store) {
   const touched = new Set(db.prepare(`SELECT DISTINCT item_id FROM kanban_events WHERE event_type IN ('started','progress','blocked','completed')`).all().map((r) => r.item_id));
   const beats = new Map(db.prepare(`SELECT item_id, COUNT(*) AS n, MAX(created_at) AS last FROM kanban_events WHERE event_type = 'progress' AND created_at >= ? GROUP BY item_id`)
     .all(new Date(now - 3 * DAY).toISOString()).map((r) => [r.item_id, r]));
+  // Child cards fold into their open project; the project shows the count.
+  const kids = new Map(db.prepare("SELECT parent_id, SUM(CASE WHEN lane = 'done' THEN 1 ELSE 0 END) AS done, SUM(CASE WHEN lane != 'done' THEN 1 ELSE 0 END) AS open FROM kanban_items WHERE parent_id IS NOT NULL GROUP BY parent_id").all().map((r) => [r.parent_id, r]));
+  const openIds = new Set(items.map((it) => it.id));
   const shippedByDay = Array.from({ length: 7 }, (_, i) => ({ day: new Date(now - (6 - i) * DAY).toISOString().slice(0, 10), n: 0 }));
   for (const d of done) { const k = String(d.closed_at || "").slice(0, 10); const b = shippedByDay.find((x) => x.day === k); if (b) b.n++; }
 
@@ -57,10 +61,13 @@ function buildBoard(store) {
       quietDays: lastAt ? Math.floor((now - lastAt) / DAY) : null, lastAt, closedAt: ms(it.closed_at),
       github: it.github ? { n: it.github.number, url: it.github.url, repo: it.github.repo } : null,
       evidence: it.evidence_url || null, by: ownerName(created.get(it.id)), source: it.source,
+      area: it.area || "", cls: it.class || "", parent: it.parent_id || null,
+      kids: kids.has(it.id) ? { open: kids.get(it.id).open, done: kids.get(it.id).done } : null,
     };
   };
   const monitors = [], progress = [], next = [], inbox = [], blocked = [], backlog = [];
   for (const it of items) {
+    if (it.parent_id && openIds.has(it.parent_id)) continue; // shown inside its project
     const b = beats.get(it.id);
     const c = card(it);
     if (it.kind === "monitor" || (it.lane === "now" && b && b.n >= 30)) { monitors.push({ ...c, beats: b ? b.n : 0, lastBeat: Math.max(ms(it.last_progress_at), b ? ms(b.last) : 0) || c.lastAt }); continue; }
@@ -80,6 +87,7 @@ function buildBoard(store) {
   return {
     at: now, quietDays: QUIET_DAYS,
     products: store.products().filter((p) => !p.archived).map((p) => ({ slug: p.slug, name: p.name })),
+    areas: AREAS,
     monitors, progress, next, inbox, blocked, backlog,
     done: done.map(card).sort((a, b) => b.closedAt - a.closedAt),
     shippedByDay, counts: { shipped: done.length, progress: progress.length, stuck: stuck.length + blocked.length, next: next.length, inbox: inbox.length, backlog: backlog.length },
@@ -91,7 +99,15 @@ const BOARD_CSS = `
 .wb{max-width:1640px;margin:0 auto;padding:20px 24px 64px}
 .wb-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .wb-tools select,.wb-tools input{height:28px;padding:0 9px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--text);font-size:12px}
-.wb-tools input{width:220px}
+.wb-tools input{width:200px}
+.wb-cls{display:flex;padding:2px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface)}
+.wb-cls button{height:24px;padding:0 9px;border:0;border-radius:5px;background:none;color:var(--text-2);font-size:12px;cursor:pointer}
+.wb-cls button.on{background:var(--surface-3);color:var(--text)}
+.area-h{font-size:10.5px;font-weight:560;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);padding:8px 4px 2px}
+.kc .cls{font-size:10px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.kc .kids{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-2)}
+.kc .kids .kb{flex:1;height:4px;border-radius:999px;background:rgb(var(--ink)/.06);overflow:hidden}
+.kc .kids .kb i{display:block;height:100%;background:var(--accent)}
 .wb-mon{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 12px;font-size:11.5px;color:var(--text-3)}
 .wb-mon .m{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);color:var(--text-2);cursor:pointer}
 .wb-mon .m:hover{border-color:var(--border-2);color:var(--text)}
@@ -157,7 +173,7 @@ dialog.wb-dlg::backdrop{background:rgba(0,0,0,.55)}
 function makeBoardBody(board) {
   const body = `<div class="wb">
 <div class="page-h"><div><h1>Work board</h1><div class="sub" id="wbSub"></div></div>
-<div class="actions wb-tools"><select id="wbProduct" aria-label="Product"><option value="">All products</option></select><input id="wbQ" type="search" placeholder="Filter cards" autocomplete="off"><button class="hub-btn" type="button" id="wbAdd">${icon("plus", { size: 13 })}Add card</button></div></div>
+<div class="actions wb-tools"><div class="wb-cls" id="wbCls"><button class="on" data-c="">All</button><button data-c="project">Projects</button><button data-c="issue">Issues</button><button data-c="idea">Ideas</button></div><select id="wbProduct" aria-label="Product"><option value="">All products</option></select><select id="wbArea" aria-label="Area"><option value="">All areas</option></select><input id="wbQ" type="search" placeholder="Filter cards" autocomplete="off"><button class="hub-btn" type="button" id="wbAdd">${icon("plus", { size: 13 })}Add card</button></div></div>
 <div class="wb-mon" id="wbMon"></div>
 <div class="statbar" id="wbStats"></div>
 <div id="wbAttnWrap"></div>
@@ -183,15 +199,20 @@ function setHtml(el,h){el.innerHTML=h}
 var B=JSON.parse(document.getElementById('wbData').textContent);var $=function(id){return document.getElementById(id)};
 var PC={'a-house-divided':'#f85149','corporate-warfare':'#d29922','margin-of-victory':'#58a6ff','metroforge':'#3fb950','grand-century':'#a371f7','verdigris':'#2dd4bf','foreshore':'#f472b6','lakeside-mcp':'#4cc2d4'};
 var PN={};B.products.forEach(function(p){PN[p.slug]=p.name});
-var st={product:'',q:''};try{st.product=localStorage.getItem('wb-product')||''}catch(e){}
+var st={product:'',q:'',cls:'',area:''};var CC={project:'#a371f7',issue:'#f85149',idea:'#d29922'};
+function areaName(c){var t=B.areas[c.product]||{};return t[c.area]||''}try{st.product=localStorage.getItem('wb-product')||''}catch(e){}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function rel(t){if(!t)return'';var s=Math.round((Date.now()-t)/1000);if(s<60)return'just now';if(s<3600)return Math.round(s/60)+'m ago';if(s<86400)return Math.round(s/3600)+'h ago';return Math.round(s/86400)+'d ago'}
 function ini(n){var p=String(n||'?').split(/[\\s._-]+/).filter(Boolean);return((p[0]||'?')[0]+(p[1]?p[1][0]:'')).toUpperCase()}
-function ok(c){if(st.product&&c.product!==st.product)return false;if(st.q){var h=(c.title+' '+c.progress+' '+c.owner+' '+(PN[c.product]||'')).toLowerCase();var w=st.q.toLowerCase().split(/\\s+/);for(var i=0;i<w.length;i++)if(h.indexOf(w[i])<0)return false}return true}
-function card(c,extra){var q=c.lane==='now'&&c.quietDays>=B.quietDays;return'<button class="kc'+(extra?' '+extra:'')+'" type="button" data-id="'+c.id+'" style="--pc:'+(PC[c.product]||'#8b949e')+'"><b>'+esc(c.title)+'</b>'+(c.progress?'<p>'+esc(c.progress)+'</p>':'')+'<div class="meta"><span class="pn">'+esc(PN[c.product]||c.product)+'</span>'+(c.impact==='high'?'<span class="pill" style="--c:#f85149;height:18px">high</span>':'')+(c.github?'<span>#'+c.github.n+'</span>':'')+(c.evidence&&c.lane==='done'?'<span>evidence</span>':'')+'<span class="sp"></span>'+(q?'<span class="quiet">quiet '+c.quietDays+'d</span>':'<span>'+rel(c.lane==='done'?c.closedAt:c.lastAt)+'</span>')+'</div></button>'}
-function row(c){return'<div class="r" data-id="'+c.id+'" style="--pc:'+(PC[c.product]||'#8b949e')+'"><i></i><b>'+esc(c.title)+'</b><span class="h">'+esc(PN[c.product]||c.product)+'</span><span class="h">'+(c.by?'filed by '+esc(c.by):'')+'</span><span>'+rel(c.lastAt)+'</span></div>'}
-function list(arr,id,empty){var a=arr.filter(ok);setHtml($(id),a.length?a.map(function(c){return card(c)}).join(''):'<div class="wb-empty">'+empty+'</div>');return a.length}
+function ok(c){if(st.product&&c.product!==st.product)return false;if(st.cls&&c.cls!==st.cls)return false;if(st.area&&c.area!==st.area)return false;if(st.q){var h=(c.title+' '+c.progress+' '+c.owner+' '+(PN[c.product]||'')).toLowerCase();var w=st.q.toLowerCase().split(/\\s+/);for(var i=0;i<w.length;i++)if(h.indexOf(w[i])<0)return false}return true}
+function card(c,extra){var q=c.lane==='now'&&c.quietDays>=B.quietDays;var kd=c.kids?'<div class="kids"><span>'+esc(c.kids.done)+'/'+esc(c.kids.done+c.kids.open)+' steps</span><span class="kb"><i style="width:'+esc(Math.round(100*c.kids.done/Math.max(1,c.kids.done+c.kids.open)))+'%"></i></span></div>':'';
+return'<button class="kc'+(extra?' '+extra:'')+'" type="button" data-id="'+c.id+'" style="--pc:'+(PC[c.product]||'#8b949e')+'"><b>'+esc(c.title)+'</b>'+(c.progress?'<p>'+esc(c.progress)+'</p>':'')+kd+'<div class="meta">'+(c.cls?'<span class="cls" style="color:'+CC[c.cls]+'">'+esc(c.cls)+'</span>':'')+'<span class="pn">'+esc(areaName(c)||PN[c.product]||c.product)+'</span>'+(c.impact==='high'?'<span class="pill" style="--c:#f85149;height:18px">high</span>':'')+(c.github?'<span>#'+c.github.n+'</span>':'')+(c.evidence&&c.lane==='done'?'<span>evidence</span>':'')+'<span class="sp"></span>'+(q?'<span class="quiet">quiet '+c.quietDays+'d</span>':'<span>'+rel(c.lane==='done'?c.closedAt:c.lastAt)+'</span>')+'</div></button>'}
+function row(c){return'<div class="r" data-id="'+c.id+'" style="--pc:'+(PC[c.product]||'#8b949e')+'"><i></i><b>'+esc(c.title)+'</b><span class="h">'+(c.cls?'<span style="color:'+CC[c.cls]+'">'+esc(c.cls)+'</span> · ':'')+esc(areaName(c)||PN[c.product]||c.product)+'</span><span class="h">'+(c.by?'filed by '+esc(c.by):'')+'</span><span>'+rel(c.lastAt)+'</span></div>'}
+function byArea(a){var g={},order=[];a.forEach(function(c){var k=areaName(c)||PN[c.product]||'Other';if(!g[k]){g[k]=[];order.push(k)}g[k].push(c)});order.sort(function(x,y){return g[y].length-g[x].length});return order.map(function(k){return'<div class="area-h">'+esc(k)+' · '+esc(g[k].length)+'</div>'+g[k].map(function(c){return card(c)}).join('')}).join('')}
+function list(arr,id,empty){var a=arr.filter(ok);setHtml($(id),a.length?byArea(a):'<div class="wb-empty">'+empty+'</div>');return a.length}
 function render(){
+var as=$('wbArea'),seen={},opts='<option value="">All areas</option>';Object.keys(B.areas).forEach(function(p){if(st.product&&p!==st.product)return;var t=B.areas[p];Object.keys(t).forEach(function(k){if(seen[k])return;seen[k]=1;opts+='<option value="'+esc(k)+'">'+esc(t[k])+'</option>'})});setHtml(as,opts);as.value=st.area;
+document.querySelectorAll('#wbCls button').forEach(function(b){b.classList.toggle('on',(b.getAttribute('data-c')||'')===st.cls)});
 var sel=$('wbProduct');if(sel.options.length<2)sel.innerHTML+=B.products.map(function(p){return'<option value="'+esc(p.slug)+'">'+esc(p.name)+'</option>'}).join('');sel.value=st.product;
 $('wbSub').textContent='What shipped, what is stuck and who is on what.'+(B.sync?' GitHub synced '+rel(Date.parse(B.sync))+'.':'');
 setHtml($('wbMon'),B.monitors.length?'<span>Always-on agents</span>'+B.monitors.map(function(m){var fresh=Date.now()-m.lastBeat<3*3600e3;return'<span class="m" data-id="'+m.id+'"><span class="dot" style="--c:'+(fresh?'#3fb950':'#d29922')+'"></span>'+esc(m.title.replace(/:.*$/,''))+' · '+rel(m.lastBeat)+'</span>'}).join(''):'');
@@ -211,7 +232,9 @@ $('cNext').textContent=list(B.next,'lNext','Nothing queued.');$('cBlocked').text
 var ib=B.inbox.filter(ok),bl=B.backlog.filter(ok);$('cInbox').textContent=ib.length;$('cBacklog').textContent=bl.length;
 $('lInbox').innerHTML=ib.slice(0,300).map(row).join('')||'<div class="wb-empty">Inbox is empty.</div>';$('lBacklog').innerHTML=bl.slice(0,300).map(row).join('')||'<div class="wb-empty">Backlog is empty.</div>'}
 render();
-$('wbProduct').addEventListener('change',function(){st.product=this.value;try{localStorage.setItem('wb-product',st.product)}catch(e){}render()});
+$('wbCls').addEventListener('click',function(e){var b=e.target.closest('button');if(b){st.cls=b.getAttribute('data-c')||'';render()}});
+$('wbArea').addEventListener('change',function(){st.area=this.value;render()});
+$('wbProduct').addEventListener('change',function(){st.product=this.value;st.area='';try{localStorage.setItem('wb-product',st.product)}catch(e){}render()});
 var t;$('wbQ').addEventListener('input',function(){var v=this.value;clearTimeout(t);t=setTimeout(function(){st.q=v.trim();render()},90)});
 function api(method,url,body){return fetch(url,{method:method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-Requested-With':'ops-dashboard'},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d})})}
 function reload(){fetch('/api/hub/board',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){B=d;render()})}
@@ -221,14 +244,14 @@ var lanes=['now','next','blocked','inbox','backlog','done'],LN={now:'In progress
 var ev=(it.events||[]).filter(function(e){return !(e.event_type==='progress'&&/^[{[]|"\\w+":/.test(String(e.summary||'').slice(0,80)))}).slice(0,25).map(function(e){return'<div class="ev"><time>'+esc(String(e.created_at||'').slice(5,16).replace('T',' '))+'</time><div><b>'+esc(e.event_type)+'</b> <span style="color:var(--text-3)">'+esc(e.actor||'')+'</span>'+(e.summary?'<p>'+esc(String(e.summary).slice(0,600))+'</p>':'')+(e.evidence_url?'<p><a class="link" style="color:var(--accent)" href="'+esc(e.evidence_url)+'" target="_blank" rel="noopener">evidence</a></p>':'')+'</div></div>'}).join('');
 setHtml(dlg,'<div class="dlg-h"><div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--text-3);margin-bottom:4px">'+esc(PN[it.product]||it.product)+' · #'+it.id+' · '+esc(LN[it.lane]||it.lane)+'</div><h3>'+esc(it.title)+'</h3></div><button class="hub-icon-btn" type="button" data-close aria-label="Close">'+'✕'+'</button></div>'+
 '<div class="dlg-b"><div class="dlg-row"><span>Held by</span><div>'+esc(it.assigned_to||'Nobody')+'</div></div><div class="dlg-row"><span>Impact</span><div>'+esc(it.impact)+' · '+esc(it.kind||'')+'</div></div>'+(it.github?'<div class="dlg-row"><span>GitHub</span><div><a style="color:var(--accent)" href="'+esc(it.github.url)+'" target="_blank" rel="noopener">'+esc(it.github.repo)+'#'+it.github.number+'</a></div></div>':'')+(it.evidence_url?'<div class="dlg-row"><span>Evidence</span><div><a style="color:var(--accent)" href="'+esc(it.evidence_url)+'" target="_blank" rel="noopener">link</a></div></div>':'')+
-(it.detail?'<div class="detail">'+esc(it.detail)+'</div>':'')+'<div class="form"><label class="wide">Add a note<textarea id="dNote" placeholder="What changed? Visible to agents and people."></textarea></label></div><div>'+(ev||'<div class="wb-empty">No history.</div>')+'</div><div class="wb-err" id="dErr"></div></div>'+
+(it.children&&it.children.length?'<div><div class="area-h" style="padding-left:0">Steps in this project</div>'+it.children.map(function(k){return'<div class="ev" style="grid-template-columns:80px minmax(0,1fr)"><time>'+esc(k.lane)+'</time><div><a href="#" data-open="'+esc(k.id)+'" style="color:var(--text)">#'+esc(k.id)+' '+esc(k.title)+'</a></div></div>'}).join('')+'</div>':'')+(it.detail?'<div class="detail">'+esc(it.detail)+'</div>':'')+'<div class="form"><label class="wide">Add a note<textarea id="dNote" placeholder="What changed? Visible to agents and people."></textarea></label></div><div>'+(ev||'<div class="wb-empty">No history.</div>')+'</div><div class="wb-err" id="dErr"></div></div>'+
 '<div class="dlg-f"><span style="font-size:11px;color:var(--text-3)">Move to</span>'+lanes.filter(function(l){return l!==it.lane}).map(function(l){return'<button class="hub-btn ghost" type="button" data-lane="'+l+'">'+LN[l]+'</button>'}).join('')+'<span class="sp"></span><button class="hub-btn ghost" type="button" data-release>Release</button><button class="hub-btn" type="button" data-note>Save note</button></div>');
 dlg.querySelector('[data-close]').onclick=function(){dlg.close()};
 function err(e){$('dErr').textContent=e.message}
 dlg.querySelectorAll('[data-lane]').forEach(function(b){b.onclick=function(){api('POST','/api/kanban/items/'+it.id,{lane:b.getAttribute('data-lane')}).then(function(){dlg.close();reload()}).catch(err)}});
 dlg.querySelector('[data-release]').onclick=function(){api('POST','/api/kanban/items/'+it.id,{lane:'next',assigned_to:''}).then(function(){dlg.close();reload()}).catch(err)};
 dlg.querySelector('[data-note]').onclick=function(){var v=$('dNote').value.trim();if(!v)return;api('POST','/api/kanban/items/'+it.id+'/report',{event:'progress',summary:v}).then(function(){dlg.close();reload()}).catch(err)}}).catch(function(e){dlg.innerHTML='<div class="dlg-b"><div class="wb-err">'+esc(e.message)+'</div></div>'})}
-document.addEventListener('click',function(e){var c=e.target.closest('[data-id]');if(c&&!dlg.contains(c))openCard(c.getAttribute('data-id'))});
+document.addEventListener('click',function(e){var o=e.target.closest('[data-open]');if(o){e.preventDefault();openCard(o.getAttribute('data-open'));return}var c=e.target.closest('[data-id]');if(c&&!dlg.contains(c))openCard(c.getAttribute('data-id'))});
 dlg.addEventListener('click',function(e){if(e.target===dlg)dlg.close()});
 $('wbAdd').addEventListener('click',function(){setHtml(dlg,'<div class="dlg-h"><h3 style="flex:1">Add a card</h3><button class="hub-icon-btn" type="button" data-close>✕</button></div><div class="dlg-b"><div class="form"><label class="wide">Title<input id="aT" maxlength="300"></label><label>Product<select id="aP">'+B.products.map(function(p){return'<option value="'+esc(p.slug)+'"'+(p.slug===st.product?' selected':'')+'>'+esc(p.name)+'</option>'}).join('')+'</select></label><label>Lane<select id="aL"><option value="inbox">Inbox</option><option value="next">Next</option><option value="now">In progress</option><option value="backlog">Backlog</option><option value="blocked">Blocked</option></select></label><label>Impact<select id="aI"><option>medium</option><option>high</option><option>low</option></select></label><label class="wide">Detail<textarea id="aD"></textarea></label></div><div class="wb-err" id="aE"></div></div><div class="dlg-f"><span class="sp"></span><button class="hub-btn" type="button" id="aGo">Add</button></div>');dlg.showModal();
 dlg.querySelector('[data-close]').onclick=function(){dlg.close()};
