@@ -38,8 +38,9 @@ test("restart deduplicates active incidents and retries durable outbox", async t
 });
 test("operator outage does not prevent game observation and recovery follows original", async t => {
   const f = fixture(t); f.outage = true; f.lock = { isProcessing: true, paused: false, verdict: "stuck" };
-  let r = await f.run(); assert.equal(r.state.outbox.length, 2);
+  let r = await f.run(); assert.equal(r.state.outbox.length, 1);
   assert.equal(f.calls.filter(x => x.body?.method === "tools/call").length, 3);
+  f.now += 60000; r = await f.run(); assert.equal(r.state.outbox.length, 2);
   assert.ok(r.state.incidents["game:stalled"].active);
   f.outage = false; f.lock = { isProcessing: false, paused: false, verdict: "idle" }; f.now += 60000;
   r = await f.run(); assert.equal(r.state.outbox.length, 0); assert.equal(f.sent.length, 4);
@@ -59,7 +60,9 @@ test("holds, future wakes, terminal history and pending writes never become gene
 test("failed game read is isolated; successful reads still detect failures", async t => {
   const f = fixture(t); f.failSensor = "game_overview";
   f.anomalies = [{ turn: 20, kind: "turn-failed" }];
-  const r = await f.run(); assert.equal(r.healthy, false);
+  let r = await f.run(); assert.equal(r.healthy, false);
+  assert.deepEqual(f.sent.map(x => x.kind), ["game_turn_failed"]);
+  f.now += 60000; r = await f.run();
   assert.deepEqual(f.sent.map(x => x.kind).sort(), ["game_turn_failed", "sensor_stale"]);
   assert.equal(r.state.sensors.lock.succeededAt, f.now);
 });
@@ -92,8 +95,11 @@ test("only fixed localhost destinations and known read tools are reachable", asy
 test("unresponsive transport cannot outlive run budget", async t => {
   const f = fixture(t); const keepAlive = setInterval(() => {}, 100); t.after(() => clearInterval(keepAlive));
   const start = Date.now();
-  const result = await f.run({ fetchImpl: () => new Promise(() => {}), runTimeoutMs: 35, requestTimeoutMs: 100 });
-  assert.ok(Date.now() - start < 500); assert.equal(result.healthy, false); assert.equal(result.state.outbox.length, 4);
+  const hung = { fetchImpl: () => new Promise(() => {}), runTimeoutMs: 35, requestTimeoutMs: 100 };
+  let result = await f.run(hung);
+  assert.ok(Date.now() - start < 500); assert.equal(result.healthy, false); assert.equal(result.state.outbox.length, 0);
+  result = await f.run(hung);
+  assert.ok(Date.now() - start < 1000); assert.equal(result.state.outbox.length, 4);
 });
 
 test("meaningful progress survives restart and repeated activations cannot reset its clock", async t => {
@@ -118,4 +124,10 @@ test("role audits and unticketed engineering jobs cannot report their own ticket
     { id: "engineering", kind: "kanban", operatorRole: "engineering", state: "blocked", at: f.now - 7200000 },
   ] });
   const result = await f.run(); assert.equal(f.sent.length, 0); assert.deepEqual(result.state.jobProgress, {});
+});
+test("a single failed read that recovers next run raises nothing", async t => {
+  const f = fixture(t); f.failSensor = "lock_status";
+  await f.run(); assert.equal(f.sent.length, 0);
+  f.failSensor = null; f.now += 60000; const r = await f.run();
+  assert.equal(f.sent.length, 0); assert.equal(r.state.sensors.lock.failures, undefined);
 });
