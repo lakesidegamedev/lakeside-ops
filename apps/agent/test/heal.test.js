@@ -93,3 +93,9 @@ test("a compensation request plans and applies through heal-ops compensation, ne
   assert.equal(validateRequest({ kind: "compensation", env: "prod", description: "repay something owed here", credits: [{ corporationId: "x", amountLocal: 1 }] }).ok, false);
   assert.equal(validateRequest({ kind: "compensation", env: "prod", description: "repay something owed here", credits: [{ corporationId: "6ac3dbf9c6e9f850d977790d", amountLocal: -1 }] }).ok, false);
 });
+
+test("validateRequest reads a bare set or unset as the action kind", () => {
+  assert.equal(h.validateRequest({ ...adhoc, action: { set: { campaignStuck: false } } }).spec.action.kind, "set");
+  assert.equal(h.validateRequest({ ...adhoc, action: { unset: ["campaignStuck"] } }).spec.action.kind, "unset");
+  assert.equal(h.validateRequest({ ...adhoc, action: { delete: true } }).ok, false);
+});

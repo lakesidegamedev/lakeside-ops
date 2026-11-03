@@ -1942,7 +1942,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         issue.item = id; ledger.save(); record(id);
         const worker = fresh ? await startWorker(id, number) : null;
-        return { raised: true, id, issue: number, url, ...(worker || {}) };
+        return { raised: true, id, issue: number, url, instruction: "Filing does not repair stored data. If the fault is in a record, now call request_heal with its collection, exact filter and value; the owner approves it before anything changes.", ...(worker || {}) };
       }
       if (input.issueNumber) {
         const number = Number(input.issueNumber);
@@ -2046,7 +2046,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       const worker = await startWorker(r?.id || null, filedIssue?.number || null);
       if (worker) return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), ...worker };
-      return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), instruction: (input.kind || "question") === "question" ? "Filed on your own board as your work item (lane now, assigned to you). Nobody else will pick it up: keep working it yourself now. Read the game records you need with the heal-ops read tools (heal_query, heal_count), keep the player updated, and add findings with raise_to_developers appendTo. The card closes with your task. Do not wait on it and do not claim filing fixed the problem." : "Filed for the developers. Filing is not a fix. Verify the reported problem is actually resolved before closing; optional feature proposals may remain on the developer queue." };
+      return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), instruction: (input.kind || "question") === "question" ? "Filed on your own board as your work item (lane now, assigned to you). Nobody else will pick it up: keep working it yourself now. Read the game records you need with the heal-ops read tools (heal_query, heal_count), keep the player updated, and add findings with raise_to_developers appendTo. The card closes with your task. Do not wait on it and do not claim filing fixed the problem." : "Filed for the developers. Filing is not a fix. Filing does not repair stored data. If the fault is in a record, now call request_heal with its collection, exact filter and value; the owner approves it before anything changes. Verify the reported problem is actually resolved before closing; optional feature proposals may remain on the developer queue." };
       } finally { releaseIssue(); }
     }
     if (name === "merge_related") {

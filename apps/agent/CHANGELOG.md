@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket whose sector or record is damaged now gets the repair proposed to the owner for approval instead of only a developer report. The request_heal tool is no longer hidden behind a deferred schema, spells out the action shape (a bare set or unset is accepted), says it works from tickets, and the heal rule is no longer cut from support tasks. Filing a bug now tells the task to propose the data repair as well, and the debugging digest no longer tells it to wait for a root cause before repairing a bad record. Net model-facing text shrinks.
+
 - A ticket task is shown a kept note only when the note shares a game code file or game area with the question; word overlap alone no longer brings in unrelated notes. Notes are kept and shown in plain present tense: "now" is dropped and sentences about changes, fixes or updates are left out.
 - A ticket task now always starts with up to three notes from Keir's notebook (about 600 characters), found from the player's question plus the game files and screens the ticket names or has read. Each is labelled "checked rule from the code", "earlier answer on ticket N, not verified" or "earlier mistake: X was wrong, Y was right"; notes whose code file changed are left out, and only the notes shown count as recalled. A recalled note never replaces the code lookup before a rule is stated.
 
