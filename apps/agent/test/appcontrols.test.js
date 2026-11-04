@@ -228,3 +228,15 @@ test("Cursor Auto cannot acquire a legacy pinned effort through app model select
   const { app, config } = setup(t); config.quickProvider = "cursor:auto";
   assert.throws(() => app.controls.update({ action: "configure", routes: { conversation: "cursor:auto@high" } }), /manages its own/);
 });
+
+test("a saved model choice whose route no longer exists falls back to Auto and tells the owner, instead of failing the chat", t => {
+  const { app, ledger, config } = setup(t);
+  const { jobId } = app.authenticatedPost("Hello", "typed");
+  const job = ledger.data.jobs[jobId];
+  ledger.data.appThread = { ...(ledger.data.appThread || {}), preferences: { main: { routes: { conversation: "deepseek:deepseek-flash@low" } } } };
+  assert.doesNotThrow(() => applyModel(job, config, ledger, "quick"));
+  assert.equal(job.provider?.ownerSelected, undefined, "no stale route is pinned");
+  assert.ok(ledger.data.audit.some((a) => a.kind === "stale_route_selection" && a.selected === "deepseek:deepseek-flash@low"));
+  assert.ok(Object.values(ledger.data.outbox || {}).some((o) => o.destination === "owner" && /not available any more/.test(o.content || "")));
+  assert.ok(job.history.some((h) => h.kind === "route-fallback"));
+});

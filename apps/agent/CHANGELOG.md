@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A saved model choice in the app whose route no longer exists (for example after the routes were changed) now falls back to Auto and tells the owner once a day. Before, every message in that thread failed with "model route is not available" and Keir looked silent.
+
 ## 8.1.0 (2026-11-04)
 
 - Lesson retirement: capped, reversible, audited retirement of near-duplicate, stale and long-unused lessons (`bin/keir-lesson-retire.js`, dry run by default, `KEIR_LESSON_RETIRE=0` to disable), and recall ranking now favours lessons with a good ticket record.

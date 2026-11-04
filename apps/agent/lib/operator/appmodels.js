@@ -50,7 +50,7 @@ function resolveModel(config, id, lane = null) {
 // thread history still supplies conversation context across voice turns.
 function voiceRoute(config, data, thread) {
   const selected = data.appThread?.preferences?.[thread]?.routes?.voice || "auto";
-  if (selected !== "auto") return resolveModel(config, selected, "voice").id;
+  if (selected !== "auto") { try { return resolveModel(config, selected, "voice").id; } catch (e) { if (e.status !== 400) throw e; /* saved voice route is gone: fall through to Auto */ } }
   const choices = voiceChoices(config), choiceLabels = voiceChoiceLabels(config);
   const available = choices.map(id => models(config, "voice").find(m => m.id.split("@")[0] === id.split("@")[0] && m.available !== false)?.id).filter(Boolean);
   if (available.length !== choices.length) throw Object.assign(new Error(`Voice Auto needs ${choiceLabels.join(" or ")} configured. Choose an available voice model.`), { status: 409 });
@@ -80,7 +80,19 @@ function applyModel(job, config, ledger, lane) {
     }
     return;
   }
-  const route = resolveModel(config, selected, workType);
+  let route;
+  try { route = resolveModel(config, selected, workType); }
+  catch (e) {
+    // A saved selection can outlive its route (a provider removed from the config, 2026-11-04: every app chat failed with
+    // "model route is not available" after the lanes moved). Failing the whole chat is worse than using Auto, so use Auto and say so.
+    if (e.status !== 400) throw e;
+    ledger.audit("stale_route_selection", { job: job.id, selected, workType, reason: String(e.message).slice(0, 160) });
+    job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "route-fallback", summary: `The saved model ${selected} is not available (${String(e.message).slice(0, 100)}); Auto was used.` }].slice(-20);
+    if (job.provider?.ownerSelected) delete job.provider;
+    const day = new Date().toISOString().slice(0, 10);
+    ledger.notify(`stale-route:${selected}:${day}`, "owner", `Your saved model choice ${selected} is not available any more, so replies use Auto. Pick a model again in the app if you want a specific one.`);
+    return;
+  }
   job.provider = { lane, runner: route.runner, model: route.model, ...(route.effort ? { effort: route.effort } : {}), ownerSelected: true, route: selected, at: Date.now() };
   // The selected effort wins over the default inherited at delegation time.
   if (job.codingParent) job.effortPin = route.effort || undefined;
