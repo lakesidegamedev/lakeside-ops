@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.2.0 (2026-11-05)
+
 Answer quality, from a review of the 2026-11-05 ticket conversations.
 
 - Keir can no longer tell a player a problem is fixed, working, gone or "should be gone" on the strength of a release. It needs the fix on main, a turn processed on it, and a read of the player's own figures after that turn and after their latest message. Ticket 1763 heard "live and working" six times in a day and each was disproved by the next screenshot. "Now on the main server" also counts as a release claim now.
