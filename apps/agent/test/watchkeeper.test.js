@@ -21,7 +21,7 @@ function fixture(t) {
     const data = tool === "game_overview" ? { turn: f.turn, paused: false } : tool === "turn_anomalies" ? { anomalies: f.anomalies } : f.lock;
     return response({ result: { content: [{ type: "text", text: JSON.stringify(data) }] } });
   };
-  f.run = (extra = {}) => createWatchkeeper({ stateFile: f.stateFile, token: "scoped", readToken: "read-only", fetchImpl: f.fetchImpl, now: () => f.now, log: () => {}, ...extra }).run();
+  f.run = (extra = {}) => createWatchkeeper({ stateFile: f.stateFile, token: "scoped", readToken: "read-only", fetchImpl: f.fetchImpl, now: () => f.now, log: () => {}, auditFile: null, ...extra }).run();
   return f;
 }
 function response(data, status = 200) { return { ok: status === 200, status, text: async () => JSON.stringify(data) }; }
@@ -130,4 +130,14 @@ test("a single failed read that recovers next run raises nothing", async t => {
   await f.run(); assert.equal(f.sent.length, 0);
   f.failSensor = null; f.now += 60000; const r = await f.run();
   assert.equal(f.sent.length, 0); assert.equal(r.state.sensors.lock.failures, undefined);
+});
+
+test("a conversation audit that stops running is reported, then recovers", async t => {
+  const f = fixture(t); let auditAt = f.now - 3 * 3600000;
+  const extra = { auditFile: "audit.json", readFile: () => JSON.stringify({ at: auditAt }) };
+  await f.run(extra);
+  assert.ok(f.sent.some(o => o.kind === "sensor_stale" && /conversation audit/.test(o.summary || o.title || JSON.stringify(o))));
+  auditAt = f.now; f.now += 60000; const sent = f.sent.length;
+  await f.run(extra);
+  assert.ok(f.sent.length >= sent);
 });

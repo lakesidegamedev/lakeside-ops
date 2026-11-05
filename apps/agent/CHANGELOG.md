@@ -5,6 +5,18 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+Answer quality, from a review of the 2026-11-05 ticket conversations.
+
+- Keir can no longer tell a player a problem is fixed, working, gone or "should be gone" on the strength of a release. It needs the fix on main, a turn processed on it, and a read of the player's own figures after that turn and after their latest message. Ticket 1763 heard "live and working" six times in a day and each was disproved by the next screenshot. "Now on the main server" also counts as a release claim now.
+- One release announcement per ticket per 30 minutes, whichever task makes it (1763 got two 20 seconds apart).
+- "I haven't found it, so I won't guess" is allowed once. The next one needs code reads since the last, and a third needs a running investigator (1766 got seven in five hours).
+- Drafts the screen scores 0.9 or more for stating an outcome as settled are refused when the ticket has no release or verification behind them. Until now that label only warned.
+- A factual rule question can no longer be passed to Ask unread ("I haven't checked, Ask can answer that", 1765).
+- An expired provider login now moves the job to the fallback route and cools the provider, as a usage limit does, and the owner hears about it once an hour. On 2026-11-05 an expired Claude login retried for 83 minutes and was logged as a successful run; activations now record `auth_failed`.
+- Watchkeeper now reports when the independent conversation audit has not run for 30 minutes. Its timer stopped re-arming on 2026-10-26 and nobody noticed for ten days.
+- A developer pull request that only waits on the owner's approving review now reaches him as an approval card with Approve and Reject buttons and a plain explanation, not a GitHub link. Approve submits his review at that exact commit, re-runs the approval check and merges. Ariane answering on his behalf does not submit his review.
+- The brief covers following the player's own lead, recognising jokes, and answering every question the player asked.
+
 ## 8.1.2 (2026-11-05)
 
 - Game promotion PRs now carry the ticked "Conflict of interest" section AHDGame's custom-rules check requires. Without it the check failed and the promote sat blocked until someone edited the description by hand.
