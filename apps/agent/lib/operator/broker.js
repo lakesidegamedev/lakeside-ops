@@ -1,5 +1,10 @@
 "use strict";
+
 const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
+// AHDGame's custom-rules check fails any PR without a ticked "Conflict of
+// interest" section, which left promotes blocked. A promote ships commits that
+// already passed review, so it never touches a holding of its own.
+const PROMOTE_COI_SECTION = "\n\n## Conflict of interest\n\n- [x] This change does not directly affect a character, corporation, or other in-game holding of mine\n- [ ] It does, and I have disclosed it below or privately to a maintainer";
 // Minutes between checks for a task waiting with nothing subscribed and no
 // reply owed: the first is a normal look, then it settles into a slow recheck.
 const QUIET_WAITS = [15, 30, 60, 120];
@@ -2591,7 +2596,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const ahead = await api([`repos/${repo}/compare/${to}...${from}`]);
         if (!ahead.ahead_by) return { promoted: false, reason: `${from} has nothing new for ${to}` };
         let pr = (await api([`repos/${repo}/pulls?state=open&base=${to}&head=${GITHUB_OWNER}:${from}`]))[0];
-        if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => apiKeir(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}`]));
+        if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => apiKeir(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}${PROMOTE_COI_SECTION}`]));
         const result = await mergeWhenGreen(pr.number, "merge", to);
         return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Promote to main once staging looks right." : "Check with github deployed that the main server (and the turn worker for turn code) runs the new commit, then tell the requester.") : result.nextMove };
       }

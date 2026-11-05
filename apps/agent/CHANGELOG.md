@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Game promotion PRs now carry the ticked "Conflict of interest" section AHDGame's custom-rules check requires. Without it the check failed and the promote sat blocked until someone edited the description by hand.
+
 ## 8.1.1 (2026-11-04)
 
 - A saved model choice in the app whose route no longer exists (for example after the routes were changed) now falls back to Auto and tells the owner once a day. Before, every message in that thread failed with "model route is not available" and Keir looked silent.
