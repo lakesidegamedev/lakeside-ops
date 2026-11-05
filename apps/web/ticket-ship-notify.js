@@ -66,7 +66,9 @@ function cryptoRandomToken() {
 }
 
 /**
- * Role pinged when a ticket-repair PR lands in #operations.
+ * Role pinged when #operations needs a human to act (an admin heal request).
+ * PR and findings posts are informational and never ping: any PR that names a
+ * ticket triggers them, so pinging there tagged developers on routine work.
  * Prefer an explicit developers role; fall back to the historical Dev Team /
  * moderator id that triage already uses.
  */
@@ -194,7 +196,7 @@ function clipTldrParagraphs(text, maxParagraphs = 2, maxChars = 1200) {
   return out;
 }
 
-function formatOpsTldr({ prUrl, ticketNumber, summary, pingDevelopers = true } = {}) {
+function formatOpsTldr({ prUrl, ticketNumber, summary, pingDevelopers = false } = {}) {
   const lines = [];
   const roleId = pingDevelopers ? developerRoleId() : "";
   if (roleId) lines.push(`<@&${roleId}>`);
@@ -218,8 +220,6 @@ function formatOpsTldr({ prUrl, ticketNumber, summary, pingDevelopers = true } =
  */
 function formatOpsPrOnTheWay({ ticketNumber, title, findings, summary } = {}) {
   const lines = [];
-  const roleId = developerRoleId();
-  if (roleId) lines.push(`<@&${roleId}>`);
   const head = Number.isInteger(ticketNumber)
     ? `Ticket #${ticketNumber}${title ? ` — ${String(title).trim()}` : ""}`
     : (title ? String(title).trim() : "Ticket repair");
@@ -856,20 +856,18 @@ async function maybePostOpsTldrForPr(db, {
   const url = prUrl || (repo && prNumber ? `https://github.com/${repo}/pull/${prNumber}` : "");
   // PR TL;DR = what changed in the PR. Do not reuse the pre-PR findings ping.
   const summary = summarizeFix({ title, body });
-  const roleId = developerRoleId();
-  const content = formatOpsTldr({ prUrl: url, ticketNumber, summary, pingDevelopers: true });
+  const content = formatOpsTldr({ prUrl: url, ticketNumber, summary });
 
-  // Idempotency: skip if already posted for this PR / ticket.
+  // Idempotency: one TL;DR per ticket. Follow-up PRs for the same ticket are
+  // already linked from the first post's ticket and stay quiet.
   if (fix && fix.opsTldrPostedAt && fix.opsTldrPrNumber === prNumber) {
     return { skipped: "already posted" };
   }
-  if (ticket.opsTldrPostedAt && ticket.opsTldrPrNumber === prNumber) {
+  if (ticket.opsTldrPostedAt) {
     return { skipped: "already posted on ticket" };
   }
 
-  const result = await postOpsPlain(content, {
-    mentionRoleIds: roleId ? [roleId] : [],
-  });
+  const result = await postOpsPlain(content);
   const stamp = {
     opsTldrPostedAt: new Date(),
     opsTldrPrNumber: prNumber || null,
@@ -1011,10 +1009,7 @@ async function maybePostOpsFindings(db, {
     findings,
     summary,
   });
-  const roleId = developerRoleId();
-  const result = await postOpsPlain(content, {
-    mentionRoleIds: roleId ? [roleId] : [],
-  });
+  const result = await postOpsPlain(content);
   const stamp = {
     opsFindingsPostedAt: new Date(),
     opsFindingsText: String(findings || summary || "").slice(0, 2000),
