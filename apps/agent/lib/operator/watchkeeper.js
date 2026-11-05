@@ -45,7 +45,7 @@ function parseMcp(text) {
   if (!content) throw new Error("MCP read returned no data");
   return JSON.parse(content);
 }
-function createWatchkeeper({ stateFile = "/var/lib/keir-watchkeeper/state.json", operatorUrl = "http://127.0.0.1:9765", gamestateUrl = "http://127.0.0.1:9730/mcp", turndiagUrl = "http://127.0.0.1:9736/mcp", token, readToken, fetchImpl = fetch, now = Date.now, log = console.log, requestTimeoutMs = 5000, runTimeoutMs = 40000, stallMs = 30 * MINUTE, staleMs = 10 * MINUTE } = {}) {
+function createWatchkeeper({ stateFile = "/var/lib/keir-watchkeeper/state.json", operatorUrl = "http://127.0.0.1:9765", gamestateUrl = "http://127.0.0.1:9730/mcp", turndiagUrl = "http://127.0.0.1:9736/mcp", token, readToken, fetchImpl = fetch, now = Date.now, log = console.log, requestTimeoutMs = 5000, runTimeoutMs = 40000, stallMs = 30 * MINUTE, staleMs = 10 * MINUTE, auditFile = "/var/lib/keir-conversation-audit/latest.json", auditStaleMs = 30 * MINUTE, readFile = (f) => require("fs").readFileSync(f, "utf8") } = {}) {
   const operator = localUrl(operatorUrl), urls = { gamestate: localUrl(gamestateUrl), turndiag: localUrl(turndiagUrl) };
   if (!token || !readToken) throw new Error("Watchkeeper requires its scoped endpoint token and read-only MCP token");
   // Hard caps also apply when callers accidentally pass larger values.
@@ -144,6 +144,12 @@ function createWatchkeeper({ stateFile = "/var/lib/keir-watchkeeper/state.json",
         const threshold = ({ turns: 60, economy: 180, invariants: 180, heal: 540, sentry: 120, pages: 360 }[sensor] || 360) * MINUTE;
         if (at - timestamp(succeededAt) > threshold) observe(base, "sensor_stale", `Operator ${sensor} sensor is stale`, { succeededAt }); else recover(base);
       }
+    }
+    // The independent conversation audit ran every five minutes until 2026-10-26, then its timer
+    // stopped re-arming and nobody noticed for ten days of bad replies (review 2026-11-05).
+    if (auditFile) {
+      let auditAt = 0; try { auditAt = Number(JSON.parse(readFile(auditFile)).at) || 0; } catch {}
+      if (at - auditAt > auditStaleMs) observe("audit:conversation", "sensor_stale", "Keir conversation audit has not run", { lastRunAt: auditAt || null }); else recover("audit:conversation");
     }
     if (lock) {
       const stalled = !lock.paused && (lock.verdict === "stuck" || (lock.isProcessing && Number(lock.heartbeatAgeSec) > 600) || (!lock.isProcessing && Number(lock.overdueMin) > 30));
