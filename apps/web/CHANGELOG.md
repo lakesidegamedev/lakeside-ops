@@ -1,5 +1,10 @@
 # Ops web changelog
 
+## 4.6.1 (2026-11-05)
+
+- **No developer pings for ticket PRs.** The #operations TL;DR for a PR that names a support ticket, and the "PR on the way" findings post, no longer tag the Developer role. Any PR mentioning a ticket triggered them, so routine agent PRs were pinging developers. Admin heal requests still ping, since they need someone to act.
+- One TL;DR per ticket: a follow-up PR for a ticket that already has one stays quiet.
+
 ## 4.6.0 (2026-11-03)
 
 - **Economy page.** The AHD macro tracker returns as a dashboard page under Monitor instead of a standalone report. Three scores (economic health, gameplay, commodities) sit on one strip; six tabs split the rest: Overview (every red or amber measure, world macro and activity charts), Markets (commodity health and a supply/demand and real-price table for every good), Companies, Players, Countries and Fixes.

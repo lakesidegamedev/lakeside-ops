@@ -72,7 +72,7 @@ test("summarizeFix prefers What changed over findings-style diagnosis", () => {
   assert.doesNotMatch(text, /Players looked erased/);
 });
 
-test("formatOpsTldr matches the operations-channel pattern", () => {
+test("formatOpsTldr matches the operations-channel pattern without a ping", () => {
   const prev = process.env.DISCORD_DEVELOPER_ROLE_ID;
   process.env.DISCORD_DEVELOPER_ROLE_ID = "1470571508689535188";
   const msg = formatOpsTldr({
@@ -80,22 +80,26 @@ test("formatOpsTldr matches the operations-channel pattern", () => {
     ticketNumber: 998,
     summary: "Settings toggles keep the knob inside the pill.\n\nVerified with the settings panel regression.",
   });
-  assert.match(msg, /^<@&1470571508689535188>\nhttps:\/\/github\.com\/Egg3901\/a-house-divided\/pull\/3735/);
+  assert.match(msg, /^https:\/\/github\.com\/Egg3901\/a-house-divided\/pull\/3735/);
+  assert.doesNotMatch(msg, /<@&/);
   assert.match(msg, /TL;DR: Ticket #998\n\nSettings toggles keep the knob inside the pill\./);
   assert.match(msg, /Verified with the settings panel regression\./);
   if (prev === undefined) delete process.env.DISCORD_DEVELOPER_ROLE_ID;
   else process.env.DISCORD_DEVELOPER_ROLE_ID = prev;
 });
 
-test("formatOpsTldr can omit the developers ping", () => {
+test("formatOpsTldr pings developers only when asked", () => {
+  const prev = process.env.DISCORD_DEVELOPER_ROLE_ID;
+  process.env.DISCORD_DEVELOPER_ROLE_ID = "1470571508689535188";
   const msg = formatOpsTldr({
     prUrl: "https://github.com/Egg3901/a-house-divided/pull/3735",
     ticketNumber: 998,
     summary: "noop",
-    pingDevelopers: false,
+    pingDevelopers: true,
   });
-  assert.match(msg, /^https:\/\/github\.com/);
-  assert.doesNotMatch(msg, /<@&/);
+  assert.match(msg, /^<@&1470571508689535188>\nhttps:\/\/github\.com/);
+  if (prev === undefined) delete process.env.DISCORD_DEVELOPER_ROLE_ID;
+  else process.env.DISCORD_DEVELOPER_ROLE_ID = prev;
 });
 
 test("formatOpsHealRequest asks an admin to run the heal", () => {
@@ -124,7 +128,8 @@ test("formatOpsPrOnTheWay posts findings before the PR", () => {
     title: "settings toggle",
     findings: "Root cause: CSS transform. Fixed the thumb offset.",
   });
-  assert.match(msg, /^<@&1470571508689535188>\nTicket #998 — settings toggle/);
+  assert.match(msg, /^Ticket #998 — settings toggle/);
+  assert.doesNotMatch(msg, /<@&/);
   assert.match(msg, /Root cause: CSS transform/);
   assert.match(msg, /PR on the way\./);
   assert.doesNotMatch(msg, /https:\/\/github/);
