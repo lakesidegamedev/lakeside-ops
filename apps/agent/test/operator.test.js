@@ -2898,3 +2898,12 @@ test("a provider usage limit moves the job to the fallback route and cools the r
  current = k; await agent.run(k, new AbortController().signal);
  assert.deepEqual(attempts, ["opencode", "ollama"]);
 });
+
+test("a direct owner message is answered before the task can finish quietly (ticket 1763)", async () => {
+  const f = fixture(), ch = "777777777777777777";
+  const job = running(f, { role: "owner", kind: "conversation", ticket: 123, actorId: f.config.ownerId, channelId: ch, replyChannel: ch, source: { channelId: ch, authorId: f.config.ownerId, at: new Date(4000).toISOString(), content: "check directly for resolution" } });
+  await assert.rejects(() => f.broker.tool(job, "finish", { state: "waiting", summary: "Nothing posted." }), /addressed you directly/);
+  await f.broker.tool(job, "channel_reply", { message: "I checked: the fix is in testing and goes live on the main server next." });
+  const r = await f.broker.tool(job, "finish", { state: "waiting", summary: "Replied." });
+  assert.equal(r.state, "waiting");
+});
