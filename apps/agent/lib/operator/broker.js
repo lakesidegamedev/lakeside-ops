@@ -3338,6 +3338,19 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const request = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((s) => s?.authorId === job.actorId && ticketRequested(s.content)).at(-1);
         if (request && !Object.values(job.openedTickets || {}).some((r) => r.requestMessageId === request.messageId)) throw new Error("the authenticated ticket request is not fulfilled; open or attach its ticket, or retain it waiting with a concrete next step");
       }
+      // A direct message from the owner or a developer always gets an answer in the channel,
+      // even "nothing has changed". Ticket 1763 (2026-11-05): the owner asked for a resolution
+      // check and the task finished twice with "nothing posted", which read as Keir ignoring him.
+      if (["waiting", "done"].includes(state) && job.replyChannel && !job.appThread && !job.codingParent) {
+        const staff = [config.ownerId, ...(config.staffIds || [])];
+        const asked = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((m) => m && staff.includes(m.authorId)).map((m) => Date.parse(m.at || "") || 0);
+        const askedAt = asked.length ? Math.max(...asked) : 0;
+        const published = typeof job.lastPublishedAt === "number" ? job.lastPublishedAt : Date.parse(job.lastPublishedAt || "") || 0;
+        if (askedAt && published < askedAt && job.staffReplyOwed !== askedAt) {
+          job.staffReplyOwed = askedAt; ledger.save();
+          throw new Error("Not finished: the owner or a developer addressed you directly and you have not replied in the channel since. Reply now with what you found and your next step, even if nothing changed, then finish again.");
+        }
+      }
       if (input.result !== undefined) {
         job.result = input.result;
         job.resultReceipt = { sha256: hash(input.result), at: now() };

@@ -6,6 +6,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ## Unreleased
 
 - Game promotion PRs now carry the ticked "Conflict of interest" section AHDGame's custom-rules check requires. Without it the check failed and the promote sat blocked until someone edited the description by hand.
+- When the owner or a developer messages Keir directly in a ticket or channel, Keir now has to reply there before it can end its turn, even if the answer is "nothing has changed". Before, it could decide there was nothing new and finish silently, which looked like it was ignoring the ping.
 
 ## 8.1.1 (2026-11-04)
 
