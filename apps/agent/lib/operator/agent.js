@@ -228,22 +228,26 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   const DEFAULT_MODEL = { agy: () => config.agyModel || "gemini-3.8-flash", cursor: () => "auto", muse: () => config.museModel || "muse-wonder-1.0", codex: () => "gpt-6-luna", opencode: () => "opencode/glm-5.3-flash-free", ollama: () => "deepseek-v4.1-flash", deepseek: () => "deepseek-flash", claude: () => config.model };
   const PROVIDER_LABEL = { agy: "antigravity-cli-subscription", cursor: "cursor-subscription", muse: "muse-cli-subscription", codex: "codex-cli-chatgpt-subscription", opencode: "opencode-cli", ollama: "ollama-cloud-subscription", deepseek: "deepseek-api", claude: "claude-cli-subscription" };
   const USAGE_LIMIT = /usage limit|limit exceeded|rate.?limit|quota|too many requests|\b429\b|insufficient (?:credit|balance)|out of credit/i;
+  // 2026-11-05 16:22-17:45 ET: the Claude login expired ("Failed to authenticate: OAuth session
+  // expired") and 48 runs retried the dead route for 83 minutes because only quota text switched routes.
+  const AUTH_FAILED = /authentication_failed|failed to authenticate|oauth (?:session|token)[^.]{0,40}(?:expired|revoked|invalid)|invalid (?:api[ _-]?key|x-api-key|bearer token)|not logged in|please run \/login/i;
   const COOLDOWN_MS = 30 * 60000;
   const cooled = (runner) => (ledger.data.routeCooldown?.[runner] || 0) > Date.now();
   // Returns true when the job was moved to another route and requeued.
   function switchOnUsageLimit(job, text) {
     const runner = job.provider?.runner;
-    if (!runner || !USAGE_LIMIT.test(text) || Object.values(job.effects || {}).some((x) => x.state === "started")) return false;
+    const auth = AUTH_FAILED.test(text);
+    if (!runner || !(auth || USAGE_LIMIT.test(text)) || Object.values(job.effects || {}).some((x) => x.state === "started")) return false;
     (ledger.data.routeCooldown ||= {})[runner] = Date.now() + COOLDOWN_MS;
     const next = fallbackSpec(job);
     if (!next || (job.usageLimitSwitches || 0) >= 3) { ledger.audit("usage_limit_no_fallback", { job: job.id, runner }); return false; }
     const [spec, effort] = next.split("@"), [r, model] = spec.split(":");
     if (r === runner) return false;
     job.usageLimitSwitches = (job.usageLimitSwitches || 0) + 1;
-    job.provider = { lane: job.provider.lane || "worker", runner: r, model: model || DEFAULT_MODEL[r](), ...(effort ? { effort, routeEffort: effort } : {}), at: Date.now(), assignedBy: "usage-limit-fallback" };
-    job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "provider-fallback", summary: `${runner} hit a usage limit; continuing on ${r}. Approvals and ownership still apply.` }].slice(-20);
+    job.provider = { lane: job.provider.lane || "worker", runner: r, model: model || DEFAULT_MODEL[r](), ...(effort ? { effort, routeEffort: effort } : {}), at: Date.now(), assignedBy: auth ? "auth-failure-fallback" : "usage-limit-fallback" };
+    job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "provider-fallback", summary: `${runner} ${auth ? "failed to log in" : "hit a usage limit"}; continuing on ${r}. Approvals and ownership still apply.` }].slice(-20);
     job.state = "queued"; delete job.wakeAt;
-    ledger.audit("usage_limit_provider_fallback", { job: job.id, ticket: job.ticket, from: runner, to: r });
+    ledger.audit(auth ? "auth_failure_provider_fallback" : "usage_limit_provider_fallback", { job: job.id, ticket: job.ticket, from: runner, to: r });
     return true;
   }
   function fallbackSpec(job) {
@@ -491,8 +495,12 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       result = await invokeImpl({ ...common, brief: runnerBrief, runner: p, job, lane,
         viaRust, rustBin: config.rustRunnerBin, claudeBin: config.claudeBin });
       job.contextBudget.providerMs = Date.now() - providerAt;
+      // An auth failure can arrive as subtype "success" with error "authentication_failed";
+      // record what happened, not the CLI's subtype (2026-11-05: 48 failed runs logged as success).
+      const providerFailed = AUTH_FAILED.test(`${result?.error || ""} ${result?.result || ""}`);
       ledger.audit("cli_activation", { job: job.id, ticket: job.ticket, lane,
-        attempt: result.provenance?.cliAttempt, engine: result.provenance?.engine, subtype: result.subtype });
+        attempt: result.provenance?.cliAttempt, engine: result.provenance?.engine, subtype: providerFailed ? "auth_failed" : result.subtype, ...(result?.error ? { error: String(result.error).slice(0, 80) } : {}) });
+      if (providerFailed) result = { ...result, is_error: true, subtype: "auth_failed", result: `${result.error || ""} ${result.result || ""}`.trim() };
       if (result?.provenance?.runner === "rust") {
         job.provider = { ...job.provider, via: "rust", attempt: result.provenance.attempt };
         ledger.audit("rust_activation", { job: job.id, ticket: job.ticket, lane, attempt: result.provenance.attempt, label: result.provenance.label, toolCalls: result.provenance.tool_calls, ms: result.provenance.duration_ms, subtype: result.subtype });

@@ -32,6 +32,11 @@ const DECISION = /\b(?:developers?|devs?|owner|team|staff|moderators?) (?:have |
 // market" is not a decision).
 const NAMED_DECISION = new RegExp(`${DECISION.source}|\\b(?:approved|signed off on|ruled (?:on|that))\\b(?=[^.!?]*\\b(?:compensat\\w*|refund\\w*|credit\\w*|payment|paid|reimburs\\w*|exception|ruling)\\b)|\\b(?:compensat\\w*|refund\\w*|credit\\w*|payment|reimburs\\w*|exception)\\b[^.!?]*\\b(?:approved|signed off|agreed)\\b`, "i");
 
+// Keir 8.2 (ticket 1765, 2026-11-05): "I haven't checked which sectors make ordnance and systems,
+// so I won't guess. Ask at https://ask.lakesidegames.net". A rule or navigation question is answered
+// by looking it up (code_search, the wiki), not handed to another bot unread.
+const PUNT = /\b(?:haven'?t|have not|didn'?t|did not|not) (?:yet )?(?:checked|looked(?: it up)?|read)\b[^]*\bask(?:\.lakesidegames\.net| (?:at|on|in) ask\b)|\bask\.lakesidegames\.net\b[^]*\b(?:can|could|will|would) answer (?:that|this|it)\b/i;
+
 const sentenceOf = (text, re) => {
   for (const s of String(text || "").split(/(?<=[.!?])\s+|\n+/)) if (re.test(s)) return s.trim().slice(0, 160);
   return null;
@@ -40,6 +45,7 @@ const sentenceOf = (text, re) => {
 // ctx: { emptyReads: [{ sig }], escalated, building, decided, approvers: names
 // who approved this ticket's decisions, developers: every developer's name }
 function refusal(text, ctx = {}) {
+  if (PUNT.test(String(text || ""))) return { kind: "lookup_punted", sentence: String(text).slice(0, 160), reason: "this hands a factual rule or navigation question to Ask without looking it up. Look it up yourself (read_tool ops-knowledge code_search with claimType mechanic, or lore_wiki_search) and answer in a sentence or two. Only strategy and investment advice goes to Ask." };
   let s = sentenceOf(text, CONFESSIONAL);
   if (s) return { kind: "confessional", sentence: s, reason: `"${s}" apologises or talks about Keir. Players get the right fact, not the story of the mistake. State what is correct in one sentence ("Correction: you have three agreements, not none.") and move on.` };
   s = sentenceOf(text, THIRD_PERSON);

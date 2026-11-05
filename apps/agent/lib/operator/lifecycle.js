@@ -149,6 +149,8 @@ function onRunError(job, e, ctx) {
     effects.push(audit("transient_retry", { job: job.id, attempt: job.transientFailures, emptyWaits: job.emptyWaits }));
     // One owner alert an hour while the provider answers with nothing.
     if (/^model request failed: empty activation/.test(e.message)) effects.push(notify(`empty-provider:${Math.floor(ctx.now / 3600000)}`, "owner", `The model provider is returning empty replies (task ${job.id}). Tasks retry every 15 minutes; check the provider login or quota.`));
+    // 2026-11-05: an expired login retried silently for 83 minutes. Tell the owner once an hour.
+    if (/^model request failed:.*(?:authentication_failed|failed to authenticate|oauth|not logged in)/i.test(e.message)) effects.push(notify(`auth-provider:${Math.floor(ctx.now / 3600000)}`, "owner", `The model provider login has failed (task ${job.id}): ${String(e.message).slice(21, 160)}. Tasks retry every 15 minutes and the fallback route takes over where one is set; log the provider back in.`));
   }
   else {
     job.state = "blocked"; job.summary = ctx.redact(e.message);

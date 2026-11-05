@@ -355,8 +355,13 @@ const CLAIMS = [
   { kind: "reverted", re: /\b(?:switched|turned|rolled|changed|put) (?:it |that |this |them |those )?back\b|\breverted\b|\bundone\b/i },
   // KBX4 2026-11-02: "a change that lets higher pay speed hiring went live at the end of last
   // week" was posted from nothing; past-tense release verbs are the same claim.
-  { kind: "main", re: /\blive on the main server\b|\b(?:is|are|was|were|it's|now) (?:now )?live\b|\b(?:went|gone|go(?:es)?) live\b|\bfix(?:es)? (?:is|are) (?:now )?(?:live|out)\b|\b(?:fix|change|update|patch)(?:es)?\b[^.]{0,60}\b(?:rolled out|was released|were released|shipped)\b/i },
+  // 2026-11-05 (ticket 1763): "The margin fix is now on the main server" was posted an hour before it was.
+  { kind: "main", re: /\blive on the main server\b|\b(?:is|are|now|it's) (?:now )?on the main server\b|\breached the live (?:site|game|server)\b|\b(?:is|are|was|were|it's|now) (?:now )?live\b|\b(?:went|gone|go(?:es)?) live\b|\bfix(?:es)? (?:is|are) (?:now )?(?:live|out)\b|\b(?:fix|change|update|patch)(?:es)?\b[^.]{0,60}\b(?:rolled out|was released|were released|shipped)\b/i },
   { kind: "staging", re: /\bon (?:the )?sandbox\b/i },
+  // Keir 8.2 (2026-11-05, ticket 1763): "live and working", "should be gone" and "now show"
+  // were posted six times from the release alone; each was disproved by the player's next screenshot.
+  // A claim that the player's problem is gone needs a game read after a turn ran on the fix.
+  { kind: "verified", hedged: true, re: /\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
   { kind: "development", re: /\bin testing on dev\b|\bon (?:the )?dev(?:elopment)? server\b|\bon dev\b/i },
   // Keir 4.0: "being built" needs a coding attempt that can write (ticket 1514
   // said it for five hours while every pass was read-only); "written" or "in
@@ -367,6 +372,8 @@ const CLAIMS = [
   { kind: "escalated", re: /\b(?:the )?(?:developers?|devs?|dev team)(?: already)? (?:have|has|are (?:looking at|reviewing|aware of)|got) (?:it|this|that|the)\b|\b(?:it'?s|this is|that is|it is) (?:now )?with the (?:developers?|devs?)\b|\b(?:passed|raised|flagged|sent|reported|put) (?:it |this |that )?(?:on |up )?(?:to|with) the (?:developers?|devs?|dev team)\b|\b(?:developers?|devs?)\b[^.!?]*\b(?:it'?s|it is|that'?s) with them\b/i },
   { kind: "written", re: /\b(?:fix|correction|patch) (?:is|has been|was) (?:now )?(?:written|ready|built|prepared|done)\b|\bhave (?:a|the) (?:fix|correction) (?:ready|written)\b|\b(?:is|are) (?:now )?in testing\b|\bgoing through (?:its |the )?(?:checks|tests)\b|\bpassed (?:its|the|all its) (?:tests|checks)\b/i },
 ];
+// "Should be gone" is the hedge that carried 1763's claims; only these mark a real future step.
+const STRICT_FUTURE = /\b(?:will|once|when|after|until|going to|next turn|from the next)\b|['’]ll\b/i;
 const FUTURE = /\b(?:will|won't|once|when|after|until|soon|should|going to|plan(?:ning)?|next|expect|if)\b|['’]ll\b/i;
 // KBX4 2026-11-02: "cannot" was not a negation, so "a note cannot authorise a payment, so that
 // refund has to come through our own approval" was refused as a money claim four times running.
@@ -378,7 +385,7 @@ function outcomeClaims(text) {
   const out = [];
   for (const sentence of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
     if (NEGATED.test(sentence)) continue;
-    for (const c of CLAIMS) if (c.re.test(sentence) && !(c.kind === "money" && PENDING_APPROVAL.test(sentence))) out.push({ kind: c.kind, future: FUTURE.test(sentence), sentence: sentence.trim().slice(0, 160) });
+    for (const c of CLAIMS) if (c.re.test(sentence) && !(c.kind === "money" && PENDING_APPROVAL.test(sentence))) out.push({ kind: c.kind, future: (c.hedged ? STRICT_FUTURE : FUTURE).test(sentence), sentence: sentence.trim().slice(0, 160) });
   }
   return out;
 }
@@ -586,6 +593,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     development: "\"in testing on dev\" needs the fix merged to development (github where shows it).",
     staging: "\"on sandbox\" needs github where to show the fix on staging.",
     main: "\"live\" needs github where to show the fix on main (and turn-worker/production for turn fixes).",
+    verified: "saying it is fixed, working, gone or now shows correctly needs the fix live on main, a turn processed on it, and a read of this player's own figures after that turn and after their last message. Until then say it is released and ask them to check after the next turn, or check it yourself first.",
     escalated: "\"the developers have it\" needs something that reached them: call raise_to_developers (or sync the ticket tracker, or open a decision). Until then say you will pass it on.",
   };
   // One public voice per ticket: no near-duplicate updates, and no second task
@@ -667,6 +675,13 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       const screen = await (config.screenOutgoing || require("./jevgate").screenOutgoing)({ text: message, request: String(job.source?.content || "").slice(0, 800), ticket: ticketNo });
       if (screen.labels.length || screen.refuse) ledger.audit("post_screened", { job: job.id, ticket: ticketNo, labels: screen.labels, refused: Boolean(screen.refuse), model: screen.model });
       if (screen.refuse) throw Object.assign(new Error(screen.refuse), { screened: true });
+      // Keir 8.2: ten drafts on 2026-11-05 scored 0.95 to 0.97 for asserting an outcome as settled
+      // and went out anyway; one was reported wrong by the player. Without a verified receipt, refuse.
+      const certain = screen.labels.find((l) => l.label === "certaintyWithoutReceipt" && l.probability >= 0.9);
+      if (certain && !ticketEvidence(ticketNo).verified.done && !ticketEvidence(ticketNo).main.done) {
+        ledger.audit("certainty_refused", { job: job.id, ticket: ticketNo, probability: certain.probability });
+        throw Object.assign(new Error("Not posted: this states an outcome (fixed, live, changed, paid) as settled fact, and this ticket has no release or verification behind it. Say what you found and what happens next, or verify it first."), { screened: true });
+      }
     } catch (e) { if (e.screened) throw e; }
     if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
   }
@@ -749,10 +764,19 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       if (dev) throw new Error(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
     }
     const ev = ticketEvidence(ticketNo);
-    const missing = outcomeClaims(message).filter((c) => c.kind === "money" ? !(c.future ? ev.money.agreed : ev.money.done) : !c.future && !ev[c.kind].done);
+    const claims = outcomeClaims(message);
+    const verifiedNow = ev.verified.done && Object.values(d.jobs).some((j) => ticketOf(j) === ticketNo && (j.lastGameReadAt || 0) > humanAt(ticketNo) && (j.turnChecks || []).some((at) => (j.lastGameReadAt || 0) > at));
+    const missing = claims.filter((c) => c.kind === "money" ? !(c.future ? ev.money.agreed : ev.money.done) : c.kind === "verified" ? !c.future && !verifiedNow : !c.future && !ev[c.kind].done);
     if (missing.length) throw new Error(`Not posted: this states an outcome Keir has no receipt for ("${missing[0].sentence}"). ${[...new Set(missing.map((c) => NEED[c.kind]))].join(" ")} Say only what is verified.`);
     guardTicketQuality(job, ticketNo, message, ev);
     const posts = (d.ticketPosts ||= {})[ticketNo] || [];
+    // Keir 8.2 (ticket 1763, 2026-11-05 13:32): two tasks told the player "the fix is live" 20 seconds apart.
+    // One release or fix announcement per ticket per 30 minutes, whichever task makes it.
+    if (claims.some((c) => (c.kind === "main" || c.kind === "verified") && !c.future)) {
+      const said = posts.find((p) => now() - p.at < 30 * 60000 && !isCardPost(p) && outcomeClaims(p.text).some((c) => (c.kind === "main" || c.kind === "verified") && !c.future) && !playerSpokeAfter(p.at));
+      if (said) throw new Error(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
+    }
+    guardStall(job, ticketNo, message, posts);
     // A status card is edited in place and a human question deserves an answer,
     // so neither holds a reply back (ticket 1602: the owner asked twice, Keir
     // drafted twice and stayed silent behind the coordinator's card).
@@ -760,6 +784,28 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
     const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6);
     if (dup) throw new Error(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
+  }
+  // Keir 8.2 (ticket 1766, 2026-11-05): seven posts in five hours said "I haven't found what
+  // mothballs the plant, so I won't guess" and none found it. The player: "why dont you look for
+  // the answer instead of repeating you still havent found it?" A no-progress post is allowed once.
+  // The next needs new code reads since the last one or a running investigator; a third needs the investigator.
+  const STALL = /\b(?:haven'?t|have not|has not|hasn'?t|not)\s+(?:yet\s+)?(?:found|confirmed|pinned down|traced|worked out|identified|settled|checked)\b|\bwon'?t (?:guess|name a cause|claim a cause|speculate)\b|\bstill (?:checking|tracing|investigating|looking(?: into)?|working (?:out|on)) \b|\bno confirmed cause\b|\bso I won'?t guess\b/i;
+  const isStall = (text) => STALL.test(String(text || "")) && !/\?/.test(String(text || "")) && !outcomeClaims(text).length;
+  function guardStall(job, ticketNo, message, posts) {
+    if (!isStall(message)) return;
+    const recent = posts.filter((p) => !isCardPost(p) && now() - p.at < 24 * 3600000);
+    let run = 0; for (let i = recent.length - 1; i >= 0 && isStall(recent[i].text); i--) run++;
+    if (!run) return;
+    const lastStall = recent.at(-1).at;
+    const jobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
+    // An investigator handed this question, running now or started since the last stall, is progress.
+    const investigating = jobs.some((j) => (j.investigations || []).some((id) => { const c = d.jobs[id]; return c && (!["done", "blocked", "dismissed", "cancelled"].includes(c.state) || (c.at || 0) >= lastStall); }));
+    const codeRead = jobs.some((j) => (j.lastCodeReadAt || 0) > lastStall);
+    if (investigating) return;
+    if (run >= 2 || !codeRead) {
+      ledger.audit("stall_refused", { job: job.id, ticket: ticketNo, run });
+      throw new Error(`Not posted: the player already has ${run} "still checking, won't guess" post${run === 1 ? "" : "s"} in a row on ticket ${ticketNo}. Another one is not an answer. ${run >= 2 ? "Hand it to an investigator now with delegate_investigation (one bounded question, what you already know)" : "Search the game code for the rule (read_tool ops-knowledge code_search with claimType mechanic, then code_read), or hand it to an investigator with delegate_investigation"}, and post what you find. If the player gave a lead, follow it and say what it showed.`);
+    }
   }
   // Review 2026-11-01 (tickets 1736 to 1747): apologies, third-person talk
   // about the player, unconfirmed "nothing exists" claims, promises with
@@ -1794,6 +1840,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
       if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
+      if (input.server === "ops-knowledge" && /^code_/.test(String(input.tool))) job.lastCodeReadAt = now();
       // Keir 5.6.2: the spin guard counts distinct reads. Re-reading the same
       // card or record every wake is not progress (a finding re-read its own
       // unassigned handoff 463 times overnight, 2026-10-16).

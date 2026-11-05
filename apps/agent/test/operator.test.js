@@ -2899,6 +2899,21 @@ test("a provider usage limit moves the job to the fallback route and cools the r
  assert.deepEqual(attempts, ["opencode", "ollama"]);
 });
 
+test("an expired provider login moves the job to the fallback route (2026-11-05)", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 323, summary: "Checking a report.", provider: { lane: "worker", runner: "claude", model: "claude-sonnet-5-5" } });
+ const attempts = [];
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-sonnet-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "claude:claude-sonnet-5-5", fallbackProvider: "ollama:deepseek-v4.1-flash@low" },
+  invokeImpl: async ({ runner }) => { attempts.push(runner); return { subtype: "success", error: "authentication_failed", result: "Failed to authenticate: OAuth session expired and could not be refreshed", num_turns: 1 }; } });
+ await agent.run(j, new AbortController().signal);
+ assert.equal(j.state, "queued");
+ assert.equal(j.provider.runner, "ollama");
+ assert.equal(j.provider.assignedBy, "auth-failure-fallback");
+ assert.ok(f.ledger.data.routeCooldown.claude > Date.now());
+ const act = (f.ledger.data.audit || []).filter((a) => a.kind === "cli_activation").at(-1);
+ if (act) assert.equal(act.subtype, "auth_failed");
+});
+
 test("a direct owner message is answered before the task can finish quietly (ticket 1763)", async () => {
   const f = fixture(), ch = "777777777777777777";
   const job = running(f, { role: "owner", kind: "conversation", ticket: 123, actorId: f.config.ownerId, channelId: ch, replyChannel: ch, source: { channelId: ch, authorId: f.config.ownerId, at: new Date(4000).toISOString(), content: "check directly for resolution" } });
