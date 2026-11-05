@@ -2085,6 +2085,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const desktop = (input.repository || job.repository) === "AHDClient";
       const repo = desktop ? repositoryName("AHDClient") : GAME_REPO;
       const api = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000 }) || "null");
+      // The owner's own button approval of this exact merge (Keir 8.2): the owner's GitHub review is submitted for him.
+      let ownerConsent = null;
       const apiKeir = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], asKeir({ timeout: 60000 })) || "null");
       // A PR review asked for by @mention reads that one PR and posts one review on it.
       if (job.prMention) {
@@ -2132,13 +2134,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const findingShip = ["merge", "promote"].includes(input.action) && job.kind === "finding" && Boolean(job.pullRequests?.length);
       const shipsOwnFix = (["merge", "promote"].includes(input.action) && job.kind === "ticket" && Boolean(job.pullRequests?.length)) || findingShip;
       const keirMade = Object.values(d.jobs).some((j) => (j.pullRequests || []).some((u) => canonicalGithubUrl(u) === `https://github.com/${repo}/pull/${Number(input.number)}`));
-      if (input.action === "merge" && !ownerDirected(job) && !keirMade) throw new Error("merge only PRs Keir opened unless the owner asked");
+      // An owner-approval task (ownerwait.js) may ask about the one developer PR it was made for; the merge still needs his button.
+      const ownerWaitPr = job.ownerWaitPr && Number(job.ownerWaitPr) === Number(input.number);
+      if (input.action === "merge" && !ownerDirected(job) && !keirMade && !ownerWaitPr) throw new Error("merge only PRs Keir opened unless the owner asked");
       // Reading where a change is, its checks or its failures is open to every
       // staff-side task: a ticket inherited from another operator has no PRs of
       // its own yet still has to know whether the fix is live (2026-10-13: four
       // tickets stalled on "PR inaccessible"). Players never get it.
       const readAllowed = job.role !== "player" && (developerTask(job) || developerTicket(job) || job.pullRequests?.length || ["ticket", "command", "finding"].includes(job.kind));
-      if (ownPrAction ? !(developerTask(job) || job.pullRequests?.length) : readOnly ? !readAllowed : !(ownerDirected(job) || shipsOwnFix)) throw new Error(readOnly || ownPrAction ? "PR tools need a developer task or a task that opened PRs" : "merging and promotion run only on the owner's own request");
+      if (ownPrAction ? !(developerTask(job) || job.pullRequests?.length) : readOnly ? !readAllowed : !(ownerDirected(job) || shipsOwnFix || (ownerWaitPr && input.action === "merge"))) throw new Error(readOnly || ownPrAction ? "PR tools need a developer task or a task that opened PRs" : "merging and promotion run only on the owner's own request");
       // Every changed file. null means the list could not be read completely,
       // which counts as sensitive: the gate fails closed. PR files page up to
       // 3000; a compare lists at most 300 files, all on its first page.
@@ -2364,6 +2368,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               const asked = await requestGithubApproval({ ...args, summary }, shipSignoff ? "ship to the live server" : unverified ? "merge or promotion with an unverified file list" : "economy merge or promotion");
               return asked.needsExplanation ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
             }
+            if (consent.approvedBy === config.ownerId && !consent.approvedOnBehalfBy && consent.args?.action === "merge") ownerConsent = consent;
             ledger.audit(shipSignoff ? "ship_signoff" : "economy_consent", { action: consent.id, job: job.id, approvalMessage: consent.approvalMessage, ...args });
           }
           // Keir 4.0 blast radius (owner, 2026-10-14, after ticket 1498): an
@@ -2600,6 +2605,22 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (scopedConsent) {
           musePolicy.validate(d, config, job, scopedConsent, now(), true);
           if (pr.head.sha !== scopedConsent.args.head || pr.base.sha !== scopedConsent.args.base || pr.base.ref !== scopedConsent.args.to) throw new Error("The PR changed since approval. Review its current source and target commits.");
+        }
+        // Owner, 2026-11-05: "We literally have approval buttons built in." AHDGame's custom-rules
+        // needs a maintainer's GitHub review on the exact head. When the owner pressed Approve on this
+        // merge at this head, submit that review as him (the box's gh identity is the owner) and re-run
+        // the check, instead of sending him to GitHub. Ariane answering on his behalf does not count.
+        if (ownerConsent && !desktop && Number(ownerConsent.args.number) === number && ownerConsent.args.head === pr.head.sha) {
+          const reviews = await api([`repos/${repo}/pulls/${number}/reviews?per_page=100`]).catch(() => []);
+          const me = (await api(["user"]).catch(() => null))?.login;
+          if (me && !(reviews || []).some((r) => r.user?.login === me && r.state === "APPROVED" && r.commit_id === pr.head.sha)) {
+            await effect(job, `owner-review:${number}:${pr.head.sha}`, () => api(["-X", "POST", `repos/${repo}/pulls/${number}/reviews`, "-f", `commit_id=${pr.head.sha}`, "-f", "event=APPROVE", "-f", "body=Approved by the owner from Keir's approval button."]), { kind: "github", text: `approve PR ${number}` });
+            const runs = (await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?check_name=custom-rules&per_page=20`]).catch(() => null))?.check_runs || [];
+            const red = runs.filter((r) => r.status === "completed" && r.conclusion !== "success").sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)))[0];
+            if (red) await api(["-X", "POST", `repos/${repo}/actions/jobs/${red.id}/rerun`]).catch(() => null);
+            ledger.audit("owner_review_submitted", { job: job.id, pr: number, head: pr.head.sha, action: ownerConsent.id, rerun: Boolean(red) });
+            return { number, merged: false, url: pr.html_url, ownerReviewSubmitted: true, nextMove: "The owner's approval is now on the PR and custom-rules is re-running. Finish waiting with wakeAfterMinutes 10, then call merge again under the same approval." };
+          }
         }
         const g = await gate(pr);
         if (!g.ready) return { number, merged: false, url: pr.html_url, ...g, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix, do not merge." : g.pending.length ? "Checks still running: finish waiting with a wakeup of about 10 minutes and call this again." : g.checks ? "Every check finished green, but GitHub has not reported this PR as mergeable yet. Finish waiting about 5 minutes and call merge again; do not tell the owner checks are running." : "No checks have reported on this head yet: finish waiting about 10 minutes and call this again." };

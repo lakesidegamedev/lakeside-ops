@@ -14,6 +14,7 @@ Answer quality, from a review of the 2026-11-05 ticket conversations.
 - A factual rule question can no longer be passed to Ask unread ("I haven't checked, Ask can answer that", 1765).
 - An expired provider login now moves the job to the fallback route and cools the provider, as a usage limit does, and the owner hears about it once an hour. On 2026-11-05 an expired Claude login retried for 83 minutes and was logged as a successful run; activations now record `auth_failed`.
 - Watchkeeper now reports when the independent conversation audit has not run for 30 minutes. Its timer stopped re-arming on 2026-10-26 and nobody noticed for ten days.
+- A developer pull request that only waits on the owner's approving review now reaches him as an approval card with Approve and Reject buttons and a plain explanation, not a GitHub link. Approve submits his review at that exact commit, re-runs the approval check and merges. Ariane answering on his behalf does not submit his review.
 - The brief covers following the player's own lead, recognising jokes, and answering every question the player asked.
 
 ## 8.1.2 (2026-11-05)

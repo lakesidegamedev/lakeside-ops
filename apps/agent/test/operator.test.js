@@ -1272,7 +1272,7 @@ function githubFixture(routes) {
   const exec = async (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd !== "/usr/bin/gh") return "";
-    const route = args.filter((a) => !a.startsWith("-") && a !== "api" && !/^(?:state|merge_method|sha|title|head|base|body)=/.test(a)).at(-1);
+    const route = args.filter((a) => !a.startsWith("-") && a !== "api" && !/^(?:state|merge_method|sha|title|head|base|body|commit_id|event)=/.test(a)).at(-1);
     for (const [pattern, value] of routes) if (pattern.test(route)) return JSON.stringify(typeof value === "function" ? value(route, args) : value);
     throw new Error("unexpected route " + route);
   };
@@ -1381,6 +1381,34 @@ test("an owner task needs a separate explicit yes for an economy merge, bound to
   // A new push after the yes needs a new yes.
   headSha = "bbb222";
   assert.equal((await f.broker.tool(j, "github", { action: "merge", number: 10 })).approvalRequired, true);
+});
+
+test("the owner's Approve button submits his GitHub review at that head instead of sending a link (2026-11-05)", async () => {
+  const owner = "111111111111111111";
+  let reviews = [];
+  const f = githubFixture([[/pulls\/10\/files/, files("src/lib/market/governor.ts")], [/pulls\/10\/reviews/, (route, args) => { if (args.includes("POST")) { reviews.push({ user: { login: "Egg3901" }, state: "APPROVED", commit_id: "aaa111" }); return {}; } return reviews; }], [/^user$/, { login: "Egg3901" }],
+    [/actions\/jobs\/77\/rerun/, {}], [/check-runs\?check_name=custom-rules/, { check_runs: [{ id: 77, name: "custom-rules", status: "completed", conclusion: "failure", started_at: "1" }] }],
+    [/pulls\/10\/merge/, { merged: true, sha: "m1" }], [/pulls\/10$/, { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "aaa111", ref: "keir/x" }, html_url: "u" }], green]);
+  const j = running(f, { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", ownerWaitPr: 10, source: {} });
+  const first = await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  assert.equal(first.approvalRequired, true);
+  Object.assign(f.ledger.data.actions[first.action], { state: "approved", approvedBy: owner, approvalMessage: "100000000000000002" });
+  const r = await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  assert.equal(r.ownerReviewSubmitted, true);
+  assert.ok(f.calls.some((c) => c.join(" ").includes("pulls/10/reviews") && c.includes("event=APPROVE") && c.includes("commit_id=aaa111")));
+  assert.ok(f.calls.some((c) => c.join(" ").includes("actions/jobs/77/rerun")));
+  assert.ok(!f.calls.some((c) => c.join(" ").includes("pulls/10/merge")));
+  // With the review in place, the next call merges.
+  assert.equal((await f.broker.tool(j, "github", { action: "merge", number: 10 })).merged, true);
+});
+
+test("Ariane's Approve on the owner's behalf does not submit the owner's GitHub review", async () => {
+  const f = githubFixture([[/pulls\/10\/files/, files("src/lib/market/governor.ts")], [/pulls\/10\/merge/, { merged: true, sha: "m1" }], [/pulls\/10$/, { number: 10, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "aaa111", ref: "keir/x" }, html_url: "u" }], green]);
+  const j = running(f, { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", ownerWaitPr: 10, source: {} });
+  const first = await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  Object.assign(f.ledger.data.actions[first.action], { state: "approved", approvedBy: "111111111111111111", approvedOnBehalfBy: "222222222222222222", approvalMessage: "100000000000000002" });
+  await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  assert.ok(!f.calls.some((c) => c.join(" ").includes("/reviews")));
 });
 
 test("an economy patch needs a World validation section before it is published", async () => {

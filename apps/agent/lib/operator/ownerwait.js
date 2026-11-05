@@ -15,7 +15,7 @@ function latestByName(runs) {
   return out;
 }
 
-function createOwnerWait({ ledger, api, ownerLogin = "Egg3901", now = () => Date.now(), log = () => {} }) {
+function createOwnerWait({ ledger, api, ownerLogin = "Egg3901", now = () => Date.now(), log = () => {}, drain = () => {} }) {
   const d = ledger.data;
   async function tick() {
     d.ownerWait ||= {};
@@ -34,9 +34,13 @@ function createOwnerWait({ ledger, api, ownerLogin = "Egg3901", now = () => Date
       const reviews = await api([`repos/${GAME_REPO}/pulls/${pr.number}/reviews?per_page=100`]);
       if ((reviews || []).some((r) => r.user?.login === ownerLogin && r.state === "APPROVED" && r.commit_id === head)) continue;
       d.ownerWait[key] = { at: now() };
-      ledger.notify(`ownerwait:${key}`, "owner",
-        `Waiting on you: ${pr.user?.login || "a developer"}'s pull request #${pr.number} "${pr.title}" has passed every check except your approval. ` +
-        `Open it, press Review changes, choose Approve and submit. Do not let anyone push to it afterwards, because a new push cancels the approval.\n${pr.html_url}`);
+      // Owner, 2026-11-05: "We literally have approval buttons built in." A link to GitHub meant opening
+      // the app and reviewing there. Keir reads the change and asks through the approval card instead;
+      // the Approve button submits the owner's review at this exact head and merges.
+      // Not an owner message: the task has no owner authority of its own, so only the button approves.
+      ledger.createJob(`ownerwait:${key}`, { kind: "command", role: "support", internalProbe: true, repository: "AHDGame", ownerWaitPr: pr.number, deadline: now() + 6 * 3600000,
+        source: { at: new Date(now()).toISOString(), content: `Developer pull request ${pr.number} ("${pr.title}" by ${pr.user?.login || "a developer"}) has passed every check except the owner's approving review, at head ${head}. Read the change (github pr ${pr.number}), then call github merge for it. That sends the owner an approval card with your plain-language explanation; his Approve submits his review and merges. Do not send him a GitHub link, do not post in any channel, and do not push to the branch.` } });
+      drain();
       log(`ownerwait: asked about #${pr.number} at ${head.slice(0, 8)}`);
     }
     for (const k of Object.keys(d.ownerWait)) if (now() - d.ownerWait[k].at > 14 * 86400000) delete d.ownerWait[k];

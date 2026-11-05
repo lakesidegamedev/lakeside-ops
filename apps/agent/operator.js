@@ -374,7 +374,7 @@ setInterval(async () => {
 }, 5 * 60000).unref();
 // Owner approval pings: a developer PR green except the owner's own approval (owner, 2026-11-03).
 const { createOwnerWait } = require("./lib/operator/ownerwait");
-const ownerWait = createOwnerWait({ ledger, api: ciApi, log });
+const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain() });
 let watchingOwnerWait = false;
 setInterval(async () => {
   if (watchingOwnerWait) return; watchingOwnerWait = true;
