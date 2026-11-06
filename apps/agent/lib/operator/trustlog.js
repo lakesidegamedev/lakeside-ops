@@ -16,9 +16,15 @@ const STILL_CHECKING = /\b(?:still (?:checking|looking|investigating|working|dig
 const CLAIM = /\b(?:is|are|now|been)\s+(?:fixed|live|working|resolved|gone|sorted|corrected)\b|\bshould be (?:fixed|gone|working)\b|\blive on the main server\b|\bfix is (?:live|in)\b/i;
 const NEGATIVE_REPLY = /\b(?:still (?:not|broken|wrong|the same|happening|there|showing|missing|no)|not (?:fixed|working|resolved|changed)|isn['’]t (?:fixed|working)|same (?:issue|problem|thing|error)|again|doesn['’]t work|didn['’]t work|nothing changed|no change|worse)\b/i;
 
+// Keir 8.5.1 (ticket 1785): "Investigating: checking why revenue swings between turns" restates the plan, it does not
+// report a result. A short post that opens with, or is built around, investigating/checking and carries no number
+// is not progress. A number (a turn, an amount, a count) is what makes such a line a finding.
+const RESTATES = /^\W*(?:status\W+)?(?:investigating|checking|looking into|looking at|digging into)\b|\b(?:investigating|checking|looking into|looking at) (?:why|what|how|whether|the cause|this|it)\b/i;
+
 function isSubstantiveText(text, previousTexts = []) {
   const t = String(text || "").trim();
   if (t.length < 25 || STILL_CHECKING.test(t) && t.length < 220) return false;
+  if (RESTATES.test(t) && t.length < 220 && !/\d/.test(t)) return false;
   const words = (s) => new Set(String(s).toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2));
   const a = words(t);
   for (const prev of previousTexts) {
@@ -63,4 +69,4 @@ function contradictedClaims(d, since, at) {
   }
   return out;
 }
-module.exports = { trust, recordReply, recordPlayerMessages, markProgress, contradictedClaims, isSubstantiveText, STILL_CHECKING, NEGATIVE_REPLY, KEEP_MS };
+module.exports = { trust, recordReply, recordPlayerMessages, markProgress, contradictedClaims, isSubstantiveText, STILL_CHECKING, RESTATES, NEGATIVE_REPLY, KEEP_MS };

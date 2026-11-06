@@ -5,6 +5,21 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.5.1 (2026-11-06)
+
+Investigation workers and real progress for the sweeper. Ticket 1785: a player reported a company whose revenue, margins and share price flip every turn. Keir posted "checking why" at 15:14, filed a blocking question card of his own, and then did nothing for six hours. A status-card line reading "Investigating" at 19:47 counted as progress, the sweeper never fired, and 8.5.0 coding workers only start for a filed bug, so nothing launched. A person dispatched a worker by hand.
+
+- Investigation workers (`codingworkers.js`, run kind `investigate`). When Keir's own lookups leave a ticket's cause unverified (an open self-owned blocking question card, or a waiting task whose own summary says the cause is unverified and names a next step), a headless Sonnet worker is started through the same launch recipe, caps, host admission, daily launch limit, kill switch and ledger as build workers. It is read-only on prod, traces the numbers and the code path, and writes a report whose first lines are `VERDICT:` and `CLASS:`.
+- Prompt trigger: when a ticket task ends its activation (waiting or blocked) with the cause unverified, the worker is dispatched at once from `finish`, not at the sweeper's six hours. A task waiting on the player does not trigger it.
+- Outcomes: a report without a PR ends the run as `reported`, counts as real progress, and wakes the ticket task with the verdict (an economy-behaviour, rule or balance class tells it to put the options to the owner as a decision; nothing ships on its own). A bugfix or display PR joins the 8.5.0 flow (checks, exact green, merge, promote, deploy proof); any other declared class, or none, stops at `needs_owner`. No report and no PR: one retry, then the owner is told. At most two investigation runs per ticket. `workers/skip-tickets` is respected.
+- Sweeper progress is stricter. A status-card post or edit, a delivery receipt, a self-owned question card Keir filed for himself, and any short post that opens with or is built around "investigating", "checking" or "looking into" with no number in it no longer reset the six hour stall clock. A PR, a handoff to someone else, a release, a heal, an effect such as an issue, a status-card stage that moved past "Investigating", an answer, or a finding with a number still do.
+- A self-owned blocking question card must never just wait. If nothing is working it 20 minutes after it was filed (no running or queued worker run), the sweeper queues an investigation worker; if none can be started (switched off, skip list, budget spent) or the card is still unworked after one was, the owner is told once, then at most every 12 hours. While a worker run is live the ticket is covered.
+- When the sweeper finds a stale ticket whose cause is unverified it now queues a worker instead of only nudging the task; any other stale ticket is nudged as before.
+- `/v5/trust/status` lists the run kind.
+- Tests: `test/keir851-investigation-workers.test.js` (the 1785 timeline at 15:14, 19:47, 21:10 and 21:14, progress rules, the card rule, dispatch guards, reports, retry and escalation, PR classes, the brief, the `finish` trigger).
+
+Release: stage and activate with `deploy/release.sh`. Put any ticket that already has a hand-dispatched worker in `/var/lib/keir-operator/workers/skip-tickets` first, because an open self-owned question card will otherwise get a worker within one sweep.
+
 ## 8.5.0 (2026-11-06)
 
 Keir ships its own bug and display fixes (owner, 2026-11-06: "Yes, bug/display fixes only"). Ticket 1783 sat four hours as a card waiting for a developer. Now a code bug classed bugfix or display is built, merged, promoted and checked live by Keir while the owner is away. Rule, balance and economy-behaviour changes still wait for the owner.

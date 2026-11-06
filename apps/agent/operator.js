@@ -394,6 +394,7 @@ tickers.every("ciwatch", 60000, async () => {
 });
 // Keir 8.4: stuck-ticket sweeper and the daily trust report.
 const sweeper = require("./lib/operator/sweeper").createSweeper({ ledger, config: { sweeperEnabled: env.KEIR_SWEEPER !== "0" }, log, killSwitch, wake: () => drain(),
+  investigate: (root, o) => (codingWorkersInst ? codingWorkersInst.queueInvestigation({ job: root, reason: o.reason }) : { skipped: true, permanent: true, reason: "coding workers are not running" }),
   held: (job) => {
     if (config.supportDeferred(job)) return "the ticket supervisor owns it";
     const hold = admissionHold(rootJob(job, ledger.data.jobs), { now: Date.now(), claimedBy: (id) => ledger.data.channels[id]?.claimedBy });

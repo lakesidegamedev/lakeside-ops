@@ -12,6 +12,11 @@
 //   queued -> running -> checks -> merge_ready -> to_staging -> to_main -> verifying -> done
 //   side exits: needs_owner (economy paths or a gated class), escalated (worker, CI or deploy trouble)
 //
+// Keir 8.5.1 adds a second run kind, "investigate": when Keir's own lookups leave a ticket's cause unverified
+// (an open self-owned blocking question card, or a waiting task whose summary says so), a read-only
+// investigation worker finds the cause. A report without a PR ends the run as "reported" and goes back to the
+// ticket task; a bugfix or display PR joins the build flow above; rule and economy findings become owner options.
+//
 // Hard rules, all enforced here and tested:
 //  - Kill switch: no launch, merge or promote while engaged. A running worker is left to finish.
 //  - Merge and promote only on EXACT green: verify, dependency-review and custom-rules must each have a
@@ -29,6 +34,8 @@ const { GAME_REPO, GITHUB_OWNER } = require("./github");
 const trustLimits = require("./limits");
 const blast = require("./blastradius");
 const cc = require("./changeclass");
+const inv = require("./investigation");
+const { markProgress } = require("./trustlog");
 
 const REQUIRED = Object.freeze(["verify", "dependency-review", "custom-rules"]);
 const SHIPPABLE = Object.freeze(["bugfix", "display"]);
@@ -40,7 +47,7 @@ const HOP_DEADLINE_MS = 3 * 3600000;
 const DEPLOY_DEADLINE_MS = 60 * 60000;
 const WORKER_RUNTIME_SEC = 7200;
 const MAX_STEP_ERRORS = 8;
-const TERMINAL = new Set(["done", "escalated", "needs_owner", "cancelled"]);
+const TERMINAL = inv.ENDED;
 const SHA = /^[0-9a-f]{40}$/;
 const REPO = GAME_REPO;
 const WORKTREE_ROOT = "/root/projects/AHDGame/worktrees";
@@ -111,12 +118,23 @@ const RULES = `You are a headless Sonnet worker on the production ops box, start
 - If the fix turns out to be a rule, balance or economy-behaviour change, or needs an owner decision, STOP: do not open a PR; write the options in the report.
 - Your last step is to write the report file named below: root cause with file and line, what you changed, tests and results, the PR URL and the final state of the three required checks, prod evidence you read, a draft plain-language reply for the player (no jargon, no apology), and open risks stated honestly.`;
 
+const INVESTIGATE_RULES = `You are a headless Sonnet worker on the production ops box, started by Keir (the A House Divided support operator). You do not talk to players. Keir looked at a player's report, could not verify the cause, and handed the investigation to you.
+- Run EVERY command in the FOREGROUND. Never background a command, never "wait to be re-invoked": -p mode has no re-invocation. Poll CI in the foreground with a hard cap of 40 minutes, then write your report.
+- Prod data is READ-ONLY: gamestate and heal-ops read tools only (heal_query, heal_count, trace_*), no heal_apply, no writes, no Discord, no tickets.
+- Find the cause with evidence: trace the numbers turn by turn from prod, then find the code path (file and line on origin/development) that produces them. A cause without numbers is not verified. Code lookup: /root/bin/mcpcall.sh ops-knowledge code_search or code_exact, then read the real files; rg for completeness.
+- Classify the finding as exactly one of: bug or display defect (class bugfix or display), economy behaviour or rule or balance (class economy-behaviour, rule, balance), or working as designed / player error.
+- If it is a bugfix or display defect, fix it: work ONLY in your own git worktree (path below, created from origin/development), never git checkout in /root/projects/AHDGame itself, stage explicit files. AHDGame is PUBLIC: no secrets, player names, Discord ids, ticket numbers, internal hosts or paths, or ops references in code, commits, branch names or PR text. Conventional commits. The PR targets development, carries a versionless changelog note under the repo's unreleased changelog directory (areas one of engine, frontend, fullstack, backend) and a line "Change-class: <bugfix|display>" on its own line. Write a test that would have caught it. BEFORE every push run npx prettier --check on every changed file and type-check changed test files; run only targeted tests and a scoped tsc, no full verify. Wait for the required checks (verify, dependency-review, custom-rules), foreground, 40 minute cap. Do not merge, promote, deploy or touch systemd.
+- If it is an economy behaviour, rule or balance matter, or needs an owner decision, do NOT open a PR: write two to four options in plain words in the report, with what each changes for players.
+- No em dashes or en dashes anywhere you write. Never print secrets.
+- Your last step is to write the report file named below. Its first line must be "VERDICT: <one sentence: the cause, with the key number>" and its second line "CLASS: <bugfix|display|economy-behaviour|rule|balance|as-designed|unknown>". Then: root cause with file and line, the prod numbers you read, what you changed (if anything), tests, the PR URL and final state of the three required checks, a draft plain-language reply for the player (no jargon, no apology), and open risks stated honestly. If you could not verify the cause, say exactly what you checked and what is still unknown.`;
+
 function buildBrief(run, { retryNote = "", fixNote = "" } = {}) {
-  return [RULES, "",
-    "---", `RUN ${run.id} (${run.mode === "fix" ? "CI fix attempt" : `attempt ${run.attempt}`}). Change class: ${run.changeClass}.`,
+  const investigate = run.kind === "investigate";
+  return [investigate ? INVESTIGATE_RULES : RULES, "",
+    "---", `RUN ${run.id} (${run.mode === "fix" ? "CI fix attempt" : `attempt ${run.attempt}`}).${investigate ? (run.changeClass ? ` Change class: ${run.changeClass}.` : " Investigation.") : ` Change class: ${run.changeClass}.`}`,
     `Worktree: ${run.worktree}  (create with: git -C /root/projects/AHDGame worktree add ${run.worktree} -b ${run.branch} origin/development)`,
     run.mode === "fix" && run.pr ? `Existing PR #${run.pr} on branch ${run.branch}. Do NOT open a new PR: fix the failing checks on that branch and push to it. Reuse the worktree if it exists, otherwise add it from the branch.` : "",
-    "", `PROBLEM: ${run.title}`, "", run.detail,
+    "", `${investigate ? "TO INVESTIGATE" : "PROBLEM"}: ${run.title}`, "", run.detail,
     run.issue ? `\nPublic issue: #${run.issue} (reference it in the PR as "Fixes #${run.issue}").` : "",
     retryNote ? `\nThe previous attempt ended without a PR. Tail of its log:\n${retryNote}` : "",
     fixNote ? `\nThe required checks failed. Failing job output:\n${fixNote}` : "",
@@ -194,6 +212,41 @@ function createCodingWorkers({
     return { skipped: false, run };
   }
 
+  // Keir 8.5.1: hand an unverified cause to a read-only investigation worker. Skips are reported with
+  // `permanent` when retrying cannot help (switched off, skip list, budget spent), so the sweeper escalates.
+  function queueInvestigation({ job, reason = "" }) {
+    if (!enabled) return { skipped: true, permanent: true, reason: "coding workers are switched off" };
+    const ticket = job?.ticket || null;
+    if (!ticket) return { skipped: true, permanent: true, reason: "only a ticket's own task dispatches a worker" };
+    if (skipped(ticket)) return { skipped: true, permanent: true, reason: "ticket is on the skip list" };
+    if (job.resolved || job.channelClosed || ["done", "dismissed", "cancelled", "deferred"].includes(job.state)) return { skipped: true, reason: "ticket is not open for work" };
+    const jobs = Object.values(d.jobs).filter((j) => j.ticket === ticket);
+    const cause = inv.causeUnverified(jobs);
+    if (!cause) return { skipped: true, reason: "the cause is not marked unverified" };
+    const active = inv.activeRun(d, ticket);
+    if (active) return { skipped: true, active: true, reason: `ticket already has run ${active.id}`, run: active };
+    if (inv.investigationsFor(d, ticket) >= inv.MAX_INVESTIGATIONS_PER_TICKET) return { skipped: true, permanent: true, reason: `${inv.MAX_INVESTIGATIONS_PER_TICKET} investigation workers already ran for this ticket` };
+    const card = cause.card || null;
+    const detail = card ? `${card.title}\n(Keir's own card ${card.id}; read it with ops-knowledge kanban_get for what he already checked.)` : cause.summary;
+    const report = String(job.source?.content || "").slice(0, 1200);
+    const full = [detail, report && `The player's report:\n${report}`, job.summary && `Keir's own last summary:\n${String(job.summary).slice(0, 1500)}`, reason && `Why this was started: ${reason}`].filter(Boolean).join("\n\n");
+    const s = store(); s.seq += 1;
+    const id = `cw-${ticket}-${s.seq}`, sid = short(`${now().toString(36)}${s.seq}`);
+    const run = s.runs[id] = { id, kind: "investigate", ticket, jobId: job.id, card: card?.id || null, changeClass: null, title: String(card?.title || "Cause of the reported problem is unverified").slice(0, 200), detail: full.slice(0, 5000), issue: null,
+      state: "queued", attempt: 1, mode: "build", short: sid, branch: `fix/keir-${sid}`, worktree: `${WORKTREE_ROOT}/keir-${sid}`,
+      report: path.join(dir, `${id}.report.md`), log: path.join(dir, `${id}.log`), createdAt: now(), history: [], errors: 0 };
+    note(run, `queued investigation (${cause.source})`); audit("coding_worker_queued", { run: id, ticket, card: run.card, kind: "investigate" });
+    ledger.save();
+    return { skipped: false, run };
+  }
+  // Queue and launch at once (Keir's own activation ended with the cause unverified). The sweeper only queues;
+  // the 60 s worker ticker launches, subject to the same caps and admission.
+  async function dispatchInvestigation(args) {
+    const out = queueInvestigation(args);
+    if (!out.skipped) { await launchIfAble(out.run); ledger.save(); }
+    return out;
+  }
+
   async function launchIfAble(run) {
     if (killed()) return false;
     if (activeCount() >= MAX_ACTIVE) { run.waiting = "two workers already running"; return false; }
@@ -215,7 +268,7 @@ function createCodingWorkers({
     Object.assign(run, { state: "running", unit, startedAt: now(), waiting: null, errors: 0 });
     delete run.retryNote; delete run.fixNote;
     note(run, `launched ${unit}`); audit("coding_worker_launched", { run: run.id, unit });
-    await card(run, `Keir started coding worker ${run.id} (${run.mode === "fix" ? "CI fix" : `attempt ${run.attempt}`}, unit ${unit}). It builds a ${run.changeClass} fix in its own worktree and opens a PR; Keir merges only when the three required checks are green.`);
+    await card(run, `Keir started coding worker ${run.id} (${run.mode === "fix" ? "CI fix" : `attempt ${run.attempt}`}, unit ${unit}). ${run.kind === "investigate" ? "It investigates the unverified cause read-only and reports back; if the cause is a bug it opens a bugfix or display PR." : `It builds a ${run.changeClass} fix in its own worktree and opens a PR`}; Keir merges only when the three required checks are green.`);
     return true;
   }
 
@@ -251,12 +304,28 @@ function createCodingWorkers({
       if (!pr) { const m = new RegExp(`github\\.com/${REPO}/pull/(\\d+)`).exec(report); pr = m ? Number(m[1]) : null; }
     }
     if (run.mode === "fix") { run.mode = "build"; run.checksSince = now(); run.state = "checks"; note(run, "fix worker exited"); return; }
+    if (pr) { try { markProgress(d, run.ticket, now(), "worker PR opened"); } catch {} }
     if (pr && report) { Object.assign(run, { pr, state: "checks", checksSince: now() }); note(run, `worker exited, PR #${pr}`); card(run, `Coding worker ${run.id} opened PR #${pr}. Waiting for the required checks.`); return; }
     if (pr) { Object.assign(run, { pr, state: "checks", checksSince: now() }); note(run, `worker exited without a report, PR #${pr}`); return; }
     let logTail = ""; try { logTail = tail(readFile(run.log), 2500); } catch {}
+    if (report && !pr && run.kind === "investigate") return finishInvestigation(run, report);
     if (report && !pr) return escalate(run, `the worker finished without a PR; its report is at ${run.report} (likely an owner decision or a rule question)`);
     if (run.attempt < 2) { run.attempt += 1; run.state = "queued"; run.retryNote = logTail || "(no log)"; note(run, "no PR and no report; one retry queued"); return; }
     return escalate(run, "the worker exited twice without a PR or a report");
+  }
+
+  // An investigation that ends with findings and no PR: hand the report back to the ticket task and count it as
+  // real progress for the sweeper (a finding with a cause, or an exact statement of what is still unknown).
+  function finishInvestigation(run, report) {
+    run.state = "reported"; run.endedAt = now();
+    const verdict = /^\s*VERDICT:\s*(.+)$/im.exec(report)?.[1] || "", klass = /^\s*CLASS:\s*([\w-]+)/im.exec(report)?.[1] || "unknown";
+    run.verdict = verdict.slice(0, 300); run.findingClass = klass.toLowerCase();
+    run.reportSummary = String(report).slice(0, 1500);
+    try { markProgress(d, run.ticket, now(), "investigation report"); } catch {}
+    note(run, `reported: ${klass}`); audit("coding_worker_reported", { run: run.id, class: klass });
+    const owner = ["economy-behaviour", "rule", "balance"].includes(run.findingClass);
+    tellTicket(run, `Investigation worker ${run.id} finished. Verdict: ${verdict || "(none stated)"} Class: ${klass}. Full report: ${run.report}\n${run.reportSummary}\n\nNow: tell the player the finding in plain words (the cause or exactly what was ruled out, never "still checking"), update or release your own card, ${owner ? "and put the options in the report to the owner as a decision (this is a rule or economy-behaviour matter, nothing ships on its own), " : ""}and do not claim a fix is live.`);
+    return card(run, `Investigation worker ${run.id} reported (${klass}): ${verdict || "see report"}`);
   }
 
   async function prFiles(number) {
@@ -289,6 +358,11 @@ function createCodingWorkers({
     if (pr.merged) { run.mergeSha = pr.merge_commit_sha; run.state = "to_staging"; run.hopSince = now(); return; }
     if (pr.state === "closed") return escalate(run, `PR #${run.pr} was closed without merging`);
     if (pr.base?.ref !== "development") return escalate(run, `PR #${run.pr} targets ${pr.base?.ref}, not development`);
+    if (run.kind === "investigate" && !run.changeClass) {
+      const declared = cc.normalizeClass(/^\s*Change-class:\s*([\w-]+)/im.exec(pr.body || "")?.[1]);
+      if (!SHIPPABLE.includes(declared)) return escalate(run, `the investigation PR is class ${declared || "undeclared"}, not bugfix or display`, "needs_owner");
+      run.changeClass = declared;
+    }
     if (!run.gated) { const why = await gate(run, pr); if (why) return escalate(run, why, "needs_owner"); run.gated = true; }
     const g = exactGreen(await checkRuns(pr.head.sha));
     run.checks = g.detail;
@@ -427,8 +501,8 @@ function createCodingWorkers({
     ledger.save();
   }
 
-  function status() { return runs().map((r) => ({ id: r.id, ticket: r.ticket, state: r.state, pr: r.pr || null, unit: r.unit || null, waiting: r.waiting || null })); }
-  return { dispatch, tick, adopt, status, runs, runFor };
+  function status() { return runs().map((r) => ({ id: r.id, kind: r.kind || "build", ticket: r.ticket, state: r.state, pr: r.pr || null, unit: r.unit || null, waiting: r.waiting || null })); }
+  return { dispatch, dispatchInvestigation, queueInvestigation, tick, adopt, status, runs, runFor };
 }
 
 module.exports = { createCodingWorkers, decideDispatch, admit, exactGreen, isGreenLine, buildBrief, REQUIRED, MAX_ACTIVE, MIN_MEM_KB };
