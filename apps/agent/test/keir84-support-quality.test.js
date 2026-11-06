@@ -69,7 +69,7 @@ test("a production-typed live notice is not sent without the main release receip
 test("a rule explained as working as designed does not close a bug ticket; the owner decides (1775, 1757, 1750)", () => {
   const msg = "Neither screen is miscalculating. The numbers check out and this works as designed.";
   assert.match(policy.resolveRefusal({ texts: [msg] }), /under review/);
-  assert.match(policy.resolveRefusal({ texts: [msg] }), /rule_change/);
+  assert.match(policy.resolveRefusal({ texts: [msg] }), /rule/);
   // Once the owner decided, or a fix exists, closing is fine.
   assert.equal(policy.resolveRefusal({ texts: [msg], decided: true }), null);
   assert.equal(policy.resolveRefusal({ texts: [msg], fixed: true }), null);
@@ -142,7 +142,7 @@ test("tool-call text and broker machinery never reach a player (owner report 202
 });
 
 test("changeClass is validated and recorded with requiresOwner", async () => {
-  assert.equal(policy.normalizeChangeClass("rule-change"), "rule_change");
+  assert.equal(policy.normalizeChangeClass("rule-change"), "rule");
   assert.equal(policy.requiresOwner("rule_change"), true);
   assert.equal(policy.requiresOwner("display_fix"), false);
   assert.throws(() => policy.normalizeChangeClass("tweak"), /changeClass must be one of/);
@@ -151,10 +151,10 @@ test("changeClass is validated and recorded with requiresOwner", async () => {
   const r = await f.broker.tool(f.job, "raise_to_developers", { kind: "decision", changeClass: "rule_change", title: "Mothball rule", detail: "The loss counter is not cleared when a player reactivates a plant, so the autopilot mothballs it again on the next turn.", question: "Should the loss counter reset when a player reactivates a plant?", options: [{ label: "Reset it", detail: "Plants stay running", recommended: true }, { label: "Keep it", detail: "As today" }] });
   const decision = f.ledger.data.decisions[r.decision];
   assert.equal(decision.ownerHold, true);
-  assert.equal(decision.changeClass, "rule_change");
+  assert.equal(decision.changeClass, "rule");
   assert.equal(decision.requiresOwner, true);
   assert.equal(decision.ticket, 123);
-  assert.equal(f.job.changeClass, "rule_change");
+  assert.equal(f.job.changeClass, "rule");
   assert.equal(f.job.requiresOwner, true);
   assert.equal(f.job.raisedToDevelopers.at(-1).requiresOwner, true);
 });

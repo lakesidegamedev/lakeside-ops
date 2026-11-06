@@ -12,7 +12,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // news), not "that answer was wrong". They owe the player nothing new, so they must
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
-const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClass = require("./changeclass");
+const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
 const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
@@ -1528,7 +1528,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Keir 8.4 (owner, 2026-11-06): every escalation is classified so a guard can enforce the autonomy rule
       // without reading prose. Bug fixes, display fixes and documented data heals may ship while the owner is
       // away; a rule, balance or economy behaviour change waits for his answer.
-      const changeClass = replyPolicy.normalizeChangeClass(input.changeClass) || (input.kind === "bug" ? "bug_fix" : null);
+      const changeClass = replyPolicy.normalizeChangeClass(input.changeClass) || (input.kind === "bug" ? "bugfix" : null);
       if (["decision", "enhancement"].includes(input.kind) && !changeClass) throw new Error(`Not raised: say what kind of change this is. Set changeClass to ${replyPolicy.CHANGE_CLASSES.join(", ")}. Bug and display fixes and documented data heals may ship while the owner is away; rule, balance and economy changes wait for his decision.`);
       const ownerRequired = changeClass ? replyPolicy.requiresOwner(changeClass) : false;
       if (changeClass) { job.changeClass = changeClass; job.requiresOwner = ownerRequired || job.requiresOwner === true; }
@@ -2233,7 +2233,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       // Keir 8.4: what kind of change this merge or promotion ships (changeclass.js). Set once the file list is known.
       let shipClass = null;
-      const ownerGuard = () => { if (shipClass) changeClass.assertShippable(d, { ...shipClass, now: now(), inPerson: process.env.KEIR_GATED_OWNER_IN_PERSON === "1" }); };
+      const ownerGuard = () => { if (shipClass) changeClassMod.assertShippable(d, { ...shipClass, now: now(), inPerson: process.env.KEIR_GATED_OWNER_IN_PERSON === "1" }); };
       // Source evidence goes to the worker, never directly into an owner card.
       async function requestGithubApproval(args, reason) {
         const copy=require("./approvalcopy");
@@ -2302,8 +2302,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           if (!desktop) {
             const prd = input.action === "merge" ? await api([`repos/${repo}/pulls/${Number(input.number)}`]) : null;
             shipClass = { declared: input.changeClass, body: prd?.body, title: prd?.title, blastClass: Array.isArray(files) ? blast.classify(files).cls : "economy", ownerId: config.ownerId, action: input.action, number: input.action === "merge" ? Number(input.number) : null, to };
-            klass = changeClass.classifyChange(shipClass);
-            if (klass.needsDeclaration) { if (input.action === "merge") changeClass.assertShippable(d, shipClass); shipClass = null; }
+            klass = changeClassMod.classifyChange(shipClass);
+            if (klass.needsDeclaration) { if (input.action === "merge") changeClassMod.assertShippable(d, shipClass); shipClass = null; }
           }
           if (findingShip && input.action === "promote" && files?.length) {
             const range = await api([`repos/${repo}/compare/${to}...${from}`]).catch(() => null);

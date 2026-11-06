@@ -13,7 +13,7 @@
 // note wakes the ticket's task), then, if that produced nothing substantive, one owner escalation, then at
 // most one more every ownerRepingMs (12 h). A ticket waiting on a pending owner decision is never
 // investigated or resolved: the player is told once that it awaits approval, and the owner is re-pinged
-// every 12 h. All owner notices of one sweep go out as a single DM.
+// by decisions.js every 12 h (the sweeper does not). All owner notices of one sweep go out as a single DM.
 const { trust, markProgress } = require("./trustlog");
 
 const HOUR = 3600000, MIN = 60000;
@@ -29,14 +29,13 @@ function inActiveHours(at, cfg = DEFAULTS) {
 }
 
 // Pure decision for one ticket snapshot. Returns { action, reason } where action is one of
-// none | investigate | escalate_owner | reping_owner | notice_player_once.
+// none | investigate | escalate_owner | notice_player_once. The 12 h owner re-ping of a pending decision is decisions.js's alone.
 function decideTicket(t, now, cfg = DEFAULTS) {
   if (!t.open) return { action: "none", reason: "closed" };
   if (t.held) return { action: "none", reason: `held: ${t.held}` };
   if (t.pendingDecision) {
     const p = t.pendingDecision;
     if (!p.playerNotified && !t.running) return { action: "notice_player_once", reason: "an owner decision is pending and the player has not been told" };
-    if (now - (p.lastPingAt || p.at) >= cfg.ownerRepingMs) return { action: "reping_owner", reason: `owner decision pending ${Math.round((now - p.at) / HOUR)} h` };
     return { action: "none", reason: "awaiting the owner's decision" };
   }
   if (t.running) return { action: "none", reason: "being worked" };
@@ -104,7 +103,7 @@ function createSweeper({ ledger, config, now = () => Date.now(), log = () => {},
       let s; try { s = snapshot(n, jobs, at); } catch (e) { log(`sweeper: ticket ${n}: ${e.message}`); continue; }
       if (!s) continue;
       const decision = decideTicket(s, at, c);
-      if (decision.action === "none" || actions.length >= c.maxActionsPerSweep && decision.action !== "reping_owner") continue;
+      if (decision.action === "none" || actions.length >= c.maxActionsPerSweep) continue;
       const rec = (t.sweeps[n] ||= {});
       if (decision.action === "investigate") {
         nudge(s.root, `Stuck-ticket sweep: ${decision.reason}. Read the ticket from the start, establish what is actually new, then do one of: post a substantive update (a finding, a fix state change or an answer to what the player asked; never "still checking"), hand the investigation to the right owner, or finish with a concrete next action. Do not repeat an earlier post.`, at);
@@ -112,10 +111,6 @@ function createSweeper({ ledger, config, now = () => Date.now(), log = () => {},
       } else if (decision.action === "notice_player_once") {
         nudge(s.root, "A decision on this ticket is waiting for the owner. Tell the player once, in plain words, that it awaits approval. Do not decide it, promise an outcome, or resolve the ticket.", at);
         Object.assign(rec, { playerNoticedFor: s.pendingDecision.id, noticeAt: at });
-      } else if (decision.action === "reping_owner") {
-        t.ownerPings[s.pendingDecision.id] = at;
-        owner.push(`Ticket ${n}: still waiting on your decision (${Math.round((at - s.pendingDecision.at) / HOUR)} h). ${s.pendingDecision.question}`.trim());
-        Object.assign(rec, { at, kind: "reping_owner", reason: decision.reason });
       } else if (decision.action === "escalate_owner") {
         owner.push(`Ticket ${n} needs a person: ${decision.reason}.`);
         Object.assign(rec, { at, kind: "escalate_owner", reason: decision.reason, lastEscalationAt: at });

@@ -51,12 +51,12 @@ test("waiting on a developer past 6 hours goes straight to the owner, not to ano
   assert.equal(decideTicket(base({ waitingOnDeveloper: true, lastSubstantiveAt: NOON - 8 * H }), NOON).action, "escalate_owner");
 });
 
-test("a pending owner decision: tell the player once, re-ping the owner every 12 hours, never investigate", () => {
+test("a pending owner decision: tell the player once, never investigate, never re-ping (decisions.js owns the 12 h re-ping)", () => {
   const p = (o = {}) => ({ id: "d1", at: NOON - 20 * H, lastPingAt: 0, playerNotified: true, question: "ship it?", ...o });
   assert.equal(decideTicket(base({ pendingDecision: p({ playerNotified: false }), lastSubstantiveAt: NOON - 30 * H }), NOON).action, "notice_player_once");
-  assert.equal(decideTicket(base({ pendingDecision: p(), lastSubstantiveAt: NOON - 30 * H }), NOON).action, "reping_owner");
+  assert.equal(decideTicket(base({ pendingDecision: p(), lastSubstantiveAt: NOON - 30 * H }), NOON).action, "none");
   assert.equal(decideTicket(base({ pendingDecision: p({ lastPingAt: NOON - 3 * H }), lastSubstantiveAt: NOON - 30 * H, lastHumanAt: NOON - 2 * H, lastReplyAt: 0 }), NOON).action, "none");
-  assert.equal(decideTicket(base({ pendingDecision: p({ lastPingAt: NOON - 13 * H }) }), NOON).action, "reping_owner");
+  assert.equal(decideTicket(base({ pendingDecision: p({ lastPingAt: NOON - 13 * H }) }), NOON).action, "none");
 });
 
 test("active hours are Eastern", () => {
@@ -120,10 +120,8 @@ test("the sweep respects the kill switch, a pending decision and the player-upda
   g.advance(11 * MIN);
   g.ledger.data.trust.sweeps[7].playerNoticedFor = "x1";
   const again = g.sweeper.tick();
-  assert.equal(again.actions[0].action, "reping_owner");
-  assert.match(Object.values(g.ledger.data.outbox).find((e) => /sweep/.test(e.content)).content, /still waiting on your decision/);
-  g.advance(1 * H);
-  assert.equal(g.sweeper.tick().actions.length, 0, "re-ping only every 12 hours");
+  assert.equal(again.actions.length, 0, "the sweeper never re-pings the owner for a decision; decisions.js does");
+  assert.equal(Object.keys(g.ledger.data.outbox).filter((k) => k.startsWith("sweeper-owner:")).length, 0);
   g.ledger.data.trust.capHits = { 9: { at: NOON, count: 4 } };
   g.sweeper.tick();
   assert.ok(Object.values(g.ledger.data.outbox).some((e) => /reached the limit of player updates/.test(e.content)));

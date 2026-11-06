@@ -6,19 +6,8 @@
 // that was clear, and "handed to an investigator" with nobody assigned. Pure functions; the broker
 // supplies the facts and throws the refusals.
 
-// What a change is. The owner's autonomy rule while he is away: bug and display fixes and documented
-// data heals may ship through the normal pipeline; any rule, balance or economy behaviour change waits
-// for him. The class is recorded on every escalation and decision (changeClass, requiresOwner) so a
-// later guard can enforce it without parsing prose.
-const CHANGE_CLASSES = ["bug_fix", "display_fix", "data_heal", "rule_change", "balance_change", "economy_change"];
-const OWNER_CLASSES = new Set(["rule_change", "balance_change", "economy_change"]);
-const requiresOwner = (changeClass) => OWNER_CLASSES.has(changeClass);
-function normalizeChangeClass(value) {
-  const v = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-  if (!v) return null;
-  if (!CHANGE_CLASSES.includes(v)) throw new Error(`changeClass must be one of ${CHANGE_CLASSES.join(", ")}. Bug and display fixes and documented data heals may ship; a rule, balance or economy behaviour change waits for the owner.`);
-  return v;
-}
+// What a change is: one vocabulary, owned by changeclass.js. Re-exported here for the broker's policy checks.
+const { CLASSES: CHANGE_CLASSES, requiresOwner, parseClass: normalizeChangeClass } = require("./changeclass");
 
 // A rule explained as working as designed. Posted to a player who complained, then the ticket closed, this
 // is the 1775, 1757 and 1750 pattern.
@@ -34,7 +23,7 @@ function explainsIntendedBehaviour(...texts) {
 function resolveRefusal(ctx) {
   if (ctx.pendingDecision) return "Not closed: an owner decision on this ticket is still unanswered. Hold the ticket open, tell the player once that it is waiting on the owner's approval, and do not decide for the owner. The owner is re-asked every 12 hours.";
   if (ctx.decided || ctx.fixed) return null;
-  if (explainsIntendedBehaviour(...(ctx.texts || []))) return "Not closed: this only explains that the rule works as designed, and the player brought a complaint. Under the owner's policy (2026-11-06) a rule that works as designed but is clearly hurting a player is not a resolution. Explain the rule to the player, say it is under review, keep the ticket open, and ask the owner with raise_to_developers kind decision: two or three concrete options, the recommended one first, changeClass rule_change, and what each option means for players. Resolve only after the owner has decided.";
+  if (explainsIntendedBehaviour(...(ctx.texts || []))) return "Not closed: this only explains that the rule works as designed, and the player brought a complaint. Under the owner's policy (2026-11-06) a rule that works as designed but is clearly hurting a player is not a resolution. Explain the rule to the player, say it is under review, keep the ticket open, and ask the owner with raise_to_developers kind decision: two or three concrete options, the recommended one first, changeClass rule, and what each option means for players. Resolve only after the owner has decided.";
   return null;
 }
 
