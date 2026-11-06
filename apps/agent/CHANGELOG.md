@@ -5,6 +5,18 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+Support quality, from the owner's rating of the open tickets on 2026-11-05 and 06 (1763, 1766, 1772, 1775, 1757, 1750).
+
+- A "still checking, I won't guess" post is allowed once per question. The second needs a player message and code reads since the last, and an investigator already running no longer excuses a repeat; the third never goes out. The post history used to keep one hour, so ticket 1766's seven posts over five hours were never seen as a run; it now keeps 24 hours.
+- After Keir's last post, with no new player message, another post must be a milestone: a finding (a game or code read made since), a receipted outcome, a correction or a question. Everything else goes on the status card note (tickets carried 30 to 57 updates).
+- A production-typed live notice is only sent with the main-release receipt. "Live and working" keeps needing a turn processed on the fix and a read of the player's own figures (ticket 1763).
+- support_resolve is refused when the message or Keir's last post only explains that a rule works as designed on a bug report, unless the owner has decided or a fix exists, and while any owner decision on the ticket is unanswered (1775, 1757, 1750). Policy: explain the rule, say it is under review, keep it open, ask the owner with two or three concrete options.
+- raise_to_developers takes changeClass (bug_fix, display_fix, data_heal, rule_change, balance_change, economy_change; required for decision and enhancement). It is stored with requiresOwner on the escalation, the job (changeClass, requiresOwner) and the decision (ownerHold, changeClass, requiresOwner, ticket) so a guard can hold rule, balance and economy changes for the owner.
+- A held owner decision never expires and is asked again in the owner's DMs every 12 hours until answered (it used to expire after 48 hours).
+- Hedging away from readable code is refused: "I haven't checked the exact trigger, so I won't quote a threshold" and "I searched, found nothing, so I won't tell you it exists" (ticket 1772 reversed within five minutes). Fewer than three code lookups sends Keir back to search; after that it must say plainly that the thing does not exist, or how it works.
+- "Handed to an investigator" needs a real investigation job, and "the developers have it" needs a queue item with an id or a pull request. The backing ids are written to the audit (handoff_claim_backed).
+- Tool-call text (JSON calls, fenced calls, tool names, other providers' markup) and the broker's own refusal text are refused in player-visible text on every public path: the shared public text step, the public outbox and the inbox sender. No instance reached a player in the ledger, inbox or journals reviewed, but only some paths were checked before.
+
 ## 8.3.1 (2026-11-05)
 
 - A message from the owner or a developer in a ticket channel only forces Keir to reply when it names or mentions Keir or asks a question. On ticket 1778 the owner told the player he would unban them, and Keir was made to reply with "the unban and note are yours ... I have nothing further to do on this one" in the player's channel.

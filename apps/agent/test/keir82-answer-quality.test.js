@@ -53,18 +53,16 @@ test("two tasks cannot both announce the same release within half an hour", asyn
   await assert.rejects(f.broker.tool(other, "channel_reply", { message: "The outputs fix went live on the main server." }), /told this is live/);
 });
 
-test("a second 'won't guess' post needs code reads, a third needs an investigator (ticket 1766)", async () => {
+test("a second 'won't guess' post needs code reads and a player message, a third never (ticket 1766)", async () => {
   const f = setup();
   await f.broker.tool(f.job, "channel_reply", { message: "I haven't found what mothballs your plant yet, so I won't guess." });
   f.advance(20);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Still no confirmed cause. I haven't found the rule that sets it." }), /code_search|delegate_investigation/);
-  f.job.lastCodeReadAt = f.now() + 1; f.advance(1);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Still no confirmed cause. I haven't found the rule that sets it." }), /code_exact|investigation instead/);
+  // Keir 8.4: code reads alone are not enough; the player must have written since (see keir84-support-quality.test.js).
+  f.job.lastCodeReadAt = f.now() + 1; f.job.observedPlayerAt = f.now() + 1; f.advance(1);
   await f.broker.tool(f.job, "channel_reply", { message: "I haven't confirmed the rule yet; the plant's coal shortage is the lead." });
-  f.advance(20); f.job.lastCodeReadAt = f.now() + 1; f.advance(1);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "I still haven't traced it, so I won't guess." }), /investigator now/);
-  const child = f.ledger.createJob("inv", { kind: "coding", investigation: true, codingParent: f.job.id, deadline: 9e15 });
-  f.job.investigations = [child.id];
-  await f.broker.tool(f.job, "channel_reply", { message: "I haven't found the cause yet; an investigator is reading the mothball rule now." });
+  f.advance(20); f.job.lastCodeReadAt = f.now() + 1; f.job.observedPlayerAt = f.now() + 1; f.advance(1);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "I still haven't traced it, so I won't guess." }), /code_exact|investigation instead/);
 });
 
 test("a factual question is not handed to Ask unread (ticket 1765)", () => {

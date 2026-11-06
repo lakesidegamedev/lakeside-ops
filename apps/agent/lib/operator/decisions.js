@@ -34,6 +34,9 @@ function ownerInitiated(d, config, job) {
 
 const ESCALATE_MS = 3 * 3600000;
 const PLAIN_EXPIRY_MS = 48 * 3600000;
+// Owner policy 2026-11-06 (owner away): a decision held for the owner (ownerHold) never expires and is re-asked
+// in his DMs every 12 hours until he answers. Keir never decides for him and never resolves the ticket meanwhile.
+const REPING_MS = 12 * 3600000;
 const VERDICT = /\n\n\*\*Decision:\*\* (✅ Approved|❌ Rejected|💬 Explain|🔹 Selected [1-6]) (?:by|from) <@(\d{15,22})>(?: <t:\d+:R>)?(?::\s*([\s\S]*))?$/;
 const KIND = { "✅ Approved": "approve", "❌ Rejected": "reject", "💬 Explain": "explain" };
 
@@ -293,10 +296,21 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
         ledger.audit("approval_explanation_required",{decision:x.id,job:job.id});ledger.save();await closeOut(x);continue;
       }
       if (await check(x)) continue;
-      if ((action && action.expiresAt && action.expiresAt < now()) || (!action && now() - x.at > PLAIN_EXPIRY_MS)) { expire(x, action); await closeOut(x); continue; }
+      if ((action && action.expiresAt && action.expiresAt < now()) || (!action && !x.ownerHold && now() - x.at > PLAIN_EXPIRY_MS)) { expire(x, action); await closeOut(x); continue; }
       const ownerKey = `ask:${x.id}:${config.ownerId}`;
       if (!require("./decisionpolicy").appDecisions(config) && !x.sent[config.ownerId] && !d.outbox[ownerKey]) {
         ledger.notify(ownerKey, "owner", render(x.question, x), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
+        ledger.save();
+      }
+      if (x.ownerHold && now() - (x.lastPingAt || x.at) >= REPING_MS) {
+        const waited = Math.round((now() - x.at) / 3600000);
+        x.lastPingAt = now(); x.pings = (x.pings || 0) + 1;
+        if (!require("./decisionpolicy").appDecisions(config)) {
+          const prev = x.sent?.[config.ownerId];
+          if (prev?.messageId && !prev.deleted) { try { await discord("DELETE", `/channels/${prev.channelId}/messages/${prev.messageId}`); } catch { /* an old copy that cannot be removed is harmless */ } delete x.sent[config.ownerId]; }
+          ledger.notify(`ask:${x.id}:${config.ownerId}:r${x.pings}`, "owner", render(`Still waiting on you, asked ${waited} hours ago, and the player is waiting too.\n\n${x.question}`, x), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
+        }
+        ledger.audit("decision_reping", { decision: x.id, job: x.jobId, pings: x.pings, waitedHours: waited, changeClass: x.changeClass || null });
         ledger.save();
       }
       // Game repairs (heals, compensation) the owner started are still issue work and may escalate.
@@ -327,4 +341,4 @@ function withdrawDecisions(ledger, jobId, reason) {
   }
 }
 
-module.exports = { normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
+module.exports = { REPING_MS, normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };

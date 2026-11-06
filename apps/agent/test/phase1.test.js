@@ -164,6 +164,7 @@ test("a status card edit is not the decision notice: the player's question still
 
 test("monologue cap: three Keir posts with no human reply, then the card only", async () => {
   const f = fixture();
+  f.job.lastGameReadAt = 9e15; // Keir 8.4: these tests exercise other pacing rules, not the milestone cap, so a fresh game read is on record.
   for (const m of ["The budget check is being investigated against your corporation.", "The mismatch is between two revenue figures the page and the save use.", "Confirmed: the save check reads an older revenue figure than the page."]) {
     f.tick(20 * 60000); assert.equal((await say(f, m)).published, true);
   }
@@ -186,6 +187,7 @@ test("ticket posts are short, in paragraphs, one per ten minutes, and correction
   assert.equal(shapeTicketPost("Found it. Fix is being looked at."), "Found it. Fix is being looked at.");
   assert.equal(shapeTicketPost("- one\n- two\n- three"), "- one\n- two\n- three", "bullets kept");
   const f = fixture();
+  f.job.lastGameReadAt = 9e15; // Keir 8.4: these tests exercise other pacing rules, not the milestone cap, so a fresh game read is on record.
   assert.equal((await say(f, "Those lines are repeated from the last turn and the law pressure shown next to them is not yet applied. Nothing to change on your end.")).published, true);
   f.tick(60000);
   await assert.rejects(say(f, "Here is the fuller picture. The statistics page has two kinds of lines. The repeated lines were placeholders."), /waits ten minutes/);
@@ -277,9 +279,9 @@ test("a compensation filing reaches the owner as a decision DM, not only the kan
   const detail = "Reporter asks whether the period when funded laws failed to affect Japan's metrics can be compensated by returning money.";
   await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail }), /kind: "decision"/);
   assert.equal(calls.filter((c) => c[1] === "kanban_add").length, 0, "nothing filed without the question");
-  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", {title:"Choose compensation", detail, kind:"decision", question:"x".repeat(500), options:[{label:"Use A"},{label:"Use B"}]}), /450 characters/);
+  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", {title:"Choose compensation", detail, kind:"decision", changeClass:"economy_change", question:"x".repeat(500), options:[{label:"Use A"},{label:"Use B"}]}), /450 characters/);
   assert.equal(calls.filter(c=>c[1]==="kanban_add").length,0,"invalid choices cannot leave a filed card behind");
-  const r = await f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail, kind: "decision", question: "How should we handle compensation for the missed effects?", options: [{label:"Deny compensation", detail:"No compensation is proposed.", recommended:true}, {label:"Refund law costs", detail:"Prepare a scoped refund proposal for separate approval."}, {label:"Replay missed progress", detail:"Prepare an exact replay plan for separate approval."}] });
+  const r = await f.broker.tool(f.job, "raise_to_developers", { title: "Compensation for missed metric effects", detail, kind: "decision", changeClass: "economy_change", question: "How should we handle compensation for the missed effects?", options: [{label:"Deny compensation", detail:"No compensation is proposed.", recommended:true}, {label:"Refund law costs", detail:"Prepare a scoped refund proposal for separate approval."}, {label:"Replay missed progress", detail:"Prepare an exact replay plan for separate approval."}] });
   assert.equal(r.id, 888); assert.ok(r.decision);
   const x = f.ledger.data.decisions[r.decision];
   assert.equal(x.state, "pending"); assert.equal(x.actionId, null); assert.equal(x.decisionKey, "kanban:888"); assert.match(x.question, /^Ticket 1522: Compensation for missed metric effects\. How should/); assert.equal(x.options.length, 3); assert.equal(x.type, "choice");
@@ -346,6 +348,7 @@ test("a waiting developer sibling cannot silence a newer player question", async
 
 test("a quiet interval permits a new useful answer after three earlier updates", async () => {
   const f = fixture();
+  f.job.lastGameReadAt = 9e15; // Keir 8.4: these tests exercise other pacing rules, not the milestone cap, so a fresh game read is on record.
   for (const m of ["The price limit is being investigated.", "The cost calculation is different on the bid screen.", "The tender ceiling needs to include those costs."]) {
     await say(f, m); f.tick(20 * 60000);
   }
