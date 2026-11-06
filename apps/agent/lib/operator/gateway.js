@@ -14,6 +14,9 @@ const acknowledgment = (text) => /^(?:ok(?:ay)?|thanks?(?: you)?|thank you|cheer
 const problem = /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i;
 
 const DEBOUNCE_MS = 45000;
+// Keir 8.4.1: a player writing in their own ticket is waiting on an answer, so the quiet
+// period that merges a burst of chat is short (it was 45 seconds before any work began).
+const PLAYER_DEBOUNCE_MS = 8000;
 const STAFF_HOLD_MS = 10 * 60000;
 // A developer's own words asking to put work live (Keir 4.0 sign-off).
 const SHIP_WORDS = /\b(ship|promote|release|deploy)\b|\bpush (it|this)\b|\bgo(?:es)? live\b|\bsigned? off\b|\bapproved?\b/i;
@@ -39,7 +42,7 @@ async function catchUp(call, channelId, cursor, ingest, maxPages = 10) {
   return after;
 }
 
-function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null }) {
+function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null, onWake = null }) {
   const d = ledger.data;
   d.conversations ||= {};
   d.summonedChannels ||= {};
@@ -409,8 +412,9 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       if (["waiting", "dismissed", "done"].includes(job.state)) {
         job.state = "waiting";
         const hold = !job.addressedPending && (job.staffActiveUntil || 0) > now() ? job.staffActiveUntil : 0;
-        const wake = Math.max(now() + DEBOUNCE_MS, hold);
+        const wake = Math.max(now() + (role === "player" ? PLAYER_DEBOUNCE_MS : DEBOUNCE_MS), hold);
         job.wakeAt = job.addressedPending && job.debounceWake && job.wakeAt ? Math.min(job.wakeAt, wake) : wake; job.debounceWake = true;
+        onWake?.(Math.max(0, job.wakeAt - now()));
       }
       ledger.save(); return;
     }

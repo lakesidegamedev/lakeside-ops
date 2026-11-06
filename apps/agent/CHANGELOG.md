@@ -5,6 +5,19 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.4.1 (2026-11-06)
+
+Conversational replies and faster answers (owner, 2026-11-06: "he needs like 60 seconds to look, and then like 20s of output generating ... less wall-of-text, more one-liners, more messages, less length to each ... more conversational than chatbotty").
+
+Measured on the live ledger and stream logs since 2026-11-01 (176 player-facing activations): once Keir is running, the first reply goes out at a median 6.5 s and the whole activation takes a median 11.8 s (3 model calls of about 2.5 s, 4 tool calls). The "looking" time was before Keir started. A player message waited for the next 20-second channel scan, then a 45-second quiet period that merges bursts of chat, then about 3 s of preparing the briefing.
+
+- A player message in a ticket now wakes the task after 8 seconds of quiet (it was 45). Messages from staff and other chatter keep the 45-second period. The wake is scheduled the moment the message is read instead of waiting for the next scan.
+- The channel scan runs every 8 seconds (it was 20; `KEIR_TICK_MS` overrides).
+- A reply goes out as a few short messages in order, about 1.4 seconds apart, instead of one block: paragraphs first, then sentence ends, one idea each and about 200 characters. A short reply stays one message. A list stays whole with its lead-in line, a code fence is never cut, no message passes the Discord limit, at most four messages (the tail folds into the last), and text is never dropped or reordered. Applies to ticket replies (`channel_reply`) and to everything the channel outbox sends.
+- All guards still see the whole reply once before anything is sent (leak filter, player register, certainty and receipt checks, milestone and stall rules). The reply counts as ONE update for the 4-a-day cap, the post history, the monologue run and the stall guard. Messages already delivered are not sent again if the reply is retried.
+- Policy (`KEIR.md`, `KEIR-CORE.md`): write like chat, one idea per message, no headers, bold, "Here is what I found" openers, restated questions or sign-offs; send the first real fact as soon as it is known.
+- No needless questions (ticket 1781). Keir asks the player only when the answer is not in their message, the channel, screenshots, page visits or game data and the work cannot go on without it. A reply whose only content is an either/or question ("which is the problem, A or B? tell me which") is refused when the ticket already names what is wrong (sectors, states, companies, or page visits). Keir must investigate every stated issue and answer with findings for each.
+
 ## 8.4.0 (2026-11-06)
 
 Keystone stability release: Keir you can trust while the owner is away.

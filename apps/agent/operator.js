@@ -26,6 +26,7 @@ const { createAgent } = require("./lib/operator/agent");
 const { createClassifier, screenReport } = require("./lib/operator/classify");
 const { readAgentToken } = require("./lib/operator/token");
 const { redactSecrets, chunkMessage, parseCommandFooter } = require("./lib/text");
+const { splitReply, GAP_MS: replyGapMs } = require("./lib/operator/replysplit");
 const { ownerText } = require("./lib/operator/privacy");
 const { integrityReport, v3Stale, rootJob } = require("./lib/operator/workrecord");
 const { hold: admissionHold } = require("./lib/operator/admission");
@@ -177,7 +178,7 @@ const prMention = require("./lib/operator/prmention").createPrMention({ ledger, 
     env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", ...(asReviewer && config.githubReviewerToken ? { GH_TOKEN: config.githubReviewerToken } : {}) } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null")))) });
 const dailyReview = selfImprove.createDailyReview({ ledger, config, log, drain: () => drain(), hour: Number(env.KEIR_SELF_REVIEW_HOUR || 5) });
 setInterval(() => { try { dailyReview.tick(); } catch (e) { log(`self-review: ${e.message}`); } }, 5 * 60000).unref();
-const gateway = createGateway({ ledger, config, conversation, drain: () => drain(), observe: process.env.KEIR_FEEDBACK_LOG === "0" ? null : (x) => feedbackLog.observe(x) });
+const gateway = createGateway({ ledger, config, conversation, drain: () => drain(), onWake: (ms) => setTimeout(() => tick(), ms + 50).unref(), observe: process.env.KEIR_FEEDBACK_LOG === "0" ? null : (x) => feedbackLog.observe(x) });
 const { createDecisions } = require("./lib/operator/decisions");
 const decisions = createDecisions({ ledger, config, discord, log, onAnswered: (x, verdict, actor, text) => {
   // Keir 2.0: owner decisions are remembered.
@@ -507,8 +508,11 @@ async function flushOutbox() {
         dmId = await ensureDm(recipient);
         clean = recipient === config.ownerId ? ownerText(entry.content) : redactSecrets(entry.content);
       }
-      const chunks = chunkMessage(clean.replace(/[\u2013\u2014]/g, ","));
+      // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
+      const text = clean.replace(/[\u2013\u2014]/g, ",");
+      const chunks = channelJob && !entry.files?.length && !entry.components ? splitReply(text).flatMap((c) => chunkMessage(c)) : chunkMessage(text);
       for (let i = entry.deliveredChunks || 0; i < chunks.length; i++) {
+        if (channelJob && i > 0) await new Promise((r) => setTimeout(r, replyGapMs));
         if (ledger.data.control?.stopped && !entry.controlResponse) continue outboxEntries;
         if (require("./lib/operator/supporttakeover").suppressOutbox(ledger, key, entry, Date.now())) continue outboxEntries;
         const files = i === 0 ? entry.files || [] : [];
@@ -1009,7 +1013,8 @@ appServer.listen(positive("KEIR_APP_PORT", 9768), "127.0.0.1", () => log("Keir a
 const appPush = createAppPush({ ledger, log, apns: createApns({ teamId: env.KEIR_APNS_TEAM_ID, keyId: env.KEIR_APNS_KEY_ID, keyFile: env.KEIR_APNS_KEY_FILE, topic: env.KEIR_APNS_TOPIC }) });
 setInterval(() => { appPush.tick().catch((e) => log(`app push: ${e.message}`)); }, 5000).unref();
 setInterval(() => { appComputer.cleanup().catch((e) => log(`app computer cleanup: ${e.message}`)); }, 5000).unref();
-setInterval(tick, 20000);
+// Keir 8.4.1: new player messages are found by this scan, so its period is the first wait a player feels (20 s before).
+setInterval(tick, positive("KEIR_TICK_MS", 8000));
 // Private reflection runs independently so a provider wait cannot delay intake.
 // Keep failures generic: diary contents never enter operational logs or APIs.
 const diaryTick = () => diary.tick().catch((e) => log(`private diary update failed (${String(e?.message || e).slice(0, 160)}); retry in 30 minutes`));
