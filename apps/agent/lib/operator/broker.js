@@ -487,17 +487,9 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       ? "This merge's outcome is being checked against GitHub automatically within ten minutes. Do not ask the owner about it: finish waiting with a wakeup of about ten minutes, then re-read the PR."
       : "external action outcome is uncertain; owner inspection required");
     if (old?.state === "rejected" && !old.retryable && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
-    // Keir 8.4: kill switch and the player-update cap refuse before anything is marked started, so the
+    // Keir 8.4: the kill switch refuses before anything is marked started, so the
     // job keeps no uncertain receipt and nothing needs inspecting when the switch is released.
     killSwitch?.assertClear("This external action");
-    if (settle?.kind === "reply" && settle.ticket && limits) {
-      const cap = trustLimits.checkPlayerUpdate(d, Number(settle.ticket), now(), limits.get());
-      if (!cap.ok) {
-        const hit = ((trustlog.trust(d).capHits ||= {})[settle.ticket] ||= { at: now(), count: cap.count });
-        hit.count = cap.count; ledger.audit("update_cap", { job: job.id, ticket: Number(settle.ticket), count: cap.count, limit: cap.limit }); ledger.save();
-        throw Object.assign(new Error(cap.reason), { code: "UPDATE_CAP" });
-      }
-    }
     job.effects[key] = { state: "started", at: now(), ...(settle ? { settle } : {}) }; ledger.save();
     try {
       require("./supporttakeover").assertCanAct(d, job);
@@ -692,7 +684,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     } catch (e) { d.disclosed[n] = { at: now(), posted: false, error: String(e.message).slice(0, 200) }; ledger.save(); }
   }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
-    capGuard(job, ticketNo);
+    killSwitch?.assertClear("A post to the player");
     guardNumbers(job, message);
     secondLook(job, ticketNo, message);
     guardTicketPostRules(job, ticketNo, message, opts);
@@ -1116,25 +1108,11 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   // Keir 8: a post carries its kind. The old check read a "[status card]" prefix off the text, so a
 // reply that happened to start with it was treated as a card. Records without a kind are legacy.
 function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.text || "").startsWith("[status card]"); }
-  // Keir 8.4: true when Keir may not speak to this ticket right now (kill switch, or the 24 hour update cap).
-  function outputBlocked(job) {
-    if (killSwitch?.state().engaged) return true;
-    return Boolean(limits && job.ticket && !trustLimits.checkPlayerUpdate(d, Number(job.ticket), now(), limits.get()).ok);
-  }
-  // Keir 8.4: refuse a player post before it is drafted further when the kill switch is engaged or the ticket
-  // already got its 24 hour allowance. The owner is told through the sweeper (trust.capHits), not by the model.
-  function capGuard(job, ticketNo) {
-    killSwitch?.assertClear("A post to the player");
-    if (!limits || !ticketNo) return;
-    const cap = trustLimits.checkPlayerUpdate(d, Number(ticketNo), now(), limits.get());
-    if (cap.ok) return;
-    const hit = ((trustlog.trust(d).capHits ||= {})[ticketNo] ||= { at: now(), count: cap.count });
-    hit.count = cap.count; ledger.audit("update_cap", { job: job.id, ticket: Number(ticketNo), count: cap.count, limit: cap.limit }); ledger.save();
-    throw Object.assign(new Error(cap.reason), { code: "UPDATE_CAP" });
-  }
+  // Keir 8.4: true when Keir may not speak to this ticket right now (kill switch engaged).
+  function outputBlocked() { return Boolean(killSwitch?.state().engaged); }
   function recordTicketPost(job, ticketNo, message, kind = "reply") {
     const card = kind === "status_card";
-    try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); if (!card) trustLimits.recordPlayerUpdate(d, ticketNo, now()); } catch {}
+    try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); } catch {}
     if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
@@ -1398,7 +1376,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // A reply that can never be delivered (no channel) owes nothing: arming the refused-reply
       // hold there left finish refused too, so an open channel-less ticket could only end
       // blocked (KBX5 channelless--open, 2026-11-03).
-      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(["KILL_SWITCH", "UPDATE_CAP"].includes(e.code))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(e.code === "KILL_SWITCH")) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;

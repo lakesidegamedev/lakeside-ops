@@ -6,7 +6,7 @@ const KEEP_MS = 7 * DAY;
 
 const trust = (d) => {
   const t = (d.trust ||= {});
-  t.replies ||= []; t.claims ||= []; t.playerMessages ||= []; t.progress ||= {}; t.sweeps ||= {}; t.ownerPings ||= {}; t.capHits ||= {}; t.reports ||= {}; t.restarts ||= [];
+  t.replies ||= []; t.claims ||= []; t.playerMessages ||= []; t.progress ||= {}; t.sweeps ||= {}; t.ownerPings ||= {}; t.reports ||= {}; t.restarts ||= [];
   return t;
 };
 const fresh = (list, at) => list.filter((x) => at - x.at < KEEP_MS);

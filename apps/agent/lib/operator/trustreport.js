@@ -40,7 +40,7 @@ function buildTrustReport({ d, now, windowMs = DAY, ownerId, random = Math.rando
   const picks = [...recent].sort(() => random() - 0.5).slice(0, sample).map((r) => ({ ticket: r.ticket, at: r.at, text: r.text.slice(0, 200), ...reviewReply(r.text, t.replies.filter((p) => p.ticket === r.ticket && p.at < r.at).slice(-3).map((p) => p.text)) }));
   const restarts = [...(guardian?.restarts || []).filter((r) => r.at >= since)];
   return { at: now, windowHours: Math.round(windowMs / HOUR), tickets: { handled: handled.size, resolved: resolved.length, open: open.length }, fixes, contradicted, awaitingOwner: { decisions: pending, escalations },
-    spotChecks: picks, repliesSent: recent.length, incidents: { restarts, guardianState: guardian?.state || null, giveUps: (guardian?.giveUps || []).filter((g) => g.at >= since), killSwitch: killSwitch?.engaged ? { reason: killSwitch.reason } : null, capHits: Object.keys(t.capHits).length } };
+    spotChecks: picks, repliesSent: recent.length, incidents: { restarts, guardianState: guardian?.state || null, giveUps: (guardian?.giveUps || []).filter((g) => g.at >= since), killSwitch: killSwitch?.engaged ? { reason: killSwitch.reason } : null } };
 }
 
 function renderTrustReport(r) {
@@ -52,7 +52,7 @@ function renderTrustReport(r) {
   L.push(wait.length ? `Waiting on you (${wait.length}):\n${wait.slice(0, 8).join("\n")}` : "Nothing is waiting on you.");
   L.push(r.spotChecks.length ? `Reply spot checks:\n${r.spotChecks.map((s) => `- Ticket ${s.ticket}: ${s.verdict}${s.flags.length ? ` (${s.flags.join(", ")})` : ""}. "${s.text.slice(0, 100)}"`).join("\n")}` : "No replies to spot check.");
   const i = r.incidents;
-  const inc = [i.restarts.length ? `${i.restarts.length} automatic restart${i.restarts.length === 1 ? "" : "s"} (${[...new Set(i.restarts.map((x) => x.unit))].join(", ")})` : "", i.giveUps.length ? `Keir stopped restarting ${[...new Set(i.giveUps.map((g) => g.unit))].join(", ")} and needs you` : "", i.killSwitch ? `The kill switch is ENGAGED: ${i.killSwitch.reason}` : "", i.capHits ? `${i.capHits} ticket${i.capHits === 1 ? "" : "s"} hit the update limit` : ""].filter(Boolean);
+  const inc = [i.restarts.length ? `${i.restarts.length} automatic restart${i.restarts.length === 1 ? "" : "s"} (${[...new Set(i.restarts.map((x) => x.unit))].join(", ")})` : "", i.giveUps.length ? `Keir stopped restarting ${[...new Set(i.giveUps.map((g) => g.unit))].join(", ")} and needs you` : "", i.killSwitch ? `The kill switch is ENGAGED: ${i.killSwitch.reason}` : ""].filter(Boolean);
   L.push(inc.length ? `Incidents: ${inc.join("; ")}.` : "No restarts or incidents.");
   return L.join("\n\n");
 }

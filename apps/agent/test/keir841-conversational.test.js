@@ -8,7 +8,6 @@ const clarify = require("../lib/operator/clarify");
 const { createLedger } = require("../lib/operator/store");
 const { createBroker } = require("../lib/operator/broker");
 const { createGateway } = require("../lib/operator/gateway");
-const limits = require("../lib/operator/limits");
 
 const squash = (s) => String(s).replace(/\s+/g, " ").trim();
 
@@ -93,19 +92,18 @@ test("a long reply goes out as several messages in order, a gap apart, and count
   assert.ok(sent.length >= 2 && res.messages === sent.length, JSON.stringify(sent));
   assert.equal(squash(sent.join(" ")), squash(reply), "order and content kept");
   assert.equal(f.gaps.length, sent.length - 1, "a pause between messages, none before the first");
-  // One update to every counter: the cap, the post history and the monologue run.
-  assert.equal(limits.countPlayerUpdates(f.ledger.data, 123, f.now()), 1);
+  // One update to every counter: the post history and the monologue run.
   assert.equal(f.ledger.data.ticketPosts[123].filter((p) => !/^Hi, I.m Keir/.test(p.text)).length, 1);
   assert.equal(f.ledger.data.monologue[123].count, 1);
 });
 
-test("a split reply does not eat the 4-a-day cap four times over", async () => {
+test("a split reply counts as one post in the post history", async () => {
   const f = setup();
   const reply = "First fact is that the freight sector sells to the open market before your own plants. Second fact is that the order is by price.\n\nThird, no money is missing.";
   await f.broker.tool(f.job, "channel_reply", { message: reply });
   f.advance(15); f.job.observedPlayerAt = f.now(); f.advance(1);
   await f.broker.tool(f.job, "channel_reply", { message: "Thanks. The same-owner priority is a rule change, so it goes to the developers. I will tell you what they decide." });
-  assert.equal(limits.countPlayerUpdates(f.ledger.data, 123, f.now()), 2);
+  assert.equal(f.ledger.data.ticketPosts[123].filter((p) => !/^Hi, I.m Keir/.test(p.text)).length, 2);
 });
 
 test("ordering holds when the first message is retried: delivered messages are not sent twice", async () => {
