@@ -3365,6 +3365,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       if (developerTask(job) && ["done", "waiting", "blocked"].includes(state) && /offered (?:a |the )?patch|waiting for (?:her|his|their|your) (?:answer|reply).*patch|(?:ask|asking).*(?:whether|if).*(?:prepare|write|make).*(?:patch|fix)/i.test(input.summary || "") && !Object.values(d.actions).some(a => a.jobId === job.id && a.state === "pending")) throw new Error("Prepare the reviewable patch and focused validation now. Patch preparation already has developer authorization; use publish_patch for exact review before publication. Do not wait merely for permission to prepare it.");
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
+      // Keir 8.3 (owner, 2026-11-05: "tickets just sitting"): tickets 1766, 1773 and 1774 filed an issue,
+      // told the player the cause was not yet found, and parked on developer_reply for hours. While
+      // Keir's own last word is "haven't found it", the cause is Keir's job: an investigator must be on it.
+      if (state === "waiting" && input.waitFor === "developer_reply" && ticketOf(job)) {
+        const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1);
+        const investigating = Object.values(d.jobs).some((j) => ticketOf(j) === tn && (j.investigations || []).some((id) => d.jobs[id] && !["done", "blocked", "dismissed", "cancelled"].includes(d.jobs[id].state)));
+        if (last && isStall(last.text) && !investigating)
+          throw new Error("Not finished: your last post told the player the cause is not found yet, and nobody is looking for it. A filed issue is not an investigation. Hand the question to an investigator (delegate_investigation) or keep reading the code and records yourself, then wait.");
+      }
       // Ticket playbooks: a support ticket finishes done only with its required steps recorded.
       if (!developerTask(job) && !developerTicket(job) && !ownerDirected(job)) { const why = require("./playbooks").finishRefusal(job, d, state); if (why) throw new Error(why); }
       // KBX4 2026-11-02: a watch finding that an open issue already covers finished done with

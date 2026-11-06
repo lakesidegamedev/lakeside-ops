@@ -11,7 +11,7 @@ const INSTRUCTIONS = "Engineering task: read and verify the evidence and current
 // 5.6.2: raw game-record reads, guarded by the broker's rawReadArgs.
 const READS = {
   "heal-ops": ["heal_list", "heal_detect", "heal_query", "heal_count", "heal_collections"],
-  turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_anomalies"],
+  turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_anomalies", "turn_failure_detail"],
   gamestate: ["entity_search", "legislation_catalog", "elections", "game_overview", "countries", "analytics_catalog", "analytics_query", "fx_quote", "player_wealth_statistics", "trace_corp", "trace_sector", "corporation_rankings", "extraction_market", "trace_approval", "invariant_check"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
   "ops-knowledge": ["code_search", "code_read", "code_exact", "knowledge_query", "knowledge_get", "kanban_get"],
@@ -58,13 +58,14 @@ function createEngineering({ ledger, now = Date.now, config = {} }) {
     job.effortPin = provider.effort;
     job.source = { ...job.source, content: `${job.source?.content || ""}\n\n${INSTRUCTIONS}` };
   }
-  function enqueue({ key, title, evidence, repository = "AHDGame", kanbanId, source } = {}) {
+  function enqueue({ key, title, evidence, repository = "AHDGame", kanbanId, source, urgent = false } = {}) {
     if (typeof key !== "string" || !key.trim() || key.length > 300) throw new Error("Engineering requires a bounded durable key");
     const durable = `engineering:${key.replace(/^engineering:/, "")}`, s = state();
     const oldId = s.keys[durable] || d.seen?.[durable];
     if (oldId) return d.jobs[oldId] || null; // A missing/archived job never resurrects the key.
     if (typeof title !== "string" || !title.trim() || typeof evidence !== "string" || !evidence.trim()) throw new Error("Engineering requires a confirmed title and evidence");
-    if (disabled() || queued() >= backlog) return null;
+    // A stalled game is never held behind the backlog.
+    if (disabled() || (!urgent && queued() >= backlog)) return null;
     const job = ledger.createJob(durable, { kind: "finding", role: "support", repository,
       source: { ...(source && typeof source === "object" ? source : {}), content: `${title.slice(0, 180)}\n\nConfirmed task evidence:\n${evidence.slice(0, 3000)}`, at: new Date(now()).toISOString() }, deadline: now() + 24 * 3600000 });
     const scout = source?.kind === "engineering-scout";
