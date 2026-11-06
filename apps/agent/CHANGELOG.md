@@ -5,6 +5,34 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.4.0 (2026-11-06)
+
+Keystone stability release: Keir you can trust while the owner is away.
+
+Support quality, from the owner's rating of the open tickets on 2026-11-05 and 06 (1763, 1766, 1772, 1775, 1757, 1750).
+
+- A "still checking, I won't guess" post is allowed once per question. The second needs a player message and code reads since the last, and an investigator already running no longer excuses a repeat; the third never goes out. The post history used to keep one hour, so ticket 1766's seven posts over five hours were never seen as a run; it now keeps 24 hours.
+- After Keir's last post, with no new player message, another post must be a milestone: a finding (a game or code read made since), a receipted outcome, a correction or a question. Everything else goes on the status card note (tickets carried 30 to 57 updates).
+- A production-typed live notice is only sent with the main-release receipt. "Live and working" keeps needing a turn processed on the fix and a read of the player's own figures (ticket 1763).
+- support_resolve is refused when the message or Keir's last post only explains that a rule works as designed on a bug report, unless the owner has decided or a fix exists, and while any owner decision on the ticket is unanswered (1775, 1757, 1750). Policy: explain the rule, say it is under review, keep it open, ask the owner with two or three concrete options.
+- raise_to_developers takes changeClass (bugfix, display, data-heal, rule, balance, economy-behaviour; required for decision and enhancement; the old spellings bug_fix, rule_change, economy_change etc. are accepted as aliases). It is stored with requiresOwner on the escalation, the job (changeClass, requiresOwner) and the decision (ownerHold, changeClass, requiresOwner, ticket) so a guard can hold rule, balance and economy changes for the owner.
+- A held owner decision never expires and is asked again in the owner's DMs every 12 hours until answered (it used to expire after 48 hours).
+- Hedging away from readable code is refused: "I haven't checked the exact trigger, so I won't quote a threshold" and "I searched, found nothing, so I won't tell you it exists" (ticket 1772 reversed within five minutes). Fewer than three code lookups sends Keir back to search; after that it must say plainly that the thing does not exist, or how it works.
+- "Handed to an investigator" needs a real investigation job, and "the developers have it" needs a queue item with an id or a pull request. The backing ids are written to the audit (handoff_claim_backed).
+- Tool-call text (JSON calls, fenced calls, tool names, other providers' markup) and the broker's own refusal text are refused in player-visible text on every public path: the shared public text step, the public outbox and the inbox sender. No instance reached a player in the ledger, inbox or journals reviewed, but only some paths were checked before.
+
+Keir 8.4, the stability release (owner, 2026-11-06: "this needs to be Keir we can trust in our absence").
+
+- Kill switch: one file, `/var/lib/keir-operator/kill-switch`, read at runtime. While it exists no reply, MCP write, merge, promotion or heal leaves the box, no new activation starts, and queued channel posts are held (and dropped as stale if held over an hour). Flip it with `node /opt/keir/current/bin/keir-killswitch.js on "reason"` / `off` / `status`, or `POST /v5/trust/killswitch`. An unreadable file counts as engaged.
+- Hard caps, set in `/var/lib/keir-operator/limits.json` or env: 4 player-visible updates per ticket per rolling 24 hours, 3 promotions to main per day, 5 production heals per day. A refusal does not loop the task, and a ticket that hit its cap is reported to the owner by the sweeper.
+- Change classes: merge and promote take `changeClass` (bugfix, display, data-heal, rule, balance, economy-behaviour). Rule, balance and economy-behaviour changes (declared, set by a `Change-class:` line in the PR body, by a "rebalance/nerf/buff" title, or by economy paths) go to the owner's approval card and execute only with a recorded owner approval. A logic merge with no declared class is refused with instructions.
+- Stuck-ticket sweeper (every 10 minutes): an open ticket with no substantive progress for 6 hours, or a player message unanswered for 30 minutes in active hours (07:00 to 23:00 Eastern), gets one fresh investigation, then one owner escalation, then at most one more every 12 hours. "Still checking" restatements do not count as progress. A ticket waiting on an owner decision is never investigated or resolved: the player is told once, the owner is re-pinged every 12 hours.
+- Daily trust report (09:00 Eastern): tickets handled, resolved and open, fixes shipped, "fixed" claims later contradicted, what waits on the owner and for how long, three random reply spot checks, restarts and incidents. Sent as an owner DM, written to `/var/lib/keir-operator/trust-reports/`, and saved to ops-knowledge.
+- Guardian (`keir-guardian.timer`, every minute, separate from the operator): restarts a failed or hung operator, summon or inbox with doubling backoff, stops after 3 restarts in an hour and DMs the owner directly (the operator's own outbox may be the broken part), re-arms dead timers, and never starts a unit that was stopped on purpose. Status is written to `/var/lib/keir-guardian/status.json`; `/health` now reports stale periodic jobs and a stuck outbox.
+- Every periodic job in the operator that used a "busy" flag now has a deadline (`lib/operator/ticker.js`). Before, one await that never settled (roles, watch, merges, owner wait, CI watch, developer watch) silently ended that job for good while the process looked healthy.
+- One change-class vocabulary (`lib/operator/changeclass.js`): bugfix, display, data-heal, rule, balance, economy-behaviour. `raise_to_developers`, decisions, the merge and promote guard and the trust report all use it; the earlier spellings (bug_fix, display_fix, data_heal, rule_change, balance_change, economy_change) are accepted as aliases so older records still classify and stay gated. One re-ping mechanism for pending owner decisions (`decisions.js`, every 12 hours); the sweeper no longer re-pings.
+- systemd: crash loops end after 5 failures in 5 minutes (`StartLimitBurst`) so the guardian takes over, and `RestartSec` is 10.
+
 ## 8.3.1 (2026-11-05)
 
 - A message from the owner or a developer in a ticket channel only forces Keir to reply when it names or mentions Keir or asks a question. On ticket 1778 the owner told the player he would unban them, and Keir was made to reply with "the unban and note are yours ... I have nothing further to do on this one" in the player's channel.

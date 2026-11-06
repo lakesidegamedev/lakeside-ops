@@ -1,0 +1,23 @@
+[Unit]
+Description=Keir guardian: watchdog, safe restart with backoff and owner alert
+After=network.target
+
+[Service]
+Type=oneshot
+# DISCORD_BOT_TOKEN is only used to DM the owner when Keir is down and the guardian has stopped restarting it.
+EnvironmentFile=/etc/keir-discord.env
+EnvironmentFile=-/etc/keir-guardian.env
+ExecStart=/usr/bin/node /opt/keir/current/bin/keir-guardian.js
+StateDirectory=keir-guardian
+StateDirectoryMode=0700
+UMask=0077
+TimeoutStartSec=240s
+TimeoutStopSec=5s
+KillMode=control-group
+MemoryMax=192M
+CPUQuota=50%
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal

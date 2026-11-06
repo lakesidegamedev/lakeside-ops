@@ -2,6 +2,10 @@
 Description=Keir DM inbox and reward claims (ops dashboard /inbox)
 After=network-online.target
 Wants=network-online.target
+# 8.4: a crash loop stops after 5 failures in 5 minutes and the unit goes `failed`;
+# keir-guardian then restarts it with backoff and alerts the owner if it keeps failing.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -14,7 +18,7 @@ Environment=NODE_ENV=production
 Environment=NODE_NO_WARNINGS=1
 ExecStart=/usr/bin/node /opt/keir/current/inbox.js
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 StateDirectory=keir-inbox
 StateDirectoryMode=0700
 UMask=0077

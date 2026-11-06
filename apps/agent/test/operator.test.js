@@ -1383,6 +1383,30 @@ test("an owner task needs a separate explicit yes for an economy merge, bound to
   assert.equal((await f.broker.tool(j, "github", { action: "merge", number: 10 })).approvalRequired, true);
 });
 
+test("Keir 8.4: a display-only PR declared as a balance change still needs the owner's own yes, and a logic PR must declare its class", async () => {
+  const pr = (body) => () => ({ number: 10, title: "fix: shop label", body, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "aaa111", ref: "keir/x" }, html_url: "u" });
+  const routes = (body) => [[/pulls\/10\/files/, files("src/components/Shop.tsx")], [/pulls\/10\/merge/, { merged: true, sha: "m1" }], [/pulls\/10$/, pr(body)], green, [/git\/refs/, {}]];
+  const owner = (f) => f.config.ownerId;
+  // Declared balance: forced into the approval card even though the file is a component.
+  const f = githubFixture(routes(""));
+  const j = running(f, { role: "owner", kind: "command", actorId: owner(f), replyChannel: "999999999999999999", source: { authorId: owner(f), messageId: "100000000000000001" } });
+  const first = await f.broker.tool(j, "github", { action: "merge", number: 10, changeClass: "balance" });
+  assert.equal(first.approvalRequired, true);
+  assert.ok(!f.calls.some((c) => c.join(" ").includes("/merge")), "nothing merged before the yes");
+  // A body line declaring a rule change is the same.
+  const g = githubFixture(routes("Change-class: rule"));
+  const jg = running(g, { role: "owner", kind: "command", actorId: owner(g), replyChannel: "999999999999999999", source: { authorId: owner(g), messageId: "100000000000000001" } });
+  assert.equal((await g.broker.tool(jg, "github", { action: "merge", number: 10 })).approvalRequired, true);
+  // A bug fix on display files merges without a card.
+  const h = githubFixture(routes(""));
+  const jh = running(h, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  assert.equal((await h.broker.tool(jh, "github", { action: "merge", number: 10, changeClass: "display" })).merged, true);
+  // A logic PR with no declaration is refused with instructions.
+  const k = githubFixture([[/pulls\/10\/files/, files("src/lib/auth/session.ts")], [/pulls\/10$/, pr("")], green]);
+  const jk = running(k, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  await assert.rejects(k.broker.tool(jk, "github", { action: "merge", number: 10 }), (e) => e.code === "CHANGE_CLASS_REQUIRED");
+});
+
 test("the owner's Approve button submits his GitHub review at that head instead of sending a link (2026-11-05)", async () => {
   const owner = "111111111111111111";
   let reviews = [];
@@ -1727,12 +1751,14 @@ test("github history answers who changed a file, flagging the shared account", a
 
 test("Keir 2.0: a ticket post may quote only figures read or calculated this activation", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.lastGameReadAt = 9e15; // Keir 8.4: these tests exercise other pacing rules, not the milestone cap, so a fresh game read is on record.
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Your company is worth about 46.4m now." } }), /46\.4m.*does not appear/);
   f.mcp.call = async (server, tool, args) => tool === "trace_corp" ? { marketCap: 46240215, sold: 316.47, revenue: 1649562.99 } : (f.calls.push([server, tool, args]), { delivery: { status: "posted" } });
   await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_corp", args: { corporation: "x" } });
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Your company is worth about 46.2m now." } });
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Each unit averaged 5212.38 across both products." } }), /does not appear/);
   await f.broker.tool(j, "calculate", { expression: "1649562.99 / 316.47" });
+  j.lastGameReadAt = 9e15; // Keir 8.4: a fresh read is on record, so the milestone cap is not what this test exercises
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Each unit averaged 5212.38 across both products, and that is a blend." } });
 });
 
@@ -2130,7 +2156,7 @@ test("worker entrypoints and migrations require exact approval at merge and prom
     const f = githubFixture([[/pulls\/10\/files/, files(file)], [/pulls\/10$/, { number: 10, head: { sha: "feature-head", ref: "keir/fix" }, state: "open" }], [/compare\/staging\.\.\.development/, { files: files(file) }], [/commits\/development$/, { sha: "promotion-head" }]]);
     const job = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
     f.ledger.data.ticketAuthority = { 9: { by: f.config.ownerId, messageId: "earlier-yes", at: 4000 } };
-    const merge = await f.broker.tool(job, "github", { action: "merge", number: 10 });
+    const merge = await f.broker.tool(job, "github", { action: "merge", number: 10, changeClass: "bugfix" });
     assert.equal(merge.approvalRequired, true, file);
     Object.assign(f.ledger.data.actions[merge.action], { state: "approved", approvedBy: f.config.ownerId, approvalMessage: "exact-feature-yes" });
     const promote = await f.broker.tool(job, "github", { action: "promote", to: "staging" });
@@ -2891,6 +2917,7 @@ test("support public updates record what they said so an uncertain post can be s
 
 test("a support write refused at connect is rejected and repeatable; a reset mid-request still blocks for a person", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.lastGameReadAt = 9e15; // Keir 8.4: these tests exercise other pacing rules, not the milestone cap, so a fresh game read is on record.
   const msg = { tool: "support_public_update", args: { message: "I am checking the page." } };
   let down = true;
   f.mcp.call = async (_s, tool) => { if (tool === "support_public_update" && down) throw Object.assign(new Error("fetch failed"), { code: "MCP_CONNECT_REFUSED" }); return { ok: true, delivery: { status: "posted" } }; };

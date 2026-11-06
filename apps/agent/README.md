@@ -287,3 +287,12 @@ zero-token activity and complete single-milestone ticket samples. Lifetime
 ticket costs retain work from earlier versions. Observation spans differ and
 ticket difficulty remains uncontrolled; neither raw ticket counts nor normal
 activation returns prove a version is more efficient at resolving problems.
+
+## Stability (8.4): watchdog, sweeper, trust report, kill switch
+
+- **Kill switch**: `node bin/keir-killswitch.js on "reason" | off | status` (file `/var/lib/keir-operator/kill-switch`, JSON `{"reason","until"}` or free text). Read every second, no restart needed. Refuses replies, all MCP writes, merges, promotions, heals; stops new activations; holds channel posts.
+- **Limits**: `/var/lib/keir-operator/limits.json` `{"playerUpdatesPerTicket24h":4,"deploysPerDay":3,"healsPerDay":5}` (env `KEIR_LIMIT_PLAYER_UPDATES_24H`, `KEIR_LIMIT_DEPLOYS_DAY`, `KEIR_LIMIT_HEALS_DAY`). Rolling 24 hours.
+- **Change class**: `changeClass` on the github tool's merge and promote. `rule`, `balance`, `economy-behaviour` need the owner's recorded approval (`KEIR_GATED_OWNER_IN_PERSON=1` refuses the cofounder's on-behalf button too).
+- **Sweeper**: `lib/operator/sweeper.js`, `KEIR_SWEEPER=0` disables. **Trust report**: `lib/operator/trustreport.js`, `POST /v5/trust/report` forces one now.
+- **Guardian**: `deploy/keir-guardian.service|timer`, `bin/keir-guardian.js [--dry-run]`, status `/var/lib/keir-guardian/status.json`. `touch /var/lib/keir-guardian/disabled` makes it do nothing.
+- **Check everything**: `GET /v5/trust/status` (admin token) returns the kill switch, limits, periodic job health, sweeper and last report.
