@@ -44,17 +44,13 @@ test("kill switch is read at runtime from the file and the env, and an unreadabl
 });
 
 test("limits: defaults, env and file overrides, rolling window and idempotent counters", () => {
-  assert.deepEqual(limits.resolveLimits({}), { playerUpdatesPerTicket24h: 4, deploysPerDay: 3, healsPerDay: 5, workerLaunchesPerDay: 6 });
+  assert.deepEqual(limits.resolveLimits({}), { deploysPerDay: 3, healsPerDay: 5, workerLaunchesPerDay: 6 });
   assert.equal(limits.resolveLimits({ env: { KEIR_LIMIT_HEALS_DAY: "2" } }).healsPerDay, 2);
   assert.equal(limits.resolveLimits({ env: { KEIR_LIMIT_HEALS_DAY: "2" }, fileText: '{"healsPerDay":7}' }).healsPerDay, 7);
   assert.equal(limits.resolveLimits({ env: { KEIR_LIMIT_HEALS_DAY: "junk" } }).healsPerDay, 5);
   const d = {}, l = limits.resolveLimits({});
+  assert.equal(limits.resolveLimits({ fileText: '{"playerUpdatesPerTicket24h":1}' }).playerUpdatesPerTicket24h, undefined, "the retired player cap key is ignored");
   const t0 = 1000 * H;
-  for (let i = 0; i < 4; i++) { assert.equal(limits.checkPlayerUpdate(d, 9, t0 + i, l).ok, true); limits.recordPlayerUpdate(d, 9, t0 + i); }
-  const blocked = limits.checkPlayerUpdate(d, 9, t0 + 10, l);
-  assert.equal(blocked.ok, false); assert.match(blocked.reason, /4 updates in ticket 9/);
-  assert.equal(limits.checkPlayerUpdate(d, 10, t0 + 10, l).ok, true, "another ticket is unaffected");
-  assert.equal(limits.checkPlayerUpdate(d, 9, t0 + 24 * H + 5, l).ok, true, "the window rolls");
   for (const k of ["a", "b", "c"]) limits.recordCounter(d, "deploy", k, t0);
   assert.equal(limits.checkCounter(d, "deploy", "d", t0 + 1, l).ok, false);
   assert.equal(limits.checkCounter(d, "deploy", "a", t0 + 1, l).ok, true, "the same promotion re-read is not a new one");
@@ -108,14 +104,14 @@ function brokerSetup(over = {}) {
   return { ledger, broker, job, calls, killSwitch, ksFile, advance: (min) => { clock += min * 60000; }, now: () => clock };
 }
 
-test("the fifth player update in 24 hours is refused and the owner is flagged for the sweeper", async () => {
+test("many replies in one ticket all post: there is no per-ticket player update cap", async () => {
   const f = brokerSetup();
-  const lines = ["I read your tax page and the north region rate is the line that differs.", "The second report you sent matches the first one, so I treated them as one report.", "I read your balance sheet and the interest line is the one that moved.", "I counted the shares you listed against your holdings page."];
+  const lines = ["I read your tax page and the north region rate is the line that differs.", "The second report you sent matches the first one, so I treated them as one report.", "I read your balance sheet and the interest line is the one that moved.", "Your pension statement shows the contribution posted on the earlier turn.", "The bond coupon schedule for this quarter lists the payment on the fifteenth.", "Your treasury transfer shows the amount you sent on the earlier turn.", "The election filing deadline in your state falls after the current turn."];
   for (const m of lines) { await f.broker.tool(f.job, "channel_reply", { message: m }); f.advance(11); f.job.observedPlayerAt = f.now(); f.ledger.data.ticketPosts = {}; }
-  assert.equal(limits.countPlayerUpdates(f.ledger.data, 123, f.now()), 4);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "A fifth distinct note about your bond coupon schedule for this quarter." }), (e) => e.code === "UPDATE_CAP" && /4 updates/.test(e.message));
-  assert.equal(f.ledger.data.trust.capHits[123].count, 4);
-  assert.equal(f.job.replyRefusedPending, undefined, "a capped reply must not demand a retry loop");
+  const sent = JSON.stringify(f.calls);
+  for (const m of lines) assert.ok(sent.includes(m.slice(0, 40)), `posted: ${m}`);
+  assert.equal(f.job.replyRefusedPending, undefined);
+  assert.equal(f.ledger.data.trust?.capHits, undefined);
 });
 
 test("kill switch refuses replies and every MCP write, and finishing is allowed while it is engaged", async () => {
