@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- The per-ticket player update cap is removed. It counted every post, including ones the owner or lead made, refused a reply on ticket 1781 at four updates in 24 hours, and told the owner the player was waiting on a person. Spam is still stopped by the no-new-information and repeated-post guards; the promotion and heal caps stay. `playerUpdatesPerTicket24h` and `KEIR_LIMIT_PLAYER_UPDATES_24H` are ignored if still set.
+
 ## 8.4.2 (2026-11-06)
 
 Read the screenshots and the cases before asking (owner, 2026-11-06, mod chat). Danica posted two screenshots of an alt investigation naming two accounts, Monroe called it "the longest sleepover yet", and Egg asked Keir "do you think they are alts?". Keir answered "I don't know which two accounts you mean ... send me the two names." The names were in the screenshots, the case was in tickets 1778 to 1780 (moderation, opened that morning), and the tools to judge it (alt_ring_audit, trace_account) were available.

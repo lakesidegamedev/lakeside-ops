@@ -106,7 +106,7 @@ test("the sweep wakes a stale ticket with a system note once, then escalates in 
   assert.equal(f.sweeper.tick().actions.length, 0, "no second escalation inside 12 hours");
 });
 
-test("the sweep respects the kill switch, a pending decision and the player-update cap flag", () => {
+test("the sweep respects the kill switch, and a pending decision", () => {
   const f = sweeperSetup({ killSwitch: { state: () => ({ engaged: true }) } });
   assert.equal(f.sweeper.tick().skipped, true);
   assert.equal(f.root.inbox, undefined);
@@ -122,9 +122,6 @@ test("the sweep respects the kill switch, a pending decision and the player-upda
   const again = g.sweeper.tick();
   assert.equal(again.actions.length, 0, "the sweeper never re-pings the owner for a decision; decisions.js does");
   assert.equal(Object.keys(g.ledger.data.outbox).filter((k) => k.startsWith("sweeper-owner:")).length, 0);
-  g.ledger.data.trust.capHits = { 9: { at: NOON, count: 4 } };
-  g.sweeper.tick();
-  assert.ok(Object.values(g.ledger.data.outbox).some((e) => /reached the limit of player updates/.test(e.content)));
 });
 
 test("a substantive reply resets the stale clock; a restated one does not", () => {

@@ -118,9 +118,6 @@ function createSweeper({ ledger, config, now = () => Date.now(), log = () => {},
       actions.push({ ticket: n, ...decision });
       ledger.audit("sweeper_action", { ticket: n, action: decision.action, reason: decision.reason });
     }
-    // Tickets that hit the player-update cap with a player waiting are the owner's to look at.
-    for (const [n, hit] of Object.entries(t.capHits)) if (!hit.told) { hit.told = at; owner.push(`Ticket ${n} reached the limit of player updates for 24 hours (${hit.count}). The player is waiting on a person.`); }
-    for (const n of Object.keys(t.capHits)) if (at - (t.capHits[n].at || 0) > 7 * 24 * HOUR) delete t.capHits[n];
     if (owner.length) ledger.notify(`sweeper-owner:${at}`, "owner", `Keir sweep, ${owner.length} item${owner.length === 1 ? "" : "s"}:\n${owner.slice(0, 12).map((l) => `- ${l}`).join("\n")}`);
     if (actions.length || owner.length) ledger.save();
     t.lastSweepAt = at;
