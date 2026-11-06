@@ -2,6 +2,10 @@
 Description=Keir /summon edge (forwards Discord pokes to keir-operator)
 After=network-online.target keir-operator.service
 Wants=network-online.target
+# 8.4: a crash loop stops after 5 failures in 5 minutes and the unit goes `failed`;
+# keir-guardian then restarts it with backoff and alerts the owner if it keeps failing.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,7 +16,7 @@ Environment=HOME=/root
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node /opt/keir/current/server.js
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 MemoryMax=128M
 
 [Install]

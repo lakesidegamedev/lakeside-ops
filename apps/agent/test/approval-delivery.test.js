@@ -9,7 +9,7 @@ async function deliver(decision) {
   const source=fs.readFileSync(path.join(__dirname,"../operator.js"),"utf8");
   const start=source.indexOf("async function flushOutbox() {");
   const end=source.indexOf("\n// Moderation tickets",start);
-  const context={ledger,config:{ownerId:"owner",staffIds:[]},delivering:false,RESUME_HORIZON_MS:86400000,
+  const context={ledger,config:{ownerId:"owner",staffIds:[]},killSwitch:{state:()=>({engaged:false})},delivering:false,RESUME_HORIZON_MS:86400000,
     require:()=>({suppressOutbox:()=>false}),renderDecision:render,isAppJob:()=>false,
     ensureDm:async()=>"dm",ownerText:s=>s,redactSecrets:s=>s,chunkMessage:s=>[s],
     discord:async(_method,_route,body)=>{sent.push(body);return{id:"message"};},

@@ -80,7 +80,7 @@ for (const handback of [false, true]) test(`actual outbox dispatch rechecks take
   const start = source.indexOf("async function flushOutbox()");
   const end = source.indexOf("\n// Moderation tickets", start);
   const run = vm.runInNewContext(`let delivering = false; ${source.slice(start, end)}; flushOutbox`, {
-    ledger: f.ledger, require: createRequire(path.join(__dirname, "../operator.js")), RESUME_HORIZON_MS: 86400000,
+    ledger: f.ledger, killSwitch: { state: () => ({ engaged: false }) }, require: createRequire(path.join(__dirname, "../operator.js")), RESUME_HORIZON_MS: 86400000,
     config: { guildId: "guild" }, isAppJob: () => false, redactSecrets: x => x,
     chunkMessage: x => [x], snowflake: () => false, log: () => {},
     events: { append: () => { deliveries++; } },

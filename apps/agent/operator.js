@@ -108,6 +108,10 @@ const config = {
 if (!env.DISCORD_BOT_TOKEN || !env.KEIR_OPERATOR_ADMIN_TOKEN) throw new Error("operator credentials are incomplete");
 if (![config.ownerId, config.botId, config.guildId, ...config.staffIds, ...config.scanChannels].every(snowflake)) throw new Error("invalid Discord identity configuration");
 const ledger = createLedger(path.join(config.stateDir, "ledger.json"));
+// Keir 8.4: kill switch (a file read at runtime), hard caps and guarded periodic jobs.
+const killSwitch = require("./lib/operator/killswitch").createKillSwitch({ file: env.KEIR_KILL_SWITCH_FILE || path.join(config.stateDir, "kill-switch"), env });
+const limits = require("./lib/operator/limits").createLimits({ file: env.KEIR_LIMITS_FILE || path.join(config.stateDir, "limits.json"), env });
+const tickers = require("./lib/operator/ticker").createTickers({ log: (m) => console.log(`[keir] ${m}`) });
 const diary = require("./lib/operator/diary").createDiary({ stateDir: config.stateDir, ledger, ownerId: config.ownerId, botId: config.botId, staffIds: config.staffIds });
 // Keir 5.1 routing lock: lanes never run a model that measurably failed them.
 for (const c of require("./lib/operator/routing").enforce(config, { allowBlocked: env.KEIR_ALLOW_BLOCKED_ROUTES === "1" })) {
@@ -147,7 +151,7 @@ const juniors = require("./lib/operator/juniors").createJuniorRoster({ config, d
 const refreshJuniors = () => juniors.refresh().catch((e) => log(`junior roster: ${redactSecrets(e.message)}`));
 refreshJuniors();
 setInterval(refreshJuniors, 5 * 60000).unref();
-const mcp = createMcp(env.KEIR_MCP_CONFIG || "/root/.claude.json", readAgentToken(env.KEIR_AGENT_ENV_FILE || "/etc/keir-agent.env"));
+const mcp = createMcp(env.KEIR_MCP_CONFIG || "/root/.claude.json", readAgentToken(env.KEIR_AGENT_ENV_FILE || "/etc/keir-agent.env"), { gate: (what) => killSwitch.assertClear(what) });
 const reopenedTickets = createReopenedTickets({ ledger, config, supportOwner, readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false), readChannel: async (id) => { try { return await discord("GET", `/channels/${id}`); } catch (e) { if (e.status === 404) return null; throw e; } } });
 const sandbox = createSandbox(path.join(config.stateDir, "workspaces"));
 const conversation = createConversation({ ledger, config });
@@ -162,7 +166,7 @@ const notebook = knowledgeLayer.createNotebook({ file: path.join(config.stateDir
 const starmer = require("./lib/operator/starmer").createStarmer({ ledger, config, app: appChannel, log });
 // Keir 2.1 owner app (Muse parity): goals, feed, brief, approvals, upcoming, files.
 const appMuse = createAppMuse({ ledger, config, app: appChannel, starmer, drain: () => drain() });
-const broker = createBroker({ ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse });
+const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse });
 const agent = createAgent({ ledger, broker, config });
 const toolSessions = new Map(); // Keir 4.0: Rust runner tool sessions (see /v4/tool-session)
 // Keir 5.7: Jev-logged feedback and a daily self-review (lib/operator/selfimprove.js).
@@ -339,16 +343,11 @@ setInterval(() => accountAudit.tick().catch(e => log(`account audit: ${e.message
 const roles = createRoles({ ledger, engineering, config, mcp, log, held: (job) => config.supportDeferred(job) ||
   ["staff-owned", "staff-active", "owner-decision", "closure-grace"].includes(admissionHold(job, { now: Date.now(), claimedBy: (id) => ledger.data.channels[id]?.claimedBy })) });
 config.roleSnapshot = () => ({ ...roles.snapshot(), roles: roles.status() });
-let reportingRoles = false;
-setInterval(async () => {
-  if (!config.rolesEnabled || reportingRoles) return;
-  reportingRoles = true;
+tickers.every("roles", 60000, async () => {
+  if (!config.rolesEnabled) return;
   try { engineering.tick(); await roles.report(); drain(); } catch (e) { log(`roles: ${e.message}`); }
-  finally { reportingRoles = false; }
-}, 60000).unref();
-let watchBusy = false;
+});
 async function watchTick() {
-  if (watchBusy) return; watchBusy = true;
   try {
     // Failed turns need inspection even when the processed counter stops or
     // game_overview is unavailable. Each sensor isolates its own failures.
@@ -356,46 +355,51 @@ async function watchTick() {
     const turn = overview?.turn == null ? undefined : Number(overview.turn);
     const r = await watch.tick({ turn });
     if (r.raised?.length) { log(`watch raised ${r.raised.join(", ")}`); if (config.rolesEnabled) engineering.tick(); drain(); }
-  } catch (e) { log(`watch: ${e.message}`); } finally { watchBusy = false; }
+  } catch (e) { log(`watch: ${e.message}`); }
 }
-setTimeout(watchTick, 1000).unref();
-setInterval(watchTick, 5 * 60000).unref();
+tickers.every("watch", 5 * 60000, watchTick, { immediateMs: 1000 });
 const { createCiWatch } = require("./lib/operator/ciwatch");
 const ciApi = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
 const ciWatch = createCiWatch({ ledger, api: ciApi, log, onWaiting: (job, info) => broker.waitingUpdate(job, info) });
 // Developer changes related to open tickets (owner, 2026-10-14).
 const { createDevMerges } = require("./lib/operator/devmerges");
 const devMerges = createDevMerges({ ledger, api: ciApi, log });
-let watchingMerges = false;
-setInterval(async () => {
-  if (watchingMerges) return; watchingMerges = true;
-  try { await devMerges.tick(); } catch (e) { log(`devmerges: ${e.message}`); } finally { watchingMerges = false; }
+tickers.every("devmerges", 5 * 60000, async () => {
+  try { await devMerges.tick(); } catch (e) { log(`devmerges: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
-}, 5 * 60000).unref();
+});
 // Owner approval pings: a developer PR green except the owner's own approval (owner, 2026-11-03).
 const { createOwnerWait } = require("./lib/operator/ownerwait");
 const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain() });
-let watchingOwnerWait = false;
-setInterval(async () => {
-  if (watchingOwnerWait) return; watchingOwnerWait = true;
-  try { await ownerWait.tick(); } catch (e) { log(`ownerwait: ${e.message}`); } finally { watchingOwnerWait = false; }
-}, 5 * 60000).unref();
-let watchingCi = false;
-setInterval(async () => {
-  if (watchingCi) return; watchingCi = true;
-  try { await ciWatch.tick(); } catch (e) { log(`ciwatch: ${e.message}`); } finally { watchingCi = false; }
+tickers.every("ownerwait", 5 * 60000, async () => {
+  try { await ownerWait.tick(); } catch (e) { log(`ownerwait: ${e.message}`); }
+});
+tickers.every("ciwatch", 60000, async () => {
+  try { await ciWatch.tick(); } catch (e) { log(`ciwatch: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
-}, 60000).unref();
+});
+// Keir 8.4: stuck-ticket sweeper and the daily trust report.
+const sweeper = require("./lib/operator/sweeper").createSweeper({ ledger, config: { sweeperEnabled: env.KEIR_SWEEPER !== "0" }, log, killSwitch, wake: () => drain(),
+  held: (job) => {
+    if (config.supportDeferred(job)) return "the ticket supervisor owns it";
+    const hold = admissionHold(rootJob(job, ledger.data.jobs), { now: Date.now(), claimedBy: (id) => ledger.data.channels[id]?.claimedBy });
+    if (["staff-owned", "staff-active", "closure-grace"].includes(hold)) return hold;
+    if (require("./lib/operator/supporttakeover").held(ledger.data, job)) return "taken over by staff";
+    if (require("./lib/operator/ticketpause").pauseFor(ledger.data, job)) return "paused by the owner";
+    return null;
+  } });
+tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
+const guardianStatus = () => { try { return JSON.parse(require("node:fs").readFileSync(env.KEIR_GUARDIAN_STATUS_FILE || "/var/lib/keir-guardian/status.json", "utf8")); } catch { return null; } };
+const trustReporter = require("./lib/operator/trustreport").createTrustReporter({ ledger, config, log, killSwitch, mcp, readGuardian: guardianStatus });
+tickers.every("trustreport", 5 * 60000, async () => { await trustReporter.tick(); });
 // Developer questions remain observable after filing, without model polling.
 const { createDeveloperWatch } = require("./lib/operator/developerwatch");
 const developerWatch = createDeveloperWatch({ ledger, mcp, log, held: (job) => config.supportDeferred(job) ||
   ["staff-owned", "staff-active"].includes(admissionHold(rootJob(job, ledger.data.jobs), { now: Date.now(), claimedBy: (id) => ledger.data.channels[id]?.claimedBy })) });
-let watchingDevelopers = false;
-setInterval(async () => {
-  if (watchingDevelopers) return; watchingDevelopers = true;
-  try { await developerWatch.tick(); } catch (e) { log(`developerwatch: ${e.message}`); } finally { watchingDevelopers = false; }
+tickers.every("developerwatch", 60000, async () => {
+  try { await developerWatch.tick(); } catch (e) { log(`developerwatch: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
-}, 60000).unref();
+});
 // Keir 3.0: six lanes, one per admission slot (two conversation, one owner,
 // two investigation, one coding), so replies and owner corrections never
 // wait behind a long fix and the total stays inside the service budget.
@@ -447,7 +451,14 @@ function digest() {
 async function flushOutbox() {
   if (delivering) return; delivering = true;
   try {
-  outboxEntries: for (const [key, entry] of Object.entries(ledger.data.outbox).filter(([, e]) => !e.deliveredAt && (!e.retryAt || e.retryAt <= Date.now())).slice(0, 5)) {
+  // Kill switch: nothing goes to a ticket or Discord channel. Held messages are marked; after a long pause they are dropped as stale, not posted late.
+  const killed = killSwitch.state().engaged, toChannel = (e) => typeof e.destination === "string" && e.destination.startsWith("channel:");
+  for (const e of Object.values(ledger.data.outbox)) {
+    if (e.deliveredAt || !toChannel(e)) continue;
+    if (killed) e.heldByKillSwitch = true;
+    else if (e.heldByKillSwitch && Date.now() - (e.at || 0) > 3600000) { e.deliveredAt = Date.now(); e.skipped = "stale after kill switch"; }
+  }
+  outboxEntries: for (const [key, entry] of Object.entries(ledger.data.outbox).filter(([, e]) => !e.deliveredAt && (!e.retryAt || e.retryAt <= Date.now()) && !(killed && toChannel(e))).slice(0, 5)) {
     if (ledger.data.control?.stopped && !entry.controlResponse) continue;
     if (require("./lib/operator/supporttakeover").suppressOutbox(ledger, key, entry, Date.now())) continue;
     // Resume safety: an acknowledgment, or a message for a task that already
@@ -686,6 +697,8 @@ function unreadWatchdog(d, now, staffHeld) {
 function drain() {
   if (stopping) return;
   const d = ledger.data;
+  // Kill switch: no new activation starts. Running ones are not aborted; every effect they attempt is refused.
+  const killed = killSwitch.state().engaged;
   for (const job of Object.values(d.jobs)) {
     const pause = require("./lib/operator/ticketpause").pauseFor(d, job);
     if (pause) job.ticketPaused = pause;
@@ -694,7 +707,7 @@ function drain() {
   for (const slot of Object.values(active)) {
     if (slot && (d.paused || (slot.job.state === "cancelled" || slot.job.appPaused || slot.job.ticketPaused) || staffHeld(slot.job) || (slot.job.role === "support" && !["command", "conversation"].includes(slot.job.kind) && (config.supportDeferred(slot.job) || d.channels[slot.job.channelId]?.claimedBy)))) slot.controller.abort();
   }
-  if (d.paused) return;
+  if (d.paused || killed) return;
   broker.delegationTick?.();
   const now = Date.now();
   require("./lib/operator/workqueue").reviewWaits(ledger, config, now);
@@ -739,7 +752,9 @@ const server = http.createServer(async (req, res) => {
   const reply = (status, value) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(value)); };
   if (req.url === "/health" && req.method === "GET") {
     const healthy = Date.now() - (ledger.data.heartbeat || bootTime) < 120000;
-    return reply(healthy ? 200 : 503, { ok: healthy, paused: ledger.data.paused, supportDeferred: config.supportDeferred(), supportOwner: supportOwner.owner(), active: Object.values(active).some(Boolean), lanes: Object.fromEntries(Object.entries(active).map(([k, s]) => [k, s?.job.id || null])), heartbeat: ledger.data.heartbeat, scan: { consecutiveFailures: scanHealth.state.failures, lastSuccessAt: scanHealth.state.lastSuccessAt } });
+    const pendingOut = Object.values(ledger.data.outbox).filter((e) => !e.deliveredAt && !e.suppressedByTakeover && !e.heldByKillSwitch && !e.retryAt && !(ledger.data.control?.stopped && !e.controlResponse));
+    const outbox = { pending: pendingOut.length, oldestDeliverableMs: pendingOut.length ? Date.now() - Math.min(...pendingOut.map((e) => e.at || Date.now())) : 0 };
+    return reply(healthy ? 200 : 503, { ok: healthy, heartbeatAgeMs: Date.now() - (ledger.data.heartbeat || bootTime), killSwitch: killSwitch.state(), staleTickers: tickers.stale(), outbox, paused: ledger.data.paused, supportDeferred: config.supportDeferred(), supportOwner: supportOwner.owner(), active: Object.values(active).some(Boolean), lanes: Object.fromEntries(Object.entries(active).map(([k, s]) => [k, s?.job.id || null])), heartbeat: ledger.data.heartbeat, scan: { consecutiveFailures: scanHealth.state.failures, lastSuccessAt: scanHealth.state.lastSuccessAt } });
   }
   if (req.url === "/v5/roles/snapshot" && req.method === "GET") {
     if (!authorized(req) && !scopedToken(req, env.KEIR_WATCHKEEPER_TOKEN)) return reply(401, { error: "unauthorized" });
@@ -821,6 +836,13 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/v5/engineering/tasks" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 12000) return reply(413, { error: "too large" }); }
     try { const job = engineering.enqueue(JSON.parse(raw)); if (!job) return reply(409, { error: "engineering disabled or backlog full" }); drain(); return reply(202, { task: job.id, state: job.state }); }
+    catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
+  }
+  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), tickers: tickers.snapshot(), sweeper: sweeper.status(), trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
+  if (req.url === "/v5/trust/report" && req.method === "POST") { try { const r = await trustReporter.tick({ force: true }); drain(); return reply(200, { ok: true, text: r?.text, file: r?.file }); } catch (e) { return reply(500, { error: String(e.message).slice(0, 200) }); } }
+  if (req.url === "/v5/trust/killswitch" && req.method === "POST") {
+    let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }
+    try { const b = JSON.parse(raw || "{}"); return reply(200, b.on === true ? killSwitch.engage({ reason: b.reason, by: "owner via API", until: b.until }) : b.on === false ? killSwitch.release() : killSwitch.state()); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (req.url === "/status" && req.method === "GET") return reply(200, { paused: ledger.data.paused, jobs: Object.values(ledger.data.jobs).map(({ id, kind, role, state, ticket, summary }) => ({ id, kind, role, state, ticket, summary })) });
