@@ -89,3 +89,17 @@ test("a ticket cannot park on developers while its own last word is 'cause not f
   const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Investigator on it." });
   assert.equal(r.state, "waiting");
 });
+
+test("a developer talking to the player is not a ping Keir must answer (ticket 1778)", async () => {
+  const f = setup();
+  const ch = "777777777777777777", owner = "111111111111111111";
+  const j = f.ledger.createJob("own", { role: "owner", kind: "command", ticket: 123, actorId: owner, channelId: ch, replyChannel: ch, source: { channelId: ch, channelName: "ticket-bug-fixture-123", authorId: owner, at: new Date(f.now()).toISOString(), content: "sorry\ni will unban and add a note" }, deadline: 9e15 });
+  j.state = "running"; f.advance(1);
+  const r = await f.broker.tool(j, "finish", { state: "done", summary: "Owner handling the unban; nothing to add." });
+  assert.equal(r.state, "done");
+});
+
+test("bookkeeping and third-person talk are refused in the player's channel (ticket 1778)", () => {
+  assert.equal(refusal("Understood. The unban and note are yours, and the player has already been told the account is unbanned.").kind, "bookkeeping");
+  assert.equal(refusal("I have nothing further to do on this one.").kind, "bookkeeping");
+});

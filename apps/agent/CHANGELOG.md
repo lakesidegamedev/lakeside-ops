@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.3.1 (2026-11-05)
+
+- A message from the owner or a developer in a ticket channel only forces Keir to reply when it names or mentions Keir or asks a question. On ticket 1778 the owner told the player he would unban them, and Keir was made to reply with "the unban and note are yours ... I have nothing further to do on this one" in the player's channel.
+- Replies that narrate Keir's own bookkeeping or talk about "the player" in their own channel are refused.
+
 ## 8.3.0 (2026-11-05)
 
 A stuck game no longer means a stuck Keir (owner, 2026-11-05: turn 697 failed four times over two hours while Keir filed an issue and waited).

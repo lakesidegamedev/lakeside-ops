@@ -13,6 +13,9 @@ const CONFESSIONAL = /\b(?:I(?:'m|’m| am) (?:so |very |really )?sorry\b|sorry 
 // twice that nothing was signed", posted in his own channel).
 // "The player" alone is left out: reports about another player's account
 // (1743, 1745) legitimately name a third party.
+// Ticket 1778 (2026-11-05): "The unban and note are yours, and the player has already been told...
+// I have nothing further to do on this one" was posted in the player's own channel.
+const BOOKKEEPING = /\b(?:I have|I've|I've got|there is|there's) nothing (?:further|more|else) to do\b|\bthe player has (?:already )?been (?:told|informed|notified|answered)\b|\b(?:the )?(?:unban|note|fix|repair|merge|heal)s? (?:is|are) yours\b/i;
 const THIRD_PERSON = /\b(?:told|gave|showed|asked|sent|answered|promised|owe) (?:him|her)\b|\bthe reporter(?!s)\b|\bthe player has (?:the|their|an?) answer\b/i;
 
 // Claims that something does not exist (1742: an empty lookup, asked the
@@ -46,7 +49,9 @@ const sentenceOf = (text, re) => {
 // who approved this ticket's decisions, developers: every developer's name }
 function refusal(text, ctx = {}) {
   if (PUNT.test(String(text || ""))) return { kind: "lookup_punted", sentence: String(text).slice(0, 160), reason: "this hands a factual rule or navigation question to Ask without looking it up. Look it up yourself (read_tool ops-knowledge code_search with claimType mechanic, or lore_wiki_search) and answer in a sentence or two. Only strategy and investment advice goes to Ask." };
-  let s = sentenceOf(text, CONFESSIONAL);
+  let s = sentenceOf(text, BOOKKEEPING);
+  if (s) return { kind: "bookkeeping", sentence: s, reason: `"${s}" is Keir's own bookkeeping or talks about the player in their own channel. If a developer said something for the player, there is nothing to add; finish without posting. Otherwise speak to the player as "you".` };
+  s = sentenceOf(text, CONFESSIONAL);
   if (s) return { kind: "confessional", sentence: s, reason: `"${s}" apologises or talks about Keir. Players get the right fact, not the story of the mistake. State what is correct in one sentence ("Correction: you have three agreements, not none.") and move on.` };
   s = sentenceOf(text, THIRD_PERSON);
   if (s) return { kind: "third_person", sentence: s, reason: `"${s}" talks about the player in the third person in their own channel. Address them as "you". If a developer asked why something went wrong, that answer is private: give it to them in their own task, not as a ticket post.` };

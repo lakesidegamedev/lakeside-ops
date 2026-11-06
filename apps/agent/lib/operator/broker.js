@@ -3423,7 +3423,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // check and the task finished twice with "nothing posted", which read as Keir ignoring him.
       if (["waiting", "done"].includes(state) && job.replyChannel && !job.appThread && !job.codingParent) {
         const staff = [config.ownerId, ...(config.staffIds || [])];
-        const asked = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((m) => m && staff.includes(m.authorId)).map((m) => Date.parse(m.at || "") || 0);
+        // Ticket 1778 (2026-11-05): "sorry, i will unban and add a note" was the owner talking to the
+        // player, not to Keir, and the forced reply narrated Keir's bookkeeping in the player's channel.
+        // Only a message that names or mentions Keir, or asks a question, is owed an answer.
+        const addressed = (m) => new RegExp(`<@!?${config.botId}>|\\b(?:keir|keith|starmer)\\b|\\?`, "i").test(String(m.content || "")) || m.mentioned === true;
+        const asked = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((m) => m && staff.includes(m.authorId) && addressed(m)).map((m) => Date.parse(m.at || "") || 0);
         const askedAt = asked.length ? Math.max(...asked) : 0;
         const published = typeof job.lastPublishedAt === "number" ? job.lastPublishedAt : Date.parse(job.lastPublishedAt || "") || 0;
         if (askedAt && published < askedAt && job.staffReplyOwed !== askedAt) {
