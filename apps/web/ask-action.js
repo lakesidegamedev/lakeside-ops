@@ -113,7 +113,12 @@ async function openTicket(action, who, { Intake, createTicket, findMember, flags
   let ticket;
   try {
     ticket = await createTicket({
-      discordUserId: who.discordId, category: action.category, title: action.title, description: action.description,
+      // Ticket 1773 (2026-11-05): the page the player asked from was shown on the card but not in the
+      // description, so intake suggested a sector they had visited eight hours earlier, the player
+      // confirmed it by mistake, and Keir worked the wrong sector. A game URL in the description is the
+      // intake's first choice of page.
+      discordUserId: who.discordId, category: action.category, title: action.title,
+      description: action.pageUrl && !action.description.includes(action.pageUrl) ? `${action.description.slice(0, 4800)}\n\nPage: ${action.pageUrl}` : action.description,
       openedVia: `Keir through Ask (${SURFACES[action.surface]}) on behalf of <@${who.discordId}>`, extraFields,
     });
   } catch (error) {
