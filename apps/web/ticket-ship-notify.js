@@ -19,6 +19,7 @@ const {
 const { primaryRepoDir } = require("./src/core/paths");
 const { getResolution, isTerminalStatus, normalizeActions } = require("./ticket-receipt");
 const { PLAYER_COPY, contextRequestKey } = require("./ticket-context");
+const replySplit = require("./reply-split");
 
 const AHD_REPO = process.env.AHD_REPO_DIR || primaryRepoDir();
 const OPS_CHANNEL = process.env.DISCORD_OPS_CHANNEL_NAME || "operations";
@@ -428,11 +429,39 @@ function updateWasModified(result) {
 }
 
 function playerUpdateDelivery(result, at, attempts = 1) {
+  const parts = Array.isArray(result && result.parts) && result.parts.length ? { parts: result.parts } : {};
   if (result && result.posted) {
-    return { status: "posted", attempts, postedAt: at, messageId: result.id || null, channelId: result.channel || null };
+    return { status: "posted", attempts, postedAt: at, messageId: result.id || null, channelId: result.channel || null, ...parts };
   }
-  if (result && result.skipped) return { status: "skipped", attempts, at, reason: String(result.skipped).slice(0, 240) };
-  return { status: "failed", attempts, at, error: String((result && result.error) || "Discord post failed").slice(0, 240) };
+  if (result && result.skipped) return { status: "skipped", attempts, at, reason: String(result.skipped).slice(0, 240), ...parts };
+  return { status: "failed", attempts, at, error: String((result && result.error) || "Discord post failed").slice(0, 240), ...parts };
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Post a reply as several short chat messages. `done` is the list of parts
+ * already delivered by an earlier attempt ({ index, id }); those are never
+ * resent. Each new part is handed to `onPart` as soon as it lands so a crash
+ * or a later failure keeps the record. Returns the usual post result with
+ * `id` = first message and `parts` = every delivered part.
+ */
+async function postReplyParts(channelId, content, { post, nonceBase, done = [], gapMs = replySplit.GAP_MS, onPart, pause = sleep } = {}) {
+  const chunks = replySplit.splitReply(content);
+  const parts = done.filter((p) => p && Number.isInteger(p.index) && p.index < chunks.length).map((p) => ({ index: p.index, id: p.id || null }));
+  let channel = channelId;
+  for (let i = 0; i < chunks.length; i++) {
+    if (parts.some((p) => p.index === i)) continue;
+    if (parts.length) await pause(gapMs);
+    const nonce = crypto.createHash("sha256").update(i === 0 ? nonceBase : `${nonceBase}:${i}`).digest("hex").slice(0, 24);
+    const r = await post(channelId, chunks[i], { nonce });
+    if (!r || !r.posted) return { ...(r || { error: "Discord post failed" }), parts };
+    channel = r.channel || channel;
+    parts.push({ index: i, id: r.id || null });
+    if (onPart) await onPart(parts.slice());
+  }
+  parts.sort((a, b) => a.index - b.index);
+  return { posted: true, via: "bot", id: parts[0] ? parts[0].id : null, channel, parts };
 }
 
 function compactTicketUpdate(kind, message) {
@@ -490,6 +519,7 @@ async function maybePostTicketChannelUpdate(db, {
   postChannel = postDiscordBot,
   editCard = editTicketIntakeCard,
   deliveryMode = "card",
+  partGapMs = replySplit.GAP_MS,
 } = {}) {
   if (!Number.isInteger(Number(ticketNumber))) return { skipped: "no ticket number" };
   if (!String(key || "").trim()) return { skipped: "no update key" };
@@ -522,7 +552,9 @@ async function maybePostTicketChannelUpdate(db, {
   const includeReceipt = ["opening", "resolution"].includes(String(kind || ""));
   const content = (url && includeReceipt ? `${safeMessage}\n\nView your support receipt: ${url}` : safeMessage).slice(0, 1900);
   const attempts = Number(existing && existing.delivery && existing.delivery.attempts || 0) + 1;
-  const pendingDelivery = { status: "pending", attempts, at: now };
+  // A retry resumes after the parts an earlier attempt already delivered.
+  const doneParts = Array.isArray(existing && existing.delivery && existing.delivery.parts) ? existing.delivery.parts : [];
+  const pendingDelivery = { status: "pending", attempts, at: now, ...(doneParts.length ? { parts: doneParts } : {}) };
   let claim;
   if (existing) {
     claim = await tickets.updateOne(
@@ -561,7 +593,13 @@ async function maybePostTicketChannelUpdate(db, {
   const result = ticket.discordChannelId
     ? deliveryMode !== "reply" && ticket.intake && ticket.intake.cardMessageId
       ? await editCard(ticket, { kind, message: safeMessage, receiptUrl: url, updateKey })
-      : await postChannel(ticket.discordChannelId, content, { nonce: crypto.createHash("sha256").update(`${ticketNumber}:${updateKey}`).digest("hex").slice(0, 24) })
+      : await postReplyParts(ticket.discordChannelId, content, {
+        post: postChannel,
+        nonceBase: `${ticketNumber}:${updateKey}`,
+        done: doneParts,
+        gapMs: partGapMs,
+        onPart: (parts) => tickets.updateOne({ _id: ticket._id, "publicUpdates.key": updateKey }, { $set: { "publicUpdates.$.delivery.parts": parts } }),
+      })
     : { skipped: "no ticket channel" };
   const delivery = playerUpdateDelivery(result, new Date(), attempts);
   const set = {
@@ -1179,6 +1217,7 @@ async function pollTicketPrOpsTldrs(db, {
 }
 
 module.exports = {
+  postReplyParts,
   extractTicketNumber,
   coerceTicketNumber,
   summarizeFix,

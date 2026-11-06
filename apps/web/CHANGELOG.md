@@ -1,5 +1,9 @@
 # Ops web changelog
 
+## Unreleased
+
+- **Ticket replies read like chat.** A reply-mode `support_public_update` (and a resolution notice) longer than one chat line is now posted as up to four short Discord messages, about 1.2 s apart, instead of one wall of text. Same rules as Keir's own splitter: paragraphs, then sentence ends; lists keep their lead-in; code fences stay whole. The receipt keeps one update with the full text; the delivery record lists every part, and a retry resends only the parts that did not land. Card mode is unchanged.
+
 ## 4.6.1 (2026-11-05)
 
 - **No developer pings for ticket PRs.** The #operations TL;DR for a PR that names a support ticket, and the "PR on the way" findings post, no longer tag the Developer role. Any PR mentioning a ticket triggered them, so routine agent PRs were pinging developers. Admin heal requests still ping, since they need someone to act.
