@@ -79,4 +79,16 @@ function unreadContextRefusal({ message, images = [], viewed = [], cases = [], r
     + "Then run the tools on what you found (gamestate alt_ring_audit and trace_account for accounts) and answer with your view and a confidence. Ask only for something that is in none of the screenshots, replies, cases or game data.";
 }
 
-module.exports = { isBareEitherOr, namedByTicket, needlessClarification, asksForIdentifiers, unreadContextRefusal };
+// Keir 8.4.2 (mod chat, 2026-11-06): the classifier called the owner's alt question "simple", it
+// ran in the quick lane and the model called no lookup at all before "I can't tell". In a staff
+// channel a question about people or cases is answered from records: at least one lookup
+// (support_search, support_get, alt_ring_audit, trace_account...) must precede "I can't tell".
+const PEOPLE_OR_CASE = /\b(?:alts?|alt ring|same (?:person|player|guy)|ban(?:ned|s)?|unban(?:ned)?|appeals?|mute[ds]?|account|accounts|player|players|user|users|company|corporation|corp|ticket|case|cases|vpn|ip|duplicate|sockpuppets?|they|them)\b/i;
+const CANT_TELL = /\b(?:i can(?:['’]?t| ?not) (?:say|tell|judge|determine|confirm|know)|i (?:don['’]?t|do not) (?:know|have)|not sure|no way to tell|unable to (?:say|tell|determine)|can(?:['’]?t| ?not) (?:say|tell) (?:yet|from))\b/i;
+function lookupRequiredRefusal({ question, message, lookups = 0, refusals = 0 } = {}) {
+  if (refusals >= 2 || lookups > 0) return null;
+  if (!PEOPLE_OR_CASE.test(clean(question)) || !CANT_TELL.test(clean(message))) return null;
+  return "Not posted: staff asked about people or a case and you have looked nothing up. Before you say you cannot tell, run at least one lookup: support_search on the words in the conversation, support_get on a matching case, and for accounts gamestate alt_ring_audit or trace_account (read_tool). Then answer with your view, the evidence and a confidence. If the records really hold nothing, say what you searched.";
+}
+
+module.exports = { isBareEitherOr, namedByTicket, needlessClarification, asksForIdentifiers, unreadContextRefusal, lookupRequiredRefusal };

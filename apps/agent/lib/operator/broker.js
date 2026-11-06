@@ -233,6 +233,8 @@ const FINDING_READS = {
   engine: SUPPORT_READS.engine,
   "ops-knowledge": SUPPORT_READS["ops-knowledge"],
 };
+// Reads that count as looking a person or case up before saying "I can't tell" (clarify.lookupRequiredRefusal).
+const LOOKUP_READS = { support: ["support_get", "support_search", "support_list"], gamestate: ["alt_ring_audit", "alt_rank", "trace_account", "trace_character", "trace_corp", "entity_search"] };
 const QUICK_OWNER_READS = { ...SUPPORT_READS,
   "ops-knowledge": musePolicy.MCP_READS["ops-knowledge"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
@@ -1847,6 +1849,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!ticketNo && job.kind === "conversation" && job.role !== "player" && job.replyChannel !== "app") {
         const refusal = require("./clarify").unreadContextRefusal({ message, images: conversation?.recentImages?.(job) || [], viewed: job.viewedImages || [], cases: job.caseContextOffered || [], refusals: job.unreadContextRefusals || 0 });
         if (refusal) { job.unreadContextRefusals = (job.unreadContextRefusals || 0) + 1; ledger.audit("clarification_refused", { job: job.id, staff: true }); ledger.save(); throw Object.assign(new Error(refusal), { screened: true }); }
+        const noLookup = require("./clarify").lookupRequiredRefusal({ question: [job.source?.content, ...(job.requestInbox || []).map((m) => m?.content)].filter(Boolean).join("\n"), message, lookups: job.lookupReads || 0, refusals: job.lookupRefusals || 0 });
+        if (noLookup) { job.lookupRefusals = (job.lookupRefusals || 0) + 1; ledger.audit("clarification_refused", { job: job.id, staff: true, lookup: true }); ledger.save(); throw Object.assign(new Error(noLookup), { screened: true }); }
       }
       if (ticketNo) {
         // A ticket channel belongs to the player, whoever asked. Player-register
@@ -1900,7 +1904,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const key = `channel-reply:${job.id}:${hash(message)}`;
       if (ticketNo) recordTicketPost(job, ticketNo, message);
       ledger.notify(key, `channel:${job.id}`, message);
-      job.channelReplyQueued = true; ledger.save();
+      job.channelReplyQueued = true; job.channelRepliedAt = now(); ledger.save();
       return { queued: true, delivery: "durable channel outbox" };
     }
     if (name === "read_tools") {
@@ -1946,6 +1950,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       { const key = hash([input.server, input.tool, input.args || {}]); const seen = (job.readKeys ||= []);
         if (!seen.includes(key)) { seen.push(key); if (seen.length > 200) seen.shift(); job.distinctReads = (job.distinctReads || 0) + 1; } }
       if (isQuick(job) && job.role === "owner" && !QUICK_OWNER_READS[input.server]?.includes(input.tool)) throw new Error("tool is outside quick read scope");
+      if (LOOKUP_READS[input.server]?.includes(input.tool)) job.lookupReads = (job.lookupReads || 0) + 1;
       if (job.role === "player" && !(input.server === "gamestate" || (input.server === "support" && input.tool === "support_get"))) throw new Error("player conversation reads are limited to its ticket and public game state");
       if (job.role !== "owner" && !developerTask(job)) {
         if (!readScope(job)[input.server]?.includes(input.tool)) throw new Error("read tool is outside support scope");
@@ -3567,14 +3572,22 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // Ticket 1778 (2026-11-05): "sorry, i will unban and add a note" was the owner talking to the
         // player, not to Keir, and the forced reply narrated Keir's bookkeeping in the player's channel.
         // Only a message that names or mentions Keir, or asks a question, is owed an answer.
-        const addressed = (m) => new RegExp(`<@!?${config.botId}>|\\b(?:keir|keith|starmer)\\b|\\?`, "i").test(String(m.content || "")) || m.mentioned === true;
+        // Only a message that names, mentions or replies to Keir is owed an answer; a bare "?" counts only in a ticket (Keir 8.4.2: mod chat chatter is not a question to Keir).
+        const addressed = (m) => new RegExp(`<@!?${config.botId}>|\\b(?:keir|keith|starmer)\\b${job.kind === "ticket" ? "|\\?" : ""}`, "i").test(String(m.content || "")) || m.mentioned === true;
         const asked = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((m) => m && staff.includes(m.authorId) && addressed(m)).map((m) => Date.parse(m.at || "") || 0);
         const askedAt = asked.length ? Math.max(...asked) : 0;
         const published = typeof job.lastPublishedAt === "number" ? job.lastPublishedAt : Date.parse(job.lastPublishedAt || "") || 0;
-        if (askedAt && published < askedAt && job.staffReplyOwed !== askedAt) {
+        // Keir 8.4.2 (mod chat, 2026-11-06): the same addressed question was "owed" again after Keir had
+        // answered it in the channel, because only job.lastPublishedAt counted. Keir's own row in the
+        // channel record after the question also settles it, and a reply to that message never repeats.
+        const channelRows = d.channelContext?.[job.channelId || job.replyChannel] || [];
+        const repliedAt = Math.max(0, ...channelRows.filter((r) => r.role === "assistant" || r.authorId === config.botId).map((r) => Date.parse(r.at || "") || r.observedAt || 0));
+        const answered = job.repliedToAddressedAt === askedAt || Math.max(repliedAt, job.channelRepliedAt || 0) >= askedAt;
+        if (askedAt && published < askedAt && !answered && job.staffReplyOwed !== askedAt) {
           job.staffReplyOwed = askedAt; ledger.save();
-          throw new Error("Not finished: the owner or a developer addressed you directly and you have not replied in the channel since. Reply now with what you found and your next step, even if nothing changed, then finish again.");
+          throw new Error("Not finished: the owner or a developer addressed you directly and you have not replied in the channel since. Reply with what you found and your next step, then finish again.");
         }
+        if (askedAt && answered) job.repliedToAddressedAt = askedAt;
       }
       if (input.result !== undefined) {
         job.result = input.result;

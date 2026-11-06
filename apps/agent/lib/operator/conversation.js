@@ -9,17 +9,27 @@ function quickQuestion(text) {
   if (/^(?:please\s+)?ask me (?:for|about)\b/i.test(text.trim())) return true;
   return /^(what|who|why|how|when|where|which|is|are|was|were|does|do|did|has|have|can you (?:explain|show|tell|check)|show|explain|tell me|any (?:news|progress)|status)\b/i.test(text.trim());
 }
-function createConversation({ ledger, config, now = () => Date.now() }) {
+function createConversation({ ledger, config, now = () => Date.now(), mods }) {
   const channels = ledger.data.channelContext ||= {};
   function record(channel, message) {
     if (!message.id || !message.author || message.webhook_id) return;
-    const role = message.author.id === config.ownerId ? "owner" : config.staffIds.includes(message.author.id) ? "support" : message.author.id === config.botId ? "assistant" : message.author.bot ? "bot" : "player";
+    mods?.observe?.(message);
+    const human = !message.author.bot && message.author.id !== config.botId;
+    const role = message.author.id === config.ownerId ? "owner" : config.staffIds.includes(message.author.id) ? "support" : message.author.id === config.botId ? "assistant" : message.author.bot ? "bot" : mods?.isModerator?.(message.author.id) ? "moderator" : "player";
     const row = { id: message.id, authorId: message.author.id, author: message.author.global_name || message.author.username, role,
       content: redactSecrets(String(message.content || "")).slice(0, 1500), at: message.timestamp, observedAt: now(), replyTo: message.message_reference?.message_id };
     // Keir 8.4.2: screenshots posted in the channel are part of what was said. Keep which
     // attachments are images (index = position on the Discord message) so they can be opened later.
     const images = (message.attachments || []).map((a, index) => ({ index, name: a.filename || a.name, type: a.content_type || a.type })).filter((a) => /^image\//.test(a.type || "")).slice(0, 10);
     if (images.length) row.images = images;
+    // Keir 8.4.2 (mod chat, 2026-11-06): a moderator was recorded as "player" and dismissed as
+    // "their word, not evidence". The first sight of a member looks up their guild roles, then
+    // relabels what they already said.
+    if (human && role === "player" && mods?.ensure) mods.ensure(message.author.id).then((isMod) => {
+      if (!isMod) return;
+      for (const rows of Object.values(channels)) for (const r of rows) if (r.authorId === message.author.id && r.role === "player") r.role = "moderator";
+      ledger.save?.();
+    }).catch(() => {});
     const prior = channels[channel.id] || [];
     channels[channel.id] = [...prior.filter((r) => r.id !== row.id && r.observedAt > now() - 24 * 3600000), row]
       .sort((a, b) => (Date.parse(a.at) || a.observedAt) - (Date.parse(b.at) || b.observedAt)).slice(-40);
@@ -27,7 +37,7 @@ function createConversation({ ledger, config, now = () => Date.now() }) {
     for (const id of ids.slice(256)) delete channels[id];
   }
   function snapshot(job) {
-    return { channelId: job.source?.channelId, evidenceOnly: true,
+    return { channelId: job.source?.channelId, evidenceOnly: true, roles: "owner, support and moderator rows are staff, never players; assistant rows are you",
       messages: (channels[job.source?.channelId] || []).filter((r) => r.observedAt > now() - 24 * 3600000) };
   }
   // Keir 8.4.2 (owner, 2026-11-06, mod chat): two screenshots named the accounts and Keir
