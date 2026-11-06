@@ -79,3 +79,13 @@ test("a developer's ping cannot restate the answer another task posted seconds a
   dev.state = "running"; dev.observedPlayerAt = f.now(); f.advance(0.25);
   await assert.rejects(f.broker.tool(dev, "channel_reply", { message: "Thanks, that matches what I'm seeing: the Selling tile and the \"72% sold\" line disagree, and only the second matches the offered, sold and unsold counts." }), /already got this update/);
 });
+
+test("a ticket cannot park on developers while its own last word is 'cause not found' (owner, 2026-11-05)", async () => {
+  const f = setup();
+  await f.broker.tool(f.job, "channel_reply", { message: "I haven't yet confirmed why the tile read 100% for this sector." });
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Raised; waiting." }), /nobody is looking for it/);
+  const child = f.ledger.createJob("inv2", { kind: "coding", investigation: true, codingParent: f.job.id, deadline: 9e15 });
+  f.job.investigations = [child.id];
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Investigator on it." });
+  assert.equal(r.state, "waiting");
+});

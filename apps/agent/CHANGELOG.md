@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+A stuck game no longer means a stuck Keir (owner, 2026-11-05: turn 697 failed four times over two hours while Keir filed an issue and waited).
+
+- A failed or stalled turn opens one engineering task per turn, ahead of the backlog, to read every attempt's failure, confirm the cause in code and prepare a fix. The owner's Watchkeeper alert says Keir is on it. The engineering lane can now read the turn failure log.
+- A ticket can no longer park on "waiting for the developers" while Keir's own last post says the cause is not found yet. It hands the question to an investigator or keeps digging first (tickets 1766, 1773, 1774 sat for hours).
+
 ## 8.2.1 (2026-11-05)
 
 - A second task (for example one started by a developer's ping) can no longer restate an answer another task posted in the same ticket minutes earlier. Within five minutes a post that closely paraphrases the last one is refused (ticket 1773 got the same answer twice, 15 seconds apart).

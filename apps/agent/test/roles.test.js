@@ -98,3 +98,17 @@ test("role audits use the configured qualified route for verification and incide
     spawned.state = "done";
   }
 });
+test("a failed turn opens one urgent engineering task per turn, even with a full backlog (turn 697)", (t) => {
+  const h = setup(t);
+  for (let i = 0; i < 12; i++) h.engineering.enqueue({ key: `filler:${i}`, title: "Filler finding", evidence: "x" });
+  const fail = (key) => h.roles.observe({ key, kind: "game_turn_failed", title: "Game turn 697 corporationTurn failed", evidence: JSON.stringify({ anomaly: { turn: 697, phase: "corporationTurn", kind: "turn-failed" } }) });
+  const first = fail("game:failure:697:corporationTurn:1");
+  const task = h.ledger.data.jobs[first.observation.engineeringTask];
+  assert.ok(task, "engineering task opened");
+  assert.equal(task.operatorRole, "engineering"); assert.equal(task.engineeringPriority, -1);
+  assert.match(task.source.content, /turn_failure_detail for turn 697/);
+  fail("game:failure:697:turn:1");
+  assert.equal(Object.values(h.ledger.data.jobs).filter((j) => j.engineeringKey === "engineering:turn-failure:697").length, 1);
+  const dm = JSON.stringify(h.ledger.data.alerts || {}).includes("engineering lane is on it");
+  assert.ok(dm, "the owner hears that Keir is on it");
+});
