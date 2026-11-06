@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.2.1 (2026-11-05)
+
 - A second task (for example one started by a developer's ping) can no longer restate an answer another task posted in the same ticket minutes earlier. Within five minutes a post that closely paraphrases the last one is refused (ticket 1773 got the same answer twice, 15 seconds apart).
 
 ## 8.2.0 (2026-11-05)
