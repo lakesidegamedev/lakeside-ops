@@ -16,7 +16,7 @@ function literalGreeting(job) {
 // 15 seconds. Voice now runs on the small brief with its reads preloaded.
 function profile(job) {
   if (job.voiceMode && job.kind === "conversation" && !job.ticket && !job.codingParent && !job.source?.attachments?.length && !job.appAttachments?.length) return "voice";
-  if (job.kind !== "conversation" || job.ticket || job.codingParent || job.resultSchema || job.voiceMode || job.source?.attachments?.length || job.appAttachments?.length || job.appSteering) return "full";
+  if (job.kind !== "conversation" || job.ticket || job.codingParent || job.resultSchema || job.voiceMode || job.source?.attachments?.length || job.appAttachments?.length || job.contextImages || job.appSteering) return "full";
   if (literalGreeting(job)) return "minimal";
   const tags = job.tags;
   return tags?.contextProfile === "focused" && tags.kindConfidence >= 0.75 && !tags.injection && !tags.needsVision ? "focused" : "full";

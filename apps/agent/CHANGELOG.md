@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.4.2 (2026-11-06)
+
+Read the screenshots and the cases before asking (owner, 2026-11-06, mod chat). Danica posted two screenshots of an alt investigation naming two accounts, Monroe called it "the longest sleepover yet", and Egg asked Keir "do you think they are alts?". Keir answered "I don't know which two accounts you mean ... send me the two names." The names were in the screenshots, the case was in tickets 1778 to 1780 (moderation, opened that morning), and the tools to judge it (alt_ring_audit, trace_account) were available.
+
+- Screenshots in staff channels and DMs are read. The channel record keeps which messages carry images. For a staff, developer or owner question outside a ticket, `context.recentImages` lists the images in the last 10 messages, in the reply chain of the message being answered, and on that message. `view_attachment` takes an optional `messageId` to open any of them. A conversation with such images runs on the full brief and the vision lane.
+- Case lookup before answering. For the same conversations the broker searches support tickets for the words the talk uses (quoted words first, then the longest uncommon words of the last 10 messages) and, for alt, ban, appeal or moderation talk, lists the recent moderation tickets. Matches arrive as `context.caseContext` with the instruction to open them with `support_get`. Bounded to 4 seconds and fails open.
+- The needless-clarification guard now covers staff channels and DMs. A reply whose substance is a request for names, accounts or ids ("send me the two names") is refused while screenshots in the context were never opened, or while matching support cases were offered, and Keir is sent to read them, run `alt_ring_audit` and `trace_account` on what it finds and answer with a view and a confidence. After two refusals on one task the reply goes out, so a real gap never deadlocks.
+- Policy (`KEIR.md`, `KEIR-CORE.md`): to staff, lead with the verdict and a confidence, then one short supporting line; several short messages (the 8.4.1 splitter), not a block.
+
 ## 8.4.1 (2026-11-06)
 
 Conversational replies and faster answers (owner, 2026-11-06: "he needs like 60 seconds to look, and then like 20s of output generating ... less wall-of-text, more one-liners, more messages, less length to each ... more conversational than chatbotty").

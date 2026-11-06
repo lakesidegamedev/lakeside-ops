@@ -53,4 +53,30 @@ function needlessClarification({ message, texts, visits } = {}) {
     + ". Do not ask the player to pick between issues they already raised. Investigate every issue stated in the ticket and its channel, then reply with what you found for each. Ask a question only when the answer is not in the messages, the channel history, the screenshots, the page visits or the game data, and you cannot go on without it.";
 }
 
-module.exports = { isBareEitherOr, namedByTicket, needlessClarification };
+// Keir 8.4.2 (owner, 2026-11-06, mod chat). Staff asked "do you think they are alts?" under two
+// screenshots that named the accounts. Keir replied "send me the two names and I'll compare them".
+// In staff channels and DMs a reply whose substance is a request for names, accounts or ids is
+// refused while the screenshots nearby were never opened, or while support cases matching the
+// talk were never read. After two refusals on a task it goes out (a real gap is allowed through).
+const ASKS_IDENTIFIERS = /\b(?:send|give|tell|share|post|paste|name|list|provide)\b[^.?!\n]{0,50}\b(?:names?|usernames?|accounts?|ids?|handles?|which (?:two|accounts?|players?|users?|ones?))\b|\bwhich (?:two |of the )?(?:accounts?|players?|users?|ones?) (?:do you|did you|you|are you|is it)\b|\bdon['’]?t know (?:which|who|what)\b[^.?!\n]{0,40}\b(?:you mean|accounts?|players?|two)\b|\bwho (?:do you|did you) mean\b|\bcan['’]?t (?:say|tell|judge|compare)[^.?!\n]{0,40}(?:without|until|because)\b/i;
+
+function asksForIdentifiers(message) {
+  const text = clean(message);
+  if (!text) return false;
+  if (!ASKS_IDENTIFIERS.test(text)) return false;
+  const substance = statements(text).filter((s) => !ASKS_IDENTIFIERS.test(s));
+  return substance.reduce((n, x) => n + x.length, 0) < 160;
+}
+
+// images: context.recentImages rows; viewed: message ids opened; cases: case numbers offered.
+function unreadContextRefusal({ message, images = [], viewed = [], cases = [], refusals = 0 } = {}) {
+  if (refusals >= 2 || !asksForIdentifiers(message)) return null;
+  const unseen = images.filter((i) => !viewed.includes(i.messageId));
+  if (!unseen.length && !cases.length) return null;
+  return "Not posted: you are asking for names or accounts that may already be in front of you. "
+    + (unseen.length ? `${unseen.length} screenshot${unseen.length === 1 ? "" : "s"} in this channel were never opened: call view_attachment with each context.recentImages {index, messageId} and read the names, accounts and times. ` : "")
+    + (cases.length ? `Support cases match this conversation (${cases.slice(0, 5).map((n) => "#" + n).join(", ")}): open them with support_get. ` : "")
+    + "Then run the tools on what you found (gamestate alt_ring_audit and trace_account for accounts) and answer with your view and a confidence. Ask only for something that is in none of the screenshots, replies, cases or game data.";
+}
+
+module.exports = { isBareEitherOr, namedByTicket, needlessClarification, asksForIdentifiers, unreadContextRefusal };

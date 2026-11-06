@@ -1843,6 +1843,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (ticketNo) message = shapeTicketPost(message); // short, in paragraphs, or refused
       if (!ticketNo) guardNumbers(job, message);
       if (!ticketNo && job.role === "player") guardPlayerRegister(job, null, message);
+      // Keir 8.4.2: in staff channels and DMs, asking for names that sit in unopened screenshots or cases is refused.
+      if (!ticketNo && job.kind === "conversation" && job.role !== "player" && job.replyChannel !== "app") {
+        const refusal = require("./clarify").unreadContextRefusal({ message, images: conversation?.recentImages?.(job) || [], viewed: job.viewedImages || [], cases: job.caseContextOffered || [], refusals: job.unreadContextRefusals || 0 });
+        if (refusal) { job.unreadContextRefusals = (job.unreadContextRefusals || 0) + 1; ledger.audit("clarification_refused", { job: job.id, staff: true }); ledger.save(); throw Object.assign(new Error(refusal), { screened: true }); }
+      }
       if (ticketNo) {
         // A ticket channel belongs to the player, whoever asked. Player-register
         // copy only; the technical trail lives in the PR.
@@ -2943,8 +2948,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!image) throw new Error("No viewable image on this assigned ticket; continue investigating its report and metadata.");
         return {image};
       }
-      const original = await discord("GET", `/channels/${job.source.channelId}/messages/${job.source.messageId}`);
+      // Keir 8.4.2: an image posted earlier in this channel (context.recentImages) can be opened by its message id.
+      const earlier = input.messageId && input.messageId !== job.source.messageId;
+      if (earlier && !(conversation?.recentImages?.(job) || []).some((i) => i.messageId === input.messageId && i.index === Number(input.index))) throw new Error("messageId is not one of context.recentImages");
+      const original = await discord("GET", `/channels/${job.source.channelId}/messages/${earlier ? input.messageId : job.source.messageId}`);
       const a = original.attachments?.[Number(input.index)];
+      (job.viewedImages ||= []).includes(original.id) || job.viewedImages.push(original.id);
       if (!a && job.ticket) {
         const image = await reportImage();
         if (image) return {image, from: "ticket report"};
@@ -3811,7 +3820,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),
