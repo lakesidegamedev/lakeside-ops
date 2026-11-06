@@ -62,7 +62,7 @@ test("fresh player reply replaces six-hour timer through the actual gateway", as
   gateway.ingest({ id: "channel", name: "ticket-bug-fixture-1545", type: 0 }, { id: "666666666666666666", author: { id: "888888888888888888", username: "fixture", bot: false }, content: "Here is the requested evidence", timestamp: new Date(NOW).toISOString(), mentions: [], attachments: [] });
   assert.equal(f.job.inbox.length, 1);
   assert.equal(f.job.waitingFor, undefined);
-  assert.equal(f.job.wakeAt, NOW + 45000, "normal burst debounce replaces six-hour deadline");
+  assert.equal(f.job.wakeAt, NOW + 8000, "a player message replaces the six-hour deadline with the short burst debounce");
 });
 test("reply waits never extend pending approvals or promotion windows", async (t) => {
   const approval = fixture(t); approval.ledger.data.actions.a = { jobId: approval.job.id, state: "pending" };

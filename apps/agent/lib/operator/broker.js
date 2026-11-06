@@ -415,7 +415,7 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -708,7 +708,22 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         throw Object.assign(new Error("Not posted: this states an outcome (fixed, live, changed, paid) as settled fact, and this ticket has no release or verification behind it. Say what you found and what happens next, or verify it first."), { screened: true });
       }
     } catch (e) { if (e.screened) throw e; }
+    await guardNeedlessClarification(job, ticketNo, message);
     if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
+  }
+  // Keir 8.4.1 (owner, ticket 1781): a reply that only asks the player to pick between issues
+  // they already raised is not posted. The ticket text, its channel and the page visits are read
+  // only when the reply has that shape, so ordinary posts cost nothing.
+  async function guardNeedlessClarification(job, ticketNo, message) {
+    const clarify = require("./clarify");
+    if (job.role === "owner" || !clarify.isBareEitherOr(message)) return;
+    const texts = [job.source?.content, ...(job.requestInbox || []).map((m) => m?.content), ...(job.inbox || []).filter((m) => m && m.role !== "system" && m.role !== "assistant").map((m) => m.content),
+      ...(d.channelContext?.[job.channelId || job.replyChannel] || []).filter((m) => m.role !== "assistant" && m.authorId !== config.botId).slice(-15).map((m) => m.content)].filter(Boolean);
+    const t = await mcp.call("support", "support_get", { kind: "ticket", number: ticketNo }, false).catch(() => null);
+    const refusal = clarify.needlessClarification({ message, texts, visits: t?.supportRecentVisits || [] });
+    if (!refusal) return;
+    ledger.audit("clarification_refused", { job: job.id, ticket: ticketNo });
+    throw Object.assign(new Error(refusal), { screened: true });
   }
   // Keir 4.0 phase 1: the player register, checked in code. Paths,
   // repositories, model names and Keir's own runtime never reach a player
@@ -1845,15 +1860,23 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
-          const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
-          const result = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: message });
-          const delivery = result.delivery;
-          const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
-          if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
+          // Keir 8.4.1: a reply goes out as a few short messages in order, one update to every
+          // guard above and to the caps below. The first is the tracked update; the rest follow it.
+          const parts = require("./replysplit").splitReply(message);
+          let result = null;
+          for (let i = 0; i < parts.length; i++) {
+            const args = { kind: "ticket", number: ticketNo, message: parts[i], deliver: true, update_kind: "progress", delivery_mode: "reply" };
+            if (i > 0) await sleep(require("./replysplit").GAP_MS);
+            const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: parts[i] });
+            const delivery = sent.delivery;
+            const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
+            if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
+            result ||= sent;
+          }
           job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, ticketNo, message);
           const ticketTask = d.jobs[d.seen[`ticket:${ticketNo}`]]; if (ticketTask) ticketTask.lastPublishedAt = now();
           ledger.save();
-          return { published: true, attachedToTicket: ticketNo, delivery: result.delivery?.status || "submitted" };
+          return { published: true, attachedToTicket: ticketNo, messages: parts.length, delivery: result.delivery?.status || "submitted" };
         }
       }
       // Owner, 2026-10-23: a waiting app task re-posted the same "Railway is

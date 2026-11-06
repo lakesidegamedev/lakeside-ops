@@ -550,7 +550,7 @@ test("ticket pushback invalidates closure readiness and never resolves the canon
   assert.ok(!Object.values(f.ledger.data.jobs).some((j) => j.kind === "conversation"));
   assert.equal(t.inbox.length, 1); assert.equal(t.resolutionReadyAt, undefined);
   // Debounced (4.1.10): it waits briefly for more messages, then the drain queues it.
-  assert.equal(t.state, "waiting"); assert.equal(t.debounceWake, true); assert.equal(t.wakeAt, 5000 + 45000);
+  assert.equal(t.state, "waiting"); assert.equal(t.debounceWake, true); assert.equal(t.wakeAt, 5000 + 8000);
 });
 
 test("player ticket reads omit internal assessments, notes and unrelated records", async () => {
