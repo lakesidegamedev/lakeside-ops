@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.3.0 (2026-11-05)
+
 A stuck game no longer means a stuck Keir (owner, 2026-11-05: turn 697 failed four times over two hours while Keir filed an issue and waited).
 
 - A failed or stalled turn opens one engineering task per turn, ahead of the backlog, to read every attempt's failure, confirm the cause in code and prepare a fix. The owner's Watchkeeper alert says Keir is on it. The engineering lane can now read the turn failure log.
