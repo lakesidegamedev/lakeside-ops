@@ -12,6 +12,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // news), not "that answer was wrong". They owe the player nothing new, so they must
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
+const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClass = require("./changeclass");
 const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
@@ -299,13 +300,15 @@ function localMcpUrl(value) {
   if (url.hostname === "localhost") url.hostname = "127.0.0.1";
   return url.href;
 }
-function createMcp(configFile, readToken) {
+function createMcp(configFile, readToken, { gate = null } = {}) {
   const listCache = new Map(), LIST_TTL_MS = 5 * 60000;
   const servers = JSON.parse(fs.readFileSync(configFile, "utf8")).mcpServers;
   async function rpc(server, method, params, write = false, signal) {
     const c = servers[server];
     const url = localMcpUrl(c?.url);
     if (!url) throw new Error("unavailable local MCP server");
+    // Keir 8.4 kill switch: no write leaves this box while it is engaged, whichever code path made it.
+    if (write && gate) gate(`The ${server} write ${params?.name || method}`);
     // Keir 8: a refused or unresolvable connection means the request never left
     // this box, so a write that fails this way provably wrote nothing.
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: write ? c.headers.Authorization : `Bearer ${readToken}` },
@@ -410,7 +413,7 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -480,6 +483,17 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
       ? "This merge's outcome is being checked against GitHub automatically within ten minutes. Do not ask the owner about it: finish waiting with a wakeup of about ten minutes, then re-read the PR."
       : "external action outcome is uncertain; owner inspection required");
     if (old?.state === "rejected" && !old.retryable && (old.at || 0) >= STARTED_AT) throw new Error(`This exact call was already rejected by the tool's schema (${String(old.error || "").slice(0, 300)}). Read the tool schema again and change the arguments; repeating it fails the same way.`);
+    // Keir 8.4: kill switch and the player-update cap refuse before anything is marked started, so the
+    // job keeps no uncertain receipt and nothing needs inspecting when the switch is released.
+    killSwitch?.assertClear("This external action");
+    if (settle?.kind === "reply" && settle.ticket && limits) {
+      const cap = trustLimits.checkPlayerUpdate(d, Number(settle.ticket), now(), limits.get());
+      if (!cap.ok) {
+        const hit = ((trustlog.trust(d).capHits ||= {})[settle.ticket] ||= { at: now(), count: cap.count });
+        hit.count = cap.count; ledger.audit("update_cap", { job: job.id, ticket: Number(settle.ticket), count: cap.count, limit: cap.limit }); ledger.save();
+        throw Object.assign(new Error(cap.reason), { code: "UPDATE_CAP" });
+      }
+    }
     job.effects[key] = { state: "started", at: now(), ...(settle ? { settle } : {}) }; ledger.save();
     try {
       require("./supporttakeover").assertCanAct(d, job);
@@ -666,6 +680,7 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     } catch (e) { d.disclosed[n] = { at: now(), posted: false, error: String(e.message).slice(0, 200) }; ledger.save(); }
   }
   async function guardTicketPost(job, ticketNo, message) {
+    capGuard(job, ticketNo);
     guardNumbers(job, message);
     secondLook(job, ticketNo, message);
     guardTicketPostRules(job, ticketNo, message);
@@ -1059,8 +1074,25 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
   // Keir 8: a post carries its kind. The old check read a "[status card]" prefix off the text, so a
 // reply that happened to start with it was treated as a card. Records without a kind are legacy.
 function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.text || "").startsWith("[status card]"); }
+  // Keir 8.4: true when Keir may not speak to this ticket right now (kill switch, or the 24 hour update cap).
+  function outputBlocked(job) {
+    if (killSwitch?.state().engaged) return true;
+    return Boolean(limits && job.ticket && !trustLimits.checkPlayerUpdate(d, Number(job.ticket), now(), limits.get()).ok);
+  }
+  // Keir 8.4: refuse a player post before it is drafted further when the kill switch is engaged or the ticket
+  // already got its 24 hour allowance. The owner is told through the sweeper (trust.capHits), not by the model.
+  function capGuard(job, ticketNo) {
+    killSwitch?.assertClear("A post to the player");
+    if (!limits || !ticketNo) return;
+    const cap = trustLimits.checkPlayerUpdate(d, Number(ticketNo), now(), limits.get());
+    if (cap.ok) return;
+    const hit = ((trustlog.trust(d).capHits ||= {})[ticketNo] ||= { at: now(), count: cap.count });
+    hit.count = cap.count; ledger.audit("update_cap", { job: job.id, ticket: Number(ticketNo), count: cap.count, limit: cap.limit }); ledger.save();
+    throw Object.assign(new Error(cap.reason), { code: "UPDATE_CAP" });
+  }
   function recordTicketPost(job, ticketNo, message, kind = "reply") {
     const card = kind === "status_card";
+    try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); if (!card) trustLimits.recordPlayerUpdate(d, ticketNo, now()); } catch {}
     if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
@@ -1324,7 +1356,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // A reply that can never be delivered (no channel) owes nothing: arming the refused-reply
       // hold there left finish refused too, so an open channel-less ticket could only end
       // blocked (KBX5 channelless--open, 2026-11-03).
-      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(["KILL_SWITCH", "UPDATE_CAP"].includes(e.code))) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
@@ -2163,6 +2195,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const files = (await api([`repos/${repo}/compare/${base}...${head}`]).catch(() => null))?.files;
         return Array.isArray(files) && files.length < 300 ? files.flatMap((f) => details ? [f] : [f.filename, ...(f.previous_filename ? [f.previous_filename] : [])]) : null;
       }
+      // Keir 8.4: what kind of change this merge or promotion ships (changeclass.js). Set once the file list is known.
+      let shipClass = null;
+      const ownerGuard = () => { if (shipClass) changeClass.assertShippable(d, { ...shipClass, now: now(), inPerson: process.env.KEIR_GATED_OWNER_IN_PERSON === "1" }); };
       // Source evidence goes to the worker, never directly into an owner card.
       async function requestGithubApproval(args, reason) {
         const copy=require("./approvalcopy");
@@ -2225,6 +2260,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const to = input.to, from = { staging: "development", main: "staging" }[to];
         if (input.action === "merge" || from) {
           const files = input.action === "merge" ? await prFiles(Number(input.number)) : await rangeFiles(to, from);
+          // Keir 8.4: classify the change. A gated class (rule, balance, economy-behaviour) goes to the owner's approval
+          // card below even when no economy path matches, and may only execute with the owner's own recorded approval.
+          let klass = { gated: false };
+          if (!desktop) {
+            const prd = input.action === "merge" ? await api([`repos/${repo}/pulls/${Number(input.number)}`]) : null;
+            shipClass = { declared: input.changeClass, body: prd?.body, title: prd?.title, blastClass: Array.isArray(files) ? blast.classify(files).cls : "economy", ownerId: config.ownerId, action: input.action, number: input.action === "merge" ? Number(input.number) : null, to };
+            klass = changeClass.classifyChange(shipClass);
+            if (klass.needsDeclaration) { if (input.action === "merge") changeClass.assertShippable(d, shipClass); shipClass = null; }
+          }
           if (findingShip && input.action === "promote" && files?.length) {
             const range = await api([`repos/${repo}/compare/${to}...${from}`]).catch(() => null);
             const commits = range?.commits;
@@ -2238,7 +2282,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           if (findingShip && (blast.classify(files).cls !== "copy" || !blast.displayOnlyDiff(input.action === "merge" ? await prFiles(Number(input.number), true) : await rangeFiles(to, from, true)).allowed)) throw new Error("Keir's own findings ship only display-only changes (pages, components, styles, text). This one is not: leave the PR as a draft for the developers, raise it with raise_to_developers, and finish.");
           // A task that judges its own change economy-affecting (prices, money,
           // budgets, procurement, balance) gates it even when no path matches.
-          const sensitive = files ? (input.economy === true && !files.some(isHugePath) ? files.map((f) => `${f} (declared economy change)`) : files.filter(isHugePath)) : null;
+          const sensitive = files ? ((input.economy === true || klass.gated) && !files.some(isHugePath) ? files.map((f) => `${f} (${klass.gated ? `${klass.cls} change` : "declared economy change"})`) : files.filter(isHugePath)) : null;
           // Huge changes need an owner approval bound to an exact head. Since
           // 5.1 a promotion carrying only changes approved at their merged
           // heads rides those approvals (chain consent below); anything else
@@ -2658,7 +2702,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]);
         return { number: pr.number, title: pr.title, state: pr.merged ? "merged" : pr.state, base: pr.base.ref, head: pr.head.ref, url: pr.html_url, ...(pr.state === "open" ? await gate(pr) : {}) };
       }
-      if (input.action === "merge") return mergeWhenGreen(Number(input.number), "squash", desktop ? "main" : "development");
+      if (input.action === "merge") { ownerGuard(); return mergeWhenGreen(Number(input.number), "squash", desktop ? "main" : "development"); }
       if (input.action === "promote") {
         if (desktop) throw new Error("Desktop fixes use main and client releases, not the game promotion pipeline.");
         const to = input.to, from = { staging: "development", main: "staging" }[to];
@@ -2666,6 +2710,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!from) throw new Error("promote to staging or main");
         const ahead = await api([`repos/${repo}/compare/${to}...${from}`]);
         if (!ahead.ahead_by) return { promoted: false, reason: `${from} has nothing new for ${to}` };
+        ownerGuard();
+        // Keir 8.4: at most N promotions to production per rolling day (default 3), idempotent per source head.
+        if (to === "main" && limits) {
+          const key = `promote-main:${ahead.merge_base_commit?.sha || from}`, cap = trustLimits.checkCounter(d, "deploy", key, now(), limits.get());
+          if (!cap.ok) { ledger.audit("deploy_cap", { job: job.id, count: cap.count, limit: cap.limit }); ledger.save(); throw Object.assign(new Error(cap.reason), { code: "DEPLOY_CAP" }); }
+          trustLimits.recordCounter(d, "deploy", key, now()); ledger.save();
+        }
         let pr = (await api([`repos/${repo}/pulls?state=open&base=${to}&head=${GITHUB_OWNER}:${from}`]))[0];
         if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => apiKeir(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}${PROMOTE_COI_SECTION}`]));
         const result = await mergeWhenGreen(pr.number, "merge", to);
@@ -3300,6 +3351,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (supportDirectives.held(job)) throw new Error("Support directive is held");
         if (a.kind === "heal" && a.args.spec.env === "prod" && prodHold()) throw new Error(HOLD_NOTE);
       }
+      // Keir 8.4: kill switch before the action is marked executing, so a refusal leaves it approved, not stuck.
+      killSwitch?.assertClear("This approved action");
+      // Keir 8.4: at most N production heals per rolling day (default 5), idempotent per approved action.
+      if (a.kind === "heal" && a.args.spec.env === "prod" && limits) {
+        const cap = trustLimits.checkCounter(d, "heal", a.id, now(), limits.get());
+        if (!cap.ok) { ledger.audit("heal_cap", { job: job.id, action: a.id, count: cap.count, limit: cap.limit }); ledger.save(); throw Object.assign(new Error(cap.reason), { code: "HEAL_CAP" }); }
+        trustLimits.recordCounter(d, "heal", a.id, now()); ledger.save();
+      }
       // Persist this state with the effect's started receipt in one snapshot.
       a.state = "executing";
       const result = await effect(job, `action:${a.id}`, async () => {
@@ -3394,7 +3453,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (last && !/\?/.test(last.text) && /\b(?:I am|I'm|I will|I'll)\s+(?:still\s+)?(?:checking|looking into|investigating|tracing|finding out|working out|come back|report back|check)\b|\bbefore I (?:say|give)\b/i.test(last.text))
           throw new Error("Not finished: you just told the player you are still checking something, so a wait for their reply would leave that promise hanging. Do the check now, or finish waiting with wakeAfterMinutes of 30 or less.");
       }
-      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && !outputBlocked(job) && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The

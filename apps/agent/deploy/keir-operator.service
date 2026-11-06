@@ -2,6 +2,10 @@
 Description=Keir durable owner operator and Discord support desk
 After=network-online.target
 Wants=network-online.target
+# 8.4: a crash loop stops after 5 failures in 5 minutes and the unit goes `failed`;
+# keir-guardian then restarts it with backoff and alerts the owner if it keeps failing.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,7 +16,7 @@ EnvironmentFile=/etc/keir-operator.env
 EnvironmentFile=-/etc/keir-sentry.env
 ExecStart=/usr/bin/node /opt/keir/current/operator.js
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 StateDirectory=keir-operator
 StateDirectoryMode=0700
 UMask=0077

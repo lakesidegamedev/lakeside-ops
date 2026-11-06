@@ -5,6 +5,17 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+Keir 8.4, the stability release (owner, 2026-11-06: "this needs to be Keir we can trust in our absence").
+
+- Kill switch: one file, `/var/lib/keir-operator/kill-switch`, read at runtime. While it exists no reply, MCP write, merge, promotion or heal leaves the box, no new activation starts, and queued channel posts are held (and dropped as stale if held over an hour). Flip it with `node /opt/keir/current/bin/keir-killswitch.js on "reason"` / `off` / `status`, or `POST /v5/trust/killswitch`. An unreadable file counts as engaged.
+- Hard caps, set in `/var/lib/keir-operator/limits.json` or env: 4 player-visible updates per ticket per rolling 24 hours, 3 promotions to main per day, 5 production heals per day. A refusal does not loop the task, and a ticket that hit its cap is reported to the owner by the sweeper.
+- Change classes: merge and promote take `changeClass` (bugfix, display, data-heal, rule, balance, economy-behaviour). Rule, balance and economy-behaviour changes (declared, set by a `Change-class:` line in the PR body, by a "rebalance/nerf/buff" title, or by economy paths) go to the owner's approval card and execute only with a recorded owner approval. A logic merge with no declared class is refused with instructions.
+- Stuck-ticket sweeper (every 10 minutes): an open ticket with no substantive progress for 6 hours, or a player message unanswered for 30 minutes in active hours (07:00 to 23:00 Eastern), gets one fresh investigation, then one owner escalation, then at most one more every 12 hours. "Still checking" restatements do not count as progress. A ticket waiting on an owner decision is never investigated or resolved: the player is told once, the owner is re-pinged every 12 hours.
+- Daily trust report (09:00 Eastern): tickets handled, resolved and open, fixes shipped, "fixed" claims later contradicted, what waits on the owner and for how long, three random reply spot checks, restarts and incidents. Sent as an owner DM, written to `/var/lib/keir-operator/trust-reports/`, and saved to ops-knowledge.
+- Guardian (`keir-guardian.timer`, every minute, separate from the operator): restarts a failed or hung operator, summon or inbox with doubling backoff, stops after 3 restarts in an hour and DMs the owner directly (the operator's own outbox may be the broken part), re-arms dead timers, and never starts a unit that was stopped on purpose. Status is written to `/var/lib/keir-guardian/status.json`; `/health` now reports stale periodic jobs and a stuck outbox.
+- Every periodic job in the operator that used a "busy" flag now has a deadline (`lib/operator/ticker.js`). Before, one await that never settled (roles, watch, merges, owner wait, CI watch, developer watch) silently ended that job for good while the process looked healthy.
+- systemd: crash loops end after 5 failures in 5 minutes (`StartLimitBurst`) so the guardian takes over, and `RestartSec` is 10.
+
 ## 8.3.1 (2026-11-05)
 
 - A message from the owner or a developer in a ticket channel only forces Keir to reply when it names or mentions Keir or asks a question. On ticket 1778 the owner told the player he would unban them, and Keir was made to reply with "the unban and note are yours ... I have nothing further to do on this one" in the player's channel.
