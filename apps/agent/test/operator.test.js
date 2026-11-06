@@ -1727,12 +1727,14 @@ test("github history answers who changed a file, flagging the shared account", a
 
 test("Keir 2.0: a ticket post may quote only figures read or calculated this activation", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.lastGameReadAt = 9e15; // Keir 8.4: these tests exercise other pacing rules, not the milestone cap, so a fresh game read is on record.
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Your company is worth about 46.4m now." } }), /46\.4m.*does not appear/);
   f.mcp.call = async (server, tool, args) => tool === "trace_corp" ? { marketCap: 46240215, sold: 316.47, revenue: 1649562.99 } : (f.calls.push([server, tool, args]), { delivery: { status: "posted" } });
   await f.broker.tool(j, "read_tool", { server: "gamestate", tool: "trace_corp", args: { corporation: "x" } });
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Your company is worth about 46.2m now." } });
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Each unit averaged 5212.38 across both products." } }), /does not appear/);
   await f.broker.tool(j, "calculate", { expression: "1649562.99 / 316.47" });
+  j.lastGameReadAt = 9e15; // Keir 8.4: a fresh read is on record, so the milestone cap is not what this test exercises
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Each unit averaged 5212.38 across both products, and that is a blend." } });
 });
 
@@ -2891,6 +2893,7 @@ test("support public updates record what they said so an uncertain post can be s
 
 test("a support write refused at connect is rejected and repeatable; a reset mid-request still blocks for a person", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  j.lastGameReadAt = 9e15; // Keir 8.4: these tests exercise other pacing rules, not the milestone cap, so a fresh game read is on record.
   const msg = { tool: "support_public_update", args: { message: "I am checking the page." } };
   let down = true;
   f.mcp.call = async (_s, tool) => { if (tool === "support_public_update" && down) throw Object.assign(new Error("fetch failed"), { code: "MCP_CONNECT_REFUSED" }); return { ok: true, delivery: { status: "posted" } }; };

@@ -127,6 +127,8 @@ function createIngest({ discord, store, botId, guildId, attachmentsDir, fetchImp
 
   /** Send as Keir and record it. Mentions are never pinged. */
   async function send(channelId, content, sentBy = "keir") {
+    const leak = require("../operator/toolmarkup").outboundLeak(content);
+    if (leak) throw new Error(`Not sent: the message contains ${leak.kind === "broker_echo" ? "Keir's own tool or refusal text" : "tool-call text"} ("${leak.match}").`);
     const msg = await discord("POST", `/channels/${channelId}/messages`, { content: String(content).slice(0, 2000), allowed_mentions: { parse: [] } });
     store.addMessage({ id: msg.id, channelId, authorId: botId, authorName: "Keir", direction: "out", content: msg.content, attachments: [], sentBy, at: Date.parse(msg.timestamp) || now() });
     return msg;

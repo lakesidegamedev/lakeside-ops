@@ -487,6 +487,8 @@ async function flushOutbox() {
         if (channel.guild_id !== config.guildId) throw new Error("reply channel outside configured guild");
         clean = redactSecrets(entry.content);
         if (clean !== entry.content || /<@|@everyone|@here/.test(clean)) throw new Error("unsafe public outbox text");
+        // Keir 8.4 (owner, 2026-11-06): last line of defence. Tool-call text never leaves in a public channel.
+        { const leak = require("./lib/operator/toolmarkup").outboundLeak(clean); if (leak) { ledger.audit("outbound_leak_refused", { kind: leak.kind, match: leak.match, key, stage: "outbox" }); throw new Error(`unsafe public outbox text (${leak.kind})`); } }
         dmId = channelJob.replyChannel;
       } else {
         const recipient = entry.destination === "owner" ? config.ownerId : entry.destination;
