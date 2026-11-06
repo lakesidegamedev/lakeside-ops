@@ -51,6 +51,8 @@ const config = {
   developerNames: Object.fromEntries((env.KEIR_DEVELOPER_NAMES || "333052320252297216:Egg,565289871799746593:Ariane").split(",").map((x) => x.split(":")).filter((x) => x[0] && x[1])),
   // Holders of this role become junior developers (lib/operator/juniors.js).
   juniorRoleId: env.KEIR_JUNIOR_ROLE_ID ?? "1566829201523347497",
+  // Extra role ids treated as moderator roles on top of the guild roles that carry moderation permissions (lib/operator/modroster.js).
+  modRoleIds: (env.KEIR_MOD_ROLE_IDS || "").split(",").filter(Boolean),
   guildId: env.KEIR_GUILD_ID || "1465445442987888743", staffIds: (env.KEIR_SUPPORT_DELEGATES || "565289871799746593").split(",").filter(Boolean),
   scanChannels: (env.KEIR_SCAN_CHANNELS || "1470636730884427857,1483974659929145625,1495932687058206822,1488255716753019171,1488255794628788244,1523477015217443028,1474210643841122499,1490571412040188117").split(",").filter(Boolean),
   taskLifetimeMs: positive("KEIR_TASK_LIFETIME_HOURS", 168) * 3600000, closeGraceMs: positive("KEIR_CLOSE_GRACE_MINUTES", 60) * 60000, liveGraceMs: positive("KEIR_LIVE_GRACE_MINUTES", 120) * 60000,
@@ -155,7 +157,8 @@ setInterval(refreshJuniors, 5 * 60000).unref();
 const mcp = createMcp(env.KEIR_MCP_CONFIG || "/root/.claude.json", readAgentToken(env.KEIR_AGENT_ENV_FILE || "/etc/keir-agent.env"), { gate: (what) => killSwitch.assertClear(what) });
 const reopenedTickets = createReopenedTickets({ ledger, config, supportOwner, readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false), readChannel: async (id) => { try { return await discord("GET", `/channels/${id}`); } catch (e) { if (e.status === 404) return null; throw e; } } });
 const sandbox = createSandbox(path.join(config.stateDir, "workspaces"));
-const conversation = createConversation({ ledger, config });
+const mods = require("./lib/operator/modroster").createModRoster({ config, discord, log });
+const conversation = createConversation({ ledger, config, mods });
 const appComputer = require("./lib/operator/appcomputer").createAppComputer({ ledger, config, sandbox });
 // The owner's private Keir app: one more owner channel, delivered to its own thread.
 const appChannel = createAppChannel({ ledger, config, conversation, readGameStatus: () => require("./lib/operator/appstatus").readGameStatus(mcp), decisions: () => decisions, agent: () => appAgent, drain: () => drain() });

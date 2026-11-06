@@ -20,8 +20,10 @@ const PLAYER_DEBOUNCE_MS = 8000;
 const STAFF_HOLD_MS = 10 * 60000;
 // A developer's own words asking to put work live (Keir 4.0 sign-off).
 const SHIP_WORDS = /\b(ship|promote|release|deploy)\b|\bpush (it|this)\b|\bgo(?:es)? live\b|\bsigned? off\b|\bapproved?\b/i;
-function source(message, channel) {
-  return { messageId: message.id, channelId: channel.id, channelName: channel.name, authorId: message.author.id,
+function source(message, channel, botId) {
+  // mentioned: Discord itself says the message addresses Keir (a mention, or a reply to one of Keir's messages).
+  const mentioned = Boolean(botId) && ((message.mentions || []).some((u) => u.id === botId) || message.referenced_message?.author?.id === botId);
+  return { ...(mentioned ? { mentioned: true } : {}), messageId: message.id, channelId: channel.id, channelName: channel.name, authorId: message.author.id,
     author: message.author.global_name || message.author.username, content: (message.content || "").slice(0, 6000),
     at: message.timestamp, replyTo: message.message_reference?.message_id, attachments: (message.attachments || []).slice(0, 10).map((a) => ({ url: a.url, type: a.content_type, name: a.filename })),
     embeds: (message.embeds || []).map((e) => ({ title: e.title, description: e.description, fields: e.fields })).slice(0, 5) };
@@ -89,7 +91,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     if (!summonTask && message.author.bot) return;
     const actor = summonTask?.actor || message.author.id;
     const role = actor === config.ownerId ? "owner" : config.staffIds.includes(actor) ? "support" : "player";
-    const s = source(message, channel);
+    const s = source(message, channel, config.botId);
     if (summonTask) { s.authorId = actor; s.content = summonTask.content; }
     const nTicket = ticketNumber(channel.name);
     // Keir 5.7: feedback about Keir is logged by a fire-and-forget Jev check.
