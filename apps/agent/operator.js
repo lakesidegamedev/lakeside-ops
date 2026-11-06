@@ -170,7 +170,8 @@ const notebook = knowledgeLayer.createNotebook({ file: path.join(config.stateDir
 const starmer = require("./lib/operator/starmer").createStarmer({ ledger, config, app: appChannel, log });
 // Keir 2.1 owner app (Muse parity): goals, feed, brief, approvals, upcoming, files.
 const appMuse = createAppMuse({ ledger, config, app: appChannel, starmer, drain: () => drain() });
-const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse });
+let codingWorkersInst = null; // Keir 8.5: built after the CI helpers below; the broker reads it lazily
+const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse, codingWorkers: () => codingWorkersInst });
 const agent = createAgent({ ledger, broker, config });
 const toolSessions = new Map(); // Keir 4.0: Rust runner tool sessions (see /v4/tool-session)
 // Keir 5.7: Jev-logged feedback and a daily self-review (lib/operator/selfimprove.js).
@@ -368,6 +369,15 @@ const ciWatch = createCiWatch({ ledger, api: ciApi, log, onWaiting: (job, info) 
 // Developer changes related to open tickets (owner, 2026-10-14).
 const { createDevMerges } = require("./lib/operator/devmerges");
 const devMerges = createDevMerges({ ledger, api: ciApi, log });
+// Keir 8.5: bug and display fixes are built by detached coding workers and shipped by Keir (lib/operator/codingworkers.js).
+const { createCodingWorkers } = require("./lib/operator/codingworkers");
+codingWorkersInst = createCodingWorkers({ ledger, api: ciApi, write: ciApi, mcp, killSwitch, limits, stateDir: config.stateDir, log,
+  enabled: env.KEIR_CODING_WORKERS !== "0",
+  probe: (service) => new Promise((resolve) => require("node:child_process").execFile(env.KEIR_DEPLOYED_SHA_CMD || "/opt/lakeside-platform/host/ahd-deployed-sha.sh", [service], { timeout: 45000 }, (e, out) => resolve(e ? null : String(out || "").trim()))) });
+tickers.every("codingworkers", 60000, async () => {
+  try { await codingWorkersInst.tick(); } catch (e) { log(`codingworkers: ${e.message}`); }
+  if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
+}, { immediateMs: 30000 });
 tickers.every("devmerges", 5 * 60000, async () => {
   try { await devMerges.tick(); } catch (e) { log(`devmerges: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
@@ -845,7 +855,7 @@ const server = http.createServer(async (req, res) => {
     try { const job = engineering.enqueue(JSON.parse(raw)); if (!job) return reply(409, { error: "engineering disabled or backlog full" }); drain(); return reply(202, { task: job.id, state: job.state }); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
-  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), tickers: tickers.snapshot(), sweeper: sweeper.status(), trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
+  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), codingWorkers: codingWorkersInst?.status() || [], tickers: tickers.snapshot(), sweeper: sweeper.status(), trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
   if (req.url === "/v5/trust/report" && req.method === "POST") { try { const r = await trustReporter.tick({ force: true }); drain(); return reply(200, { ok: true, text: r?.text, file: r?.file }); } catch (e) { return reply(500, { error: String(e.message).slice(0, 200) }); } }
   if (req.url === "/v5/trust/killswitch" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }

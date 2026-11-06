@@ -5,6 +5,22 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.5.0 (2026-11-06)
+
+Keir ships its own bug and display fixes (owner, 2026-11-06: "Yes, bug/display fixes only"). Ticket 1783 sat four hours as a card waiting for a developer. Now a code bug classed bugfix or display is built, merged, promoted and checked live by Keir while the owner is away. Rule, balance and economy-behaviour changes still wait for the owner.
+
+- Coding workers (`lib/operator/codingworkers.js`). `raise_to_developers` kind bug with changeClass bugfix or display, after filing the public issue and the card (the card stays as the receipt and gets the worker id), starts a detached `keir-worker-<ticket>-...` systemd unit running a headless Sonnet session in its own AHDGame worktree. The brief is the ticket facts, Keir's investigation and the house rules (foreground only, public-repo hygiene, prettier, scoped tsc, changelog areas, a `Change-class:` line, PR to development, wait for checks, write a report).
+- The run is a durable ledger record (`codingWorkers.runs`: unit, worktree, branch, report, PR, state). A restart resumes from it and never launches a second worker for the same ticket. Items raised before this release (ticket 1783's waiting bug card) are adopted on the next tick. `/var/lib/keir-operator/workers/skip-tickets` (one number per line) excludes a ticket, `KEIR_CODING_WORKERS=0` switches the feature off.
+- Caps: two workers at once, one run per ticket, no launch when available memory is under 16 GiB or load is above 70 percent of the cpus, a new `workerLaunchesPerDay` limit (default 6, `KEIR_LIMIT_WORKERS_DAY`), and the existing daily production promotion cap (3) applies to the promotion to main. Each worker is bounded by `RuntimeMaxSec=7200` and `MemoryMax=8G`.
+- Completion: when the unit exits Keir reads the PR, checks the class (a PR that touches economy or turn-worker paths, or declares rule, balance or economy-behaviour, or whose title announces a rebalance, goes to the owner as `needs_owner` and is never auto-merged), then merges only on exact green: verify, dependency-review and custom-rules must each have a completed run with conclusion `success`. Pending, missing, failed or cancelled never merges. The feature PR is squash merged to development, unless a development to staging PR is open (promote freeze): the merge waits.
+- Promotion: development to staging, then staging to main, each as a MERGE commit, each only when its three required checks are exactly green, reusing an open promote PR. Then web and the turn worker must both run the main commit (or a descendant) within 60 minutes. Only then is a receipt written to the ticket (the 8.4 production-claim guard accepts it) and the ticket task woken to tell the player it is live and to re-check numbers after the next turn.
+- Failure handling: a worker that exits without a PR gets one retry with its log tail, then the owner is told. A report without a PR is an owner question, not a retry. Red required checks get one fix worker given the failing check output, then the owner is told. A promote PR that goes red, conflicts or stays pending three hours, or a deploy that does not arrive in 60 minutes, escalates. Keir never merges red, never force pushes, never bypasses checks.
+- Kill switch: while engaged there are no launches, merges or promotions. A running worker is left to finish and nothing it produced is merged until the switch is released.
+- `/v5/trust/status` lists the coding worker runs.
+- Tests: `test/keir85-coding-workers.test.js` (dispatch gating, caps, concurrency, admission, exact green including REQUIRED_FAILED, freeze queueing, resume after restart, kill switch, escalation paths, adoption, broker wiring).
+
+Release: stage and activate with `deploy/release.sh`; no new unit or env is required (`systemd-run` and the Claude CLI at `/root/.hermes/node/bin/claude` already exist on the box).
+
 ## 8.4.2 (2026-11-06)
 
 Read the screenshots and the cases before asking (owner, 2026-11-06, mod chat). Danica posted two screenshots of an alt investigation naming two accounts, Monroe called it "the longest sleepover yet", and Egg asked Keir "do you think they are alts?". Keir answered "I don't know which two accounts you mean ... send me the two names." The names were in the screenshots, the case was in tickets 1778 to 1780 (moderation, opened that morning), and the tools to judge it (alt_ring_audit, trace_account) were available.

@@ -417,7 +417,7 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -1607,7 +1607,22 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (job.kind === "finding" && job.finding) watch?.linkFinding(job.finding, { issue: number });
         else if (n) watch?.credit({ issue: number, fromTicket: true });
       };
-      async function ensureIssueCard(number, url, issueTitle) {
+      // Keir 8.5 (owner, 2026-11-06, "bug/display fixes only"): a code bug classed bugfix or display is built, merged,
+      // promoted and verified by a coding worker instead of waiting for a developer. The card stays as the receipt.
+      async function startWorker(id, issueNumber) {
+        if (input.kind !== "bug" || !id) return null;
+        const rec = (job.raisedToDevelopers || []).find((x) => x.id === id);
+        if (rec && issueNumber) rec.issue = issueNumber;
+        const cw = codingWorkers();
+        if (!cw) return null;
+        let out;
+        try { out = await cw.dispatch({ job, cardId: id, title, detail, issue: issueNumber, changeClass, kind: "bug", requiresOwner: ownerRequired }); } catch (e) { out = { skipped: true, reason: String(e.message).slice(0, 160) }; }
+        if (out.skipped) { ledger.save(); return null; }
+        if (rec) { rec.workerRun = out.run.id; rec.workerSeen = true; }
+        ledger.save();
+        return { codingWorker: out.run.id, instruction: `Filed, and a coding worker (${out.run.id}) is building the fix now. Keir merges it, promotes it and verifies it live on its own once the required checks are green; you will be woken at each end state. Tell the player a fix is being built, not that it is live. Say it is live only after the wake that says it is live.` };
+      }
+      async function ensureIssueCard(number, url, issueTitle, fresh = false) {
         const issue = d.keirIssues[number];
         let id = issue.item;
         if (!id) {
@@ -1621,7 +1636,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           if (!id) throw new Error("GitHub issue exists but its developer card was not confirmed; retry to repair the link");
         }
         issue.item = id; ledger.save(); record(id);
-        return { raised: true, id, issue: number, url };
+        const worker = fresh ? await startWorker(id, number) : null;
+        return { raised: true, id, issue: number, url, ...(worker || {}) };
       }
       if (input.issueNumber) {
         const number = Number(input.issueNumber);
@@ -1672,7 +1688,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         filedIssue = { number: created.number, url: created.html_url };
         recordIssue(created.number, created.html_url, false);
         d.keirIssues[created.number].title = built.title; ledger.save();
-        return ensureIssueCard(created.number, created.html_url, built.title);
+        return ensureIssueCard(created.number, created.html_url, built.title, true);
       }
       // Another report of a problem already raised joins that item (4.1.9:
       // the same financial margin squeeze was filed twice an hour apart).
@@ -1723,6 +1739,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const asked = askOwner(r?.id || null, title, String(input.question).trim());
         return { raised: true, id: r?.id || null, decision: asked, instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome (one public notice is allowed). Until the owner answers, status_card and other support writes are refused, so do not call them; finish waiting. Keep the ticket open: the answer wakes this task, then act on it." };
       }
+      const worker = await startWorker(r?.id || null, filedIssue?.number || null);
+      if (worker) return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), ...worker };
       return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), instruction: (input.kind || "question") === "question" ? "Filed on your own board as your work item (lane now, assigned to you). Nobody else will pick it up: keep working it yourself now. Read the game records you need with the heal-ops read tools (heal_query, heal_count), keep the player updated, and add findings with raise_to_developers appendTo. The card closes with your task. Do not wait on it and do not claim filing fixed the problem." : "Filed for the developers. Filing is not a fix. Verify the reported problem is actually resolved before closing; optional feature proposals may remain on the developer queue." };
       } finally { releaseIssue(); }
     }

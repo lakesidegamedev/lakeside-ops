@@ -44,7 +44,7 @@ test("kill switch is read at runtime from the file and the env, and an unreadabl
 });
 
 test("limits: defaults, env and file overrides, rolling window and idempotent counters", () => {
-  assert.deepEqual(limits.resolveLimits({}), { playerUpdatesPerTicket24h: 4, deploysPerDay: 3, healsPerDay: 5 });
+  assert.deepEqual(limits.resolveLimits({}), { playerUpdatesPerTicket24h: 4, deploysPerDay: 3, healsPerDay: 5, workerLaunchesPerDay: 6 });
   assert.equal(limits.resolveLimits({ env: { KEIR_LIMIT_HEALS_DAY: "2" } }).healsPerDay, 2);
   assert.equal(limits.resolveLimits({ env: { KEIR_LIMIT_HEALS_DAY: "2" }, fileText: '{"healsPerDay":7}' }).healsPerDay, 7);
   assert.equal(limits.resolveLimits({ env: { KEIR_LIMIT_HEALS_DAY: "junk" } }).healsPerDay, 5);
