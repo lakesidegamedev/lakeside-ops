@@ -54,6 +54,8 @@ test("a ticket opens once through the shared core with the player as reporter", 
   assert.equal(h.tickets[0].discordUserId, discordId); assert.equal(h.tickets[0].category, "bug");
   assert.ok(h.tickets[0].extraFields.some((f) => f.name === "Player request" && f.value === "file that as a suggestion"));
   assert.ok(h.tickets[0].extraFields.some((f) => f.name === "Page"));
+  // Ticket 1773: the page reaches the description, which intake reads first when suggesting a page.
+  assert.match(h.tickets[0].description, /\n\nPage: https:\/\/ahousedividedgame\.com\/unions$/);
   const b = await h.run(body);
   assert.equal(b.body.duplicate, true); assert.equal(h.tickets.length, 1);
   assert.equal((await h.run({ ...body, title: "Changed" })).status, 409);
