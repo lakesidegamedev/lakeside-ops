@@ -979,6 +979,9 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     cards[ticketNo] = { ...card, messageId, channelId, items, status, at: now() };
     ledger.save();
     if (stageChanged) {
+      // Keir 8.5.1: a card row that has moved past "Investigating" is a fix state change; a card that still says
+      // "Investigating" is not progress and must not reset the sweeper's stall clock.
+      if (items.some((i) => i.stage !== "found" && statusCard.stageIndex(i.stage) > statusCard.stageIndex((card.items || []).find((o) => o.name === i.name)?.stage || "found"))) { try { trustlog.markProgress(d, Number(ticketNo), now(), "status card stage"); } catch {} }
       // The public receipt keeps the history the card overwrites.
       const text = items.map((i) => `${i.name}: ${i.blocked ? `paused${i.note ? ` (${i.note})` : ""}` : (i.stage === "confirmed" ? "Live, confirmed in game" : i.stage === "answered" ? "Answered, no fix needed" : statusCard.labelOf(i.stage))}`).join("; ");
       mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
@@ -3682,6 +3685,17 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         job.state = "deferred"; job.deferredBy = "claim"; delete job.wakeAt; delete job.ciWatch; delete job.turnWatch;
       }
       if (job.codingParent) { delegation.complete(job); ledger.save(); return { state: job.state }; }
+      // Keir 8.5.1 (ticket 1785): an activation that ends with the cause still unverified (an open question card of
+      // his own, or a summary that says so) hands the investigation to a worker now, not at the sweeper's six hours.
+      if (job.kind === "ticket" && job.ticket && ["waiting", "blocked"].includes(job.state) && input.waitFor !== "player_reply") {
+        const cw = codingWorkers();
+        if (cw?.dispatchInvestigation) {
+          try {
+            const out = await cw.dispatchInvestigation({ job, reason: "the task ended its activation with the cause still unverified" });
+            if (!out.skipped) ledger.audit("investigation_dispatched", { job: job.id, ticket: job.ticket, run: out.run.id });
+          } catch (e) { ledger.audit("investigation_dispatch_failed", { job: job.id, ticket: job.ticket, error: String(e.message).slice(0, 160) }); }
+        }
+      }
       if (!["waiting", "blocked"].includes(job.state)) withdrawDecisions(ledger, job.id, `task finished ${job.state}`);
       if (replyWait && job.state === "waiting" && !(job.inbox?.length) && Math.max(playerAt(job.lastPlayerAt), playerAt(job.observedPlayerAt)) <= (job.lastPublishedAt || 0)) {
         job.waitingFor = { kind: input.waitFor, since: now(), deadline: job.wakeAt };
