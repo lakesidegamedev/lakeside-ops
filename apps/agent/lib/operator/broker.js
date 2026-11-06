@@ -782,7 +782,10 @@ function createBroker({ ledger, config, mcp, discord, sandbox, conversation, now
     // drafted twice and stayed silent behind the coordinator's card).
     const other = answeringStaff ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !isCardPost(p) && !playerSpokeAfter(p.at)).at(-1);
     if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
-    const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6);
+    // Ticket 1773 (2026-11-05): a developer's ping started a second task that restated the ticket task's
+    // answer 15 seconds later (similarity 0.5). Paraphrased repeats measure 0.41 to 0.79 and unrelated
+    // replies 0.05 or less, so within five minutes 0.4 is a repeat, whoever is being answered.
+    const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6 || !isCardPost(p) && now() - p.at < 5 * 60000 && similarity(p.text, message) >= 0.4);
     if (dup) throw new Error(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
   }
   // Keir 8.2 (ticket 1766, 2026-11-05): seven posts in five hours said "I haven't found what
