@@ -18,8 +18,8 @@
 // TRANSITIONS, in the order wakeStep() tries them for each job on every drain
 // (every pass, "continue" meaning the later rules are skipped for that job):
 //   1. staff claim            any live non-owner ticket job            -> deferred, stop
-//   2. owner decision pending live non-owner ticket job, no human msg  -> blocked, stop
-//                             with a human message in the inbox        -> blocked, go on
+//   2. owner decision pending closed ticket or non-ticket work          -> blocked, stop
+//                             open tickets keep mail and timer wakes
 //   3. resolution stall       resolutionSubmitted, not resolved, not done/cancelled/blocked
 //                             older than 20 min -> blocked + owner notice, else -> waiting; stop
 //   4. dead-end sweep         blocked probe/benchmark > 1 h, or blocked subworker whose
@@ -27,10 +27,8 @@
 //   5. directive held         owner directive on the ticket (broker)  -> nothing else runs
 //   6. wake                   waiting and (wakeAt reached, or inbox has mail and no
 //                             debounceWake)                           -> queued
-//                             blocked with mail, no owner decision, not a subworker or
+//                             blocked with mail, not a subworker or
 //                             probe, channel open                     -> queued
-//                             blocked on an owner decision, ticket, channel open, human
-//                             message waiting                         -> queued
 //   7. deadline               past job.deadline: first time extended (a waiting job is
 //                             queued), second time -> blocked + owner notice. A job held by
 //                             a claim or directive never gets here: it stays held and the
@@ -91,10 +89,10 @@ function wakeStep(j, ctx) {
     // Staff released the claim: lift the deferral the claim caused. A deferral for
     // another reason (a coordinator took over the ticket) stays until its own exit.
     if (j.state === "deferred" && j.deferredBy === "claim" && !j.channelClosed) { j.state = "queued"; j.wakeAt = 0; delete j.deferredBy; effects.push(audit("claim_release_lifted", { job: j.id, ticket: j.ticket })); }
-    // A player or staff message still reaches the conversation wake below:
-    // a ticket held on an owner decision must still answer its player.
-    if (j.ownerDecisionPending && !(j.kind === "ticket" && !j.channelClosed && humanInbox(j))) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; return effects; }
-    if (j.ownerDecisionPending) j.state = "blocked";
+    // Open tickets retain normal mail and timer wakes while an approval waits.
+    // The broker fences writes and closure; a pending merge must not strand a
+    // separate loss investigation or its completed worker report.
+    if (j.ownerDecisionPending && (j.kind !== "ticket" || j.channelClosed)) { j.state = "blocked"; j.summary = "The existing coordinator recorded an outstanding owner decision; automatic changes and closure are held."; return effects; }
   }
   if (j.resolutionSubmitted && !j.resolved && !["done", "cancelled", "dismissed", "paused", "blocked"].includes(j.state)) {
     if (now - j.resolutionSubmittedAt > 20 * 60000) {
@@ -120,9 +118,7 @@ function wakeStep(j, ctx) {
   // A message that arrived while the task was running (a handoff, a staff
   // note) is still unread when that run settles as blocked; it must wake the
   // task rather than wait for a human.
-  else if (j.state === "blocked" && j.inbox?.length && !j.ownerDecisionPending && !j.codingParent && !j.internalProbe && !j.channelClosed) { j.state = "queued"; effects.push(audit("requeued_for_inbox", { job: j.id, ticket: j.ticket || null, messages: j.inbox.length })); }
-  // An open owner decision holds writes and closure, never the conversation.
-  else if (j.state === "blocked" && j.ownerDecisionPending && j.kind === "ticket" && !j.channelClosed && humanInbox(j)) { j.state = "queued"; effects.push(audit("requeued_for_conversation", { job: j.id, ticket: j.ticket || null })); }
+  else if (j.state === "blocked" && j.inbox?.length && !j.codingParent && !j.internalProbe && !j.channelClosed) { j.state = "queued"; effects.push(audit("requeued_for_inbox", { job: j.id, ticket: j.ticket || null, messages: j.inbox.length })); }
   const expiry = require("./deadline").expireDeadline(j, now, { lifetimeMs: ctx.config.taskLifetimeMs });
   if (expiry === "extended") effects.push(audit("deadline_extended", { job: j.id, ticket: j.ticket || null, until: j.deadline }));
   else if (expiry === "blocked") effects.push(notify(`deadline:${j.id}`, "owner", `Task ${j.id}: ${j.summary}`));

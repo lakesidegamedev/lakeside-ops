@@ -423,7 +423,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // card, or say plainly that it is missing so this activation creates it.
     if (job.kind === "ticket" && job.ticket && job.role !== "player" && !require("./advicerouting").requiresRedirect(job, ledger.data)) {
       const card = ledger.data.statusCards?.[job.ticket];
-      context.statusCard = job.ownerDecisionPending ? { ...(card ? { status: card.status, items: card.items } : {}), writesPaused: "An owner decision is pending: status_card and other support writes are refused until it is answered. Do not call status_card in this activation." }
+      context.statusCard = job.ownerDecisionPending ? { ...(card ? { status: card.status, items: card.items } : {}), writesPaused: "An owner decision is pending: its requested action and closure remain gated, and status_card writes are refused. Continue independent investigation, consume worker results, and answer new player questions. Do not repeat an unchanged approval notice or call status_card." }
         : card ? { status: card.status, items: card.items, updatedMinutesAgo: Math.round((Date.now() - (card.at || 0)) / 60000) }
         : "missing: create this ticket's progress card with status_card once your investigative reads support it. A ticket answered without investigation (a privacy refusal, banter, a pure navigation answer) needs no card.";
     }

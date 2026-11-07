@@ -37,10 +37,15 @@ test("an owner-directed moderation ticket is no longer treated as moderation-onl
 // Review 2026-10-19: a ticket held on an owner decision skipped the loop
 // before the conversation wake, so its player went unanswered for hours.
 test("a player message wakes a ticket held on an owner decision", () => {
-  // The rule lives in lib/operator/lifecycle.js (behavior is pinned in lifecycle-rules.test.js).
-  const src = fs.readFileSync(path.join(__dirname, "../lib/operator/lifecycle.js"), "utf8");
-  assert.match(src, /if \(j\.ownerDecisionPending && !\(j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\)\) \{/);
-  assert.match(src, /j\.ownerDecisionPending && j\.kind === "ticket" && !j\.channelClosed && humanInbox\(j\)\) \{ j\.state = "queued"; effects\.push\(audit\("requeued_for_conversation"/);
+  const { wakeStep } = require("../lib/operator/lifecycle");
+  const { admit } = require("../lib/operator/admission");
+  const now = 1000;
+  const job = { id: "held", kind: "ticket", role: "support", ticket: 9, ownerDecisionPending: true,
+    state: "blocked", inbox: [{ authorId: "player", content: "What caused the loss?" }], deadline: now + 60000 };
+  wakeStep(job, { now, config: { taskLifetimeMs: 60000 }, claimedBy: () => null, directiveHeld: () => false });
+  assert.equal(job.state, "queued");
+  assert.deepEqual(admit([job], { now }).map(j => j.id), [job.id]);
+  assert.equal(job.ownerDecisionPending, true);
 });
 
 test("an unread ticket message pages the owner after 30 minutes with the hold that keeps it", () => {
