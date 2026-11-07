@@ -19,6 +19,7 @@ const tickets = require("./tickets");
 const keir = require("./keir");
 const board = require("./board");
 const { renderMarkdown } = require("./markdown");
+const { PROGRAMS } = require("../program-tracker");
 
 // Admin-only dashboard pages folded into the three views.
 const RETIRED = new Set([
@@ -302,6 +303,7 @@ async function search(q, { getDb, knowledgeStore, kanban, dirs }) {
     { title: "Work board", href: "/kanban", meta: "View", color: "var(--accent)" },
     { title: "Library", href: "/library", meta: "View", color: "var(--accent)" },
     { title: "Tickets", href: "/tickets", meta: "View", color: "var(--accent)" },
+    ...Object.values(PROGRAMS).map((p) => ({ title: `${p.name} program`, href: `/programs/${p.slug}`, meta: "Program", color: "var(--accent)" })),
   ];
   if (!words.length) {
     const recent = library.loadReports(dirs).slice(0, 6).map((r) => ({ title: r.title, href: r.href, meta: library.CAT[r.category].label, color: library.CAT[r.category].color }));
