@@ -1533,6 +1533,7 @@ const APPS = [
   { name: "Keir hub", desc: "Live Keir workers, tickets with fix progress, pull requests and CI, issues, kanban and decisions waiting on you.", icon: "activity", href: "/keir", minRole: "admin" },
   { name: "Keir inbox", desc: "Keir conversations across DMs, tickets, channels and threads, with staff replies and reward claims.", icon: "message-square", href: "/inbox", minRole: "admin" },
   { name: "Tracker", desc: "Long-running projects, goals and checklists across every game and realm of work.", icon: "check-square", href: "/tracker", minRole: "admin" },
+  { name: "2027 world program", desc: "Workstreams, delivery and branch health for the 2027 world reset and its run to 2050.", icon: "git-branch", href: "/programs/reset-2027", minRole: "admin" },
   { name: "Tickets", desc: "Triage community bug reports with read-only AI assessments.", icon: "life-buoy", href: "/tickets", minRole: "admin" },
   { name: "Suggestions", desc: "Review community feature suggestions with AI assessments.", icon: "lightbulb", href: "/suggestions", minRole: "admin" },
   { name: "Ask", desc: "AI Q&A about the A House Divided codebase.", icon: "message", href: "/ask", minRole: "moderator" },
@@ -3075,6 +3076,27 @@ const trackerSnapshot = createStaleRefreshCache({
   load: loadTrackerSnapshot,
   onError: (error) => console.warn("[tracker] refresh failed:", error.message),
 });
+const programTracker = require("./program-tracker");
+// One stale-while-refresh snapshot per program, refreshed at most every five
+// minutes. A failed GitHub refresh reuses the previous good GitHub data.
+const programSnapshots = new Map();
+function programSnapshot(slug) {
+  const program = programTracker.PROGRAMS[slug];
+  if (!program) return null;
+  if (!programSnapshots.has(slug)) {
+    const cache = createStaleRefreshCache({
+      ttlMs: programTracker.REFRESH_MS,
+      load: () => programTracker.loadProgramSnapshot(program, {
+        token: process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "",
+        kanban: require("./kanban-store").sharedKanban,
+        previous: cache.peek(),
+      }),
+      onError: (error) => console.warn(`[programs] ${slug} refresh failed:`, error.message),
+    });
+    programSnapshots.set(slug, cache);
+  }
+  return programSnapshots.get(slug);
+}
 const { engineHealth } = require('./engine-health');
 const { watchtowerScan, REGISTRY_COLLECTION } = require('./watchtower');
 const { makeObservatoryBody } = require('./observatory-page');
@@ -4529,6 +4551,35 @@ const server = http.createServer(async (req, res) => {
       req.method === "HEAD"
         ? ""
         : renderShell({ title: "Tracker", active: "/tracker", role: session.role, extraCss, body }),
+    );
+    return;
+  }
+
+  // ─── PROGRAMS ────────────────────────────────────────────────────
+  // One page per long-running program (program-tracker.js): tracker issue,
+  // sub-issues, integration branch delivery and the kanban project card.
+  const programStatus = /^\/api\/programs\/([a-z0-9-]{1,60})\/cache-status$/.exec(pathname);
+  if (req.method === "GET" && programStatus) {
+    const session = await resolveSession(req);
+    if (!session || session.role !== "admin") return json(res, 403, { error: "Forbidden" });
+    const cache = programSnapshot(programStatus[1]);
+    if (!cache) return json(res, 404, { error: "Unknown program" });
+    return json(res, 200, { ready: cache.peek() !== null });
+  }
+
+  const programPage = /^\/programs\/([a-z0-9-]{1,60})$/.exec(pathname);
+  if ((req.method === "GET" || req.method === "HEAD") && programPage) {
+    const session = await resolveSession(req);
+    if (!session || session.role !== "admin") return denyHtml();
+    const program = programTracker.PROGRAMS[programPage[1]];
+    if (!program) { addSecurityHeaders(res); res.writeHead(404, { "Content-Type": "text/plain" }); res.end("Unknown program"); return; }
+    const { extraCss, body } = programTracker.makeProgramBody(program, programSnapshot(program.slug).getStale());
+    addSecurityHeaders(res);
+    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+    res.end(
+      req.method === "HEAD"
+        ? ""
+        : renderShell({ title: program.name, active: pathname, role: session.role, extraCss, body }),
     );
     return;
   }
