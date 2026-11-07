@@ -2730,7 +2730,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (ownerConsent && !desktop && Number(ownerConsent.args.number) === number && ownerConsent.args.head === pr.head.sha) {
           const reviews = await api([`repos/${repo}/pulls/${number}/reviews?per_page=100`]).catch(() => []);
           const me = (await api(["user"]).catch(() => null))?.login;
-          if (me && !(reviews || []).some((r) => r.user?.login === me && r.state === "APPROVED" && r.commit_id === pr.head.sha)) {
+          // GitHub forbids approving your own PR. The exact local owner approval
+          // still binds this action; let the unchanged GitHub gates decide readiness.
+          if (me && me.toLowerCase() !== String(pr.user?.login || "").toLowerCase() && !(reviews || []).some((r) => r.user?.login === me && r.state === "APPROVED" && r.commit_id === pr.head.sha)) {
             await effect(job, `owner-review:${number}:${pr.head.sha}`, () => api(["-X", "POST", `repos/${repo}/pulls/${number}/reviews`, "-f", `commit_id=${pr.head.sha}`, "-f", "event=APPROVE", "-f", "body=Approved by the owner from Keir's approval button."]), { kind: "github", text: `approve PR ${number}` });
             const runs = (await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?check_name=custom-rules&per_page=20`]).catch(() => null))?.check_runs || [];
             const red = runs.filter((r) => r.status === "completed" && r.conclusion !== "success").sort((a, b) => String(b.started_at).localeCompare(String(a.started_at)))[0];

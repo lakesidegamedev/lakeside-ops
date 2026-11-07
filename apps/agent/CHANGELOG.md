@@ -9,6 +9,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 - Pending owner approvals hold the requested actions and ticket closure while independent investigation continues. Player messages, worker reports and scheduled reads reach admission instead of being silently blocked after the wake rules queued them.
 - An approval notice no longer suppresses a new finding. Repeated waiting notices remain suppressed, and all action approvals, claims, pauses and completion checks remain enforced.
+- An exact owner-approved merge skips submitting a GitHub review when the authenticated owner authored the PR. GitHub rejects self-approval with HTTP 422; the existing required checks and exact-head approval still gate the merge.
 - A pending decision no longer stretches an independent recorded investigation to a six-hour wait. Support guidance separates verified losses, causes, fixes and compensation.
 
 ## 8.5.3 (2026-11-07)

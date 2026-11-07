@@ -2977,3 +2977,22 @@ test("a direct owner message is answered before the task can finish quietly (tic
   const r = await f.broker.tool(job, "finish", { state: "waiting", summary: "Replied." });
   assert.equal(r.state, "waiting");
 });
+
+for (const checksGreen of [true, false]) test(`owner-authored approved PR skips forbidden self-review and retains check gate: ${checksGreen}`, async () => {
+  const f = githubFixture([
+    [/pulls\/10\/files/, files("src/lib/market/governor.ts")],
+    [/pulls\/10\/reviews/, (route, args) => { if (args.includes("POST")) throw new Error("GitHub HTTP 422: cannot approve your own pull request"); return []; }],
+    [/^user$/, { login: "Egg3901" }],
+    [/pulls\/10\/merge/, { merged: true, sha: "m1" }],
+    [/pulls\/10$/, { number: 10, user: { login: "Egg3901" }, state: "open", merged: false, mergeable: true, base: { ref: "development" }, head: { sha: "aaa111", ref: "owner/fix" }, html_url: "u" }],
+    [/check-runs/, { check_runs: [{ name: "custom-rules", status: "completed", conclusion: checksGreen ? "success" : "failure" }] }],
+  ]);
+  const j = running(f, { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", ownerWaitPr: 10, source: {} });
+  const first = await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  assert.equal(first.approvalRequired, true);
+  Object.assign(f.ledger.data.actions[first.action], { state: "approved", approvedBy: f.config.ownerId, approvalMessage: "100000000000000002" });
+  const result = await f.broker.tool(j, "github", { action: "merge", number: 10 });
+  assert.equal(result.merged, checksGreen);
+  assert.ok(!f.calls.some(c => c.includes("event=APPROVE")));
+  assert.equal(f.calls.some(c => c.join(" ").includes("pulls/10/merge")), checksGreen);
+});
