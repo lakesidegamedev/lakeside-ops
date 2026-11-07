@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.5.3 (2026-11-07)
+
+- A ticket cannot wait for the player while its own summary still names an unchecked, unexplained or unverified investigation, or its shared record has an unfulfilled promise. A later unrelated reply no longer hides that work. Continue it with a short scheduled wakeup instead.
+- Optional operator-wide provider and effort overrides apply to existing tasks and every model lane, including voice. An explicit provider override disables cross-provider fallback. Detached coding workers now receive an explicit reasoning effort too.
+- Regression tests cover four stalled ticket summaries, saved promises, voice effort and replacement of persisted model routes.
+
 ## 8.5.2 (2026-11-07)
 
 - Preserve completed investigative reads and calculations across ticket activations and restarts. All support tasks on the same ticket receive a bounded history of actual observations, separately from the latest summary, so an erroneous "unchecked" summary cannot erase the work. Existing evidence-batch receipts are recovered for tickets opened before this change. Tool discovery and failed reads do not become findings; historical observations never satisfy current deployment or success checks.

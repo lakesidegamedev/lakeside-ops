@@ -138,3 +138,24 @@ test("malformed DeepSeek tool markup cannot replace a durable checkpoint or fini
   assert.equal(f.job.state, "running");
  }
 });
+
+test("a player reply wait cannot hide investigation still owed in the summary behind a later unrelated post", async t => {
+  for (const summary of [
+    "Cause still unverified; next: compare recent turns and clearing code.",
+    "Both gates OK; Indiana figure still unexplained. Re-check next turn.",
+    "The profit-sum question from the second screenshot is still to check.",
+    "Account fix is live; the rate is still untraced.",
+  ]) {
+    const f = fixture(t);
+    f.ledger.data.ticketPosts = { 1545: [{ jobId: f.job.id, at: NOW - 1, text: "Please retry opening the account and tell me if it fails." }] };
+    await assert.rejects(f.finish({ waitFor: "player_reply", summary }), /unfinished investigation/i);
+  }
+});
+
+test("an unresolved saved promise blocks parking work on the player even after its summary changes", async t => {
+  const f = fixture(t);
+  f.ledger.data.ticketRecords = { 1545: { facts: [], questions: [], ruledOut: [], promises: [{ id: "rate", text: "Trace the savings rate and post the formula" }] } };
+  await assert.rejects(f.finish({ waitFor: "player_reply", summary: "Account fix is live" }), /unfinished investigation/i);
+  f.ledger.data.ticketRecords[1545].promises[0].closedAt = new Date(NOW).toISOString();
+  await f.finish({ waitFor: "player_reply", summary: "Account fix and rate question answered" });
+});
