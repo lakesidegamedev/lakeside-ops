@@ -3533,6 +3533,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
       if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
+      // An unrelated later post must not erase work Keir still owes. The
+      // latest-message guard alone misses partial answers and saved promises.
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent) {
+        const summary = String(input.summary || "");
+        const unfinished = /\b(?:unexplained|unchecked|untraced|unverified|unresolved|still (?:to )?(?:check|trace|investigate)|not yet (?:checked|traced|verified|explained))\b/i.test(summary);
+        const promises = knowledge.ticketRecord(ledger, job.ticket).promises.filter(p => !p.closedAt);
+        if (unfinished || promises.length) throw new Error("Not finished: unfinished investigation is still yours, not the player's. Complete the remaining check and answer it, or finish waiting without player_reply and with a short wakeup for your own work. Close a saved promise only after recording what fulfilled it.");
+      }
       // Ticket 1759 (2026-11-03): "I am still checking what stopped the buying", then a six-hour
       // wait for the player. A promise of more work is not something the player can answer.
       if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !(Number.isFinite(input.wakeAfterMinutes) && input.wakeAfterMinutes <= 30)) {

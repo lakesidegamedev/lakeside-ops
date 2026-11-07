@@ -82,3 +82,14 @@ test("source searches, failed tests and historical deploy reads retain their act
   assert.match(context.observations[2].result, /"main":false/);
   assert.equal(f.job.activationFreshRead, undefined);
 });
+
+test("an operator provider override replaces persisted routes before the next model activation", async t => {
+  const f = fixture(t);
+  f.config.providerOverride = "claude:claude-sonnet-5-5@high";
+  f.config.effortOverride = "high";
+  f.job.provider = { lane: "worker", runner: "codex", model: "old-model", assignedBy: "old-pin" };
+  await promptFor(f, f.ledger, f.job);
+  assert.equal(f.job.provider.runner, "claude");
+  assert.equal(f.job.provider.model, "claude-sonnet-5-5");
+  assert.equal(f.job.provider.effort, "high");
+});

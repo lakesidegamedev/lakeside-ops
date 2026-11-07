@@ -251,11 +251,22 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     return true;
   }
   function fallbackSpec(job) {
+    if (config.providerOverride) return null;
     const spec = config.fallbackProvider;
     return spec && DEFAULT_MODEL[String(spec).split(/[:@]/)[0]] && !cooled(String(spec).split(/[:@]/)[0]) ? spec : null;
   }
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
+    if (config.providerOverride) {
+      const [spec, effort] = config.providerOverride.split("@"), [runner, requestedModel] = spec.split(":");
+      if (!DEFAULT_MODEL[runner] || !requestedModel) throw new Error("Invalid operator provider override");
+      if (job.provider?.runner !== runner || job.provider?.model !== requestedModel || job.provider?.lane !== lane || job.provider?.routeEffort !== effort) {
+        job.provider = { lane, runner, model: requestedModel, effort, routeEffort: effort, assignedBy: "operator-override", at: Date.now() };
+        ledger.save();
+      }
+      return [requestedModel, PROVIDER_LABEL[runner], runner];
+    }
+
     const configured = String((lane === "quick" ? config.quickProvider : config.workerProvider) || "claude").split(",").map((x) => x.trim()).filter((x) => DEFAULT_MODEL[x.split(/[:@]/)[0]]);
     const list = configured;
     // A pinned route that left the configured list (a retired provider after a route switch) is re-chosen, otherwise an old job keeps failing on it forever.

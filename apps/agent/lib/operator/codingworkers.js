@@ -146,7 +146,7 @@ function buildBrief(run, { retryNote = "", fixNote = "" } = {}) {
 function createCodingWorkers({
   ledger, api, write = api, mcp = null, killSwitch = null, limits = null, stateDir = "/var/lib/keir-operator",
   now = () => Date.now(), log = () => {}, host = readHost, exec = sh, probe = null,
-  enabled = true, model = "claude-sonnet-5-5", claudeBin = "/root/.hermes/node/bin/claude",
+  enabled = true, model = "claude-sonnet-5-5", effort = "high", claudeBin = "/root/.hermes/node/bin/claude",
   readFile = (f) => fs.readFileSync(f, "utf8"), mkdir = (p) => fs.mkdirSync(p, { recursive: true }),
 } = {}) {
   const d = ledger.data;
@@ -261,7 +261,7 @@ function createCodingWorkers({
     const prompt = buildBrief(run, { retryNote: run.retryNote, fixNote: run.fixNote });
     const args = [`--unit=${unit}`, "--collect", "-p", "Environment=IS_SANDBOX=1", "-p", "Environment=HOME=/root", "-p", "Environment=PATH=/root/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin",
       "-p", "WorkingDirectory=/root", "-p", `RuntimeMaxSec=${WORKER_RUNTIME_SEC}`, "-p", "MemoryMax=8G",
-      "/bin/bash", "-c", 'exec "$0" -p "$1" --model "$2" --dangerously-skip-permissions > "$3" 2>&1', claudeBin, prompt, model, run.log];
+      "/bin/bash", "-c", 'exec "$0" -p "$1" --model "$2" --effort "$4" --dangerously-skip-permissions > "$3" 2>&1', claudeBin, prompt, model, run.log, effort];
     const r = await exec("systemd-run", args);
     if (r.code !== 0) { run.waiting = `systemd-run failed: ${tail(r.err || r.out, 160)}`; run.errors = (run.errors || 0) + 1; return false; }
     trustLimits.recordCounter(d, "worker", key, now());

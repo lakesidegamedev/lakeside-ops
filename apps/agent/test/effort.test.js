@@ -47,3 +47,11 @@ test("route effort is a ceiling on dynamic effort, one level higher after a stru
   assert.equal((await activationEffort(job, { config: { chooseEffort: high, routeEffortCeiling: false }, runner: "opencode" })).effort, "high");
   assert.equal((await activationEffort({ history: [] }, { config: { chooseEffort: high }, runner: "opencode" })).effort, "high");
 });
+
+test("an operator effort override applies to every lane including voice and old low-effort routes", async () => {
+  const { activationEffort } = require("../lib/operator/effort");
+  for (const quick of [false, true]) {
+    const r = await activationEffort({ voiceMode: true, provider: { routeEffort: "low" }, tags: { complexity: "trivial" } }, { quick, runner: "claude", config: { effortOverride: "high", dynamicEffort: false } });
+    assert.equal(r.effort, "high");
+  }
+});

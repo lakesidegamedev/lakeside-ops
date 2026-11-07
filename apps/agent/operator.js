@@ -59,6 +59,7 @@ const config = {
   maxIntakePerHour: positive("KEIR_MAX_INTAKE_PER_HOUR", 4), maxRounds: positive("KEIR_MAX_TOOL_ROUNDS", 24), ticketMaxRounds: positive("KEIR_TICKET_MAX_TOOL_ROUNDS", 16), stopGraceMs: positive("KEIR_STOP_GRACE_MS", 100000),
   maxTurnMs: positive("KEIR_MAX_TURN_MINUTES", 15) * 60000, dailyBudget: positive("KEIR_DAILY_BUDGET_USD", 20),
   model: env.KEIR_MODEL || "claude-opus-5-5",
+  providerOverride: env.KEIR_PROVIDER_OVERRIDE || "", effortOverride: env.KEIR_EFFORT_OVERRIDE || "",
   // Model split (2026-10-12 trial): quick lane = conversation, worker lanes = coding and deep answers.
   computerUrl: env.KEIR_COMPUTER_URL || (env.WORKER_TOKEN ? "http://127.0.0.1:9770" : undefined), computerToken: env.KEIR_COMPUTER_TOKEN || env.WORKER_TOKEN,
   voiceProvider: env.KEIR_VOICE_PROVIDER || "agy:gemini-3.8-flash@low",
@@ -373,6 +374,8 @@ const devMerges = createDevMerges({ ledger, api: ciApi, log });
 const { createCodingWorkers } = require("./lib/operator/codingworkers");
 codingWorkersInst = createCodingWorkers({ ledger, api: ciApi, write: ciApi, mcp, killSwitch, limits, stateDir: config.stateDir, log,
   enabled: env.KEIR_CODING_WORKERS !== "0",
+  model: config.providerOverride.startsWith("claude:") ? config.providerOverride.split("@")[0].split(":")[1] : undefined,
+  effort: config.effortOverride || "high",
   probe: (service) => new Promise((resolve) => require("node:child_process").execFile(env.KEIR_DEPLOYED_SHA_CMD || "/opt/lakeside-platform/host/ahd-deployed-sha.sh", [service], { timeout: 45000 }, (e, out) => resolve(e ? null : String(out || "").trim()))) });
 tickers.every("codingworkers", 60000, async () => {
   try { await codingWorkersInst.tick(); } catch (e) { log(`codingworkers: ${e.message}`); }
