@@ -1398,6 +1398,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       job.evidence = [...(job.evidence || []), ...knowledge.numbersIn(text).map((n) => n.value)].slice(-8000);
       job.evidenceText = (String(job.evidenceText || "") + `\n[${name}] ` + text.slice(0, 6000)).slice(-20000);
     }
+    require("./investigation-memory").record(ledger, job, name, input, result, now());
     return result;
   }
   async function toolInner(job, name, input, signal) {

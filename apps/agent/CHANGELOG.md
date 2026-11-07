@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.5.2 (2026-11-07)
+
+- Preserve completed investigative reads and calculations across ticket activations and restarts. All support tasks on the same ticket receive a bounded history of actual observations, separately from the latest summary, so an erroneous "unchecked" summary cannot erase the work. Existing evidence-batch receipts are recovered for tickets opened before this change. Tool discovery and failed reads do not become findings; historical observations never satisfy current deployment or success checks.
+- Clarify the verification policy: rechecking a current outcome does not mean earlier investigation never happened. Reconcile saved observations and facts before denying a completed check, and record the exact remaining uncertainty.
+- Regression coverage exercises a real broker code read, state reload and the next agent prompt, plus ticket isolation, role restrictions, bounded retention, deduplication, empty searches and old receipt recovery.
+
 ## 8.5.1 (2026-11-06)
 
 Investigation workers and real progress for the sweeper. Ticket 1785: a player reported a company whose revenue, margins and share price flip every turn. Keir posted "checking why" at 15:14, filed a blocking question card of his own, and then did nothing for six hours. A status-card line reading "Investigating" at 19:47 counted as progress, the sweeper never fired, and 8.5.0 coding workers only start for a filed bug, so nothing launched. A person dispatched a worker by hand.
