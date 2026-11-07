@@ -53,7 +53,9 @@ function hold(job, { now = Date.now(), supportDeferred = false, claimedBy = () =
     if (claimedBy(job.channelId)) return "staff-owned";
     // Staff chatter holds Keir back, but never past a message that named Keir.
     if ((job.staffActiveUntil || 0) > now && !job.addressedPending) return "staff-active";
-    if (job.ownerDecisionPending) return "owner-decision";
+    // Approval fences the requested effect in the broker, not independent reads
+    // or player replies on an open ticket. Claims and pauses still hold it.
+    if (job.ownerDecisionPending && (job.kind !== "ticket" || job.channelClosed)) return "owner-decision";
   }
   if (job.resolutionSubmitted && !job.resolved) return "closure-grace";
   if (job.deadline && job.deadline < now) return "deadline";

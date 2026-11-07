@@ -151,6 +151,16 @@ test("blocked on the owner: one notice, then silence until the decision or the p
   assert.equal((await say(f, "Thanks, that narrows it to the supplier change. The owner still has the decision.")).published, true, "the player wrote, so Keir may answer");
 });
 
+test("an approval notice does not suppress a new independent finding", async () => {
+  const f = fixture();
+  f.ledger.data.decisions = { dec1: { id: "dec1", jobId: f.job.id, state: "pending", at: 4000, question: "Promote the display fix?" } };
+  assert.equal((await say(f, "The display fix needs approval before it reaches the main server.")).published, true);
+  f.tick(2 * 3600000);
+  f.job.lastGameReadAt = 9e15; // A fresh independent finding, not another wait notice.
+  assert.equal((await say(f, "The production records show output stayed stable while the money earned per unit fell.")).published, true);
+  assert.equal(f.ledger.data.decisions.dec1.state, "pending");
+});
+
 test("a status card edit is not the decision notice: the player's question still gets its answer (KBX5)", async () => {
   const f = fixture();
   f.ledger.data.decisions = { dec1: { id: "dec1", jobId: f.job.id, state: "pending", at: 4000, question: "Refund the voided contract?" } };
@@ -405,4 +415,15 @@ test("a concrete bug in a gameplay ticket can still receive a support finding", 
   f.job.tags = { kind: "bug_report" };
   await say(f, "The share form shows only the selected holding. I am correcting that label.");
   assert.ok(f.job.lastAskAt);
+});
+
+for (const open of [false, true]) test(`approval polling backs off only without independent investigation: ${open}`, async () => {
+  const f = fixture();
+  f.job.ownerDecisionPending = true;
+  f.ledger.data.decisions = { dec1: { id: "dec1", jobId: f.job.id, state: "pending", at: 4000 } };
+  if (open) f.ledger.data.ticketRecords = { 1522: { facts: [], ruledOut: [], questions: [], promises: [{ id: "p", text: "Trace the independent revenue loss" }] } };
+  const start = 5000;
+  await f.broker.tool(f.job, "finish", { state: "waiting", summary: open ? "Trace the independent loss on the next scheduled check" : "Approval only; no independent work remains", wakeAfterMinutes: 15 });
+  assert.equal(f.job.wakeAt, start + (open ? 15 * 60000 : 6 * 3600000));
+  assert.equal(f.ledger.data.decisions.dec1.state, "pending");
 });

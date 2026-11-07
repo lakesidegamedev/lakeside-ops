@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.5.4 (2026-11-07)
+
+- Pending owner approvals hold the requested actions and ticket closure while independent investigation continues. Player messages, worker reports and scheduled reads reach admission instead of being silently blocked after the wake rules queued them.
+- An approval notice no longer suppresses a new finding. Repeated waiting notices remain suppressed, and all action approvals, claims, pauses and completion checks remain enforced.
+- A pending decision no longer stretches an independent recorded investigation to a six-hour wait. Support guidance separates verified losses, causes, fixes and compensation.
+
 ## 8.5.3 (2026-11-07)
 
 - A ticket cannot wait for the player while its own summary still names an unchecked, unexplained or unverified investigation, or its shared record has an unfulfilled promise. A later unrelated reply no longer hides that work. Continue it with a short scheduled wakeup instead.

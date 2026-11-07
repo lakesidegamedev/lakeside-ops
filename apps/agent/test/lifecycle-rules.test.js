@@ -28,13 +28,13 @@ const WAKE = [
   ["staff claim does not relabel an owner-paused ticket", { state: "paused" }, { claim: true }, { state: "paused", effects: [] }],
   ["the claim marks the deferral as caused by the claim", { state: "queued" }, { claim: true }, { state: "deferred", deferredBy: "claim", effects: [] }],
   // owner decision
-  ["owner decision with no mail blocks", { state: "queued", ownerDecisionPending: true }, {}, { state: "blocked", summary: /outstanding owner decision/, effects: [] }],
-  ["owner decision, mail only from system sources, blocks", { state: "waiting", ownerDecisionPending: true, inbox: [{ authorId: "developer-watch" }, { role: "system", authorId: "x" }], wakeAt: 0 }, {}, { state: "blocked", effects: [] }],
-  ["owner decision, player mail, wakes the conversation", { state: "waiting", ownerDecisionPending: true, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "queued", effects: ["audit:requeued_for_conversation"] }],
+  ["owner decision does not block an already queued open ticket", { state: "queued", ownerDecisionPending: true }, {}, { state: "queued", effects: [] }],
+  ["owner decision, system evidence wakes investigation", { state: "waiting", ownerDecisionPending: true, inbox: [{ authorId: "developer-watch" }, { role: "system", authorId: "x" }], wakeAt: 0 }, {}, { state: "queued", effects: [] }],
+  ["owner decision, player mail, wakes the conversation", { state: "waiting", ownerDecisionPending: true, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "queued", effects: [] }],
   ["owner decision, player mail, closed channel, stays blocked", { state: "waiting", ownerDecisionPending: true, channelClosed: true, inbox: [human], wakeAt: NOW + MIN }, {}, { state: "blocked", effects: [] }],
   ["owner decision on a done ticket is left alone", { state: "done", ownerDecisionPending: true }, {}, { state: "done", effects: [] }],
   // One definition of a human message: turn-watch mail is automatic, as in the unread watchdog.
-  ["turn-watch mail does not wake a ticket held on an owner decision", { state: "blocked", ownerDecisionPending: true, inbox: [{ authorId: "turn-watch" }] }, {}, { state: "blocked", effects: [] }],
+  ["turn-watch evidence wakes a ticket with an owner decision", { state: "blocked", ownerDecisionPending: true, inbox: [{ authorId: "turn-watch" }] }, {}, { state: "queued", effects: ["audit:requeued_for_inbox"] }],
   // resolution stall
   ["resolution recorded 21 min ago, channel still open: blocked and owner told", { state: "queued", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 21 * MIN }, {}, { state: "blocked", summary: /after 20 minutes/, effects: ["notify:close-stalled:j1"] }],
   ["resolution recorded exactly 20 min ago still waits", { state: "queued", resolutionSubmitted: true, resolutionSubmittedAt: NOW - 20 * MIN }, {}, { state: "waiting", effects: [] }],

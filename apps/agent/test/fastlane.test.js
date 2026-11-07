@@ -77,7 +77,7 @@ test("held work is never admitted, and hold names the reason", () => {
   ];
   const ctx = { now, supportDeferred: true, claimedBy: (c) => c === "c1" ? "staff" : null };
   assert.deepEqual(jobs.map((j) => hold(j, ctx)),
-    ["staff-owned", "owner-decision", "closure-grace", "deadline", "support-deferred", null]);
+    ["staff-owned", "support-deferred", "closure-grace", "deadline", "support-deferred", null]);
   assert.deepEqual(admit(jobs, ctx).map((j) => j.id), ["owner"]);
 });
 

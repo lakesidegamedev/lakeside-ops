@@ -769,8 +769,9 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       // A status card is edited in place, not a message to the player: it never uses the one
       // notice (KBX5 held-player, 2026-11-03: a card edit after the player's question blocked the answer).
       const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at && !isCardPost(p)).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
-      if (noticed && !question && !playerSpokeAfter(noticed.at))
-        throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. No further posts until the decision lands or the player writes; update the status card if the stage changed.`);
+      if (noticed && !question && !playerSpokeAfter(noticed.at) &&
+          (PENDING_APPROVAL.test(message) || require("./supportblockers").unchangedWait(message)))
+        throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. Do not repeat this wait; independent findings and answers may still be posted.`);
     }
     // Monologue cap (ticket 1514: 52 Keir messages to 4 human). After three
     // consecutive Keir posts, pause ten minutes instead of silencing the ticket indefinitely.
@@ -3679,9 +3680,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       // A task watching CI is woken by the watch, not by a timer.
       if (["waiting", "blocked"].includes(state) && job.ciWatch && Object.keys(job.ciWatch).length) job.wakeAt = Math.max(job.wakeAt || 0, now() + 3 * 3600000);
-      // A task waiting on an open owner decision has nothing to check: the answer
-      // wakes it. Ticket 1514 re-checked "nothing changed" 42 times overnight.
-      if (["waiting", "blocked"].includes(state) && Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.jobId === job.id)) job.wakeAt = Math.max(job.wakeAt || 0, now() + 6 * 3600000);
+      // Back off approval-only polling, not a separate recorded investigation.
+      const record = d.ticketRecords?.[job.ticket];
+      const investigationOpen = ["questions", "promises"].some(kind => record?.[kind]?.some(item => !item.closedAt));
+      if (!investigationOpen && ["waiting", "blocked"].includes(state) && Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.jobId === job.id)) job.wakeAt = Math.max(job.wakeAt || 0, now() + 6 * 3600000);
       if (["waiting", "blocked"].includes(state) && pendingQuestion) job.wakeAt = Math.max(job.wakeAt || 0, now() + 6 * 3600000);
       // While a developer's own task holds this ticket, the ticket task only
       // comes back in half an hour (or sooner if the player writes); it was
