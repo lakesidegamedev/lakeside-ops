@@ -5,8 +5,6 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
-- Military tickets (wars, armies, navies, draft, combat, defence) now get detailed, evidence-backed help in the ticket instead of the Ask redirect.
-
 ## 8.5.4 (2026-11-07)
 
 - Pending owner approvals hold the requested actions and ticket closure while independent investigation continues. Player messages, worker reports and scheduled reads reach admission instead of being silently blocked after the wake rules queued them.
