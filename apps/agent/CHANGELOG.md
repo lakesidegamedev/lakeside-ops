@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 8.5.5 (2026-11-10)
+
 - Military tickets (wars, armies, navies, draft, combat, defence) now get detailed, evidence-backed help in the ticket instead of the Ask redirect.
 
 ## 8.5.4 (2026-11-07)
