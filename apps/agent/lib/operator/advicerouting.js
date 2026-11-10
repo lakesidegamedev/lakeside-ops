@@ -9,14 +9,6 @@ function adviceQuestion(text) {
     /\b(?:should|best|recommend|advice|strategy)\b[\s\S]{0,120}\b(?:invest|build|expand|profit|company|corporation|campaign)\b/i.test(t) ||
     /\b(?:how (?:can|do|should) i|help me)\b[\s\S]{0,100}\b(?:profit|make money|invest)\b/i.test(t);
 }
-// Military questions get full, detailed help in the ticket (owner 2026-11-10):
-// the war, army, navy, draft and combat systems are where players most need a
-// walkthrough, so they are never bounced to Ask.
-const MILITARY = /\b(?:military|army|armies|navy|naval|fleet|troops?|soldiers?|divisions?|brigades?|regiments?|units?\s+(?:in|at)\s+war|war|wars|warfare|invade|invasion|occupation|occupy|battle|combat|offensive|front(?:line)?s?|draft|conscription|mobili[sz](?:e|ation)|recruit(?:ment)?|defen[cs]e spending|ceasefire|armistice|peace (?:deal|treaty)|casualt(?:y|ies)|nuclear|missiles?|air force|garrison|deploy(?:ment)? (?:troops|forces|units))\b/i;
-function militaryTopic(job) {
-  const texts = [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system")].map(m => String(m?.content || ""));
-  return job.tags?.topic === "military" || texts.some(t => MILITARY.test(t));
-}
 function latestInput(job) {
   return [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system")].filter(Boolean).at(-1);
 }
@@ -33,7 +25,6 @@ function requiresRedirect(job, d) {
   // separately by the brief; a gameplay category never overrides a bug.
   if (["bug_report", "data_repair", "feature_request", "design_feedback", "moderation"].includes(kind) || job.pullRequests?.length) return false;
   if (bugFollowup(job)) return false;
-  if (militaryTopic(job)) return false;
   if (kind === "gameplay_advice") return true;
   const latest = latestInput(job);
   return adviceQuestion(latest?.content);
@@ -49,4 +40,4 @@ function guardResolution(job, d, args) {
       (args.followUp && args.followUp !== "Report a concrete bug here if something is broken."))
     throw new Error("Advice resolution must contain only the Ask redirect, action 'Directed gameplay advice to Ask.', and optional follow-up 'Report a concrete bug here if something is broken.'. Do not add investment advice.");
 }
-module.exports = { URL, REPLY, MILITARY, militaryTopic, adviceQuestion, bugFollowup, requiresRedirect, guard, guardResolution };
+module.exports = { URL, REPLY, adviceQuestion, bugFollowup, requiresRedirect, guard, guardResolution };
