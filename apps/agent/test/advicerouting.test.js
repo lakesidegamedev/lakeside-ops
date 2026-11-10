@@ -50,3 +50,10 @@ test("a later concrete defect in an advice thread switches to the bug playbook",
   j.inbox.push({ role: "user", content: "Which state should I invest in?" });
   assert.equal(advice.requiresRedirect(j, data), true);
 });
+test("military tickets get detailed help instead of the Ask redirect", () => {
+  const j = job({ source: { role: "system", content: "What is the best strategy for my army in the war with Mexico?" }, tags: { kind: "gameplay_advice" } });
+  assert.equal(advice.requiresRedirect(j, data), false);
+  assert.doesNotThrow(() => advice.guard(j, data, "Your three divisions on the southern front are outnumbered; here is how combat strength is computed."));
+  assert.equal(advice.requiresRedirect(job({ tags: { kind: "gameplay_advice", topic: "military" } }), data), false);
+  assert.equal(advice.requiresRedirect(job(), data), true);
+});
