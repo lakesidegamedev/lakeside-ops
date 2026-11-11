@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- A refused owner approval explanation now names every field that needs fixing, with its measured length or the offending word, in one message instead of one field per round, and the github tool states the 15 to 350 character limit before the first attempt.
+
 ## 8.5.4 (2026-11-07)
 
 - Pending owner approvals hold the requested actions and ticket closure while independent investigation continues. Player messages, worker reports and scheduled reads reach admission instead of being silently blocked after the wake rules queued them.
