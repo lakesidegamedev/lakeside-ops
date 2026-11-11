@@ -2292,7 +2292,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             evidence={changes:await Promise.all(numbers.map(number=>api([`repos/${repo}/pulls/${number}`]).then(p=>({number,title:p.title,body:String(p.body||"").slice(0,6000)})).catch(()=>({number,unavailable:true}))))};
           }
           return {needsExplanation:true,approvalRequired:false,reviewedHead:copy.headOf(args),destination:args.to||"development",evidence,
-            instruction:"Nothing was sent for approval. Read these source changes, then call the same github action with explanation: reviewedHead exactly as returned, change (the problem and fix in ordinary language), impact (who notices and how), risk (verified risk or uncertainty). Cover every change in this version. No file paths, formulas, PR numbers, staging/development or developer jargon. Continue preparing now; do not wait for the owner or invent a recommendation."};
+            instruction:"Nothing was sent for approval. Read these source changes, then call the same github action with explanation: reviewedHead exactly as returned, change (the problem and fix in ordinary language), impact (who notices and how), risk (verified risk or uncertainty), each 15 to 350 characters. Cover every change in this version inside those limits. No file paths, formulas, PR numbers, staging/development or developer jargon. Continue preparing now; do not wait for the owner or invent a recommendation."};
         }
         const human=copy.explanation(value,args);
         if(existing?.state==="pending" && (!existing.explanation || !liveQuestion)) {
