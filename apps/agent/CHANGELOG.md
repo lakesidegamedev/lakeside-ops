@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Two post rules no longer contradict each other: an owner or developer speaking in a ticket, or an approved repair that ran, lets Keir reply without a new player message, and refusals that owe the player nothing never block finishing (the 8.4 lock-up).
+- The provider fallback also covers a forced provider: a usage limit or expired login on the forced route moves tasks to `KEIR_FALLBACK_PROVIDER` until the route recovers.
+- A run that runs out of steps right after a length refusal posts the leading five sentences of the refused reply instead of nothing.
+- Code searches sent with `query` or `terms` reach the tool as `question`; a claimed page or figure change needs the same receipt as a "fixed" claim.
+- Each closed ticket keeps one verified mechanic tied to the game code Keir read, and a lesson when an answer was taken back; both are recalled into later tickets.
 - A ticket answer that states a game rule or a cause is refused once per ticket when nothing on the ticket has read the game code, with a message that names the code search tool. Never refused again on that ticket, never blocks finishing, `KEIR_RULE_LOOKUP=0` turns it off.
 - Keir is the support desk, not Ask: the 8.4.1 conversational and send-the-first-fact-fast instructions are gone from the ticket brief (short phone-sized posts and the strategy-to-Ask route stay), and rules and mechanics questions are answered by Keir from the game code.
 
