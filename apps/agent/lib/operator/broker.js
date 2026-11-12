@@ -393,9 +393,15 @@ function outcomeClaims(text) {
   const out = [];
   for (const whole of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
     // Negation applies to its own clause: "it is not a bug, but it was corrected in the latest update" still claims a fix.
+    // Money stays judged on the whole sentence: "the refund is still with the developers, but it has not been
+    // approved yet" is a pending status, and splitting at "but" would drop the negation (CI 2026-11-13).
     for (const sentence of whole.split(/,?\s+(?:but|however|though|although)\s+|;\s+/i)) {
     if (NEGATED.test(sentence)) continue;
-    for (const c of CLAIMS) if (c.re.test(sentence) && !(c.kind === "money" && PENDING_APPROVAL.test(sentence))) out.push({ kind: c.kind, future: (c.hedged ? STRICT_FUTURE : FUTURE).test(sentence), sentence: sentence.trim().slice(0, 160) });
+    for (const c of CLAIMS) {
+      if (!c.re.test(sentence)) continue;
+      if (c.kind === "money" && (NEGATED.test(whole) || PENDING_APPROVAL.test(whole))) continue;
+      out.push({ kind: c.kind, future: (c.hedged ? STRICT_FUTURE : FUTURE).test(sentence), sentence: sentence.trim().slice(0, 160) });
+    }
     }
   }
   return out;
@@ -3612,7 +3618,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // posted. The obligation is per ticket and persists across tasks: while the reporter has had no real answer since
       // they last wrote (a holding line is not one), finishing done or waiting is refused twice. The third attempt
       // posts a plain limitation and escalates, then lets the task finish. Waits on a developer or the owner count too.
+      // Only once something on the ticket has been read: an ordinary wait before any investigation is the wait
+      // rules' business (the full suite on CI, 2026-11-13: five wait and handoff tests broke without this).
       if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !developerTask(job) && !developerTicket(job) && !ownerDirected(job)
+          && Object.values(d.jobs).some((j) => ticketOf(j) === ticketOf(job) && (j.lastGameReadAt || j.lastCodeReadAt))
           && process.env.KEIR_UNANSWERED_GUARD !== "0") {
         const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1), human = humanAt(tn);
         // A holding line ("looking into it") is not an answer (Muse replay 2026-11-12: two tickets got only

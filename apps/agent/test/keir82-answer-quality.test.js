@@ -116,7 +116,7 @@ test("Keir 9: a reply with a dash is posted with the dash replaced, not refused"
 });
 
 test("Keir 9: a ticket cannot park with the player unanswered; refused twice, then the code answers and escalates", async () => {
-  const f = setup();
+  const f = setup(); f.job.lastGameReadAt = 1;
   f.job.observedPlayerAt = f.now() - 60000;
   // No reads needed: the obligation is the ticket's, not the job's.
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found the cause; will post next." }), /no answer since they last wrote/);
@@ -133,7 +133,7 @@ test("Keir 9: a ticket cannot park with the player unanswered; refused twice, th
 });
 
 test("Keir 9: the refusal count is per ticket, so a fresh job cannot reset it", async () => {
-  const f = setup();
+  const f = setup(); f.job.lastGameReadAt = 1;
   f.job.observedPlayerAt = f.now() - 60000;
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
@@ -144,7 +144,7 @@ test("Keir 9: the refusal count is per ticket, so a fresh job cannot reset it", 
 });
 
 test("Keir 9: when the escalation cannot be filed the limitation does not claim the developers have it", async () => {
-  const f = setup();
+  const f = setup(); f.job.lastGameReadAt = 1;
   f.job.observedPlayerAt = f.now() - 60000;
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
