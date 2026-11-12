@@ -2,7 +2,7 @@
 // Keir 9: verified sources. A player can check a claim only if they can see what it rests on, and the
 // source must be written by code from what Keir actually read, never by the model (a model asked to
 // cite invents citations). Two jobs: (1) the figures in a ticket reply must come from this ticket's
-// reads, including reads from earlier activations; (2) code appends one short "Checked:" line naming,
+// reads, including reads from earlier activations; (2) code appends one short "From:" line naming,
 // in player terms, the reads behind the reply. Unknown tools are omitted, never shown raw.
 const knowledge = require("./knowledge");
 const { playerLeak, runtimeTalk, sentences, MAX_CHARS, MAX_SENTENCES } = require("./playercopy");
@@ -58,7 +58,7 @@ function describe(obs) {
   return words || null;
 }
 
-/** The "Checked:" line for a reply, or null when nothing qualifies. */
+/** The "From:" line (where the figures were read, not a claim they were verified) for a reply, or null when nothing qualifies. */
 function checkedLine(message, observations) {
   const text = String(message || "");
   // Checkable figures only: with no evidence at all, exactly those are reported as unsupported.
@@ -70,11 +70,13 @@ function checkedLine(message, observations) {
   for (const n of numbers) {
     add(rows.find((o) => describe(o) && (knowledge.supported(n, observationValues(o)) || n.percent && knowledge.supported({ ...n, value: n.value / 100 }, observationValues(o)))));
   }
-  if (!named.length) add(rows.find((o) => describe(o)));
+  // Audit 2026-11-13: never cite an unrelated read for a rule or cause. With no number matched, a rule or cause is
+  // sourced only from a code read on this ticket ("the game's rules"); otherwise there is no line.
+  if (!named.length && ruleLookup.ruleClaim(text)) add(rows.find((o) => /"tool"\s*:\s*"code_(?:search|read|exact)"/.test(String(o.input || ""))));
   if (!named.length) return null;
   let line = "";
   for (let k = Math.min(named.length, MAX_SOURCES); k >= 1; k--) {
-    line = `Checked: ${named.slice(0, k).join(" and ")}.`;
+    line = `From: ${named.slice(0, k).join(" and ")}.`;
     if (line.length <= MAX_LINE) break;
     line = "";
   }
@@ -85,7 +87,7 @@ function checkedLine(message, observations) {
 /** The reply with the code-written line appended, or unchanged when it does not fit the post shape. */
 function appendChecked(message, observations) {
   // A line the model wrote itself is never trusted; only the code-written one is posted.
-  const base = String(message || "").replace(/(?:^|\n+)\s*Checked:[^\n]*$/i, "").trimEnd();
+  const base = String(message || "").replace(/(?:^|\n+)\s*(?:Checked|From|Source|Sources):[^\n]*$/i, "").trimEnd();
   const line = checkedLine(base, observations);
   if (!line) return base;
   const out = `${base}\n\n${line}`;

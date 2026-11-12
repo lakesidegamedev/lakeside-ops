@@ -1,5 +1,5 @@
 "use strict";
-// Keir 9: verified sources. Ticket numbers must come from this ticket's reads; code writes the "Checked:" line.
+// Keir 9: verified sources. Ticket numbers must come from this ticket's reads; code writes the "From:" line.
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs"), os = require("os"), path = require("path");
@@ -59,20 +59,20 @@ test("a calculated value counts as read", async () => {
 });
 
 test("Checked line names trace_sector, game_overview and code reads in player terms", () => {
-  assert.equal(sources.checkedLine("Your revenue was 41,288,610.", [SECTOR, OVERVIEW]), "Checked: your Oil page in Norland.");
-  assert.equal(sources.checkedLine("Your revenue was 675,000.", [SECTOR, OVERVIEW, obs("game_overview", {}, { currentTurn: 675, x: 675000 }, 9)]), "Checked: turn 675.");
-  assert.equal(sources.checkedLine("The tax is 12.5% by design.", [SECTOR, CODE]), "Checked: the game's rules.");
-  assert.equal(sources.checkedLine("Your revenue was 41,288,610 and the tax is 12.5%.", [SECTOR, CODE]), "Checked: your Oil page in Norland and the game's rules.");
+  assert.equal(sources.checkedLine("Your revenue was 41,288,610.", [SECTOR, OVERVIEW]), "From: your Oil page in Norland.");
+  assert.equal(sources.checkedLine("Your revenue was 675,000.", [SECTOR, OVERVIEW, obs("game_overview", {}, { currentTurn: 675, x: 675000 }, 9)]), "From: turn 675.");
+  assert.equal(sources.checkedLine("The tax is 12.5% by design.", [SECTOR, CODE]), "From: the game's rules.");
+  assert.equal(sources.checkedLine("Your revenue was 41,288,610 and the tax is 12.5%.", [SECTOR, CODE]), "From: your Oil page in Norland and the game's rules.");
 });
 
 test("a rule with no matching number falls back to the most recent game read", () => {
-  assert.equal(sources.checkedLine("Only the chair can file.", [OVERVIEW, CODE]), "Checked: the game's rules.");
+  assert.equal(sources.checkedLine("Only the chair can file.", [OVERVIEW, CODE]), "From: the game's rules.");
 });
 
 test("unknown tools are omitted and no line is added when nothing qualifies", () => {
   const odd = obs("heal_query", { collection: "tickets" }, { n: 41288610 }, 8);
   assert.equal(sources.checkedLine("Your revenue was 41,288,610.", [odd]), null);
-  assert.equal(sources.checkedLine("Your revenue was 41,288,610.", [odd, SECTOR]), "Checked: your Oil page in Norland.");
+  assert.equal(sources.checkedLine("Your revenue was 41,288,610.", [odd, SECTOR]), "From: your Oil page in Norland.");
   assert.equal(sources.checkedLine("Which turn did you see it on?", [SECTOR]), null);
   assert.equal(sources.checkedLine("Your revenue was 41,288,610.", []), null);
 });
@@ -88,7 +88,7 @@ test("the line never carries a tool name, id, URL or hostile argument", () => {
 
 test("a line the model wrote itself is replaced by the code-written one", () => {
   const out = sources.appendChecked("Your revenue was 41,288,610.\n\nChecked: trace_sector abc.", [SECTOR]);
-  assert.equal(out, "Your revenue was 41,288,610.\n\nChecked: your Oil page in Norland.");
+  assert.equal(out, "Your revenue was 41,288,610.\n\nFrom: your Oil page in Norland.");
   assert.equal(sources.appendChecked("Your revenue was 41,288,610.\n\nChecked: made up.", []), "Your revenue was 41,288,610.");
 });
 
@@ -103,5 +103,10 @@ test("length rule: the line is dropped, not the reply, when it would not fit", (
 test("end to end: the posted ticket reply carries the Checked line", async () => {
   const f = setup(); seed(f, [SECTOR]);
   await f.broker.tool(f.job, "channel_reply", { message: "Your Oil revenue was 41,288,610 last turn." });
-  assert.ok(f.posts().join("\n").includes("Checked: your Oil page in Norland."));
+  assert.ok(f.posts().join("\n").includes("From: your Oil page in Norland."));
+});
+
+test("audit 2026-11-13: a rule or cause never borrows an unrelated read; only a code read sources it", () => {
+  assert.equal(sources.checkedLine("Only the chair can file.", [OVERVIEW, SECTOR]), null);
+  assert.equal(sources.checkedLine("Only the chair can file.", [OVERVIEW, CODE]), "From: the game's rules.");
 });
