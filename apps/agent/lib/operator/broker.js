@@ -385,15 +385,18 @@ const STRICT_FUTURE = /\b(?:will|once|when|after|until|going to|next turn|from t
 const FUTURE = /\b(?:will|won't|once|when|after|until|soon|should|going to|plan(?:ning)?|next|expect|if)\b|['’]ll\b/i;
 // KBX4 2026-11-02: "cannot" was not a negation, so "a note cannot authorise a payment, so that
 // refund has to come through our own approval" was refused as a money claim four times running.
-const NEGATED = /\b(?:not|never|no|cannot|unable|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
+const NEGATED = /\b(?:not|never|no|nothing|none|neither|nor|cannot|unable|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
 // A money sentence about the approval step itself ("the refund is up for approval") describes the
 // request, not an outcome; the decision or heal request is its own receipt.
 const PENDING_APPROVAL = /\b(?:for|awaiting|needs?|pending|waiting (?:on|for)|up for|through|subject to) (?:an? |the |our (?:own )?|owner['’]s |egg['’]s |his )?(?:approval|decision|sign-?off|review)\b/i;
 function outcomeClaims(text) {
   const out = [];
-  for (const sentence of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
+  for (const whole of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
+    // Negation applies to its own clause: "it is not a bug, but it was corrected in the latest update" still claims a fix.
+    for (const sentence of whole.split(/,?\s+(?:but|however|though|although)\s+|;\s+/i)) {
     if (NEGATED.test(sentence)) continue;
     for (const c of CLAIMS) if (c.re.test(sentence) && !(c.kind === "money" && PENDING_APPROVAL.test(sentence))) out.push({ kind: c.kind, future: (c.hedged ? STRICT_FUTURE : FUTURE).test(sentence), sentence: sentence.trim().slice(0, 160) });
+    }
   }
   return out;
 }

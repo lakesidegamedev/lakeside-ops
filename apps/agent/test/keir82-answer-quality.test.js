@@ -11,7 +11,7 @@ const { refusal } = require("../lib/operator/ticketquality");
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir82-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
   const state = { fail: false };
   const mcp = { servers: () => ["support"], list: async () => [], call: async (...a) => { calls.push(a); if (a[1] === "kanban_add") { if (state.fail) throw new Error("kanban down"); return { id: "card-1" }; } return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }; } };
@@ -169,4 +169,13 @@ test("Keir 9: a holding line is not an answer once the ticket has read data", as
   await f.broker.tool(f.job, "channel_reply", { message: "I'm looking into your sector history now." }).catch(() => {});
   f.job.lastGameReadAt = f.now() + 1; f.advance(1);
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found it; will post." }), /no answer since they last wrote/);
+});
+
+test("audit: negated fix claims are not fix claims; a negation in another clause does not hide one", () => {
+  const { outcomeClaims } = require("../lib/operator/broker");
+  const kinds = (t) => outcomeClaims(t).map((c) => c.kind);
+  for (const t of ["It was not corrected in the latest update.", "This has not been patched.", "Nothing has been fixed yet.", "That was never resolved."]) assert.deepEqual(kinds(t), [], t);
+  assert.ok(kinds("This has been patched.").includes("verified"));
+  assert.ok(kinds("It was corrected in the latest update.").includes("verified"));
+  assert.ok(kinds("It is not a bug, but it was corrected in the latest update.").includes("verified"));
 });

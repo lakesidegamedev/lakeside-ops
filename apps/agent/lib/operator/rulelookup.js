@@ -33,7 +33,10 @@ const PATTERNS = [
 
 // Sentences that are not claims.
 const RELAY = /\b(?:the )?(?:developers?|devs?|owner|team|studio)\b[^.!?]{0,40}\b(?:decided|approved|agreed|confirmed|signed off|ruled|said|wants|asked|are going to|will (?:be )?(?:look|fix|change|ship|handle))\b/i; // relays a human decision
-const ACK = /^\s*(?:thanks|thank you|got it|noted|understood|sure|okay|ok|will do|no problem|you(?:'|’)?re welcome|hi|hello|hey)\b/i; // acknowledgement
+// An acknowledgement opening is stripped, not exempted: "Thanks, the game always charges 5%" still states a rule
+// (audit 2026-11-12). "Thanks for the report." strips to nothing and is skipped.
+const ACK_LEAD = /^\s*(?:(?:thanks|thank you)(?: (?:a lot|so much|again))?(?: for (?:the |your |that |this |all the )?(?:report|info|information|details?|screenshots?|update|reply|patience|help|waiting|feedback|clarification|context|message|ticket))?|got it|noted|understood|sure|okay|ok|will do|no problem|you(?:'|’)?re welcome|hi|hello|hey)\b[\s,.!:;\u2014-]*/i;
+const stripAck = (sentence) => { let t = sentence; for (let i = 0; i < 3; i++) { const n = t.replace(ACK_LEAD, ""); if (n === t) break; t = n; } return t.trim(); };
 const STATUS = /^\s*(?:i(?:'|’)?m|i am|i(?:'|’)?ll|i will|we(?:'|’)?re|we are|we(?:'|’)?ll|we will|still|now|currently)\b[^.!?]{0,60}\b(?:check(?:ing)?|look(?:ing)?|read(?:ing)?|investigat(?:e|ing)|wait(?:ing)?|work(?:ing)?|trac(?:e|ing)|going|review(?:ing)?|digging|compar(?:e|ing)|come back|get back|report back|update you)\b/i; // status line
 const FIRST_PERSON = /^\s*(?:i|i(?:'|’)?m|i(?:'|’)?ve|i(?:'|’)?ll|we|we(?:'|’)?ve)\b/i; // "I can't see your records" is about Keir, not a rule
 
@@ -42,8 +45,9 @@ const isQuestion = (s) => /\?\s*["')\]]*$/.test(s);
 
 // The first rule or cause the message states, or null: { kind, pattern, sentence }.
 function ruleClaim(message) {
-  for (const sentence of sentencesOf(message)) {
-    if (isQuestion(sentence) || RELAY.test(sentence) || ACK.test(sentence) || STATUS.test(sentence)) continue;
+  for (const raw of sentencesOf(message)) {
+    const sentence = stripAck(raw);
+    if (!sentence || isQuestion(sentence) || RELAY.test(sentence) || STATUS.test(sentence)) continue;
     const hit = PATTERNS.find((p) => p.re.test(sentence) && !(p.notFirstPerson && FIRST_PERSON.test(sentence)));
     if (hit) return { kind: hit.kind, pattern: hit.name, sentence: sentence.slice(0, 200) };
   }
