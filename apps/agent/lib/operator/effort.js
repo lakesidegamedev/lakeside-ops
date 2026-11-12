@@ -4,8 +4,9 @@
 // just ran out of turns or had its completion refused never drops below high,
 // and each runner is clamped to the levels its CLI accepts.
 const JEV = "/root/bin/lib/jev.mjs";
-const ORDER = ["low", "medium", "high", "xhigh"];
-const RUNNER_MAX = { agy: "high", muse: "xhigh", claude: "xhigh" };
+// Keir 9: Muse Code accepts max (its tuned top tier); every other runner is clamped below it.
+const ORDER = ["low", "medium", "high", "xhigh", "max"];
+const RUNNER_MAX = { agy: "high", muse: "max", claude: "xhigh" };
 const DECISIVE = 0.35;
 
 const CRITERIA = {
