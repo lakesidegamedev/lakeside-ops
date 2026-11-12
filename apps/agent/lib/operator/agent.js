@@ -572,8 +572,12 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       // Keir 9: the run's last reply was refused only for length and the steps ran out: post its leading part
       // rather than leave the player with nothing.
       if (job.kind === "ticket" && job.lastTooLongDraft) {
-        const trimmed = require("./playercopy").trimTicketPost(job.lastTooLongDraft);
-        delete job.lastTooLongDraft;
+        // Stale if reads happened after the draft was stored (the evidence moved on), or if a reply since went out
+        // (broker clears the draft on delivery).
+        const stale = Math.max(job.lastGameReadAt || 0, job.lastCodeReadAt || 0) > (job.lastTooLongDraftAt || 0);
+        const trimmed = stale ? "" : require("./playercopy").trimTicketPost(job.lastTooLongDraft);
+        if (stale) ledger.audit("step_limit_trimmed_reply_stale", { job: job.id, ticket: job.ticket });
+        delete job.lastTooLongDraft; delete job.lastTooLongDraftAt;
         if (trimmed) {
           try { await broker.tool(job, "channel_reply", { message: trimmed }, signal); ledger.audit("step_limit_trimmed_reply", { job: job.id, ticket: job.ticket }); }
           catch (error) { ledger.audit("step_limit_trimmed_reply_failed", { job: job.id, ticket: job.ticket, error: String(error.message).slice(0, 200) }); }

@@ -1170,6 +1170,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
     }
     if (!card) { try { require("./ticketlearn").notePost(d, ticketNo, message, now()); } catch {} }
+    // A reply delivered on this ticket supersedes any over-long draft stored by any of its tasks.
+    if (!card) for (const j of Object.values(d.jobs)) if (ticketOf(j) === ticketNo && j.lastTooLongDraft) { delete j.lastTooLongDraft; delete j.lastTooLongDraftAt; }
     if (!card) {
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
@@ -1429,7 +1431,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // A reply that can never be delivered (no channel) owes nothing: arming the refused-reply
       // hold there left finish refused too, so an open channel-less ticket could only end
       // blocked (KBX5 channelless--open, 2026-11-03).
-      if (e?.code === "TICKET_POST_TOO_LONG" && e.draft && job.kind === "ticket") { job.lastTooLongDraft = String(e.draft).slice(0, 4000); try { ledger.save(); } catch {} }
+      if (e?.code === "TICKET_POST_TOO_LONG" && e.draft && job.kind === "ticket") { job.lastTooLongDraft = String(e.draft).slice(0, 4000); job.lastTooLongDraftAt = now(); try { ledger.save(); } catch {} }
       if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(e.code === "KILL_SWITCH")) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
@@ -3613,7 +3615,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // A holding line ("looking into it") is not an answer (Muse replay 2026-11-12: two tickets got only
         // "looking into it" and the task parked).
         const holdingOnly = last && (isStall(last.text) || /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
-        const owed = human > 0 && (!last || human > last.at || holdingOnly);
+        // A wait for the player's own reply has its own, stricter "nothing posted" refusal below; only a holding line is added here.
+        const owed = human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
         if (owed) {
           const all = (d.unansweredFinishes ||= {});
           let rec = all[tn];

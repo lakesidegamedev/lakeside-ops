@@ -80,12 +80,17 @@ function sentences(text) {
 // Keir 9: the longest leading part of an over-long draft that fits a ticket post, cut at a sentence. Used only
 // when a step-limited run would otherwise end with nothing posted (2026-11-12 replay: the length refusal used
 // the last step and the player got no answer).
+// A sentence that tells the player what to do or what happens next.
+const NEXT_STEP = /\b(?:please|next step|next,|you (?:can|could|should|need to|will need to|may)|i(?:'|\u2019)?ll|i will|we(?:'|\u2019)?ll|we will|let me know|reply (?:here|with)|send (?:me|us)|tell (?:me|us)|try (?:to|again)|come back)\b/i;
 function trimTicketPost(text) {
-  const out = [];
-  for (const s of sentences(String(text || "").trim())) {
+  const all = sentences(String(text || "").trim()), out = [];
+  for (const s of all) {
     if (out.length >= MAX_SENTENCES || [...out, s].join(" ").length > MAX_CHARS) break;
     out.push(s);
   }
+  // Audit 2026-11-12: a trimmed post must not drop the only sentence that says what happens next.
+  const dropped = all.slice(out.length);
+  if (dropped.some((s) => NEXT_STEP.test(s)) && !out.some((s) => NEXT_STEP.test(s))) return "";
   return out.join(" ");
 }
 function shapeTicketPost(text) {

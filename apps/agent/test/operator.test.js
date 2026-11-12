@@ -1054,6 +1054,8 @@ test("an activation runs on the subscription CLI with only Keir's tools and fini
 test("internal evidence wakes do not become unanswered player replies, including persisted polluted clocks", async () => {
   for (const internal of [{ role: "system", authorId: "handoff:auditor" }, { investigationResult: "child" }, { codingResult: "child" }]) {
     const f = fixture(), seen = [], at = 4000;
+    // The player has been answered (a real answer, after their last message); the wake is internal evidence only.
+    f.ledger.data.ticketPosts = { 1540: [{ at: 4500, jobId: "other", text: "Your report is with the developers, who are checking the sector figures." }] };
     const j = running(f, { kind: "ticket", role: "support", ticket: 1540, channelId: "777777777777777777",
       source: { at: new Date(1000).toISOString(), authorId: "888888888888888888" },
       inbox: [{ ...internal, at: new Date(at).toISOString(), content: "New internal evidence" }],
@@ -1070,6 +1072,7 @@ test("internal evidence wakes do not become unanswered player replies, including
 
 test("a real human reply still prevents sleeping after an internal wake", async () => {
   const f = fixture(), seen = [];
+  f.ledger.data.ticketPosts = { 1540: [{ at: 4500, jobId: "other", text: "Your report is with the developers, who are checking the sector figures." }] };
   const j = running(f, { kind: "ticket", role: "support", ticket: 1540, source: {}, lastPublishedAt: 2000,
     inbox: [{ authorId: "888888888888888888", at: new Date(4000).toISOString(), content: "Still broken" },
       { role: "system", at: new Date(4000).toISOString(), content: "Internal wake at same time" }] });
@@ -2516,6 +2519,7 @@ test("newer player input removes the old developer sibling wake delay", async ()
     source: { authorId: owner, at: new Date(1000).toISOString() }, deadline: 9999999999999 }).state = "waiting";
   const t = f.ledger.createJob("ticket:7002", { kind: "ticket", role: "support", ticket: 7002,
     observedPlayerAt: 4000, source: { content: "new question" }, deadline: 9999999999999 }); t.state = "running";
+  f.ledger.data.ticketPosts = { 7002: [{ at: 4500, jobId: "other", text: "Your question is with the developers, who are checking it." }] };
   await f.broker.tool(t, "finish", { state: "waiting", summary: "Waiting briefly for an independent check", wakeAfterMinutes: 1 });
   assert.ok(t.wakeAt < 5000 + 30 * 60000);
 });
@@ -2980,6 +2984,34 @@ test("Keir 9: a run that runs out of steps after a length refusal posts the repl
  await agent.run(j, new AbortController().signal).catch(() => {});
  const kinds = (f.ledger.data.audit || []).map((a) => a.kind + (a.error ? ": " + a.error : "")).filter((k) => k.startsWith("step_limit_trimmed"));
  assert.deepEqual(kinds, ["step_limit_trimmed_reply"]);
+ assert.equal(j.lastTooLongDraft, undefined);
+});
+
+test("Keir 9 audit: a trimmed draft is not posted when newer reads happened after it, or when it would drop the only next step", async () => {
+ for (const scenario of ["newer-read", "drops-next-step"]) {
+  const f = fixture(), ch = "777777777777777777";
+  const j = running(f, { kind: "ticket", role: "support", ticket: 328, channelId: ch, replyChannel: ch, summary: "Answering.", source: { channelId: ch, channelName: "ticket-bug-fixture-328", content: "How do I file impeachment?" } });
+  f.ledger.data.disclosed = { 328: { at: 1, posted: true } }; j.lastCodeReadAt = 1;
+  const long = scenario === "newer-read"
+   ? "Filing needs a seat in the legislature. Your party chair can file through a seated party member. That member opens the filing page. They pick the officer. They confirm the articles. Then the House votes."
+   : "Filing needs a seat in the legislature. Your party chair holds that seat for your party. The filing page lists every officer. Each officer has a fixed term. Terms are counted in turns. The articles must be confirmed. Please send me the officer you want and I will check it.";
+  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+   config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash" },
+   invokeImpl: async () => { await f.broker.tool(j, "channel_reply", { message: long }).catch(() => {}); if (scenario === "newer-read") j.lastGameReadAt = Date.now() + 1e9; return { subtype: "success", result: "The maximum step budget for this activation has been reached, so tools are disabled.", num_turns: 2 }; } });
+  await agent.run(j, new AbortController().signal).catch(() => {});
+  const kinds = (f.ledger.data.audit || []).map((a) => a.kind).filter((k) => k.startsWith("step_limit_trimmed"));
+  assert.ok(!kinds.includes("step_limit_trimmed_reply"), scenario + ": nothing posted from the stale or lossy draft");
+  assert.equal(j.lastTooLongDraft, undefined);
+ }
+});
+
+test("Keir 9 audit: delivering any reply on the ticket clears a stored over-long draft", async () => {
+ const f = fixture(), ch = "777777777777777777";
+ const j = running(f, { kind: "ticket", role: "support", ticket: 329, channelId: ch, replyChannel: ch, summary: "Answering.", source: { channelId: ch, channelName: "ticket-bug-fixture-329", content: "How do I file?" } });
+ f.ledger.data.disclosed = { 329: { at: 1, posted: true } }; j.lastCodeReadAt = 1;
+ await f.broker.tool(j, "channel_reply", { message: "Filing needs a seat in the legislature. Your party chair can file through a seated party member. That member opens the filing page. They pick the officer. They confirm the articles. Then the House votes." }).catch(() => {});
+ assert.ok(j.lastTooLongDraft);
+ await f.broker.tool(j, "channel_reply", { message: "You need a legislature seat to file." });
  assert.equal(j.lastTooLongDraft, undefined);
 });
 
