@@ -113,3 +113,19 @@ test("Keir 9: a reply with a dash is posted with the dash replaced, not refused"
   const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message).join(" ");
   assert.match(sent, /no lean effect, governor orders/);
 });
+
+test("Keir 9: a ticket cannot park with the player unanswered; refused once, then allowed", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000; f.job.lastGameReadAt = f.now() - 1000;
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found the cause; will post next." }), /no answer since they last wrote/);
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Still checking." });
+  assert.match(JSON.stringify(r), /waiting/);
+});
+
+test("Keir 9: after the player is answered, the ticket may park waiting", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000; f.job.lastCodeReadAt = 1;
+  await f.broker.tool(f.job, "channel_reply", { message: "Your sold line is the right figure: 139 of 195 sold." });
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." });
+  assert.match(JSON.stringify(r), /waiting/);
+});

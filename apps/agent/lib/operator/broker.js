@@ -368,7 +368,7 @@ const CLAIMS = [
   // Keir 8.2 (2026-11-05, ticket 1763): "live and working", "should be gone" and "now show"
   // were posted six times from the release alone; each was disproved by the player's next screenshot.
   // A claim that the player's problem is gone needs a game read after a turn ran on the fix.
-  { kind: "verified", hedged: true, re: /\b(?:was|were|has been|have been|is|are|got|now) (?:now )?(?:corrected|patched|resolved|repaired|sorted)\b|\b(?:in|with|by) the (?:current|latest|newest|last|recent) (?:update|patch|release|version)\b|\b(?:page|panel|tile|screen|display|figure|number|value|label)s? (?:has|have) been (?:changed|updated|corrected|adjusted|reworked)\b|\bnow match(?:es)?\b|\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
+  { kind: "verified", hedged: true, re: /\b(?:was|were|has been|have been|is|are|got|now) (?:now )?(?:corrected|patched|resolved|repaired)\b|\b(?:in|with|by) the (?:current|latest|newest|last|recent) (?:update|patch|release|version)\b|\b(?:page|panel|tile|screen|display|figure|number|value|label)s? (?:has|have) been (?:changed|updated|corrected|adjusted|reworked)\b|\bnow match(?:es)?\b|\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
   { kind: "development", re: /\bin testing on dev\b|\bon (?:the )?dev(?:elopment)? server\b|\bon dev\b/i },
   // Keir 4.0: "being built" needs a coding attempt that can write (ticket 1514
   // said it for five hours while every pass was read-only); "written" or "in
@@ -3576,6 +3576,18 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
       if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
+      // Keir 9 (replay 2026-11-12): models found the answer and then finished waiting with nothing posted, so the
+      // player was left with no answer. A ticket whose reporter has had no reply since they last wrote cannot park,
+      // unless it waits on a developer or the owner. Refused once per ticket, so it never loops.
+      if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !["developer_reply", "owner_reply", "owner_decision"].includes(input.waitFor)
+          && !job.unansweredFinishRefused && (job.lastGameReadAt || job.lastCodeReadAt) && process.env.KEIR_UNANSWERED_GUARD !== "0") {
+        const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1);
+        if (!last || humanAt(tn) > last.at) {
+          job.unansweredFinishRefused = true; ledger.save();
+          ledger.audit("unanswered_finish_refused", { job: job.id, ticket: tn });
+          throw new Error("Not finished: the player has had no answer since they last wrote. Post what you found to them now (channel_reply, at most five short sentences, only what you read), or tell them plainly what you are still checking, then finish.");
+        }
+      }
       // An unrelated later post must not erase work Keir still owes. The
       // latest-message guard alone misses partial answers and saved promises.
       if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent) {
