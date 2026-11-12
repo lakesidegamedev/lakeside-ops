@@ -115,11 +115,14 @@ async function invokeCursor({ spawnImpl, stateDir, model = "auto", brief, prompt
 async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, maxTurns, timeoutMs, signal }) {
   const { dir, cleanup } = scratch(stateDir, "muse-runs");
   try {
-    const ws = path.join(dir, "ws"), tmp = path.join(dir, "tmp");
-    fs.mkdirSync(ws, { recursive: true }); fs.mkdirSync(tmp, { recursive: true });
+    // Muse Code 1.4 refuses a TMPDIR inside the workspace's tree, so the temp root lives under the system temp dir.
+    const ws = path.join(dir, "ws"), tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "keir-muse-tmp-"));
+    fs.mkdirSync(ws, { recursive: true });
     const promptFile = path.join(dir, "prompt.md");
     fs.writeFileSync(promptFile, `${brief}\n\n## This activation (JSON)\n\n${prompt}\n`, { mode: 0o600 });
-    const args = ["exec", "--workspace", ws, "--model", model, "--effort", effort, "--no-session-log", "--no-foreign-personal-context",
+    // Muse Code 1.4: MCP servers load only in a trusted workspace (the workspace is an empty scratch dir), and
+    // local session logging is required, so --no-session-log is gone (2026-11-12: Keir's tools never reached Muse).
+    const args = ["exec", "--trust-workspace", "--workspace", ws, "--model", model, "--effort", effort, "--no-foreign-personal-context",
       "--disable-shell", "--disable-write", "--disable-web-tools", "--disable-reminders", "--approval-mode", "never",
       "--max-model-steps", String(maxTurns), "-c", `mcp_servers.keir=${JSON.stringify({ url, transport: "streamable_http" })}`, "--prompt-file", promptFile];
     const r = await spawnBounded(spawnImpl, "muse", args, { cwd: ws, env: { HOME: host.home(), PATH, LANG: "C.UTF-8", TMPDIR: tmp } }, timeoutMs, signal);
@@ -128,7 +131,7 @@ async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, u
     if (/max(imum)?[ -]model[ -]steps|step (cap|limit)|did not reach a terminal state within \d+ step/i.test(r.err)) return { subtype: "error_max_turns", is_error: true, result: r.out.trim() };
     if (r.code !== 0) failed(r.code, r.err, "muse");
     return { result: r.out.trim(), num_turns: null, is_error: false, subtype: "success", usage: {} };
-  } finally { cleanup(); }
+  } finally { cleanup(); try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} }
 }
 
 /** OpenAI Codex (ChatGPT subscription login). Isolated CODEX_HOME: the user

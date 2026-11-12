@@ -220,8 +220,9 @@ const fs=require('fs'),path=require('path');const config=fs.readFileSync(path.jo
  const at=Date.now(),r=await invokeCli({...request,codexBin:executable,url:session.url,completionUrl:session.completionUrl,signal:new AbortController().signal});assert.ok(Date.now()-at<4000);assert.equal(r.result,'verified patch');assert.equal(r.provenance.completion,'broker-receipt');assert.deepEqual(r.usage,{});assert.equal(r.provenance.accounting,'unavailable-before-turn-end');
 });
 
-test("Muse billing restriction rejects legacy pins and direct Meta before any worker starts", async t => {
-  for (const route of [{ runner: "muse", model: "muse-spark-1.3" }, { runner: "opencode", model: "meta/muse-spark-1.3" }, { runner: "muse", model: "muse-spark-1.3-contributor", viaRust: true }]) {
+test("Muse billing restriction rejects direct Meta before any worker starts; the Muse Code subscription CLI is allowed (owner 2026-11-12)", async t => {
+  assert.doesNotThrow(() => require("../../cli/provider-routes").assertAllowedBilling({ runner: "muse", model: "muse-spark-1.3-contributor" }));
+  for (const route of [{ runner: "opencode", model: "meta/muse-spark-1.3" }, { runner: "opencode", model: "meta/muse-spark-1.3-contributor" }]) {
     const request = { ...fixture(t), ...route };
     await assert.rejects(executeActivation(request, { spawnImpl() { assert.fail("paid worker launched"); }, openCodeImpl() { assert.fail("paid worker launched"); } }), /billing is disabled/);
     assert.equal(fs.existsSync(path.join(request.stateDir, "cli-attempts")), false);

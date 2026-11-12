@@ -79,7 +79,9 @@ test("Antigravity receives large briefs over stdin rather than a host path its s
 test("muse runs headless with shell, writes and web off and Keir's MCP server pinned", async () => {
   let args;
   const r = await invokeMuse({ ...base(), spawnImpl: fakeSpawn("final answer", (cmd, a) => { args = a; }) });
-  for (const flag of ["--disable-shell", "--disable-write", "--disable-web-tools", "--no-session-log"]) assert.ok(args.includes(flag), flag);
+  for (const flag of ["--disable-shell", "--disable-write", "--disable-web-tools", "--trust-workspace"]) assert.ok(args.includes(flag), flag);
+  // Muse Code 1.4 requires session logging and loads MCP servers only in a trusted workspace (2026-11-12).
+  assert.ok(!args.includes("--no-session-log"));
   assert.ok(args.some((a) => a.startsWith("mcp_servers.keir=") && a.includes("/mcp/abc")));
   assert.equal(args[args.indexOf("--max-model-steps") + 1], "6");
   assert.deepEqual([r.result, r.is_error], ["final answer", false]);

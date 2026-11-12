@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Muse works as a Keir model again on Muse Code 1.4: its scratch workspace is trusted so Keir's tools load, session logging stays on, and its temp folder sits outside the workspace. The Muse Code subscription CLI is an allowed route; Muse through the paid Meta API stays blocked.
+- A dash in a reply is replaced with a comma instead of refusing the reply.
 - Two post rules no longer contradict each other: an owner or developer speaking in a ticket, or an approved repair that ran, lets Keir reply without a new player message, and refusals that owe the player nothing never block finishing (the 8.4 lock-up).
 - The provider fallback also covers a forced provider: a usage limit or expired login on the forced route moves tasks to `KEIR_FALLBACK_PROVIDER` until the route recovers.
 - A run that runs out of steps right after a length refusal posts the leading five sentences of the refused reply instead of nothing.

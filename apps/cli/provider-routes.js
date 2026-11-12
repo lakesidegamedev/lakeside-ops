@@ -18,10 +18,12 @@ function providerRoute(id, model) {
   if (model.includes("/") && (!provider.prefix || !model.startsWith(`${provider.prefix}/`))) throw new Error("Model prefix does not match the selected provider and billing route");
   return { ...provider, model: provider.prefix && !model.includes("/") ? `${provider.prefix}/${model}` : model };
 }
-// Owner billing restriction: Muse may only use the explicitly selected Go route.
-// Old persisted pins must fail before a provider starts, never spend on Meta.
+// Owner billing restriction: Muse may only use the explicitly selected Go route or the Muse Code CLI on the
+// owner's subscription (owner 2026-11-12: "we have muse code directly"). Old persisted pins on any other route
+// must fail before a provider starts, never spend on the Meta API.
 function assertAllowedBilling({ runner, model }) {
-  if ((runner === "muse" || /muse|^meta\//i.test(String(model))) &&
+  if (runner === "muse") return;
+  if (/muse|^meta\//i.test(String(model)) &&
       !(runner === "opencode" && /^opencode-go\/muse-[a-z0-9.-]+$/.test(model))) {
     throw new Error("Muse direct API billing is disabled. Select an available opencode-go/muse model explicitly; no paid fallback is allowed.");
   }
