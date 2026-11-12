@@ -1,8 +1,9 @@
 "use strict";
-// Keir 9: what Keir keeps from a closed ticket. The code, not the model, writes at most one verified
-// mechanic (and one lesson when an answer was retracted) from the ticket's own evidence: the game code
-// files read during the ticket, the rule in the last answer the player was given, and the ticket number.
-// Nothing is kept without a code read. State per ticket lives in ledger.data.ticketLearn.
+// Keir 9: what Keir keeps from a closed ticket. The code, not the model, writes at most one ticket resolution
+// (and one lesson when an answer was retracted) from the ticket's own evidence: the game code files read
+// during the ticket, the rule in the last answer the player was given, and the ticket number. Nothing here
+// checked the answer against the file, so a resolution is stored unverified (kind "resolution", verified
+// false) and recall labels it so (audit 2026-11-12). Nothing is kept without a code read. State per ticket lives in ledger.data.ticketLearn.
 const { ruleClaim } = require("./rulelookup");
 const { isCorrection } = require("./playercopy");
 
@@ -71,7 +72,7 @@ function deciding(reads, answer) {
 }
 
 /**
- * Keep what a resolved ticket taught. Returns { mechanic, lesson } (note ids) or { kept: false, reason }.
+ * Keep what a resolved ticket taught. Returns { resolution, lesson } (note ids) or { kept: false, reason }.
  * `notebook` needs remember() and all(); a failure to write never breaks the close.
  */
 function keep({ d, notebook, ticket, audit }) {
@@ -90,27 +91,31 @@ function keep({ d, notebook, ticket, audit }) {
   const paths = deciding(e.reads, answer + " " + (wrong?.text || ""));
   if (!paths.length) return why("no deciding file");
   const out = { kept: false };
-  const existing = notebook.all().find((n) => n.kind === "mechanic" && (n.path === paths[0] || (n.sources || []).some((s) => s.type === "code" && s.path === paths[0])));
+  const existing = notebook.all().find((n) => (n.kind === "mechanic" || n.kind === "resolution") && (n.path === paths[0] || (n.sources || []).some((s) => s.type === "code" && s.path === paths[0])));
   try {
-    if (existing && existing.by !== BY) out.mechanicSkipped = "a note on this file already exists";
+    if (existing && existing.by !== BY) out.resolutionSkipped = "a note on this file already exists";
     else {
-      const note = notebook.remember({ kind: "mechanic", by: BY, ticket: Number(ticket), paths,
-        text: `Rule given to a player in ticket ${ticket} and read from ${paths.join(", ")}: ${answer}`,
+      const note = notebook.remember({ kind: "resolution", verified: false, by: BY, ticket: Number(ticket), paths,
+        text: `Answer given to a player in ticket ${ticket}, not checked against the code (the ticket read ${paths.join(", ")}): ${answer}`,
         ...(existing ? { supersedes: [existing.id], reason: `Ticket ${ticket} read the same file and states the rule again` } : {}) });
-      out.mechanic = note.id; out.kept = true;
+      out.resolution = note.id; out.kept = true;
     }
-  } catch (err) { out.mechanicError = clip(err.message, 160); }
+  } catch (err) { out.resolutionError = clip(err.message, 160); }
   if (wrong) {
     try {
       const old = notebook.all().find((n) => n.kind === "lesson" && n.by === BY && (n.path === paths[0]));
-      const note = notebook.remember({ kind: "lesson", by: BY, ticket: Number(ticket), paths: [paths[0]],
-        text: `Ticket ${ticket}: do not repeat this mistake. A wrong claim was given and later retracted. Wrong: "${clip(wrong.text, CLAIM_CHARS)}" Right: "${clip(stripCorrection(final.correction ? final.text : e.posts[lastCorrection].text), CLAIM_CHARS)}" The file that settled it: ${paths[0]}.`,
+      const right = clip(stripCorrection(final.correction ? final.text : e.posts[lastCorrection].text), CLAIM_CHARS);
+      // The right claim came from a correction. It is only presented as settled by the file when the claim itself
+      // names what that file is about; otherwise it is labelled like any other unchecked answer.
+      const cited = [...wordsOf(paths[0])].some((w) => wordsOf(right).has(w));
+      const note = notebook.remember({ kind: "lesson", by: BY, ticket: Number(ticket), paths: [paths[0]], ...(cited ? {} : { verified: false }),
+        text: `Ticket ${ticket}: do not repeat this mistake. A wrong claim was given and later retracted. Wrong: "${clip(wrong.text, CLAIM_CHARS)}" Right: "${right}" ${cited ? `The file that settled it: ${paths[0]}.` : `Not verified against the code; the ticket read ${paths[0]}.`}`,
         ...(old ? { supersedes: [old.id], reason: `Ticket ${ticket} retracted a claim about the same file` } : {}) });
       out.lesson = note.id; out.kept = true;
     } catch (err) { out.lessonError = clip(err.message, 160); }
   }
   if (out.kept) { e.keptFor = final.at; e.keptAt = Date.now(); }
-  try { audit?.(out.kept ? "ticket_learned" : "ticket_learn_skipped", { ticket, mechanic: out.mechanic || null, lesson: out.lesson || null, paths, error: out.mechanicError || out.lessonError || null }); } catch {}
+  try { audit?.(out.kept ? "ticket_learned" : "ticket_learn_skipped", { ticket, resolution: out.resolution || null, lesson: out.lesson || null, paths, error: out.resolutionError || out.lessonError || null }); } catch {}
   return out;
 }
 

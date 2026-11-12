@@ -25,10 +25,10 @@ test("a clean close with a code read keeps one mechanic tied to the file", () =>
   learn.notePost(d, 5001, RULE, 2000);
   const out = learn.keep({ d, notebook: nb, ticket: 5001 });
   assert.equal(out.kept, true);
-  assert.ok(out.mechanic && !out.lesson);
+  assert.ok(out.resolution && !out.lesson);
   const notes = nb.all();
   assert.equal(notes.length, 1);
-  assert.equal(notes[0].kind, "mechanic");
+  assert.equal(notes[0].kind, "resolution");
   assert.equal(notes[0].path, FILE);
   assert.match(notes[0].text, /inputs panel only lists inputs/);
   assert.ok(notes[0].sources.some((s) => s.type === "ticket" && s.number === 5001));
@@ -62,12 +62,12 @@ test("a retraction keeps a lesson (wrong, right, file) and the corrected rule", 
   learn.notePost(d, 5001, "The supply charge is always zero because plants never pay for their own deliveries.", 2000);
   learn.notePost(d, 5001, "Correction: your own plants are charged the supply price on their own deliveries, it just shows on the margin line.", 3000);
   const out = learn.keep({ d, notebook: nb, ticket: 5001 });
-  assert.ok(out.lesson && out.mechanic);
+  assert.ok(out.lesson && out.resolution);
   const lesson = nb.all().find((n) => n.kind === "lesson");
   assert.match(lesson.text, /Wrong: "The supply charge is always zero/);
   assert.match(lesson.text, /Right: "your own plants are charged/);
   assert.ok(lesson.text.includes(FILE));
-  const mech = nb.all().find((n) => n.kind === "mechanic");
+  const mech = nb.all().find((n) => n.kind === "resolution");
   assert.doesNotMatch(mech.text, /always zero/);
   assert.match(mech.text, /your own plants are charged/);
 });
@@ -77,7 +77,7 @@ test("a correction without an earlier rule answer keeps the mechanic but no less
   read(d, [FILE]);
   learn.notePost(d, 5001, "Correction: the charge is per delivered unit, not per turn.", 3000);
   const out = learn.keep({ d, notebook: nb, ticket: 5001 });
-  assert.ok(out.mechanic && !out.lesson);
+  assert.ok(out.resolution && !out.lesson);
 });
 
 test("de-duplicates on the same file: the newer ticket updates the note", () => {
@@ -92,10 +92,10 @@ test("de-duplicates on the same file: the newer ticket updates the note", () => 
   learn.noteRead(d2, { id: "j2", ticket: 5002, role: "support" }, "read_tool", { server: "ops-knowledge", tool: "code_read", args: { path: FILE } }, { path: FILE, files: [FILE] }, 1);
   learn.notePost(d2, 5002, "The inputs panel shows no missing input because supply is charged on every delivery, including your own plants.", 5000);
   const second = learn.keep({ d: d2, notebook: nb, ticket: 5002 });
-  assert.ok(second.mechanic && second.mechanic !== first.mechanic, JSON.stringify(second));
-  assert.equal(nb.all().filter((n) => n.kind === "mechanic").length, 1);
-  assert.equal(nb.all()[0].id, second.mechanic);
-  assert.equal(nb.archive().find((n) => n.id === first.mechanic).supersededBy, second.mechanic);
+  assert.ok(second.resolution && second.resolution !== first.resolution, JSON.stringify(second));
+  assert.equal(nb.all().filter((n) => n.kind === "resolution").length, 1);
+  assert.equal(nb.all()[0].id, second.resolution);
+  assert.equal(nb.archive().find((n) => n.id === first.resolution).supersededBy, second.resolution);
 });
 
 test("an existing hand-written note on the file is not overwritten", () => {
@@ -126,7 +126,7 @@ test("recalled into the next ticket's context by its question", () => {
   learn.keep({ d, notebook: nb, ticket: 5001 });
   const hits = nb.recall("My plant is idle and the inputs panel does not name any missing input, why?", { ticket: 5009, k: 6 });
   assert.equal(hits.length, 1);
-  assert.equal(hits[0].kind, "mechanic");
+  assert.equal(hits[0].kind, "resolution");
   assert.match(hits[0].text, /inputs panel only lists inputs/);
   assert.deepEqual(nb.recall("what is the weather", { ticket: 5009 }), []);
 });
@@ -150,4 +150,38 @@ test("broker wiring: reads and posts are noted, and a resolve keeps the mechanic
   assert.equal(ledger.data.ticketLearn["5003"].posts.length, 1);
   const out = learn.keep({ d: ledger.data, notebook: nb, ticket: 5003 });
   assert.equal(out.kept, true);
+});
+
+test("audit: the kept answer is an unverified resolution, and recall labels it as such", () => {
+  const { nb } = notebook(), d = {};
+  read(d, [FILE]);
+  learn.notePost(d, 5001, RULE, 2000);
+  learn.keep({ d, notebook: nb, ticket: 5001 });
+  const note = nb.all()[0];
+  assert.equal(note.kind, "resolution");
+  assert.equal(note.verified, false);
+  assert.equal(nb.all().filter((n) => n.kind === "mechanic").length, 0, "never an authoritative mechanic");
+  const hit = nb.recall("My plant is idle and the inputs panel does not name any missing input, why?", { ticket: 5009, k: 6 })[0];
+  assert.equal(hit.verified, false);
+  assert.match(hit.label, /an earlier answer on ticket 5001, not verified; check it against the code before relying on it/);
+  assert.match(hit.text, /^\(an earlier answer on ticket 5001, not verified/);
+});
+
+test("audit: a retraction lesson's right claim is labelled unless it names what the cited file is about", () => {
+  const unlabelled = notebook(), d1 = {};
+  read(d1, [FILE]);
+  learn.notePost(d1, 5001, "The supply charge is always zero because plants never pay for their own deliveries.", 2000);
+  learn.notePost(d1, 5001, "Correction: your own plants are charged the supply price on their own deliveries, it just shows on the margin line.", 3000);
+  learn.keep({ d: d1, notebook: unlabelled.nb, ticket: 5001 });
+  const settled = unlabelled.nb.all().find((n) => n.kind === "lesson");
+  assert.equal(settled.verified, undefined);
+  const labelled = notebook(), d2 = {};
+  read(d2, [FILE]);
+  learn.notePost(d2, 5001, "The charge is always zero because plants never pay for their own deliveries.", 2000);
+  learn.notePost(d2, 5001, "Correction: the figure is booked at the end of each period, in your ledger lines.", 3000);
+  learn.keep({ d: d2, notebook: labelled.nb, ticket: 5001 });
+  const lesson = labelled.nb.all().find((n) => n.kind === "lesson");
+  assert.equal(lesson.verified, false);
+  assert.match(lesson.text, /Not verified against the code/);
+  assert.match(labelled.nb.recall("charge zero plants own deliveries ledger lines", { ticket: 5009 })[0].label, /not verified/);
 });
