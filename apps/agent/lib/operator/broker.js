@@ -3582,7 +3582,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !["developer_reply", "owner_reply", "owner_decision"].includes(input.waitFor)
           && !job.unansweredFinishRefused && (job.lastGameReadAt || job.lastCodeReadAt) && process.env.KEIR_UNANSWERED_GUARD !== "0") {
         const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1);
-        if (!last || humanAt(tn) > last.at) {
+        // A holding line ("looking into it") is not an answer once the task has read what it needed (Muse replay
+        // 2026-11-12: two tickets got only "looking into it" and the task parked).
+        const holdingOnly = last && (isStall(last.text) || /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
+        if (!last || humanAt(tn) > last.at || holdingOnly) {
           job.unansweredFinishRefused = true; ledger.save();
           ledger.audit("unanswered_finish_refused", { job: job.id, ticket: tn });
           throw new Error("Not finished: the player has had no answer since they last wrote. Post what you found to them now (channel_reply, at most five short sentences, only what you read), or tell them plainly what you are still checking, then finish.");

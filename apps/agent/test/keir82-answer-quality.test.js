@@ -129,3 +129,11 @@ test("Keir 9: after the player is answered, the ticket may park waiting", async 
   const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." });
   assert.match(JSON.stringify(r), /waiting/);
 });
+
+test("Keir 9: a holding line is not an answer once the ticket has read data", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  await f.broker.tool(f.job, "channel_reply", { message: "I'm looking into your sector history now." }).catch(() => {});
+  f.job.lastGameReadAt = f.now() + 1; f.advance(1);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found it; will post." }), /no answer since they last wrote/);
+});
