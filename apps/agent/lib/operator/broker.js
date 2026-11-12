@@ -13,11 +13,12 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
 const prMention = require("./prmention");
+const ruleLookup = require("./rulelookup");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const crypto = require("node:crypto");
@@ -840,6 +841,18 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
       newReadSince: lastPost ? sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lastPost.at || (j.lastCodeReadAt || 0) > lastPost.at) : false });
     if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); throw new Error(spam); }
+    // Keir 9: a rule or a cause stated before anything in this ticket read the game code is refused once per
+    // ticket, so the answer rests on the code and not on the data on screen. Never again after that (no loops).
+    // The fast lane posts an Ask answer that is already grounded in the code index, so it is exempt.
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated) && process.env.KEIR_RULE_LOOKUP !== "0" && !d.ruleLookupRefused?.[ticketNo]
+        && !sameTicketJobs.some((j) => j.lastCodeReadAt || j.codeLookups)) {
+      const claim = ruleLookup.ruleClaim(message);
+      if (claim) {
+        (d.ruleLookupRefused ||= {})[ticketNo] = now(); ledger.save();
+        ledger.audit("rule_lookup_required", { job: job.id, ticket: ticketNo, claim: claim.kind, pattern: claim.pattern });
+        throw new Error(ruleLookup.REFUSAL);
+      }
+    }
     if (claims.some((c) => (c.kind === "escalated" || c.kind === "investigating") && !c.future))
       ledger.audit("handoff_claim_backed", { job: job.id, ticket: ticketNo, refs: replyPolicy.handoffRefs(sameTicketJobs, d.jobs) });
     // A status card is edited in place and a human question deserves an answer,

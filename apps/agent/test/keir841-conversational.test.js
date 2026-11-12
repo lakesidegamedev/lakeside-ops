@@ -85,6 +85,7 @@ const updates = (f) => f.calls.filter((c) => c[1] === "support_public_update");
 
 test("a long reply goes out as several messages in order, a gap apart, and counts as one update", async () => {
   const f = setup();
+  f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
   const reply = "Your Indiana freight sector sells to the open market before your own manufacturing sees it. The sale order is by price, not by owner. That is why only five percent reaches your own company.\n\nNothing is missing from your account. A same-owner priority would be a rule change, so I am raising it with the developers.";
   const res = await f.broker.tool(f.job, "channel_reply", { message: reply });
   assert.equal(res.published, true);

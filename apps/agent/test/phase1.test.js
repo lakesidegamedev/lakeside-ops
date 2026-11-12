@@ -212,6 +212,7 @@ test("ticket posts are short, in paragraphs, one per ten minutes, and correction
 
 test("a progress card does not hold back the answer it announces, and a mechanics question gets no fix card", async () => {
   const f = fixture();
+  f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
   // A card recorded a minute ago, then the long answer: it goes out.
   (f.ledger.data.ticketPosts ||= {})[1522] = [{ at: Date.now(), jobId: f.job.id, kind: "status_card", text: "Checked the records; posting the explanation." }];
   f.tick(60000);
@@ -314,6 +315,7 @@ test("Keir does not ask the player which bank when the ticket already names thei
 test("Keir introduces itself once per player, then answers returning players without an opener, and never introduces itself to staff", async () => {
   const run = async ({ uid, prior, introduced = false, priorDisclosed = false, fail = false, answered = false, keirOpened = false }) => {
     const f = fixture(), posted = [];
+    f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
     if (keirOpened) f.ledger.createJob("intake:chat", { kind: "command", role: "support", source: {} }).openedTickets = { m1: { number: 1522, channelId: "c" } };
     for (const j of Object.values(f.ledger.data.jobs)) { delete j.lastPublishedAt; delete j.progressMessageId; delete j.channelReplyQueued; }
     delete f.ledger.data.statusCards; delete f.ledger.data.disclosed;

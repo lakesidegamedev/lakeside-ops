@@ -72,6 +72,7 @@ test("a factual question is not handed to Ask unread (ticket 1765)", () => {
 
 test("a developer's ping cannot restate the answer another task posted seconds ago (ticket 1773)", async () => {
   const f = setup();
+  f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
   await f.broker.tool(f.job, "channel_reply", { message: "You're right that the two figures disagree. The Selling tile and the \"72% sold\" line are calculated from different records, and only the second matches the offered, sold and unsold counts beside it." });
   const dev = f.ledger.createJob("dev", { role: "support", kind: "command", ticket: 123, actorId: "222222222222222222", channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123", authorId: "222222222222222222", at: new Date(f.now()).toISOString(), content: "Keir the selling tile shows 100% but only 72% sold" }, deadline: 9e15 });
   dev.state = "running"; dev.observedPlayerAt = f.now(); f.advance(0.25);

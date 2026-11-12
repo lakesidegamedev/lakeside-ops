@@ -45,6 +45,7 @@ test("stall posts: the post history keeps the whole run, and a second needs the 
 
 test("update spam: no milestone, no new read, no new player message means no post (tickets with 30 to 57 updates)", async () => {
   const f = setup();
+  f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
   await f.broker.tool(f.job, "channel_reply", { message: "Your revenue fell sharply between those two turns because your plants sold far less." });
   f.advance(15);
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "I am continuing to look at the sales drop on your plants." }), /real milestone|status card/);
