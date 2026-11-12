@@ -551,11 +551,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   function publicText(value) {
     if (typeof value !== "string" || !value.trim() || value.length > 5000) throw new Error("invalid player text");
-    const clean = redactSecrets(value).replace(/[\u2013\u2014]/g, ",");
+    const clean = redactSecrets(value).replace(/\s*[\u2013\u2014]\s*/g, ", ");
     // Keir 8.4 (owner, 2026-11-06): tool calls and the broker's own instructions must never reach a person.
     const leak = require("./toolmarkup").outboundLeak(clean);
     if (leak) { try { ledger.audit("outbound_leak_refused", { kind: leak.kind, match: leak.match }); } catch {} throw new Error(`Not posted: this contains ${leak.kind === "broker_echo" ? "Keir's own tool or refusal text" : "tool-call text"} ("${leak.match}"). Call tools through the tool interface and write only the plain answer for the reader.`); }
-    if (clean !== value || /<@|@everyone|@here/.test(clean)) throw new Error("player text contains private details, forbidden punctuation or mentions");
+    // Keir 9: a dash is replaced, not refused (replay 2026-11-12: a right answer was refused for a dash and the
+    // player got nothing). Redacted private details and mentions are still refused.
+    if (redactSecrets(value) !== value || /<@|@everyone|@here/.test(clean)) throw new Error("player text contains private details or mentions");
     return clean;
   }
   // Keir's own GitHub account (keir-bot, KEIR_GITHUB_TOKEN): what Keir authors on GitHub (its pushed branch, PR,

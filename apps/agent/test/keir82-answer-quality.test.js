@@ -104,3 +104,11 @@ test("bookkeeping and third-person talk are refused in the player's channel (tic
   assert.equal(refusal("Understood. The unban and note are yours, and the player has already been told the account is unbanned.").kind, "bookkeeping");
   assert.equal(refusal("I have nothing further to do on this one.").kind, "bookkeeping");
 });
+
+test("Keir 9: a reply with a dash is posted with the dash replaced, not refused", async () => {
+  const f = setup();
+  f.job.lastCodeReadAt = 1;
+  await f.broker.tool(f.job, "channel_reply", { message: "Newer regional bills carry no lean effect \u2014 governor orders and older laws do." });
+  const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message).join(" ");
+  assert.match(sent, /no lean effect, governor orders/);
+});
