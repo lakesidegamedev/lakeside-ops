@@ -1146,6 +1146,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
     }
+    if (!card) { try { require("./ticketlearn").notePost(d, ticketNo, message, now()); } catch {} }
     if (!card) {
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
@@ -1426,6 +1427,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       job.evidenceText = (String(job.evidenceText || "") + `\n[${name}] ` + text.slice(0, 6000)).slice(-20000);
     }
     require("./investigation-memory").record(ledger, job, name, input, result, now());
+    try { require("./ticketlearn").noteRead(d, job, name, input, result, now()); } catch {}
     return result;
   }
   async function toolInner(job, name, input, signal) {
@@ -3256,6 +3258,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             conversation: { channelId: job.channelId } }, now());
         }
         // Keir 2.0: every resolution becomes a recallable note.
+        // Keir 9: and at most one verified mechanic (plus a lesson after a retraction) from the code the ticket read.
+        try { require("./ticketlearn").keep({ d, notebook, ticket: job.ticket, audit: (k, v) => ledger.audit(k, v) }); } catch {}
         try { notebook?.remember({ kind: "resolution", text: `Ticket ${job.ticket}: ${String(args.message || job.summary || "").slice(0, 600)}`, ticket: job.ticket, by: job.id }); } catch {}
         try { const r = await reporterOf(job, signal); if (r?.id) notebook?.remember({ kind: "player", player: r.id, text: `${r.name || "Player"} raised ticket ${job.ticket}${r.title ? ` ("${String(r.title).slice(0, 80)}")` : ""}; resolved: ${String(args.message || job.summary || "").slice(0, 400)}`, ticket: job.ticket, by: job.id }); } catch {}
       }
