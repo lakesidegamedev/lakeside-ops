@@ -29,6 +29,7 @@ test("a release alone cannot tell the player the problem is fixed (ticket 1763)"
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The fix is live and working." }), /no receipt|figures after that turn/);
   // Keir 9 (replay 2026-11-12): a page change claimed without a receipt is the same claim.
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The page has been changed so the tile now matches sold against made units." }), /no receipt|figures after that turn/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That block was corrected in the current update, so the option is there for you now." }), /no receipt|figures after that turn/);
   // A turn on the fix, then a read of their figures: now it may be said.
   f.job.turnChecks = [f.now()]; f.advance(1); f.job.lastGameReadAt = f.now();
   await f.broker.tool(f.job, "channel_reply", { message: "Your chemicals page now shows the internal supply income." });
