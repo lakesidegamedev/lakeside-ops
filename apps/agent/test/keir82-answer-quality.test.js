@@ -13,13 +13,14 @@ function setup() {
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
-  const mcp = { servers: () => ["support"], list: async () => [], call: async (...a) => { calls.push(a); return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }; } };
+  const state = { fail: false };
+  const mcp = { servers: () => ["support"], list: async () => [], call: async (...a) => { calls.push(a); if (a[1] === "kanban_add") { if (state.fail) throw new Error("kanban down"); return { id: "card-1" }; } return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }; } };
   let clock = 10 * 3600000;
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" }, deadline: 9e15 });
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id;
   const advance = (min) => { clock += min * 60000; };
-  return { ledger, broker, job, calls, advance, now: () => clock };
+  return { ledger, broker, job, calls, advance, now: () => clock, get mcpFail() { return state.fail; }, set mcpFail(v) { state.fail = v; } };
 }
 
 test("a release alone cannot tell the player the problem is fixed (ticket 1763)", async () => {
@@ -114,12 +115,44 @@ test("Keir 9: a reply with a dash is posted with the dash replaced, not refused"
   assert.match(sent, /no lean effect, governor orders/);
 });
 
-test("Keir 9: a ticket cannot park with the player unanswered; refused once, then allowed", async () => {
+test("Keir 9: a ticket cannot park with the player unanswered; refused twice, then the code answers and escalates", async () => {
   const f = setup();
-  f.job.observedPlayerAt = f.now() - 60000; f.job.lastGameReadAt = f.now() - 1000;
+  f.job.observedPlayerAt = f.now() - 60000;
+  // No reads needed: the obligation is the ticket's, not the job's.
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found the cause; will post next." }), /no answer since they last wrote/);
+  // A wait on the developers does not excuse it, and a second job on the same ticket shares the count.
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still checking." }), /no answer since they last wrote/);
   const r = await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Still checking." });
   assert.match(JSON.stringify(r), /waiting/);
+  const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /haven't got a confirmed answer for you yet/);
+  assert.match(sent[0], /passed it to the developers/);
+  assert.ok(f.calls.some((c) => c[1] === "kanban_add"), "escalation filed");
+  assert.ok(f.ledger.data.audit?.some?.((a) => a.kind === "unanswered_limitation_posted") || JSON.stringify(f.ledger.data).includes("unanswered_limitation"), "receipt recorded");
+});
+
+test("Keir 9: the refusal count is per ticket, so a fresh job cannot reset it", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
+  const other = f.ledger.createJob("t2", { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" }, deadline: 9e15 });
+  other.state = "running"; other.observedPlayerAt = f.job.observedPlayerAt;
+  await f.broker.tool(other, "finish", { state: "waiting", summary: "x." });
+  assert.equal(f.calls.filter((c) => c[1] === "support_public_update").length, 1);
+});
+
+test("Keir 9: when the escalation cannot be filed the limitation does not claim the developers have it", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
+  f.mcpFail = true;
+  await f.broker.tool(f.job, "finish", { state: "done", summary: "x." });
+  const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message).join(" ");
+  assert.match(sent, /haven't got a confirmed answer/);
+  assert.doesNotMatch(sent, /developers/);
 });
 
 test("Keir 9: after the player is answered, the ticket may park waiting", async () => {

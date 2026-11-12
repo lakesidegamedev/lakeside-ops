@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket cannot park or finish while its reporter has had no real answer since they last wrote (a holding line does not count), whatever it waits on. The count is per ticket and survives new tasks: two refusals, then the code posts a plain "no confirmed answer yet" message, files the escalation, records a receipt and lets the task finish.
 - A code lookup counts toward the rule check only after it ran and returned something. After the first refusal, a rule or cause with no successful code read is posted only if the reply says plainly it is not confirmed, otherwise it is refused once more (never more than two refusals per ticket).
 - Ticket replies are now number-checked against everything the ticket has read, earlier runs included (refused at most twice per ticket, then let through and audited), and code appends a short "Checked:" line naming what the reply rests on in player terms (a sector page, a turn, the game's rules). The model never writes the source.
 - Muse works as a Keir model again on Muse Code 1.4: its scratch workspace is trusted so Keir's tools load, session logging stays on, and its temp folder sits outside the workspace. The Muse Code subscription CLI is an allowed route; Muse through the paid Meta API stays blocked.

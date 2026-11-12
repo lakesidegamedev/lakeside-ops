@@ -3603,19 +3603,46 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
       if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
-      // Keir 9 (replay 2026-11-12): models found the answer and then finished waiting with nothing posted, so the
-      // player was left with no answer. A ticket whose reporter has had no reply since they last wrote cannot park,
-      // unless it waits on a developer or the owner. Refused once per ticket, so it never loops.
-      if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !["developer_reply", "owner_reply", "owner_decision"].includes(input.waitFor)
-          && !job.unansweredFinishRefused && (job.lastGameReadAt || job.lastCodeReadAt) && process.env.KEIR_UNANSWERED_GUARD !== "0") {
-        const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1);
-        // A holding line ("looking into it") is not an answer once the task has read what it needed (Muse replay
-        // 2026-11-12: two tickets got only "looking into it" and the task parked).
+      // Keir 9 (replay 2026-11-12, audit finding 3): models found the answer and then finished waiting with nothing
+      // posted. The obligation is per ticket and persists across tasks: while the reporter has had no real answer since
+      // they last wrote (a holding line is not one), finishing done or waiting is refused twice. The third attempt
+      // posts a plain limitation and escalates, then lets the task finish. Waits on a developer or the owner count too.
+      if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !developerTask(job) && !developerTicket(job) && !ownerDirected(job)
+          && process.env.KEIR_UNANSWERED_GUARD !== "0") {
+        const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1), human = humanAt(tn);
+        // A holding line ("looking into it") is not an answer (Muse replay 2026-11-12: two tickets got only
+        // "looking into it" and the task parked).
         const holdingOnly = last && (isStall(last.text) || /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
-        if (!last || humanAt(tn) > last.at || holdingOnly) {
-          job.unansweredFinishRefused = true; ledger.save();
-          ledger.audit("unanswered_finish_refused", { job: job.id, ticket: tn });
-          throw new Error("Not finished: the player has had no answer since they last wrote. Post what you found to them now (channel_reply, at most five short sentences, only what you read), or tell them plainly what you are still checking, then finish.");
+        const owed = human > 0 && (!last || human > last.at || holdingOnly);
+        if (owed) {
+          const all = (d.unansweredFinishes ||= {});
+          let rec = all[tn];
+          if (!rec || rec.humanAt !== human) rec = all[tn] = { humanAt: human, refused: 0 };
+          if (rec.refused < 2) {
+            rec.refused += 1; ledger.save();
+            ledger.audit("unanswered_finish_refused", { job: job.id, ticket: tn, refusals: rec.refused });
+            throw new Error("Not finished: the player has had no answer since they last wrote. Post what you found to them now (channel_reply, at most five short sentences, only what you read), or tell them plainly what you could not confirm, then finish. Waiting on the developers or the owner does not excuse a missing answer.");
+          }
+          if (!rec.limitationPostedAt) {
+            // Third attempt: the code answers for the task so the player is never left with silence.
+            let escalated = false;
+            try {
+              const r = await tool(job, "raise_to_developers", { kind: "question", title: `Ticket ${tn}: no confirmed answer for the player`, detail: `Ticket ${tn} reached the end of its task without an answer the player can use. Last summary: ${String(input.summary || "none").slice(0, 400)}. Please look at what the player asked and reply.`, needsHuman: true, force: true }, signal);
+              escalated = r?.raised === true;
+            } catch { escalated = false; }
+            const message = escalated
+              ? "I haven't got a confirmed answer for you yet. I've passed it to the developers and will reply here when I do."
+              : "I haven't got a confirmed answer for you yet. I'm still working on it and will reply here when I do.";
+            const args = { kind: "ticket", number: tn, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
+            const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: tn, text: message });
+            const dl = sent?.delivery;
+            const posted = dl?.posted === true || dl?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(dl?.status) || dl?.delivery?.status === "posted";
+            if (!posted) throw new Error("Not finished: the limitation message to the player was not confirmed as delivered. Retry the finish.");
+            job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, tn, message);
+            rec.limitationPostedAt = now(); rec.escalated = escalated;
+            (job.history ||= []).push({ at: new Date(now()).toISOString(), kind: "unanswered_limitation", ticket: tn, escalated });
+            ledger.audit("unanswered_limitation_posted", { job: job.id, ticket: tn, escalated }); ledger.save();
+          }
         }
       }
       // An unrelated later post must not erase work Keir still owes. The
