@@ -179,3 +179,18 @@ test("an Ask-grounded fast lane answer is exempt, a task that has escalated out 
   g.job.fastLane = { answers: 0, escalated: true };
   await assert.rejects(g.broker.tool(g.job, "channel_reply", { message: RULE }), /code_search/);
 });
+
+test("Keir 9: a code search sent with query or terms reaches the tool as question", async () => {
+  const { createLedger } = require("../lib/operator/store"), { createBroker } = require("../lib/operator/broker");
+  const fs = require("fs"), os = require("os"), path = require("path");
+  const ledger = createLedger(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "k9q-")), "l.json"));
+  const seen = [];
+  const mcp = { servers: () => ["ops-knowledge"], list: async () => [{ name: "code_search", inputSchema: { type: "object", additionalProperties: true } }, { name: "code_exact", inputSchema: { type: "object", additionalProperties: true } }], call: async (srv, tool, args) => { seen.push([tool, args]); return { hits: [] }; } };
+  const broker = createBroker({ ledger, config: { ownerId: "1", staffIds: [], botId: "3", guildId: "4", scanChannels: [], taskLifetimeMs: 1e9, closeGraceMs: 1, maxIntakePerHour: 4, supportDeferred: () => false }, mcp, discord: async () => [], sandbox: { run: async () => ({ code: 0, output: "" }) } });
+  const job = ledger.createJob("q", { role: "owner", kind: "command", actorId: "1", source: { content: "x" }, deadline: 9e15 }); job.state = "running";
+  await broker.tool(job, "read_tool", { server: "ops-knowledge", tool: "code_search", args: { query: "selling tile" } }).catch(() => {});
+  await broker.tool(job, "read_tool", { server: "ops-knowledge", tool: "code_search", args: { terms: ["Selling", "soldPct"] } }).catch(() => {});
+  const searches = seen.filter(([t]) => t === "code_search").map(([, a]) => a);
+  assert.equal(searches[0]?.question, "selling tile"); assert.equal(searches[0]?.query, undefined);
+  assert.equal(searches[1]?.question, "Selling soldPct"); assert.equal(searches[1]?.terms, undefined);
+});

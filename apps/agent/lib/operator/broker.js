@@ -368,7 +368,7 @@ const CLAIMS = [
   // Keir 8.2 (2026-11-05, ticket 1763): "live and working", "should be gone" and "now show"
   // were posted six times from the release alone; each was disproved by the player's next screenshot.
   // A claim that the player's problem is gone needs a game read after a turn ran on the fix.
-  { kind: "verified", hedged: true, re: /\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
+  { kind: "verified", hedged: true, re: /\b(?:page|panel|tile|screen|display|figure|number|value|label)s? (?:has|have) been (?:changed|updated|corrected|adjusted|reworked)\b|\bnow match(?:es)?\b|\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
   { kind: "development", re: /\bin testing on dev\b|\bon (?:the )?dev(?:elopment)? server\b|\bon dev\b/i },
   // Keir 4.0: "being built" needs a coding attempt that can write (ticket 1514
   // said it for five hours while every pass was read-only); "written" or "in
@@ -1962,6 +1962,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.server === "ops-knowledge" && input.tool === "knowledge_query" && args.text === undefined) {
         const alias = ["query", "question", "q"].find((k) => typeof args[k] === "string");
         if (alias) { args.text = args[alias]; delete args[alias]; }
+      }
+      // Keir 9: code_search and code_exact take `question`; DeepSeek sends query (2026-11-12 replay: four
+      // code searches with the wrong key, so the rule was never found).
+      if (input.server === "ops-knowledge" && ["code_search", "code_exact"].includes(input.tool) && args.question === undefined) {
+        const alias = ["query", "text", "q", "symbol", "term"].find((k) => typeof args[k] === "string");
+        if (alias) { args.question = args[alias]; delete args[alias]; }
+        else if (Array.isArray(args.terms) && args.terms.length) { args.question = args.terms.join(" "); }
+        delete args.terms;
       }
       // heal-ops passes filters through verbatim, so {"$oid": id} is an unknown
       // operator. Match the id as text instead: ids are stored both ways.
