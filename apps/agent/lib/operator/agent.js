@@ -569,6 +569,16 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
         (Number.isFinite(session.maxTurns) && (session.steps || 0) >= session.maxTurns || STEP_LIMIT_TEXT.test(lastText))) {
       if (lastText.trim()) job.summary = `Checkpoint from a step-limited activation (not sent to anyone): ${lastText.trim()}`.slice(0, 4000);
       ledger.audit("step_limit_reached", { job: job.id, lane: quick ? "quick" : "worker", steps: session.steps || 0, max: session.maxTurns, model: job.provider?.model });
+      // Keir 9: the run's last reply was refused only for length and the steps ran out: post its leading part
+      // rather than leave the player with nothing.
+      if (job.kind === "ticket" && job.lastTooLongDraft) {
+        const trimmed = require("./playercopy").trimTicketPost(job.lastTooLongDraft);
+        delete job.lastTooLongDraft;
+        if (trimmed) {
+          try { await broker.tool(job, "channel_reply", { message: trimmed }, signal); ledger.audit("step_limit_trimmed_reply", { job: job.id, ticket: job.ticket }); }
+          catch (error) { ledger.audit("step_limit_trimmed_reply_failed", { job: job.id, ticket: job.ticket, error: String(error.message).slice(0, 200) }); }
+        }
+      }
       result = { ...result, subtype: "error_max_turns" };
     }
     if (result.subtype === "error_max_turns" || quick && job.voiceMode && !String(result.result || "").trim()) {

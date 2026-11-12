@@ -2969,6 +2969,20 @@ test("an expired provider login moves the job to the fallback route (2026-11-05)
  if (act) assert.equal(act.subtype, "auth_failed");
 });
 
+test("Keir 9: a run that runs out of steps after a length refusal posts the reply's leading part, not nothing", async () => {
+ const f = fixture(), ch = "777777777777777777";
+ const j = running(f, { kind: "ticket", role: "support", ticket: 327, channelId: ch, replyChannel: ch, summary: "Answering.", source: { channelId: ch, channelName: "ticket-bug-fixture-327", content: "How do I file impeachment?" } });
+ f.ledger.data.disclosed = { 327: { at: 1, posted: true } }; j.lastCodeReadAt = 1;
+ const long = "Filing needs a seat in the legislature. Your party chair can file through a seated party member. That member opens the filing page. They pick the officer. They confirm the articles. Then the House votes.";
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash" },
+  invokeImpl: async () => { await f.broker.tool(j, "channel_reply", { message: long }).catch(() => {}); return { subtype: "success", result: "The maximum step budget for this activation has been reached, so tools are disabled.", num_turns: 2 }; } });
+ await agent.run(j, new AbortController().signal).catch(() => {});
+ const kinds = (f.ledger.data.audit || []).map((a) => a.kind + (a.error ? ": " + a.error : "")).filter((k) => k.startsWith("step_limit_trimmed"));
+ assert.deepEqual(kinds, ["step_limit_trimmed_reply"]);
+ assert.equal(j.lastTooLongDraft, undefined);
+});
+
 test("Keir 9: a forced provider still falls back when its route hits a usage limit, and returns once the cooldown ends", async () => {
  const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 324, summary: "Checking a report." });
  const attempts = []; let current = null;

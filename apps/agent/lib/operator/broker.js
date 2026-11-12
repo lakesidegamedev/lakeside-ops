@@ -1405,6 +1405,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // A reply that can never be delivered (no channel) owes nothing: arming the refused-reply
       // hold there left finish refused too, so an open channel-less ticket could only end
       // blocked (KBX5 channelless--open, 2026-11-03).
+      if (e?.code === "TICKET_POST_TOO_LONG" && e.draft && job.kind === "ticket") { job.lastTooLongDraft = String(e.draft).slice(0, 4000); try { ledger.save(); } catch {} }
       if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(e.code === "KILL_SWITCH")) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }

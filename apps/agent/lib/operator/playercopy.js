@@ -77,6 +77,17 @@ const PREAMBLE = /^(?:plain version of what is going on[.:]\s*|quick (?:update|s
 function sentences(text) {
   return String(text || "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/).filter((s) => s.trim());
 }
+// Keir 9: the longest leading part of an over-long draft that fits a ticket post, cut at a sentence. Used only
+// when a step-limited run would otherwise end with nothing posted (2026-11-12 replay: the length refusal used
+// the last step and the player got no answer).
+function trimTicketPost(text) {
+  const out = [];
+  for (const s of sentences(String(text || "").trim())) {
+    if (out.length >= MAX_SENTENCES || [...out, s].join(" ").length > MAX_CHARS) break;
+    out.push(s);
+  }
+  return out.join(" ");
+}
 function shapeTicketPost(text) {
   let t = String(text || "").trim().replace(PREAMBLE, "");
   // Stripping a lead-in ("Update: the bank closure...") left the post starting in lower
@@ -86,7 +97,7 @@ function shapeTicketPost(text) {
   const chars = t.replace(/\s+/g, " ").length;
   if (chars > MAX_CHARS || sents.length > MAX_SENTENCES) {
     const err = new Error(`Not posted: ${sents.length} sentences, ${chars} characters. A ticket post is at most ${MAX_SENTENCES} short sentences and ${MAX_CHARS} characters, read on a phone. Say what it means for the player and the next step; the explanation goes on the status card note or in the PR, not here.`);
-    err.code = "TICKET_POST_TOO_LONG"; throw err;
+    err.code = "TICKET_POST_TOO_LONG"; err.draft = t; throw err;
   }
   if (/\n/.test(t)) return t.replace(/\n{3,}/g, "\n\n");
   if (sents.length <= 2) return t;
@@ -97,4 +108,4 @@ function shapeTicketPost(text) {
 const CORRECTION = /^(?:correction|to correct my (?:last|previous|earlier) message|my (?:last|previous|earlier) message (?:was wrong|above))/i;
 const isCorrection = (text) => CORRECTION.test(String(text || "").trim()) || /\bcorrection to my (?:last|previous|earlier)? ?message\b/i.test(String(text || ""));
 
-module.exports = { LEAKS, playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection, MAX_CHARS, MAX_SENTENCES };
+module.exports = { trimTicketPost, LEAKS, playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection, MAX_CHARS, MAX_SENTENCES };
