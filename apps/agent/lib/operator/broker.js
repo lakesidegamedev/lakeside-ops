@@ -13,7 +13,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -860,13 +860,20 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // Keir 9: a rule or a cause stated before anything in this ticket read the game code is refused once per
     // ticket, so the answer rests on the code and not on the data on screen. Never again after that (no loops).
     // The fast lane posts an Ask answer that is already grounded in the code index, so it is exempt.
-    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated) && process.env.KEIR_RULE_LOOKUP !== "0" && !d.ruleLookupRefused?.[ticketNo]
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated) && process.env.KEIR_RULE_LOOKUP !== "0"
         && !sameTicketJobs.some((j) => j.lastCodeReadAt || j.codeLookups)) {
       const claim = ruleLookup.ruleClaim(message);
       if (claim) {
-        (d.ruleLookupRefused ||= {})[ticketNo] = now(); ledger.save();
-        ledger.audit("rule_lookup_required", { job: job.id, ticket: ticketNo, claim: claim.kind, pattern: claim.pattern });
-        throw new Error(ruleLookup.REFUSAL);
+        // First refusal: read the code. Second: no successful code read yet, so a rule or cause goes out only if the reply
+        // says plainly it is not confirmed. Never a third refusal on one ticket.
+        const refusals = (d.ruleLookupRefusals ||= {});
+        const n = refusals[ticketNo] || 0;
+        const unconfirmed = ruleLookup.statesUnconfirmed(message);
+        if (n === 0 || (n === 1 && !unconfirmed)) {
+          refusals[ticketNo] = n + 1; (d.ruleLookupRefused ||= {})[ticketNo] = now(); ledger.save();
+          ledger.audit("rule_lookup_required", { job: job.id, ticket: ticketNo, claim: claim.kind, pattern: claim.pattern, attempt: n + 1 });
+          throw new Error(n === 0 ? ruleLookup.REFUSAL : ruleLookup.REFUSAL_UNCONFIRMED);
+        }
       }
     }
     if (claims.some((c) => (c.kind === "escalated" || c.kind === "investigating") && !c.future))
@@ -1433,6 +1440,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "read_tool" && config.readyReads !== false && result != null && !require("./ticketquality").emptyResult(result) && !/(?:_catalog|_tools|_servers)$/.test(input.tool || "")) {
       try { readyReads.learn(job, input.server, input.tool); } catch {}
     }
+    // Keir 9 audit: a refused, failed or empty code lookup is not a code read. Only a finished call that returned a result counts.
+    if (name === "read_tool" && input?.server === "ops-knowledge" && /^code_/.test(String(input.tool)) && ruleLookup.codeResultHasContent(result)) {
+      job.lastCodeReadAt = now();
+      if (/^code_(?:search|exact)$/.test(String(input.tool))) job.codeLookups = (job.codeLookups || 0) + 1;
+    }
     if ((name === "read_tool" || name === "evidence_batch") && require("./ticketquality").emptyResult(result)) {
       job.emptyReads = [...(job.emptyReads || []), { sig: hash({ name, tool: input?.tool || null, args: input?.args ?? input?.arguments ?? input?.queries ?? null }), tool: input?.tool || name, at: now() }].slice(-20);
     }
@@ -1997,7 +2009,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
       if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
-      if (input.server === "ops-knowledge" && /^code_/.test(String(input.tool))) { job.lastCodeReadAt = now(); if (/^code_(?:search|exact)$/.test(String(input.tool))) job.codeLookups = (job.codeLookups || 0) + 1; }
+      // The code-read marks (lastCodeReadAt, codeLookups) are set in tool(), after the call succeeded and returned something.
       // Keir 5.6.2: the spin guard counts distinct reads. Re-reading the same
       // card or record every wake is not progress (a finding re-read its own
       // unassigned handoff 463 times overnight, 2026-10-16).

@@ -52,6 +52,25 @@ function ruleClaim(message) {
 const assertsRule = (message) => Boolean(ruleClaim(message));
 
 // The refusal text. Names the tool so the model does not guess one.
-const REFUSAL = "Not posted: this states a game rule or a cause, and nothing in this ticket has read the game code. Search the game code for the rule first: read_tool on server ops-knowledge, tool code_search, with args {\"question\": <the rule in plain words>, \"claimType\": \"mechanic\", \"source\": \"dev\"} (code_exact when you know the symbol, code_read for a whole file). Read the deciding code, then answer from it in at most five short sentences. This check applies once per ticket.";
+const REFUSAL = "Not posted: this states a game rule or a cause, and nothing in this ticket has read the game code. Search the game code for the rule first: read_tool on server ops-knowledge, tool code_search, with args {\"question\": <the rule in plain words>, \"claimType\": \"mechanic\", \"source\": \"dev\"} (code_exact when you know the symbol, code_read for a whole file). Read the deciding code, then answer from it in at most five short sentences. This check asks at most twice per ticket.";
 
-module.exports = { PATTERNS, assertsRule, ruleClaim, REFUSAL };
+// Second refusal on a ticket whose code lookups all failed or came back empty.
+const REFUSAL_UNCONFIRMED = "Not posted: this states a game rule or a cause, and no code lookup on this ticket has returned anything yet. Either find the rule with a lookup that returns results (code_search with claimType mechanic, code_exact for a symbol, code_read for a file), or say plainly in the reply that this is not yet confirmed from the game code, for example \"I have not confirmed this in the game code yet, but ...\". This is the last time this check asks.";
+
+// The message itself says the rule or cause is not confirmed.
+const UNCONFIRMED = /\b(?:not (?:yet )?(?:been )?(?:confirmed|verified|checked)|unconfirmed|unverified|(?:haven(?:'|’)?t|have not|hasn(?:'|’)?t|has not|couldn(?:'|’)?t|could not) (?:yet )?(?:confirmed|verified|checked|found|read)\b[^.!?]{0,40}\b(?:code|rule|this|that|it)\b|not (?:yet )?sure|my best guess|may not be (?:right|correct))\b/i;
+const statesUnconfirmed = (message) => UNCONFIRMED.test(String(message || ""));
+
+// A code lookup result that carries something: hits, files, text or a path. Errors and empty sets carry nothing.
+function codeResultHasContent(result) {
+  let v = result;
+  if (typeof v === "string") { try { v = JSON.parse(v); } catch { return v.trim().length > 40 && !/^\s*(?:no (?:results|matches)|error)\b/i.test(v); } }
+  if (v == null || typeof v !== "object") return false;
+  if (v.isError || v.error) return false;
+  if (Array.isArray(v.content) && v.content.length) return v.content.some((c) => c?.type === "text" && codeResultHasContent(c.text));
+  for (const k of ["hits", "results", "files", "chunks", "matches", "items"]) if (Array.isArray(v[k])) return v[k].length > 0;
+  if (typeof v.text === "string" || typeof v.content === "string") return String(v.text || v.content).trim().length > 0;
+  return Boolean(v.path) && Object.keys(v).length > 1;
+}
+
+module.exports = { PATTERNS, assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED, statesUnconfirmed, codeResultHasContent };

@@ -5,7 +5,7 @@ const assert = require("node:assert");
 const fs = require("fs"), os = require("os"), path = require("path");
 const { createLedger } = require("../lib/operator/store");
 const { createBroker } = require("../lib/operator/broker");
-const { assertsRule, ruleClaim, REFUSAL } = require("../lib/operator/rulelookup");
+const { assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED } = require("../lib/operator/rulelookup");
 
 const POSITIVE = [
   "Your revenue fell because the plants sold far less last turn.",
@@ -94,15 +94,15 @@ function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir9-rule-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false };
-  const calls = [];
-  const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => ["support_public_update", "support_resolve", "code_search"].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })), call: async (...a) => { calls.push(a); return { ok: true, id: "card-9", hits: [], delivery: { posted: true, delivery: { status: "posted" } } }; } };
+  const calls = [], state = { codeFail: false, codeEmpty: false };
+  const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => ["support_public_update", "support_resolve", "code_search"].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })), call: async (...a) => { calls.push(a); if (a[1] === "code_search" || a[1] === "code_exact") { if (state.codeFail) throw new Error("code index unavailable"); return { hits: state.codeEmpty ? [] : [{ path: "src/rules.ts", source: "code", text: "x" }] }; } return { ok: true, id: "card-9", hits: [], delivery: { posted: true, delivery: { status: "posted" } } }; } };
   let clock = 10 * 3600000;
   const broker = createBroker({ ledger, config, mcp, discord: ticketDiscord, sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: CH, replyChannel: CH, source: { channelId: CH, channelName: "ticket-bug-fixture-123", content: "Why did my revenue fall after turn 670?" }, deadline: 9e15 });
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id; ledger.data.disclosed = { 123: { at: 1, posted: true } };
   const posts = () => calls.filter((c) => c[1] === "support_public_update" && c[2].deliver === true).map((c) => c[2].message);
   const audits = (kind) => (ledger.data.audit || []).filter((a) => a.kind === kind);
-  return { ledger, broker, job, calls, posts, audits, advance: (min) => { clock += min * 60000; } };
+  return { state, ledger, broker, job, calls, posts, audits, advance: (min) => { clock += min * 60000; } };
 }
 const RULE = "Your revenue fell because the California plants were mothballed at turn 675.";
 
@@ -132,17 +132,62 @@ test("a code read by another task on the same ticket also counts", async () => {
   assert.equal(f.posts().length, 1);
 });
 
-test("a second try on the same ticket posts even without a read: one refusal per ticket", async () => {
+test("a second try without a read is refused again unless it says plainly it is not confirmed; the third posts", async () => {
   const f = setup();
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), /code_search/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), (e) => e.message === REFUSAL);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), (e) => e.message === REFUSAL_UNCONFIRMED);
+  assert.equal(f.posts().length, 0);
   await f.broker.tool(f.job, "channel_reply", { message: RULE });
   assert.equal(f.posts().length, 1);
-  assert.equal(f.audits("rule_lookup_required").length, 1);
+  assert.equal(f.audits("rule_lookup_required").length, 2, "never more than two refusals");
   // A different rule claim later is not refused again.
   f.advance(30);
   f.job.observedPlayerAt = f.job.lastPlayerAt = 10 * 3600000 + 20 * 60000;
   await f.broker.tool(f.job, "channel_reply", { message: "Only the party chair can file, and that never changes between turns." });
   assert.equal(f.posts().length, 2);
+});
+
+test("after the first refusal, a rule that says plainly it is not confirmed posts", async () => {
+  const f = setup();
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), (e) => e.message === REFUSAL);
+  await f.broker.tool(f.job, "channel_reply", { message: "I have not confirmed this in the game code yet, but your revenue fell because the California plants were mothballed at turn 675." });
+  assert.equal(f.posts().length, 1);
+  assert.equal(f.audits("rule_lookup_required").length, 1);
+});
+
+test("the second refusal does not arm the finish block", async () => {
+  const f = setup();
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), (e) => e.message === REFUSAL);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), (e) => e.message === REFUSAL_UNCONFIRMED);
+  assert.ok(!f.job.replyRefusedPending);
+});
+
+test("a failed code lookup does not count as a code read", async () => {
+  const f = setup();
+  f.state.codeFail = true;
+  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "ops-knowledge", tool: "code_search", args: { question: "why plants are mothballed", claimType: "mechanic" } }), /unavailable/);
+  assert.ok(!f.job.codeLookups && !f.job.lastCodeReadAt);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), (e) => e.message === REFUSAL);
+});
+
+test("a refused code lookup (scope or arguments) does not count as a code read", async () => {
+  const f = setup();
+  f.job.role = "player";
+  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "ops-knowledge", tool: "code_search", args: { question: "x" } }));
+  assert.ok(!f.job.codeLookups && !f.job.lastCodeReadAt);
+});
+
+test("an empty code lookup does not count as a code read, a lookup with hits does", async () => {
+  const f = setup();
+  f.state.codeEmpty = true;
+  await f.broker.tool(f.job, "read_tool", { server: "ops-knowledge", tool: "code_search", args: { question: "why plants are mothballed", claimType: "mechanic" } });
+  assert.ok(!f.job.codeLookups && !f.job.lastCodeReadAt);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), (e) => e.message === REFUSAL);
+  f.state.codeEmpty = false;
+  await f.broker.tool(f.job, "read_tool", { server: "ops-knowledge", tool: "code_exact", args: { question: "mothball" } });
+  assert.equal(f.job.codeLookups, 1);
+  await f.broker.tool(f.job, "channel_reply", { message: RULE });
+  assert.equal(f.posts().length, 1);
 });
 
 test("a question, a status line and a plain finding are never refused", async () => {
