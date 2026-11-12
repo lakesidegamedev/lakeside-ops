@@ -13,7 +13,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -625,6 +625,20 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const missing = knowledge.unsupportedNumbers(message, job.evidence || []);
     if (missing.length) throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything you read this activation. If you worked it out from figures you read, call calculate with that expression (for example "41288610 / 312540") and post the same reply; it then passes. Otherwise read the figure with a tool first or leave it out. Never hand the arithmetic to the player instead.`);
   }
+  // Keir 9: ticket posts get the same number check, against everything this ticket has read (earlier
+  // activations included). Refused at most twice per ticket, then skipped and audited (no loops, no
+  // silenced player).
+  function guardTicketNumbers(job, ticketNo, message) {
+    const missing = require("./sources").unsupported(message, require("./sources").ticketEvidence(ledger, job, ticketNo));
+    if (!missing.length) return;
+    const counts = (d.numberCheckRefused ||= {});
+    if ((counts[ticketNo] || 0) >= require("./sources").MAX_REFUSALS) {
+      if (!d.numberCheckGaveUp?.[ticketNo]) { (d.numberCheckGaveUp ||= {})[ticketNo] = now(); ledger.audit("number_check_gave_up", { job: job.id, ticket: ticketNo, numbers: missing.slice(0, 5) }); ledger.save(); }
+      return;
+    }
+    counts[ticketNo] = (counts[ticketNo] || 0) + 1; ledger.save();
+    throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything this ticket has read. If you worked it out from figures you read, call calculate with that expression and post the same reply; it then passes. Otherwise read the figure with a tool first or leave it out. Never hand the arithmetic to the player instead.`);
+  }
   // Keir 2.1: code-only second look (owner, 2026-10-13: no model tokens per
   // post). A draft may not re-assert an idea the ticket record ruled out.
   function secondLook(job, ticketNo, message) {
@@ -688,7 +702,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
-    guardNumbers(job, message);
+    guardTicketNumbers(job, ticketNo, message);
     secondLook(job, ticketNo, message);
     guardTicketPostRules(job, ticketNo, message, opts);
     // Keir 4.0: a typed semantic read of the draft (Jev). Decisive leaks are
@@ -1888,6 +1902,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
         await guardTicketPost(job, ticketNo, message);
+        message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
         // ticket already named the reporter's company and the page they had open.
         if (ASKS_WHICH.test(message)) {
@@ -3194,7 +3209,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).
