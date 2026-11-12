@@ -56,8 +56,12 @@ function handoffRefs(jobs, allJobs) {
 // post must be a milestone: a question to the player, a receipted outcome (the claims guard has already
 // proved it), a correction, or a finding, which is a game or code read made since that post. Everything else
 // belongs on the status card note or the tracker note.
-function milestoneRefusal({ message, lastPost, claims = [], newReadSince = false, playerSpokeAfter = false, answeringStaff = false, correction = false }) {
-  if (!lastPost || playerSpokeAfter || answeringStaff || correction) return null;
+// News, besides a player message: any human in the channel since Keir's last post (an owner or developer
+// addressing Keir is owed an answer, and the finish rule refuses to let Keir stay silent), and an approved
+// action executed since that post (the "it is fixed" message is the news; Keir 8.4 refused it because no
+// new read had happened, which deadlocked repairs the owner had approved).
+function milestoneRefusal({ message, lastPost, claims = [], newReadSince = false, playerSpokeAfter = false, answeringStaff = false, correction = false, humanSpokeAfter = false, approvedActionSince = false }) {
+  if (!lastPost || playerSpokeAfter || humanSpokeAfter || approvedActionSince || answeringStaff || correction) return null;
   if (/\?/.test(String(message || ""))) return null;
   if (claims.some((c) => !c.future)) return null;
   if (newReadSince) return null;
