@@ -2969,6 +2969,37 @@ test("an expired provider login moves the job to the fallback route (2026-11-05)
  if (act) assert.equal(act.subtype, "auth_failed");
 });
 
+test("Keir 9: a forced provider still falls back when its route hits a usage limit, and returns once the cooldown ends", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 324, summary: "Checking a report." });
+ const attempts = []; let current = null;
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "opencode") return { subtype: "error", is_error: true, result: "GoUsageLimitError: Go usage limit exceeded (monthly)", num_turns: 1 }; await f.broker.tool(current, "finish", { state: "done", summary: "Answered." }); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+ current = j; await agent.run(j, new AbortController().signal);
+ assert.equal(j.state, "queued");
+ assert.equal(j.provider.runner, "ollama");
+ current = j; j.state = "running"; await agent.run(j, new AbortController().signal);
+ assert.deepEqual(attempts, ["opencode", "ollama"]);
+ assert.match(j.provider.assignedBy, /fallback/);
+ // Once the cooldown ends the forced route is used again.
+ f.ledger.data.routeCooldown.opencode = Date.now() - 1;
+ const k = running(f, { kind: "ticket", role: "support", ticket: 325, summary: "Another." });
+ current = k; await agent.run(k, new AbortController().signal);
+ assert.equal(attempts.at(-1), "opencode");
+});
+
+test("Keir 9: a fallback on the same runner as the forced provider is never used", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 326, summary: "Checking a report." });
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", fallbackProvider: "opencode:opencode-go/deepseek-v4.1-flash@low" },
+  invokeImpl: async () => ({ subtype: "error", is_error: true, result: "Go usage limit exceeded", num_turns: 1 }) });
+ await agent.run(j, new AbortController().signal).catch(() => {});
+ assert.notEqual(j.provider?.assignedBy, "usage-limit-fallback");
+ assert.ok((f.ledger.data.audit || []).some((a) => a.kind === "usage_limit_no_fallback"));
+});
+
 test("a direct owner message is answered before the task can finish quietly (ticket 1763)", async () => {
   const f = fixture(), ch = "777777777777777777";
   const job = running(f, { role: "owner", kind: "conversation", ticket: 123, actorId: f.config.ownerId, channelId: ch, replyChannel: ch, source: { channelId: ch, authorId: f.config.ownerId, at: new Date(4000).toISOString(), content: "<@333333333333333333> check directly for resolution" } });

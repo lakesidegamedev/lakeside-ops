@@ -250,16 +250,27 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     ledger.audit(auth ? "auth_failure_provider_fallback" : "usage_limit_provider_fallback", { job: job.id, ticket: job.ticket, from: runner, to: r });
     return true;
   }
+  // Keir 9: the fallback also covers a forced provider. Before, KEIR_PROVIDER_OVERRIDE turned the fallback off, so
+  // when the forced route hit its monthly cap (2026-11-03) or its login expired (2026-11-05) every task failed.
+  // The fallback must be a different runner from the one that failed.
   function fallbackSpec(job) {
-    if (config.providerOverride) return null;
-    const spec = config.fallbackProvider;
-    return spec && DEFAULT_MODEL[String(spec).split(/[:@]/)[0]] && !cooled(String(spec).split(/[:@]/)[0]) ? spec : null;
+    const spec = config.fallbackProvider, runner = String(spec || "").split(/[:@]/)[0];
+    if (!spec || !DEFAULT_MODEL[runner] || cooled(runner)) return null;
+    if (config.providerOverride && config.providerOverride.split(/[:@]/)[0] === runner) return null;
+    return spec;
   }
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
     if (config.providerOverride) {
       const [spec, effort] = config.providerOverride.split("@"), [runner, requestedModel] = spec.split(":");
       if (!DEFAULT_MODEL[runner] || !requestedModel) throw new Error("Invalid operator provider override");
+      // The forced route is cooling down after a usage-limit or login failure: stay on the fallback until it recovers.
+      const fallback = cooled(runner) && fallbackSpec(job);
+      if (fallback) {
+        const [fspec, feffort] = fallback.split("@"), [fr, fm] = fspec.split(":"), model = fm || DEFAULT_MODEL[fr]();
+        if (job.provider?.runner !== fr || job.provider?.model !== model) { job.provider = { lane, runner: fr, model, ...(feffort ? { effort: feffort, routeEffort: feffort } : {}), assignedBy: "override-fallback", at: Date.now() }; ledger.save(); }
+        return [model, PROVIDER_LABEL[fr], fr];
+      }
       if (job.provider?.runner !== runner || job.provider?.model !== requestedModel || job.provider?.lane !== lane || job.provider?.routeEffort !== effort) {
         job.provider = { lane, runner, model: requestedModel, effort, routeEffort: effort, assignedBy: "operator-override", at: Date.now() };
         ledger.save();
