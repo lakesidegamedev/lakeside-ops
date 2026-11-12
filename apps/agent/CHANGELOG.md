@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Muse: its temp folder is now actually removed after each run (the cleanup referenced a variable out of scope), and the muse runner is limited to an explicit list of subscription models; any other model on it is refused with the billing message.
 - Wording checks: an acknowledgement opening ("Thanks, ...") no longer exempts the rest of its sentence from the rule-lookup check, and negation in a fix claim is judged per clause ("not corrected" is no claim, "not a bug, but corrected in the latest update" is).
 - The saved over-long draft posted when a run runs out of steps is dropped when any reply went out on the ticket or newer reads happened after it, and nothing is posted if trimming would cut the only sentence that gives the player a next step.
 - A ticket cannot park or finish while its reporter has had no real answer since they last wrote (a holding line does not count), whatever it waits on. The count is per ticket and survives new tasks: two refusals, then the code posts a plain "no confirmed answer yet" message, files the escalation, records a receipt and lets the task finish.

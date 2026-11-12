@@ -182,3 +182,15 @@ test("the vision lane routes a screenshot task to the configured model once, and
   assert.equal(routeForVision({ id: "c", codingParent: "p", tags: { needsVision: true } }, cfg, ledger), false);
   const def = { id: "d", tags: { needsVision: true } }; routeForVision(def, {}, ledger); assert.equal(def.provider.model, "claude-sonnet-5-5", "Sonnet subscription is the default");
 });
+
+test("audit: a muse run removes its temp directory, on success and on failure", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "keir-tmproot-")), saved = process.env.TMPDIR;
+  process.env.TMPDIR = root;
+  try {
+    const left = () => fs.readdirSync(root).filter((n) => n.startsWith("keir-muse-tmp-"));
+    await invokeMuse({ ...base(), spawnImpl: fakeSpawn("ok", () => {}) });
+    assert.deepEqual(left(), []);
+    await assert.rejects(invokeMuse({ ...base(), spawnImpl: fakeSpawn("", () => {}, 2) }), /muse exited 2/);
+    assert.deepEqual(left(), []);
+  } finally { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
+});

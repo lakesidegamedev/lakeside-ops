@@ -250,3 +250,9 @@ test("OpenCode reasoning-only stop at step budget continues instead of succeedin
   const accepted = readTranscript(transcript, { maxTurns: 6, acceptedCompletion: { state: "done", summary: "verified" } });
   assert.equal(accepted.is_error, false, "persisted broker finish is authoritative");
 });
+
+test("audit: only the listed Muse subscription models are allowed on the muse runner", () => {
+  const { assertAllowedBilling } = require("../../cli/provider-routes");
+  for (const model of ["muse-spark-1.3-contributor", "muse-spark-1.3", "muse-spark-1.2-contributor", "muse-wonder-1.0"]) assert.doesNotThrow(() => assertAllowedBilling({ runner: "muse", model }), model);
+  for (const model of ["muse-spark-9.9", "meta/muse-spark-1.3", "gpt-6-luna", "", "muse-spark-1.3-pro"]) assert.throws(() => assertAllowedBilling({ runner: "muse", model }), /billing is disabled/, model);
+});
