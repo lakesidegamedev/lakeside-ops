@@ -13,7 +13,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
+const PACING_REFUSAL = /your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -744,6 +744,16 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   // The newest thing a human said in this ticket, across every task on it.
   const humanAt = (ticketNo) => Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => Math.max(j.observedPlayerAt || 0, j.lastPlayerAt || 0)));
+  // Keir 9: any human in the ticket channel (player, owner, developer, moderator) after a time, from the
+  // channel record. Staff addressing Keir are news the same as the player, so the update-spam rule and the
+  // finish rule no longer contradict each other (8.4 deadlock).
+  const humanInChannelSince = (job, at) => (d.channelContext?.[job.channelId || job.replyChannel] || [])
+    .some((r) => ["player", "owner", "support", "moderator"].includes(r.role) && r.authorId !== config.botId && (Date.parse(r.at || "") || r.observedAt || 0) > at);
+  // An approved action that ran for this ticket after a time.
+  const approvedActionSince = (ticketNo, at) => {
+    const ids = new Set(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => j.id));
+    return Object.values(d.actions || {}).some((a) => ids.has(a.jobId) && a.state === "done" && (a.executedAt || 0) > at);
+  };
   const MONOLOGUE_CAP = 3;
   const waitingStage = ticketNo => JSON.stringify({ evidence: Object.fromEntries(Object.entries(ticketEvidence(ticketNo)).map(([k,v])=>[k,v.done])), suggestions: Object.values(d.jobs).filter(j=>ticketOf(j)===ticketNo).flatMap(j=>Object.values(j.filedSuggestions||{}).map(s=>s.number)).sort((a,b)=>a-b) });
   function guardTicketPostRules(job, ticketNo, message, opts = {}) {
@@ -826,6 +836,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const sameTicketJobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
     const spam = opts.system ? null : replyPolicy.milestoneRefusal({ message, lastPost, claims, answeringStaff, correction: isCorrection(message),
       playerSpokeAfter: lastPost ? playerSpokeAfter(lastPost.at) : false,
+      humanSpokeAfter: lastPost ? humanInChannelSince(job, lastPost.at) : false,
+      approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
       newReadSince: lastPost ? sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lastPost.at || (j.lastCodeReadAt || 0) > lastPost.at) : false });
     if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); throw new Error(spam); }
     if (claims.some((c) => (c.kind === "escalated" || c.kind === "investigating") && !c.future))
@@ -3468,7 +3480,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (job.effects[`action:${a.id}`]?.state === "rejected") { a.state = "failed"; ledger.save(); }
         throw e;
       });
-      a.state = "done"; ledger.save(); return result;
+      a.state = "done"; a.executedAt = now(); ledger.save(); return result;
     }
     if (name === "checkpoint") {
       if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a checkpoint. Call tools through their interface and preserve the last verified conclusion.");
