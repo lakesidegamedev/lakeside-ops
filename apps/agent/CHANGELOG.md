@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket answer that states a game rule or a cause is refused once per ticket when nothing on the ticket has read the game code, with a message that names the code search tool. Never refused again on that ticket, never blocks finishing, `KEIR_RULE_LOOKUP=0` turns it off.
+- Keir is the support desk, not Ask: the 8.4.1 conversational and send-the-first-fact-fast instructions are gone from the ticket brief (short phone-sized posts and the strategy-to-Ask route stay), and rules and mechanics questions are answered by Keir from the game code.
+
 ## 8.5.4 (2026-11-07)
 
 - Pending owner approvals hold the requested actions and ticket closure while independent investigation continues. Player messages, worker reports and scheduled reads reach admission instead of being silently blocked after the wake rules queued them.
