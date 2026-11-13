@@ -273,19 +273,22 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
   // notes whose code changed are left out, and only the notes actually shown count as recalled.
   const clipText = (t, n) => { const x = String(t || "").replace(/\s+/g, " ").trim(); return x.length <= n ? x : x.slice(0, Math.max(0, n - 3)).trimEnd() + "..."; };
   function labelled(n, room) {
-    const wrong = /Wrong: "(.*?)" Right: "(.*?)"/s.exec(n.text);
+    // Shown in plain present tense, whatever wording an older note was kept in (lib/operator/ticketrecall.js).
+    const { plainPresent } = require("./ticketrecall");
+    const wrongRaw = /Wrong: "(.*?)" Right: "(.*?)"/s.exec(n.text);
+    const wrong = wrongRaw && [wrongRaw[0], wrongRaw[1], plainPresent(wrongRaw[2])];
     if (n.kind === "lesson") {
-      const head = wrong ? `earlier mistake: "${clipText(wrong[1], Math.floor(room / 3))}" was wrong, "${clipText(wrong[2], Math.floor(room / 3))}" was right` : `earlier mistake: ${clipText(n.text, room)}`;
+      const head = wrong ? `earlier mistake: "${clipText(wrong[1], Math.floor(room / 3))}" was wrong${wrong[2] ? `, "${clipText(wrong[2], Math.floor(room / 3))}" was right` : ""}` : `earlier mistake: ${clipText(n.text, room)}`;
       return n.verified === false ? `${head} (not verified against the code)` : head;
     }
-    if (n.kind === "resolution" || n.verified === false) return `earlier answer on ticket ${n.ticket || "?"}, not verified: ${clipText(n.text.replace(/^Answer given to a player in ticket \d+, not checked against the code \([^)]*\): /, ""), room)}`;
-    if (n.kind === "mechanic" && codeSources(n).length) return `checked rule from the code (${codeSources(n)[0].path}): ${clipText(n.text, room)}`;
+    if (n.kind === "resolution" || n.verified === false) return `earlier answer on ticket ${n.ticket || "?"}, not verified: ${clipText(plainPresent(n.text.replace(/^Answer given to a player in ticket \d+, not checked against the code \([^)]*\): /, "")), room)}`;
+    if (n.kind === "mechanic" && codeSources(n).length) return `checked rule from the code (${codeSources(n)[0].path}): ${clipText(plainPresent(n.text), room)}`;
     return `${n.kind === "decision" ? "owner decision" : "note"}: ${clipText(n.text, room)}`;
   }
-  function recallForTicket(query, { ticket, player, job, via = "ticket-context", k = 3, chars = 600 } = {}) {
+  function recallForTicket(query, { ticket, player, job, via = "ticket-context", k = 3, chars = 600, accept } = {}) {
     const shown = [], out = [];
     let used = 0;
-    for (const { n } of rank(query, { k: k * 4, ticket, player, skip: (x) => x.kind === "player" || stale(x) || conflicts(x).length })) {
+    for (const { n } of rank(query, { k: k * 4, ticket, player, skip: (x) => x.kind === "player" || stale(x) || conflicts(x).length || (accept && !accept(x)) })) {
       if (shown.length >= k) break;
       const room = Math.min(chars - used, Math.floor(chars / 2));
       if (room < 80) break;
