@@ -368,7 +368,7 @@ const CLAIMS = [
   // Keir 8.2 (2026-11-05, ticket 1763): "live and working", "should be gone" and "now show"
   // were posted six times from the release alone; each was disproved by the player's next screenshot.
   // A claim that the player's problem is gone needs a game read after a turn ran on the fix.
-  { kind: "verified", hedged: true, re: /\b(?:was|were|has been|have been|is|are|got|now) (?:now )?(?:corrected|patched|resolved|repaired)\b|\b(?:in|with|by) the (?:current|latest|newest|last|recent) (?:update|patch|release|version)\b|\b(?:page|panel|tile|screen|display|figure|number|value|label)s? (?:has|have) been (?:changed|updated|corrected|adjusted|reworked)\b|\bnow match(?:es)?\b|\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
+  { kind: "verified", hedged: true, re: /\b(?:was|were|has been|have been|is|are|got|now) (?:now )?(?:corrected|patched|resolved|repaired)\b|\b(?:in|with|by) (?:the|a|our) (?:current|latest|newest|last|recent) (?:update|patch|release|version)\b|\b(?:fix|fixes|change|correction|update|patch)\b[^.]{0,60}\b(?:has|have) been (?:released|shipped|deployed|pushed out)\b|\b(?:page|panel|tile|screen|display|figure|number|value|label)s? (?:has|have) been (?:changed|updated|corrected|adjusted|reworked)\b|\bnow match(?:es)?\b|\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
   { kind: "development", re: /\bin testing on dev\b|\bon (?:the )?dev(?:elopment)? server\b|\bon dev\b/i },
   // Keir 4.0: "being built" needs a coding attempt that can write (ticket 1514
   // said it for five hours while every pass was read-only); "written" or "in
@@ -381,7 +381,9 @@ const CLAIMS = [
   { kind: "written", re: /\b(?:fix|correction|patch) (?:is|has been|was) (?:now )?(?:written|ready|built|prepared|done)\b|\bhave (?:a|the) (?:fix|correction) (?:ready|written)\b|\b(?:is|are) (?:now )?in testing\b|\bgoing through (?:its |the )?(?:checks|tests)\b|\bpassed (?:its|the|all its) (?:tests|checks)\b/i },
 ];
 // "Should be gone" is the hedge that carried 1763's claims; only these mark a real future step.
-const STRICT_FUTURE = /\b(?:will|once|when|after|until|going to|next turn|from the next)\b|['’]ll\b/i;
+// Keir 9 (replay 2026-11-13): "that fault is fixed and takes effect from the next turn" asserts the fix now; a turn
+// mention alone no longer makes a fix claim count as future. "will", "once", "when" and the like still do.
+const STRICT_FUTURE = /\b(?:will|once|when|after|until|going to)\b|['’]ll\b/i;
 const FUTURE = /\b(?:will|won't|once|when|after|until|soon|should|going to|plan(?:ning)?|next|expect|if)\b|['’]ll\b/i;
 // KBX4 2026-11-02: "cannot" was not a negation, so "a note cannot authorise a payment, so that
 // refund has to come through our own approval" was refused as a money claim four times running.
