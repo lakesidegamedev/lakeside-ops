@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket reply is never called fixed from a deploy alone. Keir records the page figure it first cited as the symptom; once the fix is live and a turn has run, the code re-reads that figure for the player. Changed: the fixed message may post. Unchanged: it is refused, the player is told once that the change is out but their page still shows the old figure, the task is woken, and after three turns it goes to the developers. One re-read per turn.
+
 ## 9.1.3 (2026-11-15)
 
 - Ticket tasks can find the errors a reporting player hit with sentry_player_errors: by the reporter's account id, the page they name and the time they describe, with a readable step trail before each error.
