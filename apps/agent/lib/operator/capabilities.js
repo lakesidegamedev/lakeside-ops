@@ -82,7 +82,7 @@ async function viewPage(url, { run = exec, playwright = playwrightModule() } = {
 
 /** Wakes tasks after a given turn has been processed (no model runs while waiting). */
 const MAX_TURN_WATCH_MS = 8 * 3600000;
-function createTurnWatch({ ledger, currentTurn, now = () => Date.now(), log = () => {} }) {
+function createTurnWatch({ ledger, currentTurn, now = () => Date.now(), log = () => {}, onTurn = null }) {
   async function tick() {
     const watching = Object.values(ledger.data.jobs).filter((j) => j.turnWatch && !["done", "dismissed", "cancelled"].includes(j.state));
     if (!watching.length) return;
@@ -99,6 +99,7 @@ function createTurnWatch({ ledger, currentTurn, now = () => Date.now(), log = ()
       if (turn >= w.turn) job.turnChecks = [...(job.turnChecks || []), now()].slice(-10);
       if (["waiting", "blocked"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
       ledger.audit("turn_watch_done", { job: job.id, turn: w.turn, now: turn }); ledger.save();
+      if (onTurn && turn >= w.turn) { try { await onTurn(job); } catch (e) { log(`turnwatch page check: ${e.message}`); } }
     }
   }
   return { tick };
