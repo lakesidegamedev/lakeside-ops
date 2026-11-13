@@ -1,7 +1,8 @@
 "use strict";
 // Keir 9: check the player's own page before saying it is fixed. The symptom is the first figure on one of the
 // player's pages that Keir cited in an answer, recorded by code from what Keir actually read. After the fix is
-// live and a turn has run, code repeats that read; only a changed figure lets a "fixed" message out.
+// live and a turn has run, code repeats that read. An unchanged figure blocks "fixed"; a changed one does not prove it
+// (figures move every turn), so the normal rule still needs Keir to read the player's figures and judge.
 const knowledge = require("./knowledge");
 const sources = require("./sources");
 
@@ -63,7 +64,9 @@ function judge(symptom, fresh) {
     const now = num(atPath(body, symptom.field));
     if (now !== null) return now === symptom.value ? "unchanged" : "changed";
   }
-  return knowledge.numbersIn(text).some((n) => n.value === symptom.value) ? "unchanged" : "changed";
+  // Without the field, the old figure still on the page means unchanged; its absence proves nothing (the page may have
+  // moved or reshaped), so it is unknown, never "changed".
+  return knowledge.numbersIn(text).some((n) => n.value === symptom.value) ? "unchanged" : "unknown";
 }
 
 const PLAIN = "The change is out, but your page still shows the old figure. I am checking why and will update you here.";

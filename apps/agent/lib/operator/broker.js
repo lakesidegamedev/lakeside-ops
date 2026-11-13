@@ -741,7 +741,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       st.checkedFor = turnAt;
       const jobs = ticketJobs(ticketNo), job = jobs.find((j) => j.kind === "ticket") || jobs[0];
       if (st.outcome === "changed") {
-        for (const j of jobs) j.lastGameReadAt = Math.max(now(), turnAt + 1);
+        // Recorded as an observation only: a moved figure is not proof of a fix, so it grants no receipt.
         if (job) require("./investigation-memory").record(ledger, job, "read_tool", { server: sym.server, tool: sym.tool, args: sym.args }, fresh, now());
         ledger.save(); return st;
       }
