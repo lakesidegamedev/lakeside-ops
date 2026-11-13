@@ -130,14 +130,15 @@ test("relevance floor: a note reaches a ticket only through a shared code file o
   nb.remember({ kind: "resolution", verified: false, ticket: 51, paths: ["src/lib/wealth/computeCharacterWealth.ts"], text: "Net worth counts only the shares you hold directly, at the quoted share price." });
   nb.remember({ kind: "resolution", verified: false, ticket: 52, paths: ["src/lib/turn/npp/nppCorporationTuning.ts"], text: "A sector you restart by hand is left alone by autopilot for some turns, counted per sector." });
   nb.remember({ kind: "decision", ticket: 53, text: "Shares held by a party chair are counted per sector for the impeachment filing." });
-  const ask = (text) => { const q = queryFor({ texts: [text] }); return nb.recallForTicket(q, { ticket: 99, accept: relevantTo(q) }).map((o) => nb.all().find((n) => n.id === o.id).ticket); };
+  const ask = (text, reads = []) => { const q = queryFor({ texts: [text], reads }); return nb.recallForTicket(q, { ticket: 99, accept: relevantTo({ texts: [text], reads }) }).map((o) => nb.all().find((n) => n.id === o.id).ticket); };
   // An impeachment question shares words with all three, an area with none.
   assert.deepEqual(ask("As party chair, why can I not file the impeachment through a legislator? The shares counted per sector look odd."), []);
   assert.deepEqual(ask("My net worth dropped after my subsidiary listed shares. Why are the shares not counted?"), [51]);
   assert.deepEqual(ask("Autopilot keeps closing a sector I restarted by hand. How many turns does it leave it alone?"), [52]);
-  // A shared code file is enough even without area words.
-  const q = queryFor({ texts: ["Something is off"], reads: [{ path: "src/lib/wealth/computeCharacterWealth.ts" }] });
-  assert.ok(relevantTo(q)(nb.all().find((n) => n.ticket === 51)));
+  // A file the ticket read is enough even without area words.
+  assert.ok(relevantTo({ texts: ["Something is off"], reads: [{ path: "src/lib/wealth/computeCharacterWealth.ts" }] })(nb.all().find((n) => n.ticket === 51)));
+  // But a read file in the same area is not: words from opened files never widen the area (rerun leak, 2026-11-13).
+  assert.deepEqual(ask("As party chair, why can I not file the impeachment?", [{ path: "src/lib/wealth/otherWealthFile.ts" }, { path: "src/lib/turn/npp/nppOther.ts" }]), []);
 });
 
 test("notes are kept and shown in plain present tense", (t) => {
@@ -148,6 +149,6 @@ test("notes are kept and shown in plain present tense", (t) => {
   assert.equal(plainPresent("Net worth counts only the shares you hold directly."), "Net worth counts only the shares you hold directly.");
   const { nb } = fixture(t);
   nb.remember({ kind: "resolution", verified: false, ticket: 61, paths: [FILE], text: "Answer given to a player in ticket 61, not checked against the code (the ticket read x): Supply chain output is now capped at plant capacity. That cap has since been fixed." });
-  const out = nb.recallForTicket("supply chain output capacity", { ticket: 1, accept: relevantTo("supply chain output capacity") });
+  const out = nb.recallForTicket("supply chain output capacity", { ticket: 1, accept: relevantTo({ texts: ["supply chain output capacity"] }) });
   assert.equal(out[0].note, "earlier answer on ticket 61, not verified: Supply chain output is capped at plant capacity.");
 });

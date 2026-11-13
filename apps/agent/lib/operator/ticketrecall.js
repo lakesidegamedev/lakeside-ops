@@ -38,9 +38,14 @@ function areaOf(p) {
   const dir = parts.slice(0, -1).find((x) => !GENERIC.has(x.toLowerCase()));
   return split(dir || parts.at(-1));
 }
-/** Returns a predicate: does this note share a code file or a game area with the ticket's question? */
-function relevantTo(query) {
-  const raw = String(query || "").toLowerCase();
+/**
+ * Returns a predicate: does this note share a code file or a game area with the ticket's question?
+ * Areas come from the player's own words only. A file the ticket read counts as an exact file match, never as an
+ * area: in the rerun, words from files Keir had opened pulled net worth and autopilot notes into unrelated tickets.
+ */
+function relevantTo({ texts = [], reads = [] } = {}) {
+  const raw = texts.filter(Boolean).join(" ").toLowerCase();
+  const read = new Set(reads.map((r) => String(r.path || r).toLowerCase()));
   const words = new Set((raw.match(/[a-z][a-z0-9]{2,}/g) || []).map(stem));
   for (const [area, said] of Object.entries(ALIASES)) if (said.some((w) => words.has(stem(w)))) words.add(area);
   if (/\bnet worth\b/.test(raw)) words.add("wealth");
@@ -48,8 +53,8 @@ function relevantTo(query) {
     const paths = notePaths(n);
     if (!paths.length) return false;
     for (const p of paths) {
-      const base = String(p).split("/").at(-1).replace(/\.[a-z]+$/i, "").toLowerCase();
-      if (raw.includes(base) || raw.includes(String(p).toLowerCase())) return true;
+      const lower = String(p).toLowerCase(), base = lower.split("/").at(-1).replace(/\.[a-z]+$/i, "");
+      if (read.has(lower) || raw.includes(lower) || raw.includes(base)) return true;
       if (areaOf(p).some((w) => words.has(w))) return true;
     }
     return false;
