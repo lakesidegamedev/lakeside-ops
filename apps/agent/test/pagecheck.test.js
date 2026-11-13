@@ -39,7 +39,7 @@ test("the first cited page figure is recorded as the symptom", async () => {
   assert.equal(s.args.sector, "Oil");
 });
 
-test("a changed figure lets the fixed message post", async () => {
+test("a changed figure does not block the fixed message; the normal receipt rule still decides", async () => {
   const f = setup(); await symptomPost(f); f.release(); f.turn(); f.state.fresh = { revenue: 52000000 };
   await f.claim();
   assert.equal(f.posts().some((p) => /now fixed/.test(p)), true);
@@ -85,7 +85,15 @@ test("judge: field comparison, excerpt fallback and unreadable results", () => {
   assert.equal(pagecheck.judge(sym, { a: { b: 10 } }), "unchanged");
   assert.equal(pagecheck.judge(sym, { a: { b: "11" } }), "changed");
   assert.equal(pagecheck.judge({ excerpt: "10", value: 10 }, { x: 10 }), "unchanged");
-  assert.equal(pagecheck.judge({ excerpt: "10", value: 10 }, { x: 12 }), "changed");
+  assert.equal(pagecheck.judge({ excerpt: "10", value: 10 }, { x: 12 }), "unknown"); // absence of the old figure proves nothing
   assert.equal(pagecheck.judge(sym, null), "unknown");
   assert.equal(pagecheck.judge(sym, { error: "boom" }), "unknown");
+});
+
+test("a changed figure grants no receipt by itself: a moved figure is not proof of a fix", async () => {
+  const f = setup(); await symptomPost(f); f.release(); f.turn(); f.state.fresh = { revenue: 52000000 };
+  const before = Object.values(f.ledger.data.jobs).map((j) => j.lastGameReadAt || 0);
+  await f.broker.pageCheckAfterTurn(f.job);
+  const after = Object.values(f.ledger.data.jobs).map((j) => j.lastGameReadAt || 0);
+  assert.deepEqual(after, before);
 });
