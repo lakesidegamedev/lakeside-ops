@@ -175,3 +175,9 @@ test("the fast lane, system posts and staff answers are exempt", async () => {
   assert.equal(f.posts().length, 1);
   assert.equal(f.audits("read_claim_refused").length, 0);
 });
+
+test("a condition or a general instruction is not a claim about a read page (CI, 2026-11-13)", () => {
+  const { readClaims } = require("../lib/operator/readclaim");
+  assert.equal(readClaims("If a screen is broken or shows incorrect figures, report that here.").length, 0);
+  assert.equal(readClaims("Whenever the panel shows a red badge, open it for the details.").length, 0);
+});

@@ -20,6 +20,8 @@ const NEGATED = /\b(?:not|no|none|nothing|never|neither|nor|without|cannot|can(?
 const HEDGED = /\b(?:may|might|could|possibly|perhaps|probably|likely|seems?|appears?|suspect|suspected|guess|think|unclear|not clear|unconfirmed|unverified|not (?:yet )?(?:confirmed|verified|established|sure)|have not confirmed|haven(?:'|’)?t confirmed|cannot confirm|can(?:'|’)?t confirm|do not know|don(?:'|’)?t know|if so|in theory|best guess)\b/i;
 const RESTATES_PLAYER = /\b(?:you (?:said|wrote|told|mentioned|reported|describe[sd]?|saw|see)|your (?:message|report|ticket|description|screenshot|post)|as you (?:said|put it|wrote|describe[sd]?))\b/i;
 const STATUS = /^\s*(?:i(?:'|’)?m|i am|i(?:'|’)?ll|i will|we(?:'|’)?ll|we will|let me|going to)\b/i;
+// A condition or a general instruction ("if a screen shows wrong figures, report it here") describes no page that was read.
+const CONDITIONAL = /\b(?:if|unless|whenever|whether|in case|any time|anytime)\b/i;
 const FUTURE = /\b(?:will|would|should|going to|shall)\s+(?:be\s+)?(?:show|read|say|record|list|name|display|use|count)/i;
 
 const STOP = new Set(("the a an and or of to in on at for from by with as is are was were be been being it its this that these those there here your you yours " +
@@ -64,7 +66,7 @@ function readClaims(message) {
       if (!m) { const k = MEASURE.exec(clause); if (!k) continue; m = [k[0], "", k[1]]; m.index = k.index; }
       const object = String(m[2] || "").trim();
       const claimText = clause.slice(m.index);
-      if (NOT_A_CLAIM_GAP.test(m[1] || "") || NEGATED.test(clause) || HEDGED.test(clause) || (i > 0 && HEDGED.test(clauses[i - 1])) || RESTATES_PLAYER.test(sentence) || FUTURE.test(claimText)) continue;
+      if (NOT_A_CLAIM_GAP.test(m[1] || "") || NEGATED.test(clause) || HEDGED.test(clause) || (i > 0 && HEDGED.test(clauses[i - 1])) || RESTATES_PLAYER.test(sentence) || FUTURE.test(claimText) || CONDITIONAL.test(clause) || (i > 0 && CONDITIONAL.test(clauses[i - 1]))) continue;
       const stems = contentStems(object);
       if (!stems.length) continue;
       out.push({ sentence, clause, object: object.slice(0, 160), stems });
