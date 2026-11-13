@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.0.1 (2026-11-13)
+
 - After an outage, replaying missed Discord messages saves Keir's state at most every two seconds instead of after every message, so the operator stays responsive and its health check passes while it catches up.
 
 ## 9.0.0 (2026-11-13)
