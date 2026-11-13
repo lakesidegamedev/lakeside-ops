@@ -55,3 +55,36 @@ test("an operator effort override applies to every lane including voice and old 
     assert.equal(r.effort, "high");
   }
 });
+
+test("with an operator override, a ticket's effort is picked per activation and capped by the override", async () => {
+  const { activationEffort } = require("../lib/operator/effort");
+  const run = (j, ceiling = "high") => activationEffort({ ticket: 7, history: [], ...j }, { config: { effortOverride: ceiling }, runner: "claude" });
+  const q = { source: { content: "How does the party leader vote work?" }, tags: { kind: "mechanics_question", complexity: "simple" } };
+  const lowered = await run(q);
+  assert.equal(lowered.effort, "medium");
+  assert.match(lowered.via, /^operator-override:lowered:first-time rules question/);
+  for (const [name, j] of Object.entries({
+    bug: { ...q, tags: { kind: "bug_report" } },
+    money: { ...q, source: { content: "How do I get back the $50,000 I lost?" } },
+    outage: { ...q, source: { content: "Why is the turn stuck?" } },
+    complex: { ...q, tags: { kind: "mechanics_question", complexity: "hard" } },
+    laterActivation: { ...q, history: [{ kind: "note" }] },
+    refused: { ...q, history: [{ kind: "refused" }] },
+    outOfSteps: { ...q, history: [{ kind: "turn-limit" }] },
+  })) { const r = await run(j); assert.equal(r.effort, "high", name); assert.match(r.via, /:ceiling:/, name); }
+});
+
+test("a disputed answer goes back to high, and a ceiling below medium is respected", async () => {
+  const { activationEffort } = require("../lib/operator/effort");
+  const base = { ticket: 7, history: [], source: { content: "How does the vote work?" }, tags: { kind: "mechanics_question" } };
+  const disputed = await activationEffort({ ...base, inbox: [{ content: "That's wrong, it works differently" }] }, { config: { effortOverride: "high" }, runner: "claude" });
+  assert.equal(disputed.effort, "high");
+  assert.match(disputed.via, /player disputed/);
+  assert.equal((await activationEffort(base, { config: { effortOverride: "low" }, runner: "claude" })).effort, "low");
+});
+
+test("non-ticket tasks keep the fixed operator override", async () => {
+  const { activationEffort } = require("../lib/operator/effort");
+  const r = await activationEffort({ history: [], source: { content: "How does the vote work?" } }, { config: { effortOverride: "high" }, runner: "claude" });
+  assert.deepEqual(r, { effort: "high", via: "operator-override" });
+});
