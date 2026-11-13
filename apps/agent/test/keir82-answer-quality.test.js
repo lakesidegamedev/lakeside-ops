@@ -194,3 +194,21 @@ test("audit: negated fix claims are not fix claims; a negation in another clause
   assert.ok(kinds("It was corrected in the latest update.").includes("verified"));
   assert.ok(kinds("It is not a bug, but it was corrected in the latest update.").includes("verified"));
 });
+
+test("Keir 9: a refused first answer then a wait behind the introduction alone is refused (Hydrogen replay, 2026-11-13)", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 30000, text: "Hi, I'm Keir, the support assistant for A House Divided. I can look into this." }] };
+  // The answer is refused (any post rule: here the pacing rule, in the replay the rule lookup), nothing has been read.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Supplying yourself lowers your margin because the charge is counted against your revenue." }), /Not posted/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /no answer since they last wrote/);
+});
+
+test("Keir 9: an ordinary wait with no refused answer and no reads is still allowed", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 30000, text: "Which corporation is this about?" }] };
+  f.job.lastAskAt = f.now() - 30000; f.job.lastPlayerAt = f.now() - 60000;
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked which corporation." });
+  assert.match(JSON.stringify(r), /waiting/);
+});

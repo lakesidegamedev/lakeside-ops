@@ -1512,6 +1512,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // A reply that can never be delivered (no channel) owes nothing: arming the refused-reply
       // hold there left finish refused too, so an open channel-less ticket could only end
       // blocked (KBX5 channelless--open, 2026-11-03).
+      // Keir 9 (Hydrogen replay, 2026-11-13): any refused attempt to answer the player, pacing refusals included, means the
+      // player is owed an answer, even before anything was read (the unanswered-player rule at finish keys on it).
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update")) { job.replyAttemptRefusedAt = now(); try { ledger.save(); } catch {} }
       if (e?.code === "TICKET_POST_TOO_LONG" && e.draft && job.kind === "ticket") { job.lastTooLongDraft = String(e.draft).slice(0, 4000); job.lastTooLongDraftAt = now(); try { ledger.save(); } catch {} }
       if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(e.code === "KILL_SWITCH")) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
@@ -3694,12 +3697,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Only once something on the ticket has been read: an ordinary wait before any investigation is the wait
       // rules' business (the full suite on CI, 2026-11-13: five wait and handoff tests broke without this).
       if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !developerTask(job) && !developerTicket(job) && !ownerDirected(job)
-          && Object.values(d.jobs).some((j) => ticketOf(j) === ticketOf(job) && (j.lastGameReadAt || j.lastCodeReadAt))
+          && Object.values(d.jobs).some((j) => ticketOf(j) === ticketOf(job) && (j.lastGameReadAt || j.lastCodeReadAt || j.replyAttemptRefusedAt))
           && process.env.KEIR_UNANSWERED_GUARD !== "0") {
         const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1), human = humanAt(tn);
         // A holding line ("looking into it") is not an answer (Muse replay 2026-11-12: two tickets got only
         // "looking into it" and the task parked).
-        const holdingOnly = last && (isStall(last.text) || /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
+        // The code-written introduction ("Hi, I'm Keir, the support assistant ...") is not an answer either (Hydrogen replay, 2026-11-13:
+        // a refused first answer, then a wait for the player behind the introduction alone).
+        const holdingOnly = last && (isStall(last.text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(last.text || "").trim()) || /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
         // A wait for the player's own reply has its own, stricter "nothing posted" refusal below; only a holding line is added here.
         const owed = human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
         if (owed) {
