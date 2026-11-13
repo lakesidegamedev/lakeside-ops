@@ -63,7 +63,7 @@ const config = {
   // Model split (2026-10-12 trial): quick lane = conversation, worker lanes = coding and deep answers.
   computerUrl: env.KEIR_COMPUTER_URL || (env.WORKER_TOKEN ? "http://127.0.0.1:9770" : undefined), computerToken: env.KEIR_COMPUTER_TOKEN || env.WORKER_TOKEN,
   voiceProvider: env.KEIR_VOICE_PROVIDER || "agy:gemini-3.8-flash@low",
-  fallbackProvider: env.KEIR_FALLBACK_PROVIDER || "", quickProvider: env.KEIR_QUICK_PROVIDER || "claude", workerProvider: env.KEIR_WORKER_PROVIDER || "claude",
+  fallbackProvider: env.KEIR_FALLBACK_PROVIDER || "", ticketProvider: env.KEIR_TICKET_PROVIDER || "", quickProvider: env.KEIR_QUICK_PROVIDER || "claude", workerProvider: env.KEIR_WORKER_PROVIDER || "claude",
   // Keir 7 fast lane: ticket questions answered by Ask Keir before any model run.
   // A deep Ask answer with live reads measured 80 s (2026-11-01), so the wait is 150 s.
   fastLane: env.KEIR_FAST_LANE !== "0", askUrl: (env.KEIR_ASK_URL || "https://ask.lakesidegames.net").replace(/\/+$/, ""), askSecret: env.KEIR_ASK_SECRET || null, askTimeoutMs: positive("KEIR_ASK_TIMEOUT_SECONDS", 150) * 1000,

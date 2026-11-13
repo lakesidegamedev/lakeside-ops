@@ -3073,3 +3073,44 @@ for (const checksGreen of [true, false]) test(`owner-authored approved PR skips 
   assert.ok(!f.calls.some(c => c.includes("event=APPROVE")));
   assert.equal(f.calls.some(c => c.join(" ").includes("pulls/10/merge")), checksGreen);
 });
+
+// Distinct keys: running() reuses one fixture job for every call.
+const runningAs = (f, key, fields) => { const j = f.ledger.createJob(key, { role: "owner", kind: "command", source: {}, deadline: 9999999999999, ...fields }); j.state = "running"; return j; };
+test("Keir 9: player tickets run on the ticket route at its own effort, other work stays on the main route", async () => {
+ const f = fixture(), t = runningAs(f, "t410", { kind: "ticket", role: "support", ticket: 410, summary: "A player question." });
+ const other = runningAs(f, "finding", { kind: "finding", role: "support", summary: "A finding." });
+ const seen = []; let current = null;
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", effortOverride: "high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
+  invokeImpl: async ({ runner, model, effort }) => { seen.push([current.id, runner, model, effort]); await f.broker.tool(current, "finish", { state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+ current = t; await agent.run(t, new AbortController().signal);
+ current = other; await agent.run(other, new AbortController().signal);
+ const forT = seen.filter((x) => x[0] === t.id), forOther = seen.filter((x) => x[0] === other.id);
+ assert.ok(forT.length && forT.every((x) => x[1] === "agy" && x[2] === "gemini-4-hydrogen-medium" && x[3] === "medium"), JSON.stringify(seen));
+ assert.equal(t.provider.assignedBy, "ticket-route");
+ assert.ok(forOther.length && forOther.every((x) => x[1] === "opencode"), JSON.stringify(seen));
+});
+
+test("Keir 9: a ticket on the ticket route falls back to the main route when the ticket route hits its usage limit", async () => {
+ const f = fixture(), j = runningAs(f, "t411", { kind: "ticket", role: "support", ticket: 411, summary: "A player question." });
+ const attempts = []; let current = null;
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "agy") return { subtype: "error", is_error: true, result: "RESOURCE_EXHAUSTED: quota exceeded (429)", num_turns: 1 }; await f.broker.tool(current, "finish", { state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+ current = j; await agent.run(j, new AbortController().signal);
+ assert.equal(j.provider.runner, "opencode");
+ current = j; j.state = "running"; await agent.run(j, new AbortController().signal);
+ assert.deepEqual(attempts, ["agy", "opencode"]);
+ // A new ticket while the ticket route cools down starts on the main route.
+ const k = runningAs(f, "t412", { kind: "ticket", role: "support", ticket: 412, summary: "Another." });
+ current = k; await agent.run(k, new AbortController().signal);
+ assert.equal(attempts.at(-1), "opencode");
+ assert.equal(k.provider.assignedBy, "ticket-route-fallback");
+ // Once the cooldown ends, tickets go back to the ticket route.
+ f.ledger.data.routeCooldown.agy = Date.now() - 1;
+ const m = runningAs(f, "t413", { kind: "ticket", role: "support", ticket: 413, summary: "Later." });
+ current = m; await agent.run(m, new AbortController().signal);
+ assert.equal(attempts.at(-1), "agy");
+});
