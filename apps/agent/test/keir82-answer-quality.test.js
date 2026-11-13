@@ -34,6 +34,14 @@ test("a release alone cannot tell the player the problem is fixed (ticket 1763)"
   // Release candidate replay, 2026-11-13: both of these reached the player.
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That fault is fixed and takes effect from the next turn." }), /no receipt|figures after that turn/);
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The tile was reading the offer instead of the sales, and a fix making it use the sales figures has been released in a recent update." }), /no receipt|figures after that turn/);
+  // Feature C replay, 2026-11-13: both reached the player as false claims.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That was a real gap, and it has since been fixed: regional laws now carry the effect." }), /no receipt|figures after that turn/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That rule has since been changed to allow it." }), /no receipt|figures after that turn/);
+  // Negated, or a rule described without a change, is not a claim.
+  await f.broker.tool(f.job, "channel_reply", { message: "The rule has not been changed." });
+  f.ledger.data.ticketPosts = {}; f.advance(11);
+  await f.broker.tool(f.job, "channel_reply", { message: "The rule allows one bill in progress per legislator." });
+  f.ledger.data.ticketPosts = {}; f.advance(11);
   // A turn on the fix, then a read of their figures: now it may be said.
   f.job.turnChecks = [f.now()]; f.advance(1); f.job.lastGameReadAt = f.now();
   await f.broker.tool(f.job, "channel_reply", { message: "Your chemicals page now shows the internal supply income." });
