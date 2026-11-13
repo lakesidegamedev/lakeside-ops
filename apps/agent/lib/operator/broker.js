@@ -13,7 +13,9 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|calls behaviour a bug, fault or defect/i;
+// A post asking the player who they are (ticket 1829: "If you share your character name here").
+const ASKS_IDENTITY = /\bwhich (?:character|account)\b[^.!\n]{0,40}\?|\b(?:share|tell me|send|give me|let me know|post|confirm|what(?:'|’)?s|what is|which is)\b[^.?!\n]{0,40}\b(?:(?:your|the) )?(?:character(?:'s|’s)? name|character|in-?game name|username|user name|account(?: name)?|ign)\b/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|asks the player who they are|calls behaviour a bug, fault or defect/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -723,6 +725,17 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     killSwitch?.assertClear("A post to the player");
     guardTicketNumbers(job, ticketNo, message);
     secondLook(job, ticketNo, message);
+    // Keir 9.0.2 (ticket 1829, owner): a linked reporter is never asked who they are. Keir looks the account up itself
+    // (reporter_state). Refused at most twice per ticket, then let through, so a post is never stuck on it.
+    if (!opts.system && job.kind === "ticket" && ASKS_IDENTITY.test(message)) {
+      const reporter = await reporterOf(job).catch(() => null);
+      const asked = (d.identityAskRefusals ||= {});
+      if ((reporter?.username || reporter?.id) && (asked[ticketNo] || 0) < 2) {
+        asked[ticketNo] = (asked[ticketNo] || 0) + 1; ledger.save();
+        ledger.audit("identity_ask_refused", { job: job.id, ticket: ticketNo, attempt: asked[ticketNo] });
+        throw new Error("Not posted: this asks the player who they are, but their game account is linked to this ticket. Look it up with reporter_state (it returns the linked account and its characters) and never ask a linked player for their character name, username or account. Ask only for what you cannot read.");
+      }
+    }
     guardTicketPostRules(job, ticketNo, message, opts);
     // Keir 4.0: a typed semantic read of the draft (Jev). Decisive leaks are
     // refused; everything else is a proposed label in the event sink.
@@ -852,7 +865,12 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // The progress card is edited in place and is not a message, so it does not
     // hold back the answer it announces (ticket 1540).
     const mine = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.jobId === job.id && !isCardPost(p)).at(-1);
-    if (!answeringStaff && mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
+    // Keir 9.0.2 (ticket 1829): while the player is owed an answer (the unanswered-player rule has refused a finish for
+    // their latest message, or an answer to it was refused), pacing never holds the answer back. On 1829 the cause was found,
+    // the first draft was refused by the screen, the rewrite was held by both pacing rules, and the player got "no confirmed answer".
+    const owedNow = (() => { const h = humanAt(ticketNo), rec = d.unansweredFinishes?.[ticketNo];
+      return h > 0 && ((rec && rec.humanAt === h && rec.refused > 0 && !rec.limitationPostedAt) || Object.values(d.jobs).some((j) => ticketOf(j) === ticketNo && (j.replyAttemptRefusedAt || 0) > h)); })();
+    if (!answeringStaff && !owedNow && mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
       throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
     // The same question again (1592 asked one question four times in 31
     // hours): asking twice is a reminder, a third time is not progress.
@@ -895,7 +913,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (timid) { ledger.audit("timid_answer_refused", { job: job.id, ticket: ticketNo }); throw new Error(timid); }
     const lastPost = posts.filter((p) => !isCardPost(p)).at(-1);
     const sameTicketJobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
-    const spam = opts.system ? null : replyPolicy.milestoneRefusal({ message, lastPost, claims, answeringStaff, correction: isCorrection(message),
+    const spam = opts.system || owedNow ? null : replyPolicy.milestoneRefusal({ message, lastPost, claims, answeringStaff, correction: isCorrection(message),
       playerSpokeAfter: lastPost ? playerSpokeAfter(lastPost.at) : false,
       humanSpokeAfter: lastPost ? humanInChannelSince(job, lastPost.at) : false,
       approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
@@ -1486,7 +1504,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (!job.ticket) return null;
     if (!job.reporterCharacter) {
       const t = await mcp.call("support", "support_get", { kind: "ticket", number: job.ticket }, false, signal).catch(() => null);
-      job.reporterCharacter = { id: /\/character\/(\d+)/.exec(t?.reporter?.profileUrl || "")?.[1] || null, name: t?.reporter?.characterName || null, title: t?.title || null };
+      job.reporterCharacter = { id: /\/character\/(\d+)/.exec(t?.reporter?.profileUrl || "")?.[1] || null, name: t?.reporter?.characterName || null, username: t?.reporter?.username || null, title: t?.title || null };
     }
     return job.reporterCharacter;
   }
@@ -2233,6 +2251,21 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (card.id !== cardId || card.author?.id !== config.botId || card.webhook_id) throw new Error("canonical intake card does not match this channel");
       const inspectedTicket = input.ticket || job.ticket;
       if (inspectedTicket !== job.ticket) ticket = await mcp.call("support", "support_get", {kind:"ticket",number:inspectedTicket}, false, signal);
+      // Keir 9.0.2 (ticket 1829, 2026-11-13): tickets now carry the reporter's linked game username without a character
+      // profile link. Resolve the account and its characters from the username (read-only) instead of reporting "not linked",
+      // which made Keir ask a linked player for their character name.
+      if (!ticket.reporter?.profileUrl && ticket.reporter?.username) {
+        const username = String(ticket.reporter.username);
+        const users = await mcp.call("heal-ops", "heal_query", {env:"prod", collection:"users", filter:{username}, projection:{_id:1, username:1}, limit:2}, false, signal);
+        if (users.docs?.length !== 1 || users.docs[0].username !== username) throw new Error("the ticket's linked game username did not match exactly one account");
+        const userId = String(users.docs[0]._id);
+        const fields = ["name", "sequentialId", "countryId", "homeState", "currentOffice"];
+        const chars = await mcp.call("heal-ops", "heal_query", {env:"prod", collection:"characters", filter:{$expr:{$eq:[{$toString:"$userId"}, userId]}}, projection:Object.fromEntries(fields.map(k => [k,1])), limit:10}, false, signal);
+        const characters = (chars.docs || []).map((c) => Object.fromEntries(fields.filter(k => c[k] !== undefined).map(k => [k,c[k]])));
+        job.reporterInspection = {at:now(), ticket:inspectedTicket, account:{username, linked:true}, characters}; ledger.save();
+        return {environment:"prod", ticket:inspectedTicket, checkedAt:now(), account:{username, linked:true}, characters,
+          instruction: characters.length ? "The reporter's linked account and its characters, from the live game. Never ask the player who they are or for their character name." : "The reporter's account is linked but has no current character. Never ask the player who they are; ask only for what you cannot read, if anything."};
+      }
       let profile; try { profile = new URL(ticket.reporter?.profileUrl); } catch { throw new Error("ticket has no linked character profile"); }
       if (!/^https:$/.test(profile.protocol) || !["www.ahousedividedgame.com", "ahousedividedgame.com"].includes(profile.hostname) || !/^\/character\/[1-9]\d*$/.test(profile.pathname)) throw new Error("ticket character profile is not canonical");
       const characterId = Number(profile.pathname.split("/").at(-1));
@@ -2254,7 +2287,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const rows = await discord("GET", `/channels/${job.channelId}/messages?limit=50`);
       const claimant = rows.map((m) => ticketClaim(m, config, d.channels[job.channelId]?.claimReleasedAt)).find(Boolean);
       if (claimant) d.channels[job.channelId] = { ...d.channels[job.channelId], claimedBy: claimant };
-      job.observedPlayerAt = Math.max(job.observedPlayerAt || 0, ...rows.filter((m) => !m.author.bot).map((m) => Date.parse(m.timestamp) || 0));
+      // Keir 9.0.2 (ticket 1829): only the player's own messages count as the player writing. A staff or owner message
+      // ("their account should be linked, is it not?") re-armed the unanswered-player rule and the "no confirmed answer"
+      // line was posted a second time.
+      const staff = new Set([config.ownerId, ...(config.staffIds || [])].filter(Boolean));
+      job.observedPlayerAt = Math.max(job.observedPlayerAt || 0, ...rows.filter((m) => !m.author.bot && !staff.has(m.author.id)).map((m) => Date.parse(m.timestamp) || 0));
       ledger.save();
       return rows.map((m) => ({ id: m.id, author: m.author.username, authorId: m.author.id, bot: Boolean(m.author.bot), content: m.content, embeds: m.embeds, attachments: m.attachments, at: m.timestamp }));
     }
