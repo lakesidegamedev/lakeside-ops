@@ -34,7 +34,7 @@ test("doctor: crashed activation and unknown ticket and finished ticket", () => 
 test("doctor without a ticket, Keir off", () => {
   const s = mk([job("a", 6)]); s.active = false;
   const out = read.doctor(s);
-  assert.match(out, /OFF/); assert.match(out, /Oldest waiting: ticket 6/); assert.match(out, /\/keir on/);
+  assert.match(out, /OFF/); assert.match(out, /Oldest waiting: ticket 6/); assert.match(out, /bring it back/); assert.doesNotMatch(out, /\/keir on/);
 });
 
 test("status counts and waiting list", () => {
