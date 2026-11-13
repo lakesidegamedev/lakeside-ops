@@ -1,4 +1,5 @@
 "use strict";
+const { plainPresent } = require("./ticketrecall");
 // Keir 9: what Keir keeps from a closed ticket. The code, not the model, writes at most one ticket resolution
 // (and one lesson when an answer was retracted) from the ticket's own evidence: the game code files read
 // during the ticket, the rule in the last answer the player was given, and the ticket number. Nothing here
@@ -86,8 +87,8 @@ function keep({ d, notebook, ticket, audit }) {
   const final = e.posts.at(-1);
   if (e.keptFor === final.at) return why("already kept");
   const wrong = lastCorrection === undefined ? null : e.posts.slice(0, lastCorrection).filter((p) => !p.correction).pop() || null;
-  const answer = clip(final.correction ? stripCorrection(final.text) : final.text, ANSWER_CHARS);
-  if (answer.length < 12) return why("answer too short");
+  const answer = clip(plainPresent(final.correction ? stripCorrection(final.text) : final.text), ANSWER_CHARS);
+  if (answer.length < 12) return why("answer too short or only about a change");
   const paths = deciding(e.reads, answer + " " + (wrong?.text || ""));
   if (!paths.length) return why("no deciding file");
   const out = { kept: false };
@@ -104,7 +105,7 @@ function keep({ d, notebook, ticket, audit }) {
   if (wrong) {
     try {
       const old = notebook.all().find((n) => n.kind === "lesson" && n.by === BY && (n.path === paths[0]));
-      const right = clip(stripCorrection(final.correction ? final.text : e.posts[lastCorrection].text), CLAIM_CHARS);
+      const right = clip(plainPresent(stripCorrection(final.correction ? final.text : e.posts[lastCorrection].text)), CLAIM_CHARS);
       // The right claim came from a correction. It is only presented as settled by the file when the claim itself
       // names what that file is about; otherwise it is labelled like any other unchecked answer.
       const cited = [...wordsOf(paths[0])].some((w) => wordsOf(right).has(w));
