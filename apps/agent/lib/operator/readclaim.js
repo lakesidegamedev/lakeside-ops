@@ -133,4 +133,4 @@ function hedge(message, claims, maxChars) {
   return out.trim() || String(message || "");
 }
 
-module.exports = { readClaims, unbackedClaims, windowBacks, contentStems, REFUSAL, HEDGE, hedge, MAX_REFUSALS: 2 };
+module.exports = { clausesOf, stem, HEDGED, CONDITIONAL, RESTATES_PLAYER, readClaims, unbackedClaims, windowBacks, contentStems, REFUSAL, HEDGE, hedge, MAX_REFUSALS: 2 };

@@ -13,13 +13,14 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|calls behaviour a bug, fault or defect/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
 const prMention = require("./prmention");
 const ruleLookup = require("./rulelookup");
 const readClaim = require("./readclaim");
+const bugClaim = require("./bugclaim");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const crypto = require("node:crypto");
@@ -808,6 +809,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("read_claim_hedged", { job: job.id, ticket: ticketNo, clause: bad[0].clause.slice(0, 160) });
     return readClaim.hedge(message, bad, require("./playercopy").MAX_CHARS);
   }
+  // Same for a sentence that calls behaviour a bug or says it needs a code change with no read marking it a fault.
+  function softenBugClaims(job, ticketNo, message) {
+    if (job.kind !== "ticket" || (job.fastLane && !job.fastLane.escalated) || (d.bugClaimRefusals?.[ticketNo] || 0) < bugClaim.MAX_REFUSALS) return message;
+    const claim = bugClaim.unbackedBugClaim(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), ticketPlayerText(job));
+    if (!claim) return message;
+    ledger.audit("bug_claim_hedged", { job: job.id, ticket: ticketNo, sentence: claim.sentence.slice(0, 160) });
+    return bugClaim.hedge(message, claim, require("./playercopy").MAX_CHARS);
+  }
   function guardTicketPostRules(job, ticketNo, message, opts = {}) {
     require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
@@ -932,6 +941,20 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
         ledger.audit("read_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], clause: bad[0].clause.slice(0, 160) });
         throw new Error(readClaim.REFUSAL(bad[0]));
+      }
+    }
+    // Keir 9 (replay 2026-11-13): "this is a bug" / "needs a code change" is a claim. A sentence that labels behaviour a defect
+    // needs a read on this ticket that marks it a fault, or plain "not confirmed" wording; otherwise refused, at most twice per
+    // ticket, then labelled unconfirmed by code (softenBugClaims). Never blocks finishing: the text is in PACING_REFUSAL.
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated)) {
+      const refusals = (d.bugClaimRefusals ||= {});
+      if ((refusals[ticketNo] || 0) < bugClaim.MAX_REFUSALS) {
+        const claim = bugClaim.unbackedBugClaim(message, ticketReadTexts(ticketNo, sameTicketJobs), ticketPlayerText(job));
+        if (claim) {
+          refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
+          ledger.audit("bug_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], pattern: claim.pattern });
+          throw new Error(bugClaim.REFUSAL(claim));
+        }
       }
     }
     if (claims.some((c) => (c.kind === "escalated" || c.kind === "investigating") && !c.future))
@@ -1974,7 +1997,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
         await guardTicketPost(job, ticketNo, message);
-        message = softenUnreadClaims(job, ticketNo, message);
+        message = softenBugClaims(job, ticketNo, softenUnreadClaims(job, ticketNo, message));
         message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
         // ticket already named the reporter's company and the page they had open.
@@ -3282,7 +3305,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenUnreadClaims(job, job.ticket, args.message); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).

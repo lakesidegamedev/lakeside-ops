@@ -6,6 +6,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ## Unreleased
 
 - Keir can no longer tell a player a fix "was fixed on" a date, or that "a correction has been released" followed by when it reaches their page, without proof from their own page. A future word after a past fix claim no longer makes the claim count as a promise.
+- Keir no longer tells a player that behaviour is a bug, a fault or "needs a code change" unless a read on that ticket marks it as a fault (a tracker bug, a code note) or the reply says plainly it is not confirmed. Otherwise it is asked to read the deciding code and say whether it is the rule; at most twice per ticket, then the code labels the sentence "I have not confirmed this is a fault, but ..." and the answer still goes out.
 - Keir no longer tells a player that one value "already includes" another, or that counting both is double counting, when what it read says the inclusion is only partial or says nothing about it; it is asked to restate the limit, at most twice per ticket.
 - Keir no longer tells a player what a page, record or panel shows, or what a figure measures, unless a read on that ticket returned those words. An unread cause or recorded fact is refused twice (quote the read, or say it is not confirmed); after that the code labels it "I have not confirmed this, but ..." and the answer still goes out. Never blocks finishing.
 - Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.

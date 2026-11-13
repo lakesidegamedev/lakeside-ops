@@ -126,4 +126,4 @@ function inclusionRefusal(message, texts) {
   return evidence.any ? null : INCLUSION_REFUSAL(claim, evidence);
 }
 
-module.exports = { inclusionClaim, inclusionEvidence, inclusionRefusal, PATTERNS, assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED, statesUnconfirmed, codeResultHasContent };
+module.exports = { sentencesOf, RELAY, STATUS, inclusionClaim, inclusionEvidence, inclusionRefusal, PATTERNS, assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED, statesUnconfirmed, codeResultHasContent };
