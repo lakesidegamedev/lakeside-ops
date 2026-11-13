@@ -6,7 +6,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ## Unreleased
 
 - Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.
-
+- Staff ticket board: a new read endpoint `/v5/ticket-board` on the operator and a "Tickets" panel on the Keir hub list every open ticket in one line (what the player asked, where Keir is in plain words, the next step and who owns it, last player message and last Keir answer), with a highlight when a player has had no answer for over 2 hours. Built from the ledger only, no model calls.
 - What Keir keeps from a closed ticket is now an unverified `resolution` (kind `resolution`, `verified: false`), not a `mechanic`. Recall shows it as "an earlier answer on ticket N, not verified; check it against the code before relying on it". A retraction lesson's right claim gets the same label unless the claim names what the cited file is about.
 - Muse: its temp folder is now actually removed after each run (the cleanup referenced a variable out of scope), and the muse runner is limited to an explicit list of subscription models; any other model on it is refused with the billing message.
 - Wording checks: an acknowledgement opening ("Thanks, ...") no longer exempts the rest of its sentence from the rule-lookup check, and negation in a fix claim is judged per clause ("not corrected" is no claim, "not a bug, but corrected in the latest update" is).
