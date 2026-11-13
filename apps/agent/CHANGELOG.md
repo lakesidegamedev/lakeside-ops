@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- When several players report the same fault, Keir reuses one checked answer. A new ticket that matches an earlier one on at least two independent signals (similar wording, the support search, the same screen or file, place or turn) within 72 hours gets that ticket's answer as context, but only if it was posted with a code-written "From:" line and was not later corrected or disputed by its player. The new task still has to read the new player's own figures. A draft that takes the opposite direction on the same fault ("working as designed" against "a bug") is refused once with both texts; the next post goes out. The tickets are linked, not merged.
+
 - A ticket reply is never called fixed from a deploy alone. Keir records the page figure it first cited as the symptom; once the fix is live and a turn has run, the code re-reads that figure for the player. Changed: the fixed message may post. Unchanged: it is refused, the player is told once that the change is out but their page still shows the old figure, the task is woken, and after three turns it goes to the developers. One re-read per turn.
 
 ## 9.1.3 (2026-11-15)
