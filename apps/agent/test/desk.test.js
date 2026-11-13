@@ -48,7 +48,8 @@ test("why: trail newest last, at most 12, From lines kept, ids and dashes stripp
   const posts = Array.from({ length: 15 }, (_, i) => ({ at: NOW - (20 - i) * MIN, kind: "reply", text: `From: Keir\nhello <@123456789012345678> — ${i}` }));
   const s = mk([job("a", 7)], { ledger: { ticketPosts: { 7: posts }, audit: [{ at: NOW - MIN, job: "a", kind: "reply-refused", reason: "number not read" }, { at: NOW - 2 * MIN, ticket: 7, kind: "escalated_to_developers" }] } });
   const out = read.why(s, 7), lines = out.split("\n").slice(1);
-  assert.equal(lines.length, 12); assert.match(lines.at(-1), /refused a draft/); assert.match(out, /From: Keir/);
+  // Identical lines in a row collapse with a count, so the trail stays short and a loop reads as one event.
+  assert.ok(lines.length <= 12); assert.match(out, /From: Keir.*\(x\d+\)/); assert.match(lines.at(-1), /refused/);
   assert.doesNotMatch(out, /\d{17}|—|–/);
 });
 

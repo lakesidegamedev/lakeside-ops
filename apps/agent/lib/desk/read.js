@@ -97,7 +97,7 @@ function doctor(state, ticket) {
     const oldest = waiting.slice().sort((a, b) => touched(a) - touched(b))[0];
     const cooled = cooledRoutes(state);
     const lines = [
-      `Keir is ${state.active ? (state.ledger?.paused ? "on but paused" : "on") : "OFF (the service is not running)"}${state.release ? `, release ${clean(state.release)}` : ""}.`,
+      `Keir is ${state.active ? (state.ledger?.paused ? "on but paused" : "on") : "OFF (the service is not running)"}${state.release ? `, release ${clean(String(state.release).split(/\s+/).filter((x) => !/^[0-9a-f]{12,}$/.test(x)).join(" ") || state.release)}` : ""}.`,
       `${queued.length} queued, ${jobs.length} open tickets in all.`,
       oldest ? `Oldest waiting: ticket ${ticketOf(oldest)}, ${span(state.now - touched(oldest))}.` : "Nothing is waiting.",
       cooled.length ? `Provider: ${cooled.map((c) => `${clean(c.runner)} is capped for another ${span(c.until - state.now)}`).join("; ")}.` : "Provider: no route is capped.",
@@ -124,7 +124,7 @@ function status(state) {
   const route = jobs.map((j) => j.provider).filter(Boolean).at(-1);
   const model = clean(route?.model || latest?.model || "unknown"), provider = clean(route?.runner || latest?.provider || "unknown");
   return cap([
-    `Keir is ${state.active ? (state.ledger?.paused ? "on but paused" : "on") : "OFF"}${state.release ? `, release ${clean(state.release)}` : ""}.`,
+    `Keir is ${state.active ? (state.ledger?.paused ? "on but paused" : "on") : "OFF"}${state.release ? `, release ${clean(String(state.release).split(/\s+/).filter((x) => !/^[0-9a-f]{12,}$/.test(x)).join(" ") || state.release)}` : ""}.`,
     `Model: ${model} via ${provider}.`,
     `Open tickets: ${jobs.length}. In progress: ${by("progress")}. Waiting on staff: ${by("staff")}. Waiting on the player: ${by("player")}.${by("other") ? ` Parked or blocked: ${by("other")}.` : ""}`,
   ].join("\n"));
@@ -159,12 +159,19 @@ function why(state, ticket) {
   for (const a of state.ledger?.audit || []) {
     if (!(a.ticket === n || ids.has(a.job))) continue;
     const kind = String(a.kind || "");
-    if (/refus/i.test(kind)) ev.push({ at: a.at, line: `refused a draft: ${clean(a.reason || a.why || kind).slice(0, 90)}` });
+    if (/refus/i.test(kind)) {
+      // Say what was refused in a few words: the tool and the start of the refusal, not the audit kind.
+      const what = clean(a.error || a.reason || a.why || "").replace(/^Not (?:posted|finished):\s*/i, "").split(/[.;:]/)[0].slice(0, 70);
+      ev.push({ at: a.at, line: `refused${a.tool ? ` ${clean(a.tool).replace(/_/g, " ")}` : ""}: ${what || clean(kind).replace(/_/g, " ")}` });
+    }
     else if (/escalat|raise|handoff|investigation_dispatched/i.test(kind)) ev.push({ at: a.at, line: `escalated: ${clean(kind.replace(/[_-]/g, " "))}` });
   }
   if (!ev.length) return `Nothing recorded for ticket ${n} in the last day.`;
   ev.sort((a, b) => a.at - b.at);
-  return cap([`Ticket ${n}, newest last:`, ...ev.slice(-12).map((e) => `${ago({ now: state.now }, e.at)}: ${e.line}`)].join("\n"));
+  // Repeats in a row collapse into one line with a count, so a refusal loop reads as one event.
+  const rows = [];
+  for (const e of ev) { const last = rows.at(-1); if (last && last.line === e.line) { last.n++; last.at = e.at; } else rows.push({ ...e, n: 1 }); }
+  return cap([`Ticket ${n}, newest last:`, ...rows.slice(-12).map((e) => `${ago({ now: state.now }, e.at)}: ${e.line}${e.n > 1 ? ` (x${e.n})` : ""}`)].join("\n"));
 }
 
 module.exports = { doctor, status, waiting, why };
