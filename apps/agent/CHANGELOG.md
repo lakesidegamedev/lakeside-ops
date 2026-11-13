@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.0.2 (2026-11-13)
+
+- A ticket whose reporter has a linked game account (the ticket carries the game username) is no longer treated as unlinked: `reporter_state` looks up the account and its characters, and asking a linked player for their character name, username or account is refused (at most twice per ticket).
+- While a player is owed an answer, the ten-minute and "nothing new" pacing rules no longer hold back the answer, so a found cause reaches the player instead of the "no confirmed answer yet" line.
+- A staff or owner message in a ticket no longer counts as the player writing, so it does not re-arm the unanswered-player rule.
+
 ## 9.0.1 (2026-11-13)
 
 - After an outage, replaying missed Discord messages saves Keir's state at most every two seconds instead of after every message, so the operator stays responsive and its health check passes while it catches up.
