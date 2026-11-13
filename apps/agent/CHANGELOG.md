@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket task now always starts with up to three notes from Keir's notebook (about 600 characters), found from the player's question plus the game files and screens the ticket names or has read. Each is labelled "checked rule from the code", "earlier answer on ticket N, not verified" or "earlier mistake: X was wrong, Y was right"; notes whose code file changed are left out, and only the notes shown count as recalled. A recalled note never replaces the code lookup before a rule is stated.
+
 - Desk staff actions: nudge, release, pause and resume a ticket (junior developers and developers) and switch Keir on or off (developers) through a new local operator endpoint that audits each action and posts one line to the staff channel; none of them resolves a ticket or messages the player. A proven-model registry lets developers switch the model for new tickets only, and only to entries that passed the bar with a live check in the last 10 minutes (override is logged and posted to staff).
 
 - Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.
