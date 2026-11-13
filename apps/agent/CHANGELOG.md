@@ -6,6 +6,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ## Unreleased
 
 - Keir no longer tells a player that one value "already includes" another, or that counting both is double counting, when what it read says the inclusion is only partial or says nothing about it; it is asked to restate the limit, at most twice per ticket.
+- Keir no longer tells a player what a page, record or panel shows, or what a figure measures, unless a read on that ticket returned those words. An unread cause or recorded fact is refused twice (quote the read, or say it is not confirmed); after that the code labels it "I have not confirmed this, but ..." and the answer still goes out. Never blocks finishing.
 - Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.
 - Staff slash command `/keir` (doctor, status, waiting, why) answered by a separate read-only desk process, so moderators and developers can see why Keir is stuck or who it is waiting on even when Keir's own loop is hung. It runs CLI-only until its own Discord application is configured; replies are private unless shared.
 - What Keir keeps from a closed ticket is now an unverified `resolution` (kind `resolution`, `verified: false`), not a `mechanic`. Recall shows it as "an earlier answer on ticket N, not verified; check it against the code before relying on it". A retraction lesson's right claim gets the same label unless the claim names what the cited file is about.
