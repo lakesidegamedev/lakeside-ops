@@ -77,4 +77,53 @@ function codeResultHasContent(result) {
   return Boolean(v.path) && Object.keys(v).length > 1;
 }
 
-module.exports = { PATTERNS, assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED, statesUnconfirmed, codeResultHasContent };
+// Keir 9 (replay 2026-11-13): "X already includes Y, so adding both would double count" is a rule claim whose truth
+// depends on HOW MUCH of Y is in X. Keir read the code and a trace saying the inclusion was partial ("only through
+// earnings"), then told the player it was double counting in every run. This part is pure too: the broker passes the
+// text this ticket has read (observations and recorded facts) and acts on the answer.
+const INCLUDE_WORD = String.raw`(?:includ|reflect|carr(?:y|ie)|contain|cover|capitali[sz]|account(?:s|ed)? for|priced? in|rolled? up|consolidat|built into)\w*`;
+const INCLUDES = new RegExp(String.raw`\b(?:already|alread)\s+${INCLUDE_WORD}|\b${INCLUDE_WORD}\b[^.!?]{0,60}\b(?:already|anyway)\b|\b(?:is|are) (?:already )?(?:included|reflected|counted|built) (?:in|into)\b`, "i");
+const DOUBLE = /\bdouble[- ]?count\w*|\bcount\w* [\w' ,-]{0,60}?(?:twice|a second time|two times|again)\b|\b(?:twice|a second time|two times) over\b/i;
+const NOT_DOUBLE = /\b(?:not|isn(?:'|’)?t|wouldn(?:'|’)?t|no|never) (?:be |a |an )?(?:real )?double[- ]?count|\bwould not (?:be )?double/i;
+const PARTIAL = /\b(?:partly|partially|in part|only part|part of (?:it|its|the|their)|some of (?:it|its|the)|not fully|only (?:through|via|by way of|from)\b)/i;
+
+// The first sentence that claims one value already includes another, or calls counting both double counting.
+// { kind: "double" | "includes", qualified, sentence } or null. A denial ("that is not double counting") is not a claim.
+function inclusionClaim(message) {
+  for (const raw of sentencesOf(message)) {
+    const sentence = stripAck(raw);
+    if (!sentence || isQuestion(sentence) || RELAY.test(sentence) || STATUS.test(sentence) || NOT_DOUBLE.test(sentence)) continue;
+    const double = DOUBLE.test(sentence), includes = INCLUDES.test(sentence);
+    if (double || includes) return { kind: double ? "double" : "includes", qualified: PARTIAL.test(sentence), sentence: sentence.slice(0, 200) };
+  }
+  return null;
+}
+
+// What the ticket's reads say about inclusion. partial: the first line that limits it, or "". any: some line states one.
+function inclusionEvidence(texts) {
+  const partial = new RegExp(String.raw`${INCLUDE_WORD}[^.;]{0,120}?\b(?:partly|partially|in part|only partly|only through [\w' ]{1,30}|through [\w' ]{1,30} only)\b|\b(?:partly|partially|in part)\b[^.;]{0,80}\b${INCLUDE_WORD}`, "i");
+  const plain = new RegExp(String.raw`${INCLUDE_WORD}`, "i");
+  let any = false;
+  for (const t of texts) {
+    const text = String(t || "").replace(/\\+"/g, '"');
+    const hit = partial.exec(text);
+    if (hit) { const at = Math.max(0, hit.index - 30); return { partial: text.slice(at, at + 170).replace(/[{}\\]/g, " ").replace(/\s+/g, " ").trim(), any: true }; }
+    if (plain.test(text)) any = true;
+  }
+  return { partial: "", any };
+}
+
+const INCLUSION_REFUSAL = (claim, evidence) => evidence.partial
+  ? `Not posted: this states that one value already includes another or that counting both is double counting ("${claim.sentence}"), but what this ticket read says only: "${evidence.partial}". An inclusion that is only partial does not make adding both double counting. Say exactly what the read says, with its limit, and do not call it double counting. This inclusion check asks at most twice per ticket.`
+  : `Not posted: this states that one value already includes another ("${claim.sentence}"), and nothing this ticket has read says so. Read the code that forms the value (code_search with claimType mechanic, or code_read) and quote what it includes, or leave the inclusion out and say only what you read. This inclusion check asks at most twice per ticket.`;
+
+// The refusal text for a draft, or null. Never refuses a draft that says plainly it is unconfirmed.
+function inclusionRefusal(message, texts) {
+  const claim = inclusionClaim(message);
+  if (!claim || statesUnconfirmed(message)) return null;
+  const evidence = inclusionEvidence(texts);
+  if (evidence.partial) return claim.kind === "double" || !claim.qualified ? INCLUSION_REFUSAL(claim, evidence) : null;
+  return evidence.any ? null : INCLUSION_REFUSAL(claim, evidence);
+}
+
+module.exports = { inclusionClaim, inclusionEvidence, inclusionRefusal, PATTERNS, assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED, statesUnconfirmed, codeResultHasContent };

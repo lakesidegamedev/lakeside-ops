@@ -249,3 +249,18 @@ test("audit: an acknowledgement opening does not exempt the rest of the sentence
   assert.equal(assertsRule("Thanks, I'm checking that now."), false);
   assert.equal(assertsRule("Got it, thanks."), false);
 });
+
+test("an inclusion claim against a partial read is refused at most twice, then posts; the code-read rule is separate", async () => {
+  const f = setup();
+  f.job.lastCodeReadAt = 5; // the code-read rule is satisfied, only the inclusion check is under test
+  (f.ledger.data.ticketObservations ||= {})[123] = [{ key: "k", tool: "trace_corp", at: 1, historical: true, input: "{}", result: JSON.stringify({ priceIncludesSubsidiary: "partly, through its earnings only" }) }];
+  const claim = "The parent's price already carries the subsidiary, so counting both would be double counting.";
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: claim }), /only partial/);
+  assert.equal(f.posts().length, 0);
+  assert.ok(!f.job.replyRefusedPending, "the refusal must not arm the finish block");
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: claim.replace("subsidiary", "affiliate") }), /only partial/);
+  f.advance(10);
+  await f.broker.tool(f.job, "channel_reply", { message: "Your revenue fell because the California plants were mothballed at turn 675, and the parent price reflects the subsidiary only partly, through its earnings." });
+  assert.equal(f.posts().length, 1);
+  assert.equal(f.audits("inclusion_claim_refused").length, 2);
+});
