@@ -13,12 +13,13 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|this inclusion check asks at most twice/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
 const prMention = require("./prmention");
 const ruleLookup = require("./rulelookup");
+const readClaim = require("./readclaim");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const crypto = require("node:crypto");
@@ -785,6 +786,23 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   };
   const MONOLOGUE_CAP = 3;
   const waitingStage = ticketNo => JSON.stringify({ evidence: Object.fromEntries(Object.entries(ticketEvidence(ticketNo)).map(([k,v])=>[k,v.done])), suggestions: Object.values(d.jobs).filter(j=>ticketOf(j)===ticketNo).flatMap(j=>Object.values(j.filedSuggestions||{}).map(s=>s.number)).sort((a,b)=>a-b) });
+  // The text of every read on this ticket: this activation's and earlier ones'. Never Keir's own notes, its own earlier posts
+  // (ticket_history) or the reporter's words: those are not what a page or record shows.
+  const SELF_READS = new Set(["ticket_history", "ticket_record", "reporter_state", "remember", "checkpoint"]);
+  function ticketReadTexts(ticketNo, jobs) {
+    const live = (jobs || []).flatMap((j) => String(j.evidenceText || "").split(/\n\[([a-z_]+)\] /).slice(1).reduce((acc, v, i, all) => (i % 2 === 0 && !SELF_READS.has(v) ? [...acc, all[i + 1] || ""] : acc), []));
+    return [...live, ...(d.ticketObservations?.[ticketNo] || []).filter((o) => !SELF_READS.has(o.tool)).map((o) => o.result)];
+  }
+  const ticketPlayerText = (job) => [job.source?.content, ...(job.requestInbox || []).map((m) => m?.content), ...(job.inbox || []).filter((m) => m && m.role === "player").map((m) => m.content),
+    ...(d.channelContext?.[job.channelId || job.replyChannel] || []).filter((m) => m.role !== "assistant" && m.authorId !== config.botId).slice(-15).map((m) => m.content)].filter(Boolean).join(" ");
+  // After the second refusal the clause goes out labelled as unconfirmed, by code, rather than as a recorded fact.
+  function softenUnreadClaims(job, ticketNo, message) {
+    if (job.kind !== "ticket" || (job.fastLane && !job.fastLane.escalated) || (d.readClaimRefusals?.[ticketNo] || 0) < readClaim.MAX_REFUSALS) return message;
+    const bad = readClaim.unbackedClaims(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), ticketPlayerText(job));
+    if (!bad.length) return message;
+    ledger.audit("read_claim_hedged", { job: job.id, ticket: ticketNo, clause: bad[0].clause.slice(0, 160) });
+    return readClaim.hedge(message, bad, require("./playercopy").MAX_CHARS);
+  }
   function guardTicketPostRules(job, ticketNo, message, opts = {}) {
     require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
@@ -896,6 +914,19 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         const texts = [...(ledger.data.ticketObservations?.[ticketNo] || []).map((r) => r.result), ...knowledge.ticketRecord(ledger, ticketNo).facts.filter((f) => !f.closedAt).map((f) => f.text)];
         const refusal = ruleLookup.inclusionRefusal(message, texts);
         if (refusal) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("inclusion_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo] }); throw new Error(refusal); }
+      }
+    }
+    // Keir 9: a sentence that says what a page, record or panel shows must rest on a read of this ticket that contains those
+    // words (replay tickets: "the tile reads how much you put up for sale", "your record says inputs held the run back", when
+    // the reads showed neither). Refused at most twice per ticket; after that the code labels the clause unconfirmed (see
+    // softenUnreadClaims) so the player still gets the answer. Never blocks finishing: the text is in PACING_REFUSAL.
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated)) {
+      const bad = readClaim.unbackedClaims(message, ticketReadTexts(ticketNo, sameTicketJobs), ticketPlayerText(job));
+      const refusals = (d.readClaimRefusals ||= {});
+      if (bad.length && (refusals[ticketNo] || 0) < readClaim.MAX_REFUSALS) {
+        refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
+        ledger.audit("read_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], clause: bad[0].clause.slice(0, 160) });
+        throw new Error(readClaim.REFUSAL(bad[0]));
       }
     }
     if (claims.some((c) => (c.kind === "escalated" || c.kind === "investigating") && !c.future))
@@ -1938,6 +1969,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
         await guardTicketPost(job, ticketNo, message);
+        message = softenUnreadClaims(job, ticketNo, message);
         message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
         // ticket already named the reporter's company and the page they had open.
@@ -3245,7 +3277,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenUnreadClaims(job, job.ticket, args.message); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).

@@ -157,6 +157,7 @@ test("an approval notice does not suppress a new independent finding", async () 
   assert.equal((await say(f, "The display fix needs approval before it reaches the main server.")).published, true);
   f.tick(2 * 3600000);
   f.job.lastGameReadAt = 9e15; // A fresh independent finding, not another wait notice.
+  f.job.evidenceText = "\n[read_tool] production records: output stayed stable; money earned per unit fell.";
   assert.equal((await say(f, "The production records show output stayed stable while the money earned per unit fell.")).published, true);
   assert.equal(f.ledger.data.decisions.dec1.state, "pending");
 });

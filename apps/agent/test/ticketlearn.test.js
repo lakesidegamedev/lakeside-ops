@@ -140,7 +140,7 @@ test("broker wiring: reads and posts are noted, and a resolve keeps the mechanic
   const { nb } = notebook();
   const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false };
   const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => ["support_public_update", "support_resolve", "code_search"].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })),
-    call: async (_s, tool) => (tool === "code_search" ? search([FILE]) : { ok: true, id: "c", delivery: { posted: true, delivery: { status: "posted" } } }) };
+    call: async (_s, tool) => (tool === "code_search" ? { ...search([FILE]), hits: [{ path: FILE, source: "code", text: "// The inputs panel only lists inputs your plant already has; a missing supply never shows as a missing input." }] } : { ok: true, id: "c", delivery: { posted: true, delivery: { status: "posted" } } }) };
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => 10 * 3600000, notebook: nb });
   const j = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 5003, channelId: CH, replyChannel: CH, source: { channelId: CH, content: "why" }, deadline: 9e15 });
   j.state = "running"; ledger.data.seen["ticket:5003"] = j.id; ledger.data.disclosed = { 5003: { at: 1, posted: true } };

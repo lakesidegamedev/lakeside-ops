@@ -44,6 +44,7 @@ test("a release alone cannot tell the player the problem is fixed (ticket 1763)"
   f.ledger.data.ticketPosts = {}; f.advance(11);
   // A turn on the fix, then a read of their figures: now it may be said.
   f.job.turnChecks = [f.now()]; f.advance(1); f.job.lastGameReadAt = f.now();
+  f.job.evidenceText = "\n[read_tool] chemicals page: internal supply income 120"; // what that read of their page returned
   await f.broker.tool(f.job, "channel_reply", { message: "Your chemicals page now shows the internal supply income." });
   // The player writes back that it is still wrong: the old read no longer covers the claim.
   f.advance(40); f.job.observedPlayerAt = f.now();
