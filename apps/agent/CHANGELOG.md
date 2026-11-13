@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A ticket task now always starts with up to three notes from Keir's notebook (about 600 characters), found from the player's question plus the game files and screens the ticket names or has read. Each is labelled "checked rule from the code", "earlier answer on ticket N, not verified" or "earlier mistake: X was wrong, Y was right"; notes whose code file changed are left out, and only the notes shown count as recalled. A recalled note never replaces the code lookup before a rule is stated.
+
 ## 9.0.2 (2026-11-13)
 
 - A ticket whose reporter has a linked game account (the ticket carries the game username) is no longer treated as unlinked: `reporter_state` looks up the account and its characters, and asking a linked player for their character name, username or account is refused (at most twice per ticket).
