@@ -571,6 +571,7 @@ function stopModerationTicket(channelId, number, category = "moderation") {
 }
 
 let performanceReconciliation = null;
+let catchUpSavedAt = 0;
 async function scan() {
   const channels = await discord("GET", `/guilds/${config.guildId}/channels`);
   for (const recipient of new Set([config.ownerId, ...config.staffIds])) {
@@ -625,8 +626,13 @@ async function scan() {
         gateway.ingest(ch, m, stale ? { historical: true } : undefined);
         if (stale && !m.author?.bot && (ch.type === 1 || (m.mentions || []).some((u) => u.id === config.botId)))
           ledger.notify(`recovery:resume-skipped:${m.id}`, "owner", `Not acted on (sent ${m.timestamp}, before resume): ${String(m.content || "").slice(0, 200)}`);
-        ledger.data.cursors[ch.id] = m.id; ledger.save();
+        // Keir 9.0.0 launch (2026-11-13): saving the whole ledger (11 MB, fsync) after every replayed message pinned
+        // the operator for many minutes after a 39-hour outage, so its health check timed out and the guardian kept
+        // restarting it. Save at most every two seconds while replaying, and once when the channel is caught up.
+        ledger.data.cursors[ch.id] = m.id;
+        if (Date.now() - catchUpSavedAt > 2000) { ledger.save(); catchUpSavedAt = Date.now(); }
       });
+      ledger.save(); catchUpSavedAt = Date.now();
     } catch (e) { log(`scan ${ch.name}: ${e.message}`); }
   }
   const liveChannels = new Set(channels.map((c) => c.id));
