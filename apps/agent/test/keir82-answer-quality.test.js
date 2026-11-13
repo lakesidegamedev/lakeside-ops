@@ -42,6 +42,9 @@ test("a release alone cannot tell the player the problem is fixed (ticket 1763)"
   f.ledger.data.ticketPosts = {}; f.advance(11);
   await f.broker.tool(f.job, "channel_reply", { message: "The rule allows one bill in progress per legislator." });
   f.ledger.data.ticketPosts = {}; f.advance(11);
+  // rc3 replay, 2026-11-13: both reached the player.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "A correction has been released so the tile reports the share actually sold, and it reaches your page after the next turn." }), /no receipt|figures after that turn/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That exact blocker was fixed on 6 November." }), /no receipt|figures after that turn/);
   // A turn on the fix, then a read of their figures: now it may be said.
   f.job.turnChecks = [f.now()]; f.advance(1); f.job.lastGameReadAt = f.now();
   f.job.evidenceText = "\n[read_tool] chemicals page: internal supply income 120"; // what that read of their page returned
