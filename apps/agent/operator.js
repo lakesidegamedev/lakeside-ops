@@ -134,6 +134,7 @@ recoverAuthBlocked(ledger);
 // legacy supervisor policy as before, and also to any other operator that
 // owns support, except tickets that operator has handed off.
 const supportOwner = createSupportOwner({ ledger });
+const deskActions = require("./lib/operator/deskactions").createDeskActions({ ledger, config, supportOwner, killSwitch });
 const legacyDeferred = config.supportDeferred.bind(config);
 config.supportDeferred = (job) => ["watchkeeper", "engineering"].includes(job?.operatorRole) || job?.kind === "finding" || ledger.data.jobs[job?.codingParent]?.kind === "finding" ? false : legacyDeferred() || supportOwner.deferred(job);
 const effectShadow = createEffectShadow({ ledger, config });
@@ -864,6 +865,11 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/v5/trust/killswitch" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }
     try { const b = JSON.parse(raw || "{}"); return reply(200, b.on === true ? killSwitch.engage({ reason: b.reason, by: "owner via API", until: b.until }) : b.on === false ? killSwitch.release() : killSwitch.state()); }
+    catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
+  }
+  if (req.url === "/v5/desk/action" && req.method === "POST") {
+    let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }
+    try { const r = deskActions.run(JSON.parse(raw || "{}")); drain(); return reply(200, r); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (req.url === "/status" && req.method === "GET") return reply(200, { paused: ledger.data.paused, jobs: Object.values(ledger.data.jobs).map(({ id, kind, role, state, ticket, summary }) => ({ id, kind, role, state, ticket, summary })) });

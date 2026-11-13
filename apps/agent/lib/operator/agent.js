@@ -286,6 +286,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       const rr = (ledger.data.providerTurn ||= {}), i = (rr[lane] || 0) % Math.max(1, list.length);
       rr[lane] = i + 1;
       // runner[:model][@effort]; Jev chooses effort for each activation.
+      // Keir 9: a model chosen from the desk applies to jobs created after the choice, never to a ticket in progress.
+      const chosen = lane === "worker" && ledger.data.pendingRoute && job.at >= ledger.data.pendingRoute.at && DEFAULT_MODEL[ledger.data.pendingRoute.runner] ? ledger.data.pendingRoute : null;
+      if (chosen) { job.provider = { lane, runner: chosen.runner, model: chosen.model, ...(chosen.effort ? { effort: chosen.effort, routeEffort: chosen.effort } : {}), at: Date.now(), assignedBy: `desk:${chosen.by}` }; ledger.save(); return [job.provider.model, PROVIDER_LABEL[job.provider.runner], job.provider.runner]; }
       const pick = list[i] || "claude", [spec, pinned] = ((cooled(pick.split(/[:@]/)[0]) && fallbackSpec(job)) || pick).split("@"), [runner, model] = spec.split(":");
       job.provider = { lane, runner, model: model || DEFAULT_MODEL[runner](), ...(pinned ? { effort: pinned, routeEffort: pinned } : {}), at: Date.now() };
       ledger.save();
