@@ -148,6 +148,7 @@ if [[ $DO_FIREWALL -eq 1 ]]; then
     run ufw allow 80/tcp comment 'HTTP (Caddy)'
     run ufw allow 443/tcp comment 'HTTPS (Caddy)'
     run ufw allow 443/udp comment 'HTTP/3 QUIC (Caddy)'
+    if [ "$(hostname)" = "contabo-vps12-us" ]; then run ufw allow 25/tcp comment 'SMTP inbound (staff mail)'; fi
     run ufw --force enable
     if [[ $DRY -eq 0 ]]; then
       # Prove the paths an operator needs before cancelling the rollback.
@@ -165,7 +166,10 @@ if [[ $DO_FIREWALL -eq 1 ]]; then
     fi
   else
     say "   already active; ensuring required allows"
-    for spec in "22/tcp:SSH" "80/tcp:HTTP (Caddy)" "443/tcp:HTTPS (Caddy)" "443/udp:HTTP/3 QUIC (Caddy)"; do
+    specs=("22/tcp:SSH" "80/tcp:HTTP (Caddy)" "443/tcp:HTTPS (Caddy)" "443/udp:HTTP/3 QUIC (Caddy)")
+    # The mail host (US box) also receives SMTP for the staff mailboxes.
+    if [ "$(hostname)" = "contabo-vps12-us" ]; then specs+=("25/tcp:SMTP inbound (staff mail)"); fi
+    for spec in "${specs[@]}"; do
       port=${spec%%:*}; label=${spec#*:}
       ufw status 2>/dev/null | grep -qE "^${port}( \(v6\))?[[:space:]]+ALLOW" || run ufw allow "$port" comment "$label"
     done
