@@ -178,3 +178,17 @@ test("Keir's audit trail is told in plain sentences and activations become timel
   assert.equal(lane.wakeAt, NOW + 600000);
   assert.ok(!s.lanes.some((l) => l.id === "p1"));
 });
+
+test("ticket board route is staff-only, no-store, and the panel is on the hub", async () => {
+  let calls = 0;
+  const actions = { ticketBoard: async () => { calls++; return { tickets: [{ number: 7 }] }; } };
+  const run = async role => {
+    const res = { writeHead(status, headers) { this.status = status; this.headers = headers; }, end(body) { this.body = body; } };
+    await handleKeirHubRoute({ method: "GET", url: "/api/keir/hub/tickets" }, res, "/api/keir/hub/tickets", { resolveSession: async () => role ? { role } : null, addSecurityHeaders() {}, actions });
+    return res;
+  };
+  assert.equal((await run(null)).status, 401); assert.equal((await run("viewer")).status, 404); assert.equal((await run("moderator")).status, 404); assert.equal(calls, 0);
+  for (const role of ["admin", "junior_dev"]) { const res = await run(role); assert.equal(res.status, 200); assert.equal(res.headers["Cache-Control"], "no-store"); assert.deepEqual(JSON.parse(res.body), { tickets: [{ number: 7 }] }); }
+  const body = makeKeirHubBody().body; assert.match(body, /id="kh-board"/); assert.match(body, /no answer over 2h/);
+  for (const [, script] of body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)) new Function(script);
+});

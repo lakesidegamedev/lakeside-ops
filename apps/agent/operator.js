@@ -810,6 +810,10 @@ const server = http.createServer(async (req, res) => {
         config.usageFile || path.join(config.stateDir, "usage.jsonl"), { since: Math.max(0, until - days * 86400000), until }));
     } catch { return reply(503, { error: "Performance data unavailable" }); }
   }
+  if (req.url?.split("?")[0] === "/v5/ticket-board" && req.method === "GET") {
+    try { return reply(200, require("./lib/operator/ticketboard").ticketBoard(ledger.data, { guildId: config.guildId })); }
+    catch { return reply(503, { error: "Ticket board unavailable" }); }
+  }
   if (req.url === "/v5/usage" && req.method === "GET") {
     const until = Date.now();
     try {
