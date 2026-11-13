@@ -43,7 +43,36 @@ async function chooseEffort(job, { quick, runner, jev = (spec) => process.env.KE
   return { effort: clamp(level, runner, quick), via, confidence };
 }
 
+// Keir 9: for a ticket the operator override is a ceiling, not a fixed value. Code-only:
+// a plain first-time rules question runs at medium, everything else stays at the ceiling.
+const MONEY = /\$|£|€|\bmoney\b|\bcash\b|\blost\b|\blosses?\b|\bloss\b|\bbalance\b|\bfunds?\b|\brefund|\bcharged?\b|\bmissing\b|\d[\d,.]{2,}|\d\s*%/i;
+const FAULT = /\bbug\b|\bglitch|\bbroken\b|\bcrash|\berror\b|\bturn\b|\boutage\b|\bdown\b|\bstuck\b|\bnot working\b|\bdoesn'?t work\b/i;
+const DISPUTE = /\b(wrong|incorrect|not (right|true|correct)|that'?s not|isn'?t (right|true|correct)|still (wrong|broken|not|happening)|you('re| are) (wrong|mistaken)|doesn'?t (match|add up)|disagree|didn'?t (help|answer)|try again)\b/i;
+const QUESTION = /\bhow (do|does|can|should|to)\b|\bwhat (is|are|does|happens)\b|\bwhy (is|are|does|do|can'?t)\b|\bcan i\b|\bis it possible\b|\bwhere (do|can|is)\b|\bwhen (does|do|can)\b|\?/i;
+
+function ticketEffort(job, ceiling) {
+  const playerText = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter(Boolean).map((s) => String(s.content || "")).join("\n");
+  const history = job.history || [];
+  const reason = (r) => ({ level: ceiling, reason: r });
+  if ((job.history || []).some((h) => ["turn-limit", "refused", "retracted", "correction"].includes(h.kind))) return reason("earlier attempt refused, retracted or out of steps");
+  if (DISPUTE.test(playerText) || (job.inbox || []).some((m) => m.disputed)) return reason("player disputed an answer");
+  if (history.length || (job.requestInbox || []).some((m) => m.role === "assistant")) return reason("not the first activation");
+  const kind = job.tags?.kind;
+  if (kind && kind !== "mechanics_question") return reason(`intake kind ${kind}`);
+  if (["moderate", "hard"].includes(job.tags?.complexity)) return reason(`intake complexity ${job.tags.complexity}`);
+  if (job.incidentCandidates?.length) return reason("incident candidate");
+  if (MONEY.test(playerText)) return reason("money or figures");
+  if (FAULT.test(playerText)) return reason("bug, turn or outage");
+  if (kind !== "mechanics_question" && !QUESTION.test(playerText)) return reason("not plainly a rules question");
+  return { level: "medium", reason: "first-time rules question" };
+}
+
 async function activationEffort(job, { config, quick, runner }) {
+  if (ORDER.includes(config.effortOverride) && job.ticket) {
+    const { level, reason } = ticketEffort(job, config.effortOverride);
+    const effort = ORDER[Math.min(ORDER.indexOf(level), ORDER.indexOf(config.effortOverride))];
+    return { effort: clamp(effort, runner, quick), via: `operator-override:${effort === config.effortOverride ? "ceiling" : "lowered"}:${reason}` };
+  }
   if (ORDER.includes(config.effortOverride)) return { effort: clamp(config.effortOverride, runner, quick), via: "operator-override" };
   // Route defaults are model choices, not manual reasoning overrides. Jev owns
   // effort unless an explicit benchmark or task effort override says otherwise.
@@ -72,4 +101,4 @@ function capToRoute(job, chosen, { config = {}, quick = false, runner } = {}) {
   if (ORDER.indexOf(chosen.effort) <= ORDER.indexOf(cap)) return chosen;
   return { ...chosen, effort: clamp(cap, runner, quick), via: `${chosen.via}+route-cap` };
 }
-module.exports = { chooseEffort, activationEffort, capToRoute, CRITERIA, clamp };
+module.exports = { chooseEffort, activationEffort, ticketEffort, capToRoute, CRITERIA, clamp };

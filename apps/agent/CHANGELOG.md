@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Effort per ticket question: with the operator effort override set, it is now a ceiling for tickets. A first-time plain rules question with no figures runs at medium; bug reports, money or figures, turn or outage questions, a refused, retracted or out-of-steps earlier attempt, and any activation after the player disputed an answer stay at the ceiling. Never below medium unless the ceiling is lower. The reason is recorded in the usage record. Non-ticket tasks are unchanged.
 - What Keir keeps from a closed ticket is now an unverified `resolution` (kind `resolution`, `verified: false`), not a `mechanic`. Recall shows it as "an earlier answer on ticket N, not verified; check it against the code before relying on it". A retraction lesson's right claim gets the same label unless the claim names what the cited file is about.
 - Muse: its temp folder is now actually removed after each run (the cleanup referenced a variable out of scope), and the muse runner is limited to an explicit list of subscription models; any other model on it is refused with the billing message.
 - Wording checks: an acknowledgement opening ("Thanks, ...") no longer exempts the rest of its sentence from the rule-lookup check, and negation in a fix claim is judged per clause ("not corrected" is no claim, "not a bug, but corrected in the latest update" is).
