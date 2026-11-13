@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.0.0 (2026-11-13)
+
 - Player tickets can run on their own model route (`KEIR_TICKET_PROVIDER`, at that route's own effort) while all other work stays on the main route. When the ticket route hits a usage limit or a login failure, tickets continue on the main route, and return once its cooldown ends.
 - A ticket cannot park waiting on the player when its answer was refused and only Keir's introduction reached them: a refused answer arms the unanswered-player rule even before anything was read, and the introduction no longer counts as an answer.
 - Keir can no longer tell a player a fix "was fixed on" a date, or that "a correction has been released" followed by when it reaches their page, without proof from their own page. A future word after a past fix claim no longer makes the claim count as a promise.
