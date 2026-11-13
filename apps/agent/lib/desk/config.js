@@ -24,8 +24,6 @@ const REQUIRED = { doctor: 1, status: 1, waiting: 1, why: 1, nudge: 2, release: 
 
 const GUILD_DEFAULT = "1465445442987888743";
 const settings = (env = process.env) => ({
-  token: env.KEIR_DESK_DISCORD_TOKEN || "",
-  appId: env.KEIR_DESK_APP_ID || "",
   guildId: env.KEIR_GUILD_ID || GUILD_DEFAULT,
   stateDir: env.KEIR_STATE_DIR || "/var/lib/keir-operator",
   releaseFile: env.KEIR_RELEASE_FILE || "/opt/keir/current/RELEASE",

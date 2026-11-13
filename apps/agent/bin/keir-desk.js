@@ -2,7 +2,7 @@
 "use strict";
 // Keir desk: a separate process that reads Keir's state, so it still answers when the agent loop is hung.
 //   keir-desk.js <doctor|status|waiting|why|...> [ticket] [--as dev|junior|mod] [--fixture state.json] [--share]
-//   keir-desk.js --serve   (needs KEIR_DESK_DISCORD_TOKEN and KEIR_DESK_APP_ID; otherwise CLI only)
+//   keir-desk.js --http    (loopback HTTP for the game bot's /keir command; needs ASK_API_SECRET, port KEIR_DESK_PORT)
 const fs = require("node:fs");
 const path = require("node:path");
 const { handle } = require("../lib/desk/router");
@@ -22,6 +22,7 @@ const SUBS = [
   ["off", "Turn Keir off", false],
 ];
 
+// The bot registers /keir itself; this shape is kept for reference only.
 function commandBody() {
   return {
     name: "keir", description: "Keir staff desk", dm_permission: false,
@@ -50,42 +51,40 @@ async function cli(args) {
   console.log(out.content);
 }
 
-function interactionToCall(i) {
-  const d = i.data || {}, s = d.options?.[0] || {}, options = {};
-  for (const o of s.options || []) options[o.name] = o.value;
-  return { command: d.name, sub: s.name, options, member: { roles: i.member?.roles || [] } };
-}
-
-async function serve() {
-  const cfg = settings();
-  if (!cfg.token || !cfg.appId) { console.error("KEIR_DESK_DISCORD_TOKEN and KEIR_DESK_APP_ID are not set; the desk is CLI-only."); process.exit(1); }
-  const API = "https://discord.com/api/v10";
-  // The desk's own application only. POST upserts the one command by name; never a bulk PUT.
-  const res = await fetch(`${API}/applications/${cfg.appId}/guilds/${cfg.guildId}/commands`, { method: "POST", headers: { authorization: `Bot ${cfg.token}`, "content-type": "application/json" }, body: JSON.stringify(commandBody()) });
-  if (!res.ok) console.error(`command registration failed: HTTP ${res.status}`); else console.log("command /keir registered");
-  const respond = (i, out) => fetch(`${API}/interactions/${i.id}/${i.token}/callback`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: 4, data: { content: out.content, flags: out.ephemeral ? 64 : 0, allowed_mentions: { parse: [] } } }) }).catch((e) => console.error("reply failed", e.message));
-  let backoff = 1000;
-  const connect = () => {
-    const ws = new WebSocket("wss://gateway.discord.gg/?v=10&encoding=json");
-    let timer = null, seq = null;
-    ws.onmessage = async (ev) => {
-      const m = JSON.parse(ev.data);
-      if (m.s != null) seq = m.s;
-      if (m.op === 10) {
-        timer = setInterval(() => ws.send(JSON.stringify({ op: 1, d: seq })), m.d.heartbeat_interval);
-        ws.send(JSON.stringify({ op: 2, d: { token: cfg.token, intents: 0, properties: { os: "linux", browser: "keir-desk", device: "keir-desk" } } }));
-      } else if (m.op === 7 || m.op === 9) ws.close();
-      else if (m.op === 0 && m.t === "READY") backoff = 1000;
-      else if (m.op === 0 && m.t === "INTERACTION_CREATE" && m.d.type === 2 && m.d.data?.name === "keir") {
-        let out; try { out = await handle(interactionToCall(m.d)); } catch { out = { content: "The desk hit an error.", ephemeral: true }; }
-        await respond(m.d, out);
-      }
-    };
-    ws.onclose = () => { clearInterval(timer); setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 60000); };
-    ws.onerror = () => {};
-  };
-  connect();
+// HTTP mode (owner decision 2026-11-13: /keir lives in the existing game bot, which POSTs here through Caddy).
+// Loopback only. The caller proves itself with the ops dashboard's ASK_API_SECRET in X-Ask-Secret, compared in
+// constant time. The body is passed straight to the router; member.id is the actor for any audit row.
+function serveHttp() {
+  const http = require("node:http"), crypto = require("node:crypto");
+  const secret = process.env.ASK_API_SECRET || "";
+  if (!secret) { console.error("ASK_API_SECRET is not set; refusing to start."); process.exit(1); }
+  const expected = crypto.createHash("sha256").update(secret).digest();
+  const port = Number(process.env.KEIR_DESK_PORT || 9791);
+  const send = (res, code, body) => { res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store" }); res.end(JSON.stringify(body)); };
+  const server = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/health") return send(res, 200, { ok: true });
+    if (req.method !== "POST" || req.url.split("?")[0] !== "/api/keir/desk/command") return send(res, 404, { error: "not found" });
+    const given = crypto.createHash("sha256").update(String(req.headers["x-ask-secret"] || "")).digest();
+    if (!crypto.timingSafeEqual(given, expected)) return send(res, 401, { error: "unauthorized" });
+    let raw = "";
+    req.on("data", (c) => { raw += c; if (raw.length > 8192) { send(res, 413, { error: "too large" }); req.destroy(); } });
+    req.on("end", async () => {
+      let body; try { body = JSON.parse(raw || "{}"); } catch { return send(res, 400, { error: "invalid json" }); }
+      const m = body.member || {};
+      const member = { id: /^\d{15,22}$/.test(String(m.id || "")) ? String(m.id) : undefined, roles: Array.isArray(m.roles) ? m.roles.map(String).slice(0, 100) : [] };
+      const o = body.options || {}, options = {};
+      if (o.ticket != null && Number.isFinite(Number(o.ticket))) options.ticket = Number(o.ticket);
+      if (typeof o.name === "string") options.name = o.name.slice(0, 120);
+      if (o.share === true) options.share = true;
+      let out;
+      try { out = await handle({ command: String(body.command || "keir"), sub: String(body.sub || ""), options, member }); }
+      catch { out = { content: "The desk hit an error.", ephemeral: true }; }
+      send(res, 200, { content: String(out.content || "").slice(0, 1900), ephemeral: out.ephemeral !== false });
+    });
+  });
+  server.listen(port, "127.0.0.1", () => console.log(`keir-desk listening on 127.0.0.1:${port}`));
+  return server;
 }
 
 const args = process.argv.slice(2);
-if (args.includes("--serve")) serve(); else cli(args).catch((e) => { console.error(e.message); process.exit(1); });
+if (args.includes("--http")) serveHttp(); else cli(args).catch((e) => { console.error(e.message); process.exit(1); });
