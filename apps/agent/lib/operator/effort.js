@@ -44,6 +44,8 @@ async function chooseEffort(job, { quick, runner, jev = (spec) => process.env.KE
 }
 
 async function activationEffort(job, { config, quick, runner }) {
+  // The player-ticket route names its own effort (Keir 9, owner 2026-11-13); the operator-wide override does not raise it.
+  if (job.provider?.assignedBy === "ticket-route" && ORDER.includes(job.provider.routeEffort)) return { effort: clamp(job.provider.routeEffort, runner, quick), via: "ticket-route" };
   if (ORDER.includes(config.effortOverride)) return { effort: clamp(config.effortOverride, runner, quick), via: "operator-override" };
   // Route defaults are model choices, not manual reasoning overrides. Jev owns
   // effort unless an explicit benchmark or task effort override says otherwise.

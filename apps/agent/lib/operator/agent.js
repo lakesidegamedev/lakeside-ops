@@ -254,13 +254,39 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   // when the forced route hit its monthly cap (2026-11-03) or its login expired (2026-11-05) every task failed.
   // The fallback must be a different runner from the one that failed.
   function fallbackSpec(job) {
+    // A player ticket on its own route falls back to the operator's main route first (owner, 2026-11-13).
+    if (String(job?.provider?.assignedBy || "").startsWith("ticket-route") && config.providerOverride) {
+      const main = config.providerOverride, mainRunner = main.split(/[:@]/)[0];
+      if (DEFAULT_MODEL[mainRunner] && !cooled(mainRunner) && mainRunner !== String(config.ticketProvider || "").split(/[:@]/)[0]) return main;
+    }
     const spec = config.fallbackProvider, runner = String(spec || "").split(/[:@]/)[0];
     if (!spec || !DEFAULT_MODEL[runner] || cooled(runner)) return null;
     if (config.providerOverride && config.providerOverride.split(/[:@]/)[0] === runner) return null;
     return spec;
   }
+  // Keir 9 (owner, 2026-11-13): player tickets run on their own route (KEIR_TICKET_PROVIDER, Gemini 4 Hydrogen at launch),
+  // everything else on the main route. Its subscription quota is far smaller than all of Keir's traffic, so only player
+  // tickets use it; when it is cooling down after a usage limit or a login failure, the ticket runs on the main route.
+  const ticketRouted = (job) => Boolean(config.ticketProvider) && job.kind === "ticket" && job.role !== "owner" && !job.codingParent;
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
+    if (ticketRouted(job)) {
+      const [tspec, teffort] = config.ticketProvider.split("@"), [trunner, tmodel] = tspec.split(":");
+      if (!DEFAULT_MODEL[trunner] || !tmodel) throw new Error("Invalid ticket provider");
+      if (!cooled(trunner)) {
+        if (job.provider?.runner !== trunner || job.provider?.model !== tmodel || job.provider?.routeEffort !== teffort || job.provider?.assignedBy !== "ticket-route") {
+          job.provider = { lane, runner: trunner, model: tmodel, ...(teffort ? { effort: teffort, routeEffort: teffort } : {}), assignedBy: "ticket-route", at: Date.now() };
+          ledger.save();
+        }
+        return [tmodel, PROVIDER_LABEL[trunner], trunner];
+      }
+      const next = fallbackSpec({ provider: { assignedBy: "ticket-route" } });
+      if (next) {
+        const [fspec, feffort] = next.split("@"), [fr, fm] = fspec.split(":"), model = fm || DEFAULT_MODEL[fr]();
+        if (job.provider?.runner !== fr || job.provider?.model !== model) { job.provider = { lane, runner: fr, model, ...(feffort ? { effort: feffort, routeEffort: feffort } : {}), assignedBy: "ticket-route-fallback", at: Date.now() }; ledger.save(); }
+        return [model, PROVIDER_LABEL[fr], fr];
+      }
+    }
     if (config.providerOverride) {
       const [spec, effort] = config.providerOverride.split("@"), [runner, requestedModel] = spec.split(":");
       if (!DEFAULT_MODEL[runner] || !requestedModel) throw new Error("Invalid operator provider override");

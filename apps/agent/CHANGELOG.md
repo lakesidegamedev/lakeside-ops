@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Player tickets can run on their own model route (`KEIR_TICKET_PROVIDER`, at that route's own effort) while all other work stays on the main route. When the ticket route hits a usage limit or a login failure, tickets continue on the main route, and return once its cooldown ends.
 - Keir can no longer tell a player a fix "was fixed on" a date, or that "a correction has been released" followed by when it reaches their page, without proof from their own page. A future word after a past fix claim no longer makes the claim count as a promise.
 - Keir no longer tells a player that behaviour is a bug, a fault or "needs a code change" unless a read on that ticket marks it as a fault (a tracker bug, a code note) or the reply says plainly it is not confirmed. Otherwise it is asked to read the deciding code and say whether it is the rule; at most twice per ticket, then the code labels the sentence "I have not confirmed this is a fault, but ..." and the answer still goes out.
 - Keir no longer tells a player that one value "already includes" another, or that counting both is double counting, when what it read says the inclusion is only partial or says nothing about it; it is asked to restate the limit, at most twice per ticket.
