@@ -103,7 +103,7 @@ function doctor(state, ticket) {
       cooled.length ? `Provider: ${cooled.map((c) => `${clean(c.runner)} is capped for another ${span(c.until - state.now)}`).join("; ")}.` : "Provider: no route is capped.",
       `Last successful answer: ${ago(state, lastOk(state))}.`,
     ];
-    if (!state.active) lines.push("A dev can bring it back with /keir on.");
+    if (!state.active) lines.push("A developer can bring it back once it is cleared to run.");
     return cap(lines.join("\n"));
   }
   const jobs = jobsOf(state).filter((j) => ticketOf(j) === n).sort((a, b) => touched(b) - touched(a));
