@@ -13,7 +13,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|page still shows the old figure/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -711,8 +711,73 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       ledger.audit("disclosure_posted", { ticket: n, count: opening.count || null, returning: !opening.text.startsWith("Hi, I'm Keir") });
     } catch (e) { d.disclosed[n] = { at: now(), posted: false, error: String(e.message).slice(0, 200) }; ledger.save(); }
   }
+  // Keir 9 (ticket 1763): "fixed" was said six times off a deploy while the player's page still showed the fault.
+  // The symptom is the first page figure Keir cited before any fix was live; once the fix is live and a turn has run,
+  // code repeats that read. A changed figure lets "fixed" out; an unchanged one refuses it, tells the player plainly
+  // once, wakes the task, and after three turns escalates. One re-read per turn.
+  const pageChecking = new Map();
+  const ticketJobs = (n) => Object.values(d.jobs).filter((j) => ticketOf(j) === n);
+  const latestTurnCheck = (n) => Math.max(0, ...ticketJobs(n).flatMap((j) => j.turnChecks || []));
+  function notePageSymptom(ticketNo, message) {
+    if (!ticketNo || d.ticketSymptoms?.[ticketNo] || ticketEvidence(ticketNo).main.done) return;
+    const symptom = require("./pagecheck").chooseSymptom(message, d.ticketObservations?.[ticketNo]);
+    if (!symptom) return;
+    (d.ticketSymptoms ||= {})[ticketNo] = symptom; ledger.save();
+    ledger.audit("page_symptom_recorded", { ticket: ticketNo, tool: symptom.tool, field: symptom.field || null });
+  }
+  async function pageCheck(ticketNo, signal) {
+    const sym = d.ticketSymptoms?.[ticketNo];
+    if (!sym || !ticketEvidence(ticketNo).main.done) return null;
+    const st = ((d.pageChecks ||= {})[ticketNo] ||= { turns: 0, refusals: 0 });
+    const turnAt = latestTurnCheck(ticketNo);
+    if (!turnAt || st.checkedFor === turnAt) return st;
+    if (pageChecking.has(ticketNo)) return pageChecking.get(ticketNo);
+    const run = (async () => {
+      const pc = require("./pagecheck");
+      let fresh = null; try { fresh = await mcp.call(sym.server, sym.tool, sym.args, false, signal); } catch { /* unknown below */ }
+      st.outcome = pc.judge(sym, fresh); st.at = now();
+      ledger.audit("page_check", { ticket: ticketNo, outcome: st.outcome, turns: st.turns });
+      if (st.outcome === "unknown") { ledger.save(); return st; }
+      st.checkedFor = turnAt;
+      const jobs = ticketJobs(ticketNo), job = jobs.find((j) => j.kind === "ticket") || jobs[0];
+      if (st.outcome === "changed") {
+        for (const j of jobs) j.lastGameReadAt = Math.max(now(), turnAt + 1);
+        if (job) require("./investigation-memory").record(ledger, job, "read_tool", { server: sym.server, tool: sym.tool, args: sym.args }, fresh, now());
+        ledger.save(); return st;
+      }
+      st.turns += 1;
+      if (!st.plainPosted) {
+        st.plainPosted = true;
+        try { await mcp.call("support", "support_public_update", { kind: "ticket", number: ticketNo, message: pc.PLAIN, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true); }
+        catch (e) { st.plainPosted = false; ledger.audit("page_check_post_failed", { ticket: ticketNo, error: String(e.message).slice(0, 160) }); }
+      }
+      if (job && ["waiting", "blocked"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
+      if (job) (job.inbox ||= []).push({ authorId: "page-check", role: "system", content: `The fix is live and a turn has run, but the player's page still shows the old figure (turn check ${st.turns} of ${pc.MAX_TURNS}). Find out why: read the page again, check whether the fix covers this case, and set a turn watch for the next turn. Do not tell the player it is fixed until the figure changes.`, at: new Date(now()).toISOString() });
+      if (st.turns >= pc.MAX_TURNS && !st.escalated && job) {
+        st.escalated = true;
+        try { await tool(job, "raise_to_developers", { kind: "question", title: `Ticket ${ticketNo}: fix is live but the player's page still shows the old figure`, detail: `The fix reached the main server and ${pc.MAX_TURNS} turns have run, but the figure the player complained about is unchanged on their page. Please look at why.`, needsHuman: true, force: true }, signal); }
+        catch (e) { st.escalated = false; ledger.audit("page_check_escalation_failed", { ticket: ticketNo, error: String(e.message).slice(0, 160) }); }
+      }
+      ledger.save(); return st;
+    })().finally(() => pageChecking.delete(ticketNo));
+    pageChecking.set(ticketNo, run);
+    return run;
+  }
+  async function pageGate(job, ticketNo, message) {
+    const sym = d.ticketSymptoms?.[ticketNo];
+    if (!sym || !outcomeClaims(message).some((c) => c.kind === "verified" && !c.future) || !ticketEvidence(ticketNo).main.done || !latestTurnCheck(ticketNo)) return;
+    const st = await pageCheck(ticketNo);
+    if (st?.outcome === "changed" && st.checkedFor === latestTurnCheck(ticketNo)) return;
+    if (st) { st.refusals = (st.refusals || 0) + 1; ledger.save(); }
+    ledger.audit("page_claim_refused", { job: job.id, ticket: ticketNo, outcome: st?.outcome || "unknown" });
+    throw new Error(st?.outcome === "unchanged"
+      ? "Not posted: the player's page still shows the old figure after the fix and a turn on it, so it is not fixed. The player has been told the change is out and you are checking why. Find the cause; do not say it is fixed until the figure changes."
+      : "Not posted: the player's own page could not be re-read to confirm the fix, so it cannot be called fixed. Say the change is released and ask them to check after the next turn.");
+  }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
+    notePageSymptom(ticketNo, message);
+    await pageGate(job, ticketNo, message);
     guardTicketNumbers(job, ticketNo, message);
     secondLook(job, ticketNo, message);
     guardTicketPostRules(job, ticketNo, message, opts);
@@ -3982,7 +4047,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

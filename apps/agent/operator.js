@@ -324,7 +324,7 @@ setTimeout(learnKnowledge, 10 * 60000).unref();
 setInterval(learnKnowledge, 60 * 60000).unref();
 setInterval(() => broker.issueSweep().catch((e) => log(`issue sweep: ${e.message}`)), 60 * 60000).unref();
 const { createTurnWatch } = require("./lib/operator/capabilities");
-const turnWatch = createTurnWatch({ ledger, log, currentTurn: async () => Number((await mcp.call("gamestate", "game_overview", {}, false)).turn) });
+const turnWatch = createTurnWatch({ ledger, log, onTurn: (job) => broker.pageCheckAfterTurn(job), currentTurn: async () => Number((await mcp.call("gamestate", "game_overview", {}, false)).turn) });
 setInterval(async () => {
   try { await turnWatch.tick(); } catch (e) { log(`turnwatch: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
