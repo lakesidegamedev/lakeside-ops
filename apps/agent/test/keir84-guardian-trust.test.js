@@ -66,8 +66,9 @@ test("a fixed claim is contradicted by the player's next message or by Keir's ow
   const d = {};
   recordReply(d, { ticket: 3, jobId: "j", text: "Your margins are fixed and live on the main server now.", at: T0 });
   recordReply(d, { ticket: 4, jobId: "j", text: "Your margins are fixed and live on the main server now.", at: T0 });
-  recordPlayerMessages(d, 3, [{ content: "it is still broken, same number as before", at: new Date(T0 + 5 * MIN).toISOString() }]);
-  recordPlayerMessages(d, 4, [{ content: "thanks, looks right now", at: new Date(T0 + 5 * MIN).toISOString() }]);
+  // The clock is passed in: a fixed date plus the real clock aged out after 7 days (CI, 2026-11-13).
+  recordPlayerMessages(d, 3, [{ content: "it is still broken, same number as before", at: new Date(T0 + 5 * MIN).toISOString() }], T0 + 6 * MIN);
+  recordPlayerMessages(d, 4, [{ content: "thanks, looks right now", at: new Date(T0 + 5 * MIN).toISOString() }], T0 + 6 * MIN);
   const found = contradictedClaims(d, T0 - H, T0 + H);
   assert.equal(found.length, 1); assert.equal(found[0].ticket, 3); assert.equal(found[0].contradictedBy, "player");
   recordReply(d, { ticket: 4, jobId: "j", text: "Correction: that is not fixed yet, the change is still on the test server.", at: T0 + 20 * MIN });
