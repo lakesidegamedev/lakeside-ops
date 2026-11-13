@@ -679,6 +679,18 @@ async function loadPerformance(){
   }catch{host.textContent='Ticket performance unavailable. It will appear when the operator supports tracking.'}
   finally{performanceLoading=false}
 }
+let boardAt=0,boardLoading=false;
+async function loadBoard(){
+  if(boardLoading||paused||Date.now()-boardAt<30000)return;
+  boardLoading=true;boardAt=Date.now();const host=$('#kh-board');
+  try{
+    const response=await fetch('/api/keir/hub/tickets',{cache:'no-store',signal:AbortSignal.timeout(15000)});
+    if(!response.ok)throw Error('Unavailable');const b=await response.json(),ago=t=>t?dur(Date.now()-t)+' ago':'never';
+    const link=u=>/^https:\/\/discord\.com\/channels\/\d+\/\d+$/.test(u||'')?'<a href="'+u+'" target="_blank" rel="noopener">open</a>':'';
+    setHtml(host,b.tickets.length?'<div style="overflow-x:auto"><table style="width:100%;text-align:left"><thead><tr><th>Ticket</th><th>Age</th><th>Player asked</th><th>Where it stands</th><th>Next step</th><th>Player wrote</th><th>Keir answered</th><th></th></tr></thead><tbody>'+b.tickets.map(t=>'<tr'+(t.noAnswerOver2h?' style="background:rgba(245,158,11,.18)"':'')+'><th scope="row">#'+t.number+(t.category?' <span class="kh-muted">'+esc(t.category)+'</span>':'')+'</th><td>'+dur(t.ageMs)+'</td><td>'+esc(t.question||'')+(t.player?' <span class="kh-muted">'+esc(t.player)+'</span>':'')+'</td><td>'+esc(t.state)+(t.noAnswerOver2h?' <strong>no answer over 2h</strong>':'')+'</td><td>'+esc(t.next)+' <span class="kh-muted">('+esc(t.owner)+')</span></td><td>'+ago(t.lastPlayerMessageAt)+'</td><td>'+ago(t.lastKeirAnswerAt)+'</td><td>'+link(t.channelUrl)+'</td></tr>').join('')+'</tbody></table></div>':'No open tickets.');
+  }catch{host.textContent='Ticket board unavailable.'}
+  finally{boardLoading=false}
+}
 let efficiencyAt=0,efficiencyLoading=false;
 async function loadEfficiency(){
   if(efficiencyLoading||paused||Date.now()-efficiencyAt<60000)return;
@@ -694,7 +706,7 @@ async function loadEfficiency(){
 }
 $('#kh-performance-days').onchange=()=>{performanceAt=0;efficiencyAt=0;loadPerformance();loadEfficiency()};
 function load(){if(paused)return Promise.resolve();if(inFlight)return inFlight;
-  loadPerformance();loadEfficiency();
+  loadBoard();loadPerformance();loadEfficiency();
   inFlight=(async()=>{try{const r=await fetch('/api/keir/hub',{cache:'no-store',signal:AbortSignal.timeout(30000)});if(r.status===401){location.href='/';return}if(!r.ok)throw Error('HTTP '+r.status);
     const next=await r.json();if(!next||!next.kpis||!next.stream||!Array.isArray(next.activity)||!Array.isArray(next.workers))throw Error('Incomplete dashboard response');
     const previous=S;try{S=next;render()}catch(e){S=previous;throw e}
@@ -729,6 +741,7 @@ function makeKeirHubBody() {
   </header>
   <div class="kh-note" id="kh-src"></div>
   <section class="kt rise" id="kh-throughput" aria-label="Delivery throughput"></section>
+  <section class="kh-panel rise" aria-label="Open tickets"><div class="kh-ph"><h2>Tickets</h2></div><div class="kh-pb" id="kh-board">Loading open tickets.</div></section>
   <section class="kh-panel rise" aria-label="Ticket resolution performance"><div class="kh-ph"><h2>Ticket resolution performance</h2><label>Window <select id="kh-performance-days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label></div><div class="kh-pb" id="kh-performance">Loading ticket outcomes.</div></section>
   <details class="kh-panel rise"><summary class="kh-ph">Keir versions and tickets served</summary><div class="kh-pb" id="kh-release-efficiency">Loading release comparisons.</div></details>
   <section class="kh-panel kh-now rise" style="--i:1">

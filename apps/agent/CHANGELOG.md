@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.
+- Staff ticket board: a new read endpoint `/v5/ticket-board` on the operator and a "Tickets" panel on the Keir hub list every open ticket in one line (what the player asked, where Keir is in plain words, the next step and who owns it, last player message and last Keir answer), with a highlight when a player has had no answer for over 2 hours. Built from the ledger only, no model calls.
+
 - Effort per ticket question: the player-ticket route effort (and the operator effort override) is now a ceiling for tickets. A first-time plain rules question with no figures runs at medium; bug reports, money or figures, turn or outage questions, a refused, retracted or out-of-steps earlier attempt, and any activation after the player disputed an answer stay at the ceiling. Never below medium unless the ceiling is lower. The reason is recorded in the usage record. Non-ticket tasks are unchanged.
 
 - When several players report the same fault, Keir reuses one checked answer. A new ticket that matches an earlier one on at least two independent signals (similar wording, the support search, the same screen or file, place or turn) within 72 hours gets that ticket's answer as context, but only if it was posted with a code-written "From:" line and was not later corrected or disputed by its player. The new task still has to read the new player's own figures. A draft that takes the opposite direction on the same fault ("working as designed" against "a bug") is refused once with both texts; the next post goes out. The tickets are linked, not merged.

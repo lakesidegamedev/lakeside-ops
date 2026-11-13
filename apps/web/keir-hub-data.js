@@ -489,18 +489,19 @@ async function forwardPrMention({ repository, number, commentId, kind }, { fetch
   if (!res.ok) throw new Error(`operator answered ${res.status}`);
   return res.json();
 }
-async function operatorMetrics(endpoint, { days = 30, fetchImpl = fetch, envPath = PATHS.env } = {}) {
+async function operatorMetrics(endpoint, { days = 30, fetchImpl = fetch, envPath = PATHS.env, query = `?days=${days}` } = {}) {
   if (!Number.isFinite(days) || days <= 0 || days > 3650) throw new Error("Invalid days");
   const env = fs.readFileSync(envPath, "utf8");
   const token = /^KEIR_OPERATOR_ADMIN_TOKEN=(.*)$/m.exec(env)?.[1]?.trim().replace(/^["']|["']$/g, "");
   const port = /^KEIR_OPERATOR_PORT=(\d+)$/m.exec(env)?.[1] || "9765";
   if (!token) throw new Error("operator admin token not readable");
-  const res = await fetchImpl(`http://127.0.0.1:${port}/v5/${endpoint}?days=${days}`, {
+  const res = await fetchImpl(`http://127.0.0.1:${port}/v5/${endpoint}${query}`, {
     headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
   if (!res.ok) throw new Error(`operator answered ${res.status}`);
   return res.json();
 }
 const ticketPerformance = options => operatorMetrics("performance", options);
+const ticketBoard = options => operatorMetrics("ticket-board", { ...options, query: "" });
 const releaseEfficiency = options => operatorMetrics("efficiency", options);
 function probeState(ledgerPath, task) {
   const d = readJson(ledgerPath); const j = d?.jobs?.[task];
@@ -508,4 +509,4 @@ function probeState(ledgerPath, task) {
   return { state: j.state, summary: String(j.summary || "").slice(0, 400), provider: j.provider || null, rounds: j.rounds || 0, updatedAt: j.updatedAt || null };
 }
 
-module.exports = { buildHubState, buildStream, narrate, liveTails, attemptLabel, toolOf, incidentList, jevAnalytics, readAttempt, mergeTicket, probeKeir, forwardPrMention, ticketPerformance, releaseEfficiency, probeState, activityByHour, readUsage, ciState, summarizeJob, PATHS, RUNNERS, _cache: cache, _cached: cached, _mcpCall: mcpCall };
+module.exports = { buildHubState, buildStream, narrate, liveTails, attemptLabel, toolOf, incidentList, jevAnalytics, readAttempt, mergeTicket, probeKeir, forwardPrMention, ticketPerformance, ticketBoard, releaseEfficiency, probeState, activityByHour, readUsage, ciState, summarizeJob, PATHS, RUNNERS, _cache: cache, _cached: cached, _mcpCall: mcpCall };
