@@ -78,8 +78,13 @@ test("Antigravity receives large briefs over stdin rather than a host path its s
 
 test("muse runs headless with shell, writes and web off and Keir's MCP server pinned", async () => {
   let args;
-  const r = await invokeMuse({ ...base(), spawnImpl: fakeSpawn("final answer", (cmd, a) => { args = a; }) });
-  for (const flag of ["--disable-shell", "--disable-write", "--disable-web-tools", "--no-session-log"]) assert.ok(args.includes(flag), flag);
+  let env;
+  const r = await invokeMuse({ ...base(), spawnImpl: fakeSpawn("final answer", (cmd, a, o) => { args = a; env = o?.env || {}; }) });
+  for (const flag of ["--disable-shell", "--disable-write", "--disable-web-tools", "--trust-workspace"]) assert.ok(args.includes(flag), flag);
+  // Muse Code 1.4 requires session logging and loads MCP servers only in a trusted workspace (2026-11-12).
+  assert.ok(!args.includes("--no-session-log"));
+  // Keir 9: Muse runs with an empty home so the owner's personal skills and memory never load.
+  assert.notEqual(env.HOME, require("os").homedir()); assert.match(env.XDG_CONFIG_HOME, /\.config$/);
   assert.ok(args.some((a) => a.startsWith("mcp_servers.keir=") && a.includes("/mcp/abc")));
   assert.equal(args[args.indexOf("--max-model-steps") + 1], "6");
   assert.deepEqual([r.result, r.is_error], ["final answer", false]);
@@ -176,4 +181,16 @@ test("the vision lane routes a screenshot task to the configured model once, and
   assert.equal(routeForVision({ id: "t", tags: { needsVision: false } }, cfg, ledger), false);
   assert.equal(routeForVision({ id: "c", codingParent: "p", tags: { needsVision: true } }, cfg, ledger), false);
   const def = { id: "d", tags: { needsVision: true } }; routeForVision(def, {}, ledger); assert.equal(def.provider.model, "claude-sonnet-5-5", "Sonnet subscription is the default");
+});
+
+test("audit: a muse run removes its temp directory, on success and on failure", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "keir-tmproot-")), saved = process.env.TMPDIR;
+  process.env.TMPDIR = root;
+  try {
+    const left = () => fs.readdirSync(root).filter((n) => n.startsWith("keir-muse-tmp-"));
+    await invokeMuse({ ...base(), spawnImpl: fakeSpawn("ok", () => {}) });
+    assert.deepEqual(left(), []);
+    await assert.rejects(invokeMuse({ ...base(), spawnImpl: fakeSpawn("", () => {}, 2) }), /muse exited 2/);
+    assert.deepEqual(left(), []);
+  } finally { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
 });

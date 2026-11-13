@@ -13,11 +13,14 @@ const QUIET_WAITS = [15, 30, 60, 120];
 // not arm replyRefusedPending: with both armed, Keir could neither post nor finish
 // (2026-11-02: 70 refusals across tickets 1749 to 1755).
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
-const PACING_REFUSAL = /Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|calls behaviour a bug, fault or defect/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
 const prMention = require("./prmention");
+const ruleLookup = require("./rulelookup");
+const readClaim = require("./readclaim");
+const bugClaim = require("./bugclaim");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const crypto = require("node:crypto");
@@ -367,7 +370,8 @@ const CLAIMS = [
   // Keir 8.2 (2026-11-05, ticket 1763): "live and working", "should be gone" and "now show"
   // were posted six times from the release alone; each was disproved by the player's next screenshot.
   // A claim that the player's problem is gone needs a game read after a turn ran on the fix.
-  { kind: "verified", hedged: true, re: /\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|has been|have been|it's) (?:now )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
+  // Keir 9 (replay 2026-11-13): "it has since been fixed" and "that rule has since been changed" reached players unchecked.
+  { kind: "verified", hedged: true, re: /\b(?:was|were|has been|have been|is|are|got|now) (?:now )?(?:corrected|patched|resolved|repaired)\b|\b(?:in|with|by) (?:the|a|our) (?:current|latest|newest|last|recent) (?:update|patch|release|version)\b|\b(?:fix|fixes|change|correction|update|patch)\b[^.]{0,60}\b(?:has|have) been (?:released|shipped|deployed|pushed out)\b|\b(?:page|panel|tile|screen|display|figure|number|value|label)s? (?:has|have) been (?:changed|updated|corrected|adjusted|reworked)\b|\b(?:has|have|had|was|were) (?:since|recently|already|just|later) (?:been )?(?:fixed|changed|corrected|patched|resolved|repaired|updated|adjusted|reworked)\b|\b(?:rule|behaviou?r|mechanic|limit|formula|requirement|check)s? (?:has|have|was|were) (?:now |recently )?(?:been )?(?:changed|updated|adjusted|reworked|relaxed|loosened)\b|\bnow match(?:es)?\b|\b(?:is|are|it's) now (?:fixed|working|resolved)\b|\b(?:is|are|was|were|has been|have been|had been|it's) (?:now |already |since )?fixed\b|\bnow (?:fixed|resolved)\b|\b(?:live|fix) and working\b|\bnow (?:works|shows?|counts?|includes?|reads?|says?)\b|\bshould (?:now )?(?:be gone|go away|be fixed|be back|work|show|read|count|line up)\b|\bno longer (?:shows?|appears?|reads?|counts?|happens?)\b|\b(?:is|are) back (?:up|to normal)\b|\bworking for you\b/i },
   { kind: "development", re: /\bin testing on dev\b|\bon (?:the )?dev(?:elopment)? server\b|\bon dev\b/i },
   // Keir 4.0: "being built" needs a coding attempt that can write (ticket 1514
   // said it for five hours while every pass was read-only); "written" or "in
@@ -380,19 +384,35 @@ const CLAIMS = [
   { kind: "written", re: /\b(?:fix|correction|patch) (?:is|has been|was) (?:now )?(?:written|ready|built|prepared|done)\b|\bhave (?:a|the) (?:fix|correction) (?:ready|written)\b|\b(?:is|are) (?:now )?in testing\b|\bgoing through (?:its |the )?(?:checks|tests)\b|\bpassed (?:its|the|all its) (?:tests|checks)\b/i },
 ];
 // "Should be gone" is the hedge that carried 1763's claims; only these mark a real future step.
-const STRICT_FUTURE = /\b(?:will|once|when|after|until|going to|next turn|from the next)\b|['’]ll\b/i;
+// Keir 9 (replay 2026-11-13): "that fault is fixed and takes effect from the next turn" asserts the fix now; a turn
+// mention alone no longer makes a fix claim count as future. "will", "once", "when" and the like still do.
+const STRICT_FUTURE = /\b(?:will|once|when|after|until|going to)\b|['’]ll\b/i;
 const FUTURE = /\b(?:will|won't|once|when|after|until|soon|should|going to|plan(?:ning)?|next|expect|if)\b|['’]ll\b/i;
 // KBX4 2026-11-02: "cannot" was not a negation, so "a note cannot authorise a payment, so that
 // refund has to come through our own approval" was refused as a money claim four times running.
-const NEGATED = /\b(?:not|never|no|cannot|unable|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
+const NEGATED = /\b(?:not|never|no|nothing|none|neither|nor|cannot|unable|isn't|aren't|wasn't|weren't|hasn't|haven't|didn't|yet)\b|n['’]t\b/i;
 // A money sentence about the approval step itself ("the refund is up for approval") describes the
 // request, not an outcome; the decision or heal request is its own receipt.
 const PENDING_APPROVAL = /\b(?:for|awaiting|needs?|pending|waiting (?:on|for)|up for|through|subject to) (?:an? |the |our (?:own )?|owner['’]s |egg['’]s |his )?(?:approval|decision|sign-?off|review)\b/i;
 function outcomeClaims(text) {
   const out = [];
-  for (const sentence of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
+  for (const whole of String(text || "").split(/(?<=[.!?])\s+|\n+/)) {
+    // Negation applies to its own clause: "it is not a bug, but it was corrected in the latest update" still claims a fix.
+    // Money stays judged on the whole sentence: "the refund is still with the developers, but it has not been
+    // approved yet" is a pending status, and splitting at "but" would drop the negation (CI 2026-11-13).
+    for (const sentence of whole.split(/,?\s+(?:but|however|though|although)\s+|;\s+/i)) {
     if (NEGATED.test(sentence)) continue;
-    for (const c of CLAIMS) if (c.re.test(sentence) && !(c.kind === "money" && PENDING_APPROVAL.test(sentence))) out.push({ kind: c.kind, future: (c.hedged ? STRICT_FUTURE : FUTURE).test(sentence), sentence: sentence.trim().slice(0, 160) });
+    for (const c of CLAIMS) {
+      if (!c.re.test(sentence)) continue;
+      if (c.kind === "money" && (NEGATED.test(whole) || PENDING_APPROVAL.test(whole))) continue;
+      // A future word after a past claim does not make the claim future: "a correction has been released, and it reaches
+      // your page after the next turn" still says the fix is out (rc3 replay, 2026-11-13). For these claims only the words up
+      // to the end of the claim count.
+      const m = c.hedged ? c.re.exec(sentence) : null;
+      const upTo = m ? sentence.slice(0, m.index + m[0].length) : sentence;
+      out.push({ kind: c.kind, future: (c.hedged ? STRICT_FUTURE : FUTURE).test(upTo), sentence: sentence.trim().slice(0, 160) });
+    }
+    }
   }
   return out;
 }
@@ -550,11 +570,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   function publicText(value) {
     if (typeof value !== "string" || !value.trim() || value.length > 5000) throw new Error("invalid player text");
-    const clean = redactSecrets(value).replace(/[\u2013\u2014]/g, ",");
+    const clean = redactSecrets(value).replace(/\s*[\u2013\u2014]\s*/g, ", ");
     // Keir 8.4 (owner, 2026-11-06): tool calls and the broker's own instructions must never reach a person.
     const leak = require("./toolmarkup").outboundLeak(clean);
     if (leak) { try { ledger.audit("outbound_leak_refused", { kind: leak.kind, match: leak.match }); } catch {} throw new Error(`Not posted: this contains ${leak.kind === "broker_echo" ? "Keir's own tool or refusal text" : "tool-call text"} ("${leak.match}"). Call tools through the tool interface and write only the plain answer for the reader.`); }
-    if (clean !== value || /<@|@everyone|@here/.test(clean)) throw new Error("player text contains private details, forbidden punctuation or mentions");
+    // Keir 9: a dash is replaced, not refused (replay 2026-11-12: a right answer was refused for a dash and the
+    // player got nothing). Redacted private details and mentions are still refused.
+    if (redactSecrets(value) !== value || /<@|@everyone|@here/.test(clean)) throw new Error("player text contains private details or mentions");
     return clean;
   }
   // Keir's own GitHub account (keir-bot, KEIR_GITHUB_TOKEN): what Keir authors on GitHub (its pushed branch, PR,
@@ -622,6 +644,20 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const missing = knowledge.unsupportedNumbers(message, job.evidence || []);
     if (missing.length) throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything you read this activation. If you worked it out from figures you read, call calculate with that expression (for example "41288610 / 312540") and post the same reply; it then passes. Otherwise read the figure with a tool first or leave it out. Never hand the arithmetic to the player instead.`);
   }
+  // Keir 9: ticket posts get the same number check, against everything this ticket has read (earlier
+  // activations included). Refused at most twice per ticket, then skipped and audited (no loops, no
+  // silenced player).
+  function guardTicketNumbers(job, ticketNo, message) {
+    const missing = require("./sources").unsupported(message, require("./sources").ticketEvidence(ledger, job, ticketNo));
+    if (!missing.length) return;
+    const counts = (d.numberCheckRefused ||= {});
+    if ((counts[ticketNo] || 0) >= require("./sources").MAX_REFUSALS) {
+      if (!d.numberCheckGaveUp?.[ticketNo]) { (d.numberCheckGaveUp ||= {})[ticketNo] = now(); ledger.audit("number_check_gave_up", { job: job.id, ticket: ticketNo, numbers: missing.slice(0, 5) }); ledger.save(); }
+      return;
+    }
+    counts[ticketNo] = (counts[ticketNo] || 0) + 1; ledger.save();
+    throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything this ticket has read. If you worked it out from figures you read, call calculate with that expression and post the same reply; it then passes. Otherwise read the figure with a tool first or leave it out. Never hand the arithmetic to the player instead.`);
+  }
   // Keir 2.1: code-only second look (owner, 2026-10-13: no model tokens per
   // post). A draft may not re-assert an idea the ticket record ruled out.
   function secondLook(job, ticketNo, message) {
@@ -685,7 +721,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
-    guardNumbers(job, message);
+    guardTicketNumbers(job, ticketNo, message);
     secondLook(job, ticketNo, message);
     guardTicketPostRules(job, ticketNo, message, opts);
     // Keir 4.0: a typed semantic read of the draft (Jev). Decisive leaks are
@@ -744,8 +780,43 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   // The newest thing a human said in this ticket, across every task on it.
   const humanAt = (ticketNo) => Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => Math.max(j.observedPlayerAt || 0, j.lastPlayerAt || 0)));
+  // Keir 9: any human in the ticket channel (player, owner, developer, moderator) after a time, from the
+  // channel record. Staff addressing Keir are news the same as the player, so the update-spam rule and the
+  // finish rule no longer contradict each other (8.4 deadlock).
+  const humanInChannelSince = (job, at) => (d.channelContext?.[job.channelId || job.replyChannel] || [])
+    .some((r) => ["player", "owner", "support", "moderator"].includes(r.role) && r.authorId !== config.botId && (Date.parse(r.at || "") || r.observedAt || 0) > at);
+  // An approved action that ran for this ticket after a time.
+  const approvedActionSince = (ticketNo, at) => {
+    const ids = new Set(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => j.id));
+    return Object.values(d.actions || {}).some((a) => ids.has(a.jobId) && a.state === "done" && (a.executedAt || 0) > at);
+  };
   const MONOLOGUE_CAP = 3;
   const waitingStage = ticketNo => JSON.stringify({ evidence: Object.fromEntries(Object.entries(ticketEvidence(ticketNo)).map(([k,v])=>[k,v.done])), suggestions: Object.values(d.jobs).filter(j=>ticketOf(j)===ticketNo).flatMap(j=>Object.values(j.filedSuggestions||{}).map(s=>s.number)).sort((a,b)=>a-b) });
+  // The text of every read on this ticket: this activation's and earlier ones'. Never Keir's own notes, its own earlier posts
+  // (ticket_history) or the reporter's words: those are not what a page or record shows.
+  const SELF_READS = new Set(["ticket_history", "ticket_record", "reporter_state", "remember", "checkpoint"]);
+  function ticketReadTexts(ticketNo, jobs) {
+    const live = (jobs || []).flatMap((j) => String(j.evidenceText || "").split(/\n\[([a-z_]+)\] /).slice(1).reduce((acc, v, i, all) => (i % 2 === 0 && !SELF_READS.has(v) ? [...acc, all[i + 1] || ""] : acc), []));
+    return [...live, ...(d.ticketObservations?.[ticketNo] || []).filter((o) => !SELF_READS.has(o.tool)).map((o) => o.result)];
+  }
+  const ticketPlayerText = (job) => [job.source?.content, ...(job.requestInbox || []).map((m) => m?.content), ...(job.inbox || []).filter((m) => m && m.role === "player").map((m) => m.content),
+    ...(d.channelContext?.[job.channelId || job.replyChannel] || []).filter((m) => m.role !== "assistant" && m.authorId !== config.botId).slice(-15).map((m) => m.content)].filter(Boolean).join(" ");
+  // After the second refusal the clause goes out labelled as unconfirmed, by code, rather than as a recorded fact.
+  function softenUnreadClaims(job, ticketNo, message) {
+    if (job.kind !== "ticket" || (job.fastLane && !job.fastLane.escalated) || (d.readClaimRefusals?.[ticketNo] || 0) < readClaim.MAX_REFUSALS) return message;
+    const bad = readClaim.unbackedClaims(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), ticketPlayerText(job));
+    if (!bad.length) return message;
+    ledger.audit("read_claim_hedged", { job: job.id, ticket: ticketNo, clause: bad[0].clause.slice(0, 160) });
+    return readClaim.hedge(message, bad, require("./playercopy").MAX_CHARS);
+  }
+  // Same for a sentence that calls behaviour a bug or says it needs a code change with no read marking it a fault.
+  function softenBugClaims(job, ticketNo, message) {
+    if (job.kind !== "ticket" || (job.fastLane && !job.fastLane.escalated) || (d.bugClaimRefusals?.[ticketNo] || 0) < bugClaim.MAX_REFUSALS) return message;
+    const claim = bugClaim.unbackedBugClaim(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), ticketPlayerText(job));
+    if (!claim) return message;
+    ledger.audit("bug_claim_hedged", { job: job.id, ticket: ticketNo, sentence: claim.sentence.slice(0, 160) });
+    return bugClaim.hedge(message, claim, require("./playercopy").MAX_CHARS);
+  }
   function guardTicketPostRules(job, ticketNo, message, opts = {}) {
     require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
@@ -826,8 +897,66 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const sameTicketJobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
     const spam = opts.system ? null : replyPolicy.milestoneRefusal({ message, lastPost, claims, answeringStaff, correction: isCorrection(message),
       playerSpokeAfter: lastPost ? playerSpokeAfter(lastPost.at) : false,
+      humanSpokeAfter: lastPost ? humanInChannelSince(job, lastPost.at) : false,
+      approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
       newReadSince: lastPost ? sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lastPost.at || (j.lastCodeReadAt || 0) > lastPost.at) : false });
     if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); throw new Error(spam); }
+    // Keir 9: a rule or a cause stated before anything in this ticket read the game code is refused once per
+    // ticket, so the answer rests on the code and not on the data on screen. Never again after that (no loops).
+    // The fast lane posts an Ask answer that is already grounded in the code index, so it is exempt.
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated) && process.env.KEIR_RULE_LOOKUP !== "0"
+        && !sameTicketJobs.some((j) => j.lastCodeReadAt || j.codeLookups)) {
+      const claim = ruleLookup.ruleClaim(message);
+      if (claim) {
+        // First refusal: read the code. Second: no successful code read yet, so a rule or cause goes out only if the reply
+        // says plainly it is not confirmed. Never a third refusal on one ticket.
+        const refusals = (d.ruleLookupRefusals ||= {});
+        const n = refusals[ticketNo] || 0;
+        const unconfirmed = ruleLookup.statesUnconfirmed(message);
+        if (n === 0 || (n === 1 && !unconfirmed)) {
+          refusals[ticketNo] = n + 1; (d.ruleLookupRefused ||= {})[ticketNo] = now(); ledger.save();
+          ledger.audit("rule_lookup_required", { job: job.id, ticket: ticketNo, claim: claim.kind, pattern: claim.pattern, attempt: n + 1 });
+          throw new Error(n === 0 ? ruleLookup.REFUSAL : ruleLookup.REFUSAL_UNCONFIRMED);
+        }
+      }
+    }
+    // Keir 9 (replay 2026-11-13): "X already includes Y, so counting both double counts" is refused, at most twice per
+    // ticket, when what this ticket read says the inclusion is only partial, or says nothing about it. Same exemptions as above.
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated)) {
+      const refusals = (d.inclusionRefusals ||= {});
+      if ((refusals[ticketNo] || 0) < 2) {
+        const texts = [...(ledger.data.ticketObservations?.[ticketNo] || []).map((r) => r.result), ...knowledge.ticketRecord(ledger, ticketNo).facts.filter((f) => !f.closedAt).map((f) => f.text)];
+        const refusal = ruleLookup.inclusionRefusal(message, texts);
+        if (refusal) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("inclusion_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo] }); throw new Error(refusal); }
+      }
+    }
+    // Keir 9: a sentence that says what a page, record or panel shows must rest on a read of this ticket that contains those
+    // words (replay tickets: "the tile reads how much you put up for sale", "your record says inputs held the run back", when
+    // the reads showed neither). Refused at most twice per ticket; after that the code labels the clause unconfirmed (see
+    // softenUnreadClaims) so the player still gets the answer. Never blocks finishing: the text is in PACING_REFUSAL.
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated)) {
+      const bad = readClaim.unbackedClaims(message, ticketReadTexts(ticketNo, sameTicketJobs), ticketPlayerText(job));
+      const refusals = (d.readClaimRefusals ||= {});
+      if (bad.length && (refusals[ticketNo] || 0) < readClaim.MAX_REFUSALS) {
+        refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
+        ledger.audit("read_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], clause: bad[0].clause.slice(0, 160) });
+        throw new Error(readClaim.REFUSAL(bad[0]));
+      }
+    }
+    // Keir 9 (replay 2026-11-13): "this is a bug" / "needs a code change" is a claim. A sentence that labels behaviour a defect
+    // needs a read on this ticket that marks it a fault, or plain "not confirmed" wording; otherwise refused, at most twice per
+    // ticket, then labelled unconfirmed by code (softenBugClaims). Never blocks finishing: the text is in PACING_REFUSAL.
+    if (!opts.system && !answeringStaff && job.kind === "ticket" && !(job.fastLane && !job.fastLane.escalated)) {
+      const refusals = (d.bugClaimRefusals ||= {});
+      if ((refusals[ticketNo] || 0) < bugClaim.MAX_REFUSALS) {
+        const claim = bugClaim.unbackedBugClaim(message, ticketReadTexts(ticketNo, sameTicketJobs), ticketPlayerText(job));
+        if (claim) {
+          refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
+          ledger.audit("bug_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], pattern: claim.pattern });
+          throw new Error(bugClaim.REFUSAL(claim));
+        }
+      }
+    }
     if (claims.some((c) => (c.kind === "escalated" || c.kind === "investigating") && !c.future))
       ledger.audit("handoff_claim_backed", { job: job.id, ticket: ticketNo, refs: replyPolicy.handoffRefs(sameTicketJobs, d.jobs) });
     // A status card is edited in place and a human question deserves an answer,
@@ -1121,6 +1250,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
     }
+    if (!card) { try { require("./ticketlearn").notePost(d, ticketNo, message, now()); } catch {} }
+    // A reply delivered on this ticket supersedes any over-long draft stored by any of its tasks.
+    if (!card) for (const j of Object.values(d.jobs)) if (ticketOf(j) === ticketNo && j.lastTooLongDraft) { delete j.lastTooLongDraft; delete j.lastTooLongDraftAt; }
     if (!card) {
       const qs = questionsIn(message);
       if (qs.length) { const all = (d.askedQuestions ||= {}); all[ticketNo] = [...(all[ticketNo] || []).filter((q) => now() - q.at < 7 * 86400000), ...qs.map((w) => ({ at: now(), words: [...w] }))].slice(-30); }
@@ -1380,6 +1512,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // A reply that can never be delivered (no channel) owes nothing: arming the refused-reply
       // hold there left finish refused too, so an open channel-less ticket could only end
       // blocked (KBX5 channelless--open, 2026-11-03).
+      // Keir 9 (Hydrogen replay, 2026-11-13): any refused attempt to answer the player, pacing refusals included, means the
+      // player is owed an answer, even before anything was read (the unanswered-player rule at finish keys on it).
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update")) { job.replyAttemptRefusedAt = now(); try { ledger.save(); } catch {} }
+      if (e?.code === "TICKET_POST_TOO_LONG" && e.draft && job.kind === "ticket") { job.lastTooLongDraft = String(e.draft).slice(0, 4000); job.lastTooLongDraftAt = now(); try { ledger.save(); } catch {} }
       if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(e.code === "KILL_SWITCH")) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
       throw e;
     }
@@ -1389,6 +1525,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // something does not exist needs a second, differently shaped read.
     if (name === "read_tool" && config.readyReads !== false && result != null && !require("./ticketquality").emptyResult(result) && !/(?:_catalog|_tools|_servers)$/.test(input.tool || "")) {
       try { readyReads.learn(job, input.server, input.tool); } catch {}
+    }
+    // Keir 9 audit: a refused, failed or empty code lookup is not a code read. Only a finished call that returned a result counts.
+    if (name === "read_tool" && input?.server === "ops-knowledge" && /^code_/.test(String(input.tool)) && ruleLookup.codeResultHasContent(result)) {
+      job.lastCodeReadAt = now();
+      if (/^code_(?:search|exact)$/.test(String(input.tool))) job.codeLookups = (job.codeLookups || 0) + 1;
     }
     if ((name === "read_tool" || name === "evidence_batch") && require("./ticketquality").emptyResult(result)) {
       job.emptyReads = [...(job.emptyReads || []), { sig: hash({ name, tool: input?.tool || null, args: input?.args ?? input?.arguments ?? input?.queries ?? null }), tool: input?.tool || name, at: now() }].slice(-20);
@@ -1400,6 +1541,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       job.evidenceText = (String(job.evidenceText || "") + `\n[${name}] ` + text.slice(0, 6000)).slice(-20000);
     }
     require("./investigation-memory").record(ledger, job, name, input, result, now());
+    try { require("./ticketlearn").noteRead(d, job, name, input, result, now()); } catch {}
     return result;
   }
   async function toolInner(job, name, input, signal) {
@@ -1858,6 +2000,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
         await guardTicketPost(job, ticketNo, message);
+        message = softenBugClaims(job, ticketNo, softenUnreadClaims(job, ticketNo, message));
+        message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
         // ticket already named the reporter's company and the page they had open.
         if (ASKS_WHICH.test(message)) {
@@ -1935,6 +2079,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const alias = ["query", "question", "q"].find((k) => typeof args[k] === "string");
         if (alias) { args.text = args[alias]; delete args[alias]; }
       }
+      // Keir 9: code_search and code_exact take `question`; DeepSeek sends query (2026-11-12 replay: four
+      // code searches with the wrong key, so the rule was never found).
+      if (input.server === "ops-knowledge" && ["code_search", "code_exact"].includes(input.tool) && args.question === undefined) {
+        const alias = ["query", "text", "q", "symbol", "term"].find((k) => typeof args[k] === "string");
+        if (alias) { args.question = args[alias]; delete args[alias]; }
+        else if (Array.isArray(args.terms) && args.terms.length) { args.question = args.terms.join(" "); }
+        delete args.terms;
+      }
       // heal-ops passes filters through verbatim, so {"$oid": id} is an unknown
       // operator. Match the id as text instead: ids are stored both ways.
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool) && args.filter && typeof args.filter === "object") args.filter = oidFilter(args.filter);
@@ -1944,7 +2096,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Reading game state, code or data counts as investigating; reading the
       // ticket itself does not. "Cause found" on a card needs some of it.
       if (input.server !== "support") { job.investigatedReads = (job.investigatedReads || 0) + 1; job.lastGameReadAt = now(); }
-      if (input.server === "ops-knowledge" && /^code_/.test(String(input.tool))) { job.lastCodeReadAt = now(); if (/^code_(?:search|exact)$/.test(String(input.tool))) job.codeLookups = (job.codeLookups || 0) + 1; }
+      // The code-read marks (lastCodeReadAt, codeLookups) are set in tool(), after the call succeeded and returned something.
       // Keir 5.6.2: the spin guard counts distinct reads. Re-reading the same
       // card or record every wake is not progress (a finding re-read its own
       // unassigned handoff 463 times overnight, 2026-10-16).
@@ -3156,7 +3308,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).
@@ -3230,6 +3382,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             conversation: { channelId: job.channelId } }, now());
         }
         // Keir 2.0: every resolution becomes a recallable note.
+        // Keir 9: and at most one verified mechanic (plus a lesson after a retraction) from the code the ticket read.
+        try { require("./ticketlearn").keep({ d, notebook, ticket: job.ticket, audit: (k, v) => ledger.audit(k, v) }); } catch {}
         try { notebook?.remember({ kind: "resolution", text: `Ticket ${job.ticket}: ${String(args.message || job.summary || "").slice(0, 600)}`, ticket: job.ticket, by: job.id }); } catch {}
         try { const r = await reporterOf(job, signal); if (r?.id) notebook?.remember({ kind: "player", player: r.id, text: `${r.name || "Player"} raised ticket ${job.ticket}${r.title ? ` ("${String(r.title).slice(0, 80)}")` : ""}; resolved: ${String(args.message || job.summary || "").slice(0, 400)}`, ticket: job.ticket, by: job.id }); } catch {}
       }
@@ -3468,7 +3622,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (job.effects[`action:${a.id}`]?.state === "rejected") { a.state = "failed"; ledger.save(); }
         throw e;
       });
-      a.state = "done"; ledger.save(); return result;
+      a.state = "done"; a.executedAt = now(); ledger.save(); return result;
     }
     if (name === "checkpoint") {
       if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a checkpoint. Call tools through their interface and preserve the last verified conclusion.");
@@ -3536,6 +3690,54 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
       if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
+      // Keir 9 (replay 2026-11-12, audit finding 3): models found the answer and then finished waiting with nothing
+      // posted. The obligation is per ticket and persists across tasks: while the reporter has had no real answer since
+      // they last wrote (a holding line is not one), finishing done or waiting is refused twice. The third attempt
+      // posts a plain limitation and escalates, then lets the task finish. Waits on a developer or the owner count too.
+      // Only once something on the ticket has been read: an ordinary wait before any investigation is the wait
+      // rules' business (the full suite on CI, 2026-11-13: five wait and handoff tests broke without this).
+      if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !developerTask(job) && !developerTicket(job) && !ownerDirected(job)
+          && Object.values(d.jobs).some((j) => ticketOf(j) === ticketOf(job) && (j.lastGameReadAt || j.lastCodeReadAt || j.replyAttemptRefusedAt))
+          && process.env.KEIR_UNANSWERED_GUARD !== "0") {
+        const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1), human = humanAt(tn);
+        // A holding line ("looking into it") is not an answer (Muse replay 2026-11-12: two tickets got only
+        // "looking into it" and the task parked).
+        // The code-written introduction ("Hi, I'm Keir, the support assistant ...") is not an answer either (Hydrogen replay, 2026-11-13:
+        // a refused first answer, then a wait for the player behind the introduction alone).
+        const holdingOnly = last && (isStall(last.text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(last.text || "").trim()) || /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
+        // A wait for the player's own reply has its own, stricter "nothing posted" refusal below; only a holding line is added here.
+        const owed = human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
+        if (owed) {
+          const all = (d.unansweredFinishes ||= {});
+          let rec = all[tn];
+          if (!rec || rec.humanAt !== human) rec = all[tn] = { humanAt: human, refused: 0 };
+          if (rec.refused < 2) {
+            rec.refused += 1; ledger.save();
+            ledger.audit("unanswered_finish_refused", { job: job.id, ticket: tn, refusals: rec.refused });
+            throw new Error("Not finished: the player has had no answer since they last wrote. Post what you found to them now (channel_reply, at most five short sentences, only what you read), or tell them plainly what you could not confirm, then finish. Waiting on the developers or the owner does not excuse a missing answer.");
+          }
+          if (!rec.limitationPostedAt) {
+            // Third attempt: the code answers for the task so the player is never left with silence.
+            let escalated = false;
+            try {
+              const r = await tool(job, "raise_to_developers", { kind: "question", title: `Ticket ${tn}: no confirmed answer for the player`, detail: `Ticket ${tn} reached the end of its task without an answer the player can use. Last summary: ${String(input.summary || "none").slice(0, 400)}. Please look at what the player asked and reply.`, needsHuman: true, force: true }, signal);
+              escalated = r?.raised === true;
+            } catch { escalated = false; }
+            const message = escalated
+              ? "I haven't got a confirmed answer for you yet. I've passed it to the developers and will reply here when I do."
+              : "I haven't got a confirmed answer for you yet. I'm still working on it and will reply here when I do.";
+            const args = { kind: "ticket", number: tn, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
+            const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: tn, text: message });
+            const dl = sent?.delivery;
+            const posted = dl?.posted === true || dl?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(dl?.status) || dl?.delivery?.status === "posted";
+            if (!posted) throw new Error("Not finished: the limitation message to the player was not confirmed as delivered. Retry the finish.");
+            job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, tn, message);
+            rec.limitationPostedAt = now(); rec.escalated = escalated;
+            (job.history ||= []).push({ at: new Date(now()).toISOString(), kind: "unanswered_limitation", ticket: tn, escalated });
+            ledger.audit("unanswered_limitation_posted", { job: job.id, ticket: tn, escalated }); ledger.save();
+          }
+        }
+      }
       // An unrelated later post must not erase work Keir still owes. The
       // latest-message guard alone misses partial answers and saved promises.
       if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent) {

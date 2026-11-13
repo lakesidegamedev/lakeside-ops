@@ -5,6 +5,33 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.0.0 (2026-11-13)
+
+- Player tickets can run on their own model route (`KEIR_TICKET_PROVIDER`, at that route's own effort) while all other work stays on the main route. When the ticket route hits a usage limit or a login failure, tickets continue on the main route, and return once its cooldown ends.
+- A ticket cannot park waiting on the player when its answer was refused and only Keir's introduction reached them: a refused answer arms the unanswered-player rule even before anything was read, and the introduction no longer counts as an answer.
+- Keir can no longer tell a player a fix "was fixed on" a date, or that "a correction has been released" followed by when it reaches their page, without proof from their own page. A future word after a past fix claim no longer makes the claim count as a promise.
+- Keir no longer tells a player that behaviour is a bug, a fault or "needs a code change" unless a read on that ticket marks it as a fault (a tracker bug, a code note) or the reply says plainly it is not confirmed. Otherwise it is asked to read the deciding code and say whether it is the rule; at most twice per ticket, then the code labels the sentence "I have not confirmed this is a fault, but ..." and the answer still goes out.
+- Keir no longer tells a player that one value "already includes" another, or that counting both is double counting, when what it read says the inclusion is only partial or says nothing about it; it is asked to restate the limit, at most twice per ticket.
+- Keir no longer tells a player what a page, record or panel shows, or what a figure measures, unless a read on that ticket returned those words. An unread cause or recorded fact is refused twice (quote the read, or say it is not confirmed); after that the code labels it "I have not confirmed this, but ..." and the answer still goes out. Never blocks finishing.
+- Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.
+- Staff slash command `/keir` (doctor, status, waiting, why) answered by a separate read-only desk process, so moderators and developers can see why Keir is stuck or who it is waiting on even when Keir's own loop is hung. It runs CLI-only until its own Discord application is configured; replies are private unless shared.
+- What Keir keeps from a closed ticket is now an unverified `resolution` (kind `resolution`, `verified: false`), not a `mechanic`. Recall shows it as "an earlier answer on ticket N, not verified; check it against the code before relying on it". A retraction lesson's right claim gets the same label unless the claim names what the cited file is about.
+- Muse: its temp folder is now actually removed after each run (the cleanup referenced a variable out of scope), and the muse runner is limited to an explicit list of subscription models; any other model on it is refused with the billing message.
+- Wording checks: an acknowledgement opening ("Thanks, ...") no longer exempts the rest of its sentence from the rule-lookup check, and negation in a fix claim is judged per clause ("not corrected" is no claim, "not a bug, but corrected in the latest update" is).
+- The saved over-long draft posted when a run runs out of steps is dropped when any reply went out on the ticket or newer reads happened after it, and nothing is posted if trimming would cut the only sentence that gives the player a next step.
+- A ticket cannot park or finish while its reporter has had no real answer since they last wrote (a holding line does not count), whatever it waits on. The count is per ticket and survives new tasks: two refusals, then the code posts a plain "no confirmed answer yet" message, files the escalation, records a receipt and lets the task finish.
+- A code lookup counts toward the rule check only after it ran and returned something. After the first refusal, a rule or cause with no successful code read is posted only if the reply says plainly it is not confirmed, otherwise it is refused once more (never more than two refusals per ticket).
+- Ticket replies are now number-checked against everything the ticket has read, earlier runs included (refused at most twice per ticket, then let through and audited), and code appends a short "Checked:" line naming what the reply rests on in player terms (a sector page, a turn, the game's rules). The model never writes the source.
+- Muse works as a Keir model again on Muse Code 1.4: its scratch workspace is trusted so Keir's tools load, session logging stays on, and its temp folder sits outside the workspace. The Muse Code subscription CLI is an allowed route; Muse through the paid Meta API stays blocked.
+- A dash in a reply is replaced with a comma instead of refusing the reply.
+- Two post rules no longer contradict each other: an owner or developer speaking in a ticket, or an approved repair that ran, lets Keir reply without a new player message, and refusals that owe the player nothing never block finishing (the 8.4 lock-up).
+- The provider fallback also covers a forced provider: a usage limit or expired login on the forced route moves tasks to `KEIR_FALLBACK_PROVIDER` until the route recovers.
+- A run that runs out of steps right after a length refusal posts the leading five sentences of the refused reply instead of nothing.
+- Code searches sent with `query` or `terms` reach the tool as `question`; a claimed page or figure change needs the same receipt as a "fixed" claim.
+- Each closed ticket keeps one verified mechanic tied to the game code Keir read, and a lesson when an answer was taken back; both are recalled into later tickets.
+- A ticket answer that states a game rule or a cause is refused once per ticket when nothing on the ticket has read the game code, with a message that names the code search tool. Never refused again on that ticket, never blocks finishing, `KEIR_RULE_LOOKUP=0` turns it off.
+- Keir is the support desk, not Ask: the 8.4.1 conversational and send-the-first-fact-fast instructions are gone from the ticket brief (short phone-sized posts and the strategy-to-Ask route stay), and rules and mechanics questions are answered by Keir from the game code.
+
 ## 8.5.4 (2026-11-07)
 
 - Pending owner approvals hold the requested actions and ticket closure while independent investigation continues. Player messages, worker reports and scheduled reads reach admission instead of being silently blocked after the wake rules queued them.

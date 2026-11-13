@@ -250,16 +250,53 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     ledger.audit(auth ? "auth_failure_provider_fallback" : "usage_limit_provider_fallback", { job: job.id, ticket: job.ticket, from: runner, to: r });
     return true;
   }
+  // Keir 9: the fallback also covers a forced provider. Before, KEIR_PROVIDER_OVERRIDE turned the fallback off, so
+  // when the forced route hit its monthly cap (2026-11-03) or its login expired (2026-11-05) every task failed.
+  // The fallback must be a different runner from the one that failed.
   function fallbackSpec(job) {
-    if (config.providerOverride) return null;
-    const spec = config.fallbackProvider;
-    return spec && DEFAULT_MODEL[String(spec).split(/[:@]/)[0]] && !cooled(String(spec).split(/[:@]/)[0]) ? spec : null;
+    // A player ticket on its own route falls back to the operator's main route first (owner, 2026-11-13).
+    if (String(job?.provider?.assignedBy || "").startsWith("ticket-route") && config.providerOverride) {
+      const main = config.providerOverride, mainRunner = main.split(/[:@]/)[0];
+      if (DEFAULT_MODEL[mainRunner] && !cooled(mainRunner) && mainRunner !== String(config.ticketProvider || "").split(/[:@]/)[0]) return main;
+    }
+    const spec = config.fallbackProvider, runner = String(spec || "").split(/[:@]/)[0];
+    if (!spec || !DEFAULT_MODEL[runner] || cooled(runner)) return null;
+    if (config.providerOverride && config.providerOverride.split(/[:@]/)[0] === runner) return null;
+    return spec;
   }
+  // Keir 9 (owner, 2026-11-13): player tickets run on their own route (KEIR_TICKET_PROVIDER, Gemini 4 Hydrogen at launch),
+  // everything else on the main route. Its subscription quota is far smaller than all of Keir's traffic, so only player
+  // tickets use it; when it is cooling down after a usage limit or a login failure, the ticket runs on the main route.
+  const ticketRouted = (job) => Boolean(config.ticketProvider) && job.kind === "ticket" && job.role !== "owner" && !job.codingParent;
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
+    if (ticketRouted(job)) {
+      const [tspec, teffort] = config.ticketProvider.split("@"), [trunner, tmodel] = tspec.split(":");
+      if (!DEFAULT_MODEL[trunner] || !tmodel) throw new Error("Invalid ticket provider");
+      if (!cooled(trunner)) {
+        if (job.provider?.runner !== trunner || job.provider?.model !== tmodel || job.provider?.routeEffort !== teffort || job.provider?.assignedBy !== "ticket-route") {
+          job.provider = { lane, runner: trunner, model: tmodel, ...(teffort ? { effort: teffort, routeEffort: teffort } : {}), assignedBy: "ticket-route", at: Date.now() };
+          ledger.save();
+        }
+        return [tmodel, PROVIDER_LABEL[trunner], trunner];
+      }
+      const next = fallbackSpec({ provider: { assignedBy: "ticket-route" } });
+      if (next) {
+        const [fspec, feffort] = next.split("@"), [fr, fm] = fspec.split(":"), model = fm || DEFAULT_MODEL[fr]();
+        if (job.provider?.runner !== fr || job.provider?.model !== model) { job.provider = { lane, runner: fr, model, ...(feffort ? { effort: feffort, routeEffort: feffort } : {}), assignedBy: "ticket-route-fallback", at: Date.now() }; ledger.save(); }
+        return [model, PROVIDER_LABEL[fr], fr];
+      }
+    }
     if (config.providerOverride) {
       const [spec, effort] = config.providerOverride.split("@"), [runner, requestedModel] = spec.split(":");
       if (!DEFAULT_MODEL[runner] || !requestedModel) throw new Error("Invalid operator provider override");
+      // The forced route is cooling down after a usage-limit or login failure: stay on the fallback until it recovers.
+      const fallback = cooled(runner) && fallbackSpec(job);
+      if (fallback) {
+        const [fspec, feffort] = fallback.split("@"), [fr, fm] = fspec.split(":"), model = fm || DEFAULT_MODEL[fr]();
+        if (job.provider?.runner !== fr || job.provider?.model !== model) { job.provider = { lane, runner: fr, model, ...(feffort ? { effort: feffort, routeEffort: feffort } : {}), assignedBy: "override-fallback", at: Date.now() }; ledger.save(); }
+        return [model, PROVIDER_LABEL[fr], fr];
+      }
       if (job.provider?.runner !== runner || job.provider?.model !== requestedModel || job.provider?.lane !== lane || job.provider?.routeEffort !== effort) {
         job.provider = { lane, runner, model: requestedModel, effort, routeEffort: effort, assignedBy: "operator-override", at: Date.now() };
         ledger.save();
@@ -558,6 +595,20 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
         (Number.isFinite(session.maxTurns) && (session.steps || 0) >= session.maxTurns || STEP_LIMIT_TEXT.test(lastText))) {
       if (lastText.trim()) job.summary = `Checkpoint from a step-limited activation (not sent to anyone): ${lastText.trim()}`.slice(0, 4000);
       ledger.audit("step_limit_reached", { job: job.id, lane: quick ? "quick" : "worker", steps: session.steps || 0, max: session.maxTurns, model: job.provider?.model });
+      // Keir 9: the run's last reply was refused only for length and the steps ran out: post its leading part
+      // rather than leave the player with nothing.
+      if (job.kind === "ticket" && job.lastTooLongDraft) {
+        // Stale if reads happened after the draft was stored (the evidence moved on), or if a reply since went out
+        // (broker clears the draft on delivery).
+        const stale = Math.max(job.lastGameReadAt || 0, job.lastCodeReadAt || 0) > (job.lastTooLongDraftAt || 0);
+        const trimmed = stale ? "" : require("./playercopy").trimTicketPost(job.lastTooLongDraft);
+        if (stale) ledger.audit("step_limit_trimmed_reply_stale", { job: job.id, ticket: job.ticket });
+        delete job.lastTooLongDraft; delete job.lastTooLongDraftAt;
+        if (trimmed) {
+          try { await broker.tool(job, "channel_reply", { message: trimmed }, signal); ledger.audit("step_limit_trimmed_reply", { job: job.id, ticket: job.ticket }); }
+          catch (error) { ledger.audit("step_limit_trimmed_reply_failed", { job: job.id, ticket: job.ticket, error: String(error.message).slice(0, 200) }); }
+        }
+      }
       result = { ...result, subtype: "error_max_turns" };
     }
     if (result.subtype === "error_max_turns" || quick && job.voiceMode && !String(result.result || "").trim()) {

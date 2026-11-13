@@ -157,6 +157,7 @@ test("an approval notice does not suppress a new independent finding", async () 
   assert.equal((await say(f, "The display fix needs approval before it reaches the main server.")).published, true);
   f.tick(2 * 3600000);
   f.job.lastGameReadAt = 9e15; // A fresh independent finding, not another wait notice.
+  f.job.evidenceText = "\n[read_tool] production records: output stayed stable; money earned per unit fell.";
   assert.equal((await say(f, "The production records show output stayed stable while the money earned per unit fell.")).published, true);
   assert.equal(f.ledger.data.decisions.dec1.state, "pending");
 });
@@ -212,6 +213,7 @@ test("ticket posts are short, in paragraphs, one per ten minutes, and correction
 
 test("a progress card does not hold back the answer it announces, and a mechanics question gets no fix card", async () => {
   const f = fixture();
+  f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
   // A card recorded a minute ago, then the long answer: it goes out.
   (f.ledger.data.ticketPosts ||= {})[1522] = [{ at: Date.now(), jobId: f.job.id, kind: "status_card", text: "Checked the records; posting the explanation." }];
   f.tick(60000);
@@ -314,6 +316,7 @@ test("Keir does not ask the player which bank when the ticket already names thei
 test("Keir introduces itself once per player, then answers returning players without an opener, and never introduces itself to staff", async () => {
   const run = async ({ uid, prior, introduced = false, priorDisclosed = false, fail = false, answered = false, keirOpened = false }) => {
     const f = fixture(), posted = [];
+    f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
     if (keirOpened) f.ledger.createJob("intake:chat", { kind: "command", role: "support", source: {} }).openedTickets = { m1: { number: 1522, channelId: "c" } };
     for (const j of Object.values(f.ledger.data.jobs)) { delete j.lastPublishedAt; delete j.progressMessageId; delete j.channelReplyQueued; }
     delete f.ledger.data.statusCards; delete f.ledger.data.disclosed;

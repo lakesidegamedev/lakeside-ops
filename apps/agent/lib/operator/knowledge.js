@@ -211,7 +211,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
   function recordHistory(note, op, extra = {}) {
     (note.history ||= []).push({ at: now(), op, text: note.text, sources: noteSources(note), ...extra });
   }
-  function remember({ kind, text, path, paths = [], ticket, by, player, doc, docVersion, source, supersedes = [], contradicts = [], reason }) {
+  function remember({ kind, text, path, paths = [], ticket, by, player, doc, docVersion, source, supersedes = [], contradicts = [], reason, verified }) {
     if (!KINDS.includes(kind)) throw new Error(`kind must be one of ${KINDS.join(", ")}`);
     const body = String(text || "").trim();
     if (body.length > MAX_NOTE_TEXT) throw new Error("Notebook text exceeds 4000 characters; save the full handoff as a document and remember a sourced summary.");
@@ -229,7 +229,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
     for (const n of [...replaced, ...disputed]) if (!n || (n.player || "") !== String(player || "") || ((["decision", "lesson", "player"].includes(n.kind) || ["decision", "lesson", "player"].includes(kind)) && n.kind !== kind)) throw new Error("replacement and conflict links must stay within one player and protect decisions and lessons");
     const dup = !replaced.length && data.notes.find((n) => live(n) && n.kind === kind && (n.player || "") === String(player || "") && n.text === body && !replaced.includes(n));
     const note = dup || { id: crypto.randomBytes(4).toString("hex"), kind, text: body, path: dependencies[0] || null, sha: sources.find((s) => s.type === "code")?.sha || null,
-      ticket: ticket || null, by: by || null, at: now(), ...(player ? { player: String(player) } : {}), ...(doc ? { doc, docVersion } : {}) };
+      ticket: ticket || null, by: by || null, at: now(), ...(player ? { player: String(player) } : {}), ...(doc ? { doc, docVersion } : {}), ...(verified === false ? { verified: false } : {}) };
     note.sources = unique([...noteSources(note), ...sources]);
     if (!dup) data.notes.push(note);
     for (const old of replaced) { recordHistory(old, "superseded", { reason, by }); old.supersededBy = note.id; old.supersededAt = now(); }
@@ -245,7 +245,10 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
   }
   function project(n) {
     const outdated = stale(n), disputed = conflicts(n);
-    return { id: n.id, kind: n.kind, text: n.text, path: n.path || undefined, sources: noteSources(n), ticket: n.ticket || undefined,
+    // An answer Keir gave on an earlier ticket that nothing checked against the code is shown as exactly that.
+    const unverified = n.verified === false;
+    const label = unverified ? `an earlier answer${n.ticket ? ` on ticket ${n.ticket}` : ""}, not verified; check it against the code before relying on it` : undefined;
+    return { id: n.id, kind: n.kind, text: unverified ? `(${label}) ${n.text}` : n.text, ...(unverified ? { verified: false, label } : {}), path: n.path || undefined, sources: noteSources(n), ticket: n.ticket || undefined,
       supersedes: n.supersedes, replacementReason: n.replacementReason, ageDays: Math.round((now() - n.at) / 86400000),
       ...(outdated ? { stale: "the code this came from has changed since; re-verify before relying on it", verification: "pending" } : {}),
       ...(disputed.length ? { conflictsWith: disputed, conflict: "these notes disagree; read current evidence and record a sourced replacement before relying on either" } : {}) };

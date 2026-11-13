@@ -238,7 +238,8 @@ test("lanes refuse models that failed them unless a trial is allowed", () => {
   const trial = { codingProvider: "ollama:deepseek-v4.1-flash@medium" };
   assert.deepEqual(routing.enforce(trial, { allowBlocked: true }), []);
   assert.equal(routing.check("worker", "agy:gemini-3.8-flash@medium").ok, false);
-  assert.equal(routing.check("coding", "muse:muse-spark-1.3-contributor@xhigh").ok, false);
+  // Owner 2026-11-12: the Muse Code subscription CLI is an allowed route.
+  assert.equal(routing.check("coding", "muse:muse-spark-1.3-contributor@xhigh").ok, true);
   assert.equal(routing.check("coding", "opencode:opencode-go/muse-spark-1.3-contributor@xhigh").ok, true);
   // The direct DeepSeek API route is a different deployment to the measured
   // Ollama one and is not caught by the lock.

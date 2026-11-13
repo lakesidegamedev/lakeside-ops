@@ -114,21 +114,30 @@ async function invokeCursor({ spawnImpl, stateDir, model = "auto", brief, prompt
 /** Muse (Meta) headless. Shell, writes and web are off; Keir's tools come over MCP. */
 async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, maxTurns, timeoutMs, signal }) {
   const { dir, cleanup } = scratch(stateDir, "muse-runs");
+  // Declared outside the try so the finally block can remove it (it was scoped inside, so cleanup never ran).
+  let tmp = null;
   try {
-    const ws = path.join(dir, "ws"), tmp = path.join(dir, "tmp");
-    fs.mkdirSync(ws, { recursive: true }); fs.mkdirSync(tmp, { recursive: true });
+    // Muse Code 1.4 refuses a TMPDIR inside the workspace's tree, so the temp root lives under the system temp dir.
+    const ws = path.join(dir, "ws");
+    tmp = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "keir-muse-tmp-"));
+    fs.mkdirSync(ws, { recursive: true });
+    // Keir 9: an empty home, so Muse loads none of the owner's personal skills (about 80) or personal memory
+    // notes on top of Keir's brief; the login and settings still come from the real config folder.
+    const museHome = path.join(dir, "home"); fs.mkdirSync(museHome, { recursive: true });
     const promptFile = path.join(dir, "prompt.md");
     fs.writeFileSync(promptFile, `${brief}\n\n## This activation (JSON)\n\n${prompt}\n`, { mode: 0o600 });
-    const args = ["exec", "--workspace", ws, "--model", model, "--effort", effort, "--no-session-log", "--no-foreign-personal-context",
+    // Muse Code 1.4: MCP servers load only in a trusted workspace (the workspace is an empty scratch dir), and
+    // local session logging is required, so --no-session-log is gone (2026-11-12: Keir's tools never reached Muse).
+    const args = ["exec", "--trust-workspace", "--workspace", ws, "--model", model, "--effort", effort, "--no-foreign-personal-context",
       "--disable-shell", "--disable-write", "--disable-web-tools", "--disable-reminders", "--approval-mode", "never",
       "--max-model-steps", String(maxTurns), "-c", `mcp_servers.keir=${JSON.stringify({ url, transport: "streamable_http" })}`, "--prompt-file", promptFile];
-    const r = await spawnBounded(spawnImpl, "muse", args, { cwd: ws, env: { HOME: host.home(), PATH, LANG: "C.UTF-8", TMPDIR: tmp } }, timeoutMs, signal);
+    const r = await spawnBounded(spawnImpl, "muse", args, { cwd: ws, env: { HOME: museHome, XDG_CONFIG_HOME: path.join(host.home(), ".config"), PATH, LANG: "C.UTF-8", TMPDIR: tmp } }, timeoutMs, signal);
     if (r.timedOut) return { subtype: "error_max_turns", is_error: true, timedOut: true };
     if (r.code === null) return { subtype: "error_max_turns", is_error: true, interrupted: true };
     if (/max(imum)?[ -]model[ -]steps|step (cap|limit)|did not reach a terminal state within \d+ step/i.test(r.err)) return { subtype: "error_max_turns", is_error: true, result: r.out.trim() };
     if (r.code !== 0) failed(r.code, r.err, "muse");
     return { result: r.out.trim(), num_turns: null, is_error: false, subtype: "success", usage: {} };
-  } finally { cleanup(); }
+  } finally { cleanup(); if (tmp) { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} } }
 }
 
 /** OpenAI Codex (ChatGPT subscription login). Isolated CODEX_HOME: the user

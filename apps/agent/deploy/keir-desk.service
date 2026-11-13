@@ -1,0 +1,21 @@
+[Unit]
+Description=Keir desk: read-only staff commands that work when Keir's agent loop is hung
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/keir/current
+# Holds KEIR_DESK_DISCORD_TOKEN, KEIR_DESK_APP_ID and optionally KEIR_GUILD_ID. Not shipped in the repo.
+EnvironmentFile=-/etc/keir-desk.env
+ExecStart=/usr/bin/node /opt/keir/current/bin/keir-desk.js --serve
+Restart=always
+RestartSec=10
+# The desk only reads Keir's state.
+ReadOnlyPaths=/var/lib/keir-operator
+NoNewPrivileges=true
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

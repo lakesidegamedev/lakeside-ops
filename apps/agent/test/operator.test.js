@@ -1054,6 +1054,8 @@ test("an activation runs on the subscription CLI with only Keir's tools and fini
 test("internal evidence wakes do not become unanswered player replies, including persisted polluted clocks", async () => {
   for (const internal of [{ role: "system", authorId: "handoff:auditor" }, { investigationResult: "child" }, { codingResult: "child" }]) {
     const f = fixture(), seen = [], at = 4000;
+    // The player has been answered (a real answer, after their last message); the wake is internal evidence only.
+    f.ledger.data.ticketPosts = { 1540: [{ at: 4500, jobId: "other", text: "Your report is with the developers, who are checking the sector figures." }] };
     const j = running(f, { kind: "ticket", role: "support", ticket: 1540, channelId: "777777777777777777",
       source: { at: new Date(1000).toISOString(), authorId: "888888888888888888" },
       inbox: [{ ...internal, at: new Date(at).toISOString(), content: "New internal evidence" }],
@@ -1070,6 +1072,7 @@ test("internal evidence wakes do not become unanswered player replies, including
 
 test("a real human reply still prevents sleeping after an internal wake", async () => {
   const f = fixture(), seen = [];
+  f.ledger.data.ticketPosts = { 1540: [{ at: 4500, jobId: "other", text: "Your report is with the developers, who are checking the sector figures." }] };
   const j = running(f, { kind: "ticket", role: "support", ticket: 1540, source: {}, lastPublishedAt: 2000,
     inbox: [{ authorId: "888888888888888888", at: new Date(4000).toISOString(), content: "Still broken" },
       { role: "system", at: new Date(4000).toISOString(), content: "Internal wake at same time" }] });
@@ -2516,6 +2519,7 @@ test("newer player input removes the old developer sibling wake delay", async ()
     source: { authorId: owner, at: new Date(1000).toISOString() }, deadline: 9999999999999 }).state = "waiting";
   const t = f.ledger.createJob("ticket:7002", { kind: "ticket", role: "support", ticket: 7002,
     observedPlayerAt: 4000, source: { content: "new question" }, deadline: 9999999999999 }); t.state = "running";
+  f.ledger.data.ticketPosts = { 7002: [{ at: 4500, jobId: "other", text: "Your question is with the developers, who are checking it." }] };
   await f.broker.tool(t, "finish", { state: "waiting", summary: "Waiting briefly for an independent check", wakeAfterMinutes: 1 });
   assert.ok(t.wakeAt < 5000 + 30 * 60000);
 });
@@ -2969,6 +2973,79 @@ test("an expired provider login moves the job to the fallback route (2026-11-05)
  if (act) assert.equal(act.subtype, "auth_failed");
 });
 
+test("Keir 9: a run that runs out of steps after a length refusal posts the reply's leading part, not nothing", async () => {
+ const f = fixture(), ch = "777777777777777777";
+ const j = running(f, { kind: "ticket", role: "support", ticket: 327, channelId: ch, replyChannel: ch, summary: "Answering.", source: { channelId: ch, channelName: "ticket-bug-fixture-327", content: "How do I file impeachment?" } });
+ f.ledger.data.disclosed = { 327: { at: 1, posted: true } }; j.lastCodeReadAt = 1;
+ const long = "Filing needs a seat in the legislature. Your party chair can file through a seated party member. That member opens the filing page. They pick the officer. They confirm the articles. Then the House votes.";
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash" },
+  invokeImpl: async () => { await f.broker.tool(j, "channel_reply", { message: long }).catch(() => {}); return { subtype: "success", result: "The maximum step budget for this activation has been reached, so tools are disabled.", num_turns: 2 }; } });
+ await agent.run(j, new AbortController().signal).catch(() => {});
+ const kinds = (f.ledger.data.audit || []).map((a) => a.kind + (a.error ? ": " + a.error : "")).filter((k) => k.startsWith("step_limit_trimmed"));
+ assert.deepEqual(kinds, ["step_limit_trimmed_reply"]);
+ assert.equal(j.lastTooLongDraft, undefined);
+});
+
+test("Keir 9 audit: a trimmed draft is not posted when newer reads happened after it, or when it would drop the only next step", async () => {
+ for (const scenario of ["newer-read", "drops-next-step"]) {
+  const f = fixture(), ch = "777777777777777777";
+  const j = running(f, { kind: "ticket", role: "support", ticket: 328, channelId: ch, replyChannel: ch, summary: "Answering.", source: { channelId: ch, channelName: "ticket-bug-fixture-328", content: "How do I file impeachment?" } });
+  f.ledger.data.disclosed = { 328: { at: 1, posted: true } }; j.lastCodeReadAt = 1;
+  const long = scenario === "newer-read"
+   ? "Filing needs a seat in the legislature. Your party chair can file through a seated party member. That member opens the filing page. They pick the officer. They confirm the articles. Then the House votes."
+   : "Filing needs a seat in the legislature. Your party chair holds that seat for your party. The filing page lists every officer. Each officer has a fixed term. Terms are counted in turns. The articles must be confirmed. Please send me the officer you want and I will check it.";
+  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+   config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash" },
+   invokeImpl: async () => { await f.broker.tool(j, "channel_reply", { message: long }).catch(() => {}); if (scenario === "newer-read") j.lastGameReadAt = Date.now() + 1e9; return { subtype: "success", result: "The maximum step budget for this activation has been reached, so tools are disabled.", num_turns: 2 }; } });
+  await agent.run(j, new AbortController().signal).catch(() => {});
+  const kinds = (f.ledger.data.audit || []).map((a) => a.kind).filter((k) => k.startsWith("step_limit_trimmed"));
+  assert.ok(!kinds.includes("step_limit_trimmed_reply"), scenario + ": nothing posted from the stale or lossy draft");
+  assert.equal(j.lastTooLongDraft, undefined);
+ }
+});
+
+test("Keir 9 audit: delivering any reply on the ticket clears a stored over-long draft", async () => {
+ const f = fixture(), ch = "777777777777777777";
+ const j = running(f, { kind: "ticket", role: "support", ticket: 329, channelId: ch, replyChannel: ch, summary: "Answering.", source: { channelId: ch, channelName: "ticket-bug-fixture-329", content: "How do I file?" } });
+ f.ledger.data.disclosed = { 329: { at: 1, posted: true } }; j.lastCodeReadAt = 1;
+ await f.broker.tool(j, "channel_reply", { message: "Filing needs a seat in the legislature. Your party chair can file through a seated party member. That member opens the filing page. They pick the officer. They confirm the articles. Then the House votes." }).catch(() => {});
+ assert.ok(j.lastTooLongDraft);
+ await f.broker.tool(j, "channel_reply", { message: "You need a legislature seat to file." });
+ assert.equal(j.lastTooLongDraft, undefined);
+});
+
+test("Keir 9: a forced provider still falls back when its route hits a usage limit, and returns once the cooldown ends", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 324, summary: "Checking a report." });
+ const attempts = []; let current = null;
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "opencode") return { subtype: "error", is_error: true, result: "GoUsageLimitError: Go usage limit exceeded (monthly)", num_turns: 1 }; await f.broker.tool(current, "finish", { state: "done", summary: "Answered." }); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+ current = j; await agent.run(j, new AbortController().signal);
+ assert.equal(j.state, "queued");
+ assert.equal(j.provider.runner, "ollama");
+ current = j; j.state = "running"; await agent.run(j, new AbortController().signal);
+ assert.deepEqual(attempts, ["opencode", "ollama"]);
+ assert.match(j.provider.assignedBy, /fallback/);
+ // Once the cooldown ends the forced route is used again.
+ f.ledger.data.routeCooldown.opencode = Date.now() - 1;
+ const k = running(f, { kind: "ticket", role: "support", ticket: 325, summary: "Another." });
+ current = k; await agent.run(k, new AbortController().signal);
+ assert.equal(attempts.at(-1), "opencode");
+});
+
+test("Keir 9: a fallback on the same runner as the forced provider is never used", async () => {
+ const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 326, summary: "Checking a report." });
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", fallbackProvider: "opencode:opencode-go/deepseek-v4.1-flash@low" },
+  invokeImpl: async () => ({ subtype: "error", is_error: true, result: "Go usage limit exceeded", num_turns: 1 }) });
+ await agent.run(j, new AbortController().signal).catch(() => {});
+ assert.notEqual(j.provider?.assignedBy, "usage-limit-fallback");
+ assert.ok((f.ledger.data.audit || []).some((a) => a.kind === "usage_limit_no_fallback"));
+});
+
 test("a direct owner message is answered before the task can finish quietly (ticket 1763)", async () => {
   const f = fixture(), ch = "777777777777777777";
   const job = running(f, { role: "owner", kind: "conversation", ticket: 123, actorId: f.config.ownerId, channelId: ch, replyChannel: ch, source: { channelId: ch, authorId: f.config.ownerId, at: new Date(4000).toISOString(), content: "<@333333333333333333> check directly for resolution" } });
@@ -2995,4 +3072,45 @@ for (const checksGreen of [true, false]) test(`owner-authored approved PR skips 
   assert.equal(result.merged, checksGreen);
   assert.ok(!f.calls.some(c => c.includes("event=APPROVE")));
   assert.equal(f.calls.some(c => c.join(" ").includes("pulls/10/merge")), checksGreen);
+});
+
+// Distinct keys: running() reuses one fixture job for every call.
+const runningAs = (f, key, fields) => { const j = f.ledger.createJob(key, { role: "owner", kind: "command", source: {}, deadline: 9999999999999, ...fields }); j.state = "running"; return j; };
+test("Keir 9: player tickets run on the ticket route at its own effort, other work stays on the main route", async () => {
+ const f = fixture(), t = runningAs(f, "t410", { kind: "ticket", role: "support", ticket: 410, summary: "A player question." });
+ const other = runningAs(f, "finding", { kind: "finding", role: "support", summary: "A finding." });
+ const seen = []; let current = null;
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", effortOverride: "high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
+  invokeImpl: async ({ runner, model, effort }) => { seen.push([current.id, runner, model, effort]); await f.broker.tool(current, "finish", { state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+ current = t; await agent.run(t, new AbortController().signal);
+ current = other; await agent.run(other, new AbortController().signal);
+ const forT = seen.filter((x) => x[0] === t.id), forOther = seen.filter((x) => x[0] === other.id);
+ assert.ok(forT.length && forT.every((x) => x[1] === "agy" && x[2] === "gemini-4-hydrogen-medium" && x[3] === "medium"), JSON.stringify(seen));
+ assert.equal(t.provider.assignedBy, "ticket-route");
+ assert.ok(forOther.length && forOther.every((x) => x[1] === "opencode"), JSON.stringify(seen));
+});
+
+test("Keir 9: a ticket on the ticket route falls back to the main route when the ticket route hits its usage limit", async () => {
+ const f = fixture(), j = runningAs(f, "t411", { kind: "ticket", role: "support", ticket: 411, summary: "A player question." });
+ const attempts = []; let current = null;
+ const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+  config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+   providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "agy") return { subtype: "error", is_error: true, result: "RESOURCE_EXHAUSTED: quota exceeded (429)", num_turns: 1 }; await f.broker.tool(current, "finish", { state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+ current = j; await agent.run(j, new AbortController().signal);
+ assert.equal(j.provider.runner, "opencode");
+ current = j; j.state = "running"; await agent.run(j, new AbortController().signal);
+ assert.deepEqual(attempts, ["agy", "opencode"]);
+ // A new ticket while the ticket route cools down starts on the main route.
+ const k = runningAs(f, "t412", { kind: "ticket", role: "support", ticket: 412, summary: "Another." });
+ current = k; await agent.run(k, new AbortController().signal);
+ assert.equal(attempts.at(-1), "opencode");
+ assert.equal(k.provider.assignedBy, "ticket-route-fallback");
+ // Once the cooldown ends, tickets go back to the ticket route.
+ f.ledger.data.routeCooldown.agy = Date.now() - 1;
+ const m = runningAs(f, "t413", { kind: "ticket", role: "support", ticket: 413, summary: "Later." });
+ current = m; await agent.run(m, new AbortController().signal);
+ assert.equal(attempts.at(-1), "agy");
 });

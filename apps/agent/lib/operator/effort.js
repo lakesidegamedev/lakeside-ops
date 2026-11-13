@@ -4,8 +4,9 @@
 // just ran out of turns or had its completion refused never drops below high,
 // and each runner is clamped to the levels its CLI accepts.
 const JEV = "/root/bin/lib/jev.mjs";
-const ORDER = ["low", "medium", "high", "xhigh"];
-const RUNNER_MAX = { agy: "high", muse: "xhigh", claude: "xhigh" };
+// Keir 9: Muse Code accepts max (its tuned top tier); every other runner is clamped below it.
+const ORDER = ["low", "medium", "high", "xhigh", "max"];
+const RUNNER_MAX = { agy: "high", muse: "max", claude: "xhigh" };
 const DECISIVE = 0.35;
 
 const CRITERIA = {
@@ -43,6 +44,8 @@ async function chooseEffort(job, { quick, runner, jev = (spec) => process.env.KE
 }
 
 async function activationEffort(job, { config, quick, runner }) {
+  // The player-ticket route names its own effort (Keir 9, owner 2026-11-13); the operator-wide override does not raise it.
+  if (job.provider?.assignedBy === "ticket-route" && ORDER.includes(job.provider.routeEffort)) return { effort: clamp(job.provider.routeEffort, runner, quick), via: "ticket-route" };
   if (ORDER.includes(config.effortOverride)) return { effort: clamp(config.effortOverride, runner, quick), via: "operator-override" };
   // Route defaults are model choices, not manual reasoning overrides. Jev owns
   // effort unless an explicit benchmark or task effort override says otherwise.

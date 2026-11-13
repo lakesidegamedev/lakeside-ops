@@ -220,8 +220,9 @@ const fs=require('fs'),path=require('path');const config=fs.readFileSync(path.jo
  const at=Date.now(),r=await invokeCli({...request,codexBin:executable,url:session.url,completionUrl:session.completionUrl,signal:new AbortController().signal});assert.ok(Date.now()-at<4000);assert.equal(r.result,'verified patch');assert.equal(r.provenance.completion,'broker-receipt');assert.deepEqual(r.usage,{});assert.equal(r.provenance.accounting,'unavailable-before-turn-end');
 });
 
-test("Muse billing restriction rejects legacy pins and direct Meta before any worker starts", async t => {
-  for (const route of [{ runner: "muse", model: "muse-spark-1.3" }, { runner: "opencode", model: "meta/muse-spark-1.3" }, { runner: "muse", model: "muse-spark-1.3-contributor", viaRust: true }]) {
+test("Muse billing restriction rejects direct Meta before any worker starts; the Muse Code subscription CLI is allowed (owner 2026-11-12)", async t => {
+  assert.doesNotThrow(() => require("../../cli/provider-routes").assertAllowedBilling({ runner: "muse", model: "muse-spark-1.3-contributor" }));
+  for (const route of [{ runner: "opencode", model: "meta/muse-spark-1.3" }, { runner: "opencode", model: "meta/muse-spark-1.3-contributor" }]) {
     const request = { ...fixture(t), ...route };
     await assert.rejects(executeActivation(request, { spawnImpl() { assert.fail("paid worker launched"); }, openCodeImpl() { assert.fail("paid worker launched"); } }), /billing is disabled/);
     assert.equal(fs.existsSync(path.join(request.stateDir, "cli-attempts")), false);
@@ -248,4 +249,10 @@ test("OpenCode reasoning-only stop at step budget continues instead of succeedin
   assert.equal(early.is_error, true);
   const accepted = readTranscript(transcript, { maxTurns: 6, acceptedCompletion: { state: "done", summary: "verified" } });
   assert.equal(accepted.is_error, false, "persisted broker finish is authoritative");
+});
+
+test("audit: only the listed Muse subscription models are allowed on the muse runner", () => {
+  const { assertAllowedBilling } = require("../../cli/provider-routes");
+  for (const model of ["muse-spark-1.3-contributor", "muse-spark-1.3", "muse-spark-1.2-contributor", "muse-wonder-1.0"]) assert.doesNotThrow(() => assertAllowedBilling({ runner: "muse", model }), model);
+  for (const model of ["muse-spark-9.9", "meta/muse-spark-1.3", "gpt-6-luna", "", "muse-spark-1.3-pro"]) assert.throws(() => assertAllowedBilling({ runner: "muse", model }), /billing is disabled/, model);
 });

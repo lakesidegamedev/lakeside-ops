@@ -175,12 +175,12 @@ test("voice Auto is unavailable without its route and readiness is never invente
   assert.equal(models(config, "voice")[0].available, true);
 });
 
-test("owner model controls refuse a saved direct Muse route and offer only explicit Go Muse", t => {
+test("owner model controls accept the Muse Code subscription route and still offer explicit Go Muse (owner 2026-11-12)", t => {
   const { app, config } = setup(t);
   config.availableRoutes = ["muse:muse-spark-1.3"];
-  assert.throws(() => app.controls.update({ action: "configure", routes: { coding: "muse:muse-spark-1.3" } }), /billing is disabled/);
+  assert.doesNotThrow(() => app.controls.update({ action: "configure", routes: { coding: "muse:muse-spark-1.3" } }));
   const rows = require("../lib/operator/appmodels").models(config, "coding");
-  assert.equal(rows.find(row => row.id === "muse:muse-spark-1.3").available, false);
+  assert.equal(rows.find(row => row.id === "muse:muse-spark-1.3").available, true);
   assert.ok(rows.some(row => row.id === "opencode:opencode-go/muse-spark-1.3-contributor"));
 });
 

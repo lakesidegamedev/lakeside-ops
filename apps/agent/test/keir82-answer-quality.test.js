@@ -11,15 +11,16 @@ const { refusal } = require("../lib/operator/ticketquality");
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir82-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
-  const mcp = { servers: () => ["support"], list: async () => [], call: async (...a) => { calls.push(a); return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }; } };
+  const state = { fail: false };
+  const mcp = { servers: () => ["support"], list: async () => [], call: async (...a) => { calls.push(a); if (a[1] === "kanban_add") { if (state.fail) throw new Error("kanban down"); return { id: "card-1" }; } return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }; } };
   let clock = 10 * 3600000;
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" }, deadline: 9e15 });
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id;
   const advance = (min) => { clock += min * 60000; };
-  return { ledger, broker, job, calls, advance, now: () => clock };
+  return { ledger, broker, job, calls, advance, now: () => clock, get mcpFail() { return state.fail; }, set mcpFail(v) { state.fail = v; } };
 }
 
 test("a release alone cannot tell the player the problem is fixed (ticket 1763)", async () => {
@@ -27,8 +28,26 @@ test("a release alone cannot tell the player the problem is fixed (ticket 1763)"
   f.job.releaseEvidence = { a: { main: true } };
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your margins now include internal supply, so the -999% should be gone." }), /no receipt|figures after that turn/);
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The fix is live and working." }), /no receipt|figures after that turn/);
+  // Keir 9 (replay 2026-11-12): a page change claimed without a receipt is the same claim.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The page has been changed so the tile now matches sold against made units." }), /no receipt|figures after that turn/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That block was corrected in the current update, so the option is there for you now." }), /no receipt|figures after that turn/);
+  // Release candidate replay, 2026-11-13: both of these reached the player.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That fault is fixed and takes effect from the next turn." }), /no receipt|figures after that turn/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The tile was reading the offer instead of the sales, and a fix making it use the sales figures has been released in a recent update." }), /no receipt|figures after that turn/);
+  // Feature C replay, 2026-11-13: both reached the player as false claims.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That was a real gap, and it has since been fixed: regional laws now carry the effect." }), /no receipt|figures after that turn/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That rule has since been changed to allow it." }), /no receipt|figures after that turn/);
+  // Negated, or a rule described without a change, is not a claim.
+  await f.broker.tool(f.job, "channel_reply", { message: "The rule has not been changed." });
+  f.ledger.data.ticketPosts = {}; f.advance(11);
+  await f.broker.tool(f.job, "channel_reply", { message: "The rule allows one bill in progress per legislator." });
+  f.ledger.data.ticketPosts = {}; f.advance(11);
+  // rc3 replay, 2026-11-13: both reached the player.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "A correction has been released so the tile reports the share actually sold, and it reaches your page after the next turn." }), /no receipt|figures after that turn/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "That exact blocker was fixed on 6 November." }), /no receipt|figures after that turn/);
   // A turn on the fix, then a read of their figures: now it may be said.
   f.job.turnChecks = [f.now()]; f.advance(1); f.job.lastGameReadAt = f.now();
+  f.job.evidenceText = "\n[read_tool] chemicals page: internal supply income 120"; // what that read of their page returned
   await f.broker.tool(f.job, "channel_reply", { message: "Your chemicals page now shows the internal supply income." });
   // The player writes back that it is still wrong: the old read no longer covers the claim.
   f.advance(40); f.job.observedPlayerAt = f.now();
@@ -72,6 +91,7 @@ test("a factual question is not handed to Ask unread (ticket 1765)", () => {
 
 test("a developer's ping cannot restate the answer another task posted seconds ago (ticket 1773)", async () => {
   const f = setup();
+  f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
   await f.broker.tool(f.job, "channel_reply", { message: "You're right that the two figures disagree. The Selling tile and the \"72% sold\" line are calculated from different records, and only the second matches the offered, sold and unsold counts beside it." });
   const dev = f.ledger.createJob("dev", { role: "support", kind: "command", ticket: 123, actorId: "222222222222222222", channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123", authorId: "222222222222222222", at: new Date(f.now()).toISOString(), content: "Keir the selling tile shows 100% but only 72% sold" }, deadline: 9e15 });
   dev.state = "running"; dev.observedPlayerAt = f.now(); f.advance(0.25);
@@ -100,4 +120,95 @@ test("a developer talking to the player is not a ping Keir must answer (ticket 1
 test("bookkeeping and third-person talk are refused in the player's channel (ticket 1778)", () => {
   assert.equal(refusal("Understood. The unban and note are yours, and the player has already been told the account is unbanned.").kind, "bookkeeping");
   assert.equal(refusal("I have nothing further to do on this one.").kind, "bookkeeping");
+});
+
+test("Keir 9: a reply with a dash is posted with the dash replaced, not refused", async () => {
+  const f = setup();
+  f.job.lastCodeReadAt = 1;
+  await f.broker.tool(f.job, "channel_reply", { message: "Newer regional bills carry no lean effect \u2014 governor orders and older laws do." });
+  const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message).join(" ");
+  assert.match(sent, /no lean effect, governor orders/);
+});
+
+test("Keir 9: a ticket cannot park with the player unanswered; refused twice, then the code answers and escalates", async () => {
+  const f = setup(); f.job.lastGameReadAt = 1;
+  f.job.observedPlayerAt = f.now() - 60000;
+  // No reads needed: the obligation is the ticket's, not the job's.
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found the cause; will post next." }), /no answer since they last wrote/);
+  // A wait on the developers does not excuse it, and a second job on the same ticket shares the count.
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still checking." }), /no answer since they last wrote/);
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Still checking." });
+  assert.match(JSON.stringify(r), /waiting/);
+  const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /haven't got a confirmed answer for you yet/);
+  assert.match(sent[0], /passed it to the developers/);
+  assert.ok(f.calls.some((c) => c[1] === "kanban_add"), "escalation filed");
+  assert.ok(f.ledger.data.audit?.some?.((a) => a.kind === "unanswered_limitation_posted") || JSON.stringify(f.ledger.data).includes("unanswered_limitation"), "receipt recorded");
+});
+
+test("Keir 9: the refusal count is per ticket, so a fresh job cannot reset it", async () => {
+  const f = setup(); f.job.lastGameReadAt = 1;
+  f.job.observedPlayerAt = f.now() - 60000;
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
+  const other = f.ledger.createJob("t2", { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" }, deadline: 9e15 });
+  other.state = "running"; other.observedPlayerAt = f.job.observedPlayerAt;
+  await f.broker.tool(other, "finish", { state: "waiting", summary: "x." });
+  assert.equal(f.calls.filter((c) => c[1] === "support_public_update").length, 1);
+});
+
+test("Keir 9: when the escalation cannot be filed the limitation does not claim the developers have it", async () => {
+  const f = setup(); f.job.lastGameReadAt = 1;
+  f.job.observedPlayerAt = f.now() - 60000;
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
+  f.mcpFail = true;
+  await f.broker.tool(f.job, "finish", { state: "done", summary: "x." });
+  const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message).join(" ");
+  assert.match(sent, /haven't got a confirmed answer/);
+  assert.doesNotMatch(sent, /developers/);
+});
+
+test("Keir 9: after the player is answered, the ticket may park waiting", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000; f.job.lastCodeReadAt = 1;
+  await f.broker.tool(f.job, "channel_reply", { message: "Your sold line is the right figure: 139 of 195 sold." });
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." });
+  assert.match(JSON.stringify(r), /waiting/);
+});
+
+test("Keir 9: a holding line is not an answer once the ticket has read data", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  await f.broker.tool(f.job, "channel_reply", { message: "I'm looking into your sector history now." }).catch(() => {});
+  f.job.lastGameReadAt = f.now() + 1; f.advance(1);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found it; will post." }), /no answer since they last wrote/);
+});
+
+test("audit: negated fix claims are not fix claims; a negation in another clause does not hide one", () => {
+  const { outcomeClaims } = require("../lib/operator/broker");
+  const kinds = (t) => outcomeClaims(t).map((c) => c.kind);
+  for (const t of ["It was not corrected in the latest update.", "This has not been patched.", "Nothing has been fixed yet.", "That was never resolved."]) assert.deepEqual(kinds(t), [], t);
+  assert.ok(kinds("This has been patched.").includes("verified"));
+  assert.ok(kinds("It was corrected in the latest update.").includes("verified"));
+  assert.ok(kinds("It is not a bug, but it was corrected in the latest update.").includes("verified"));
+});
+
+test("Keir 9: a refused first answer then a wait behind the introduction alone is refused (Hydrogen replay, 2026-11-13)", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 30000, text: "Hi, I'm Keir, the support assistant for A House Divided. I can look into this." }] };
+  // The answer is refused (any post rule: here the pacing rule, in the replay the rule lookup), nothing has been read.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Supplying yourself lowers your margin because the charge is counted against your revenue." }), /Not posted/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /no answer since they last wrote/);
+});
+
+test("Keir 9: an ordinary wait with no refused answer and no reads is still allowed", async () => {
+  const f = setup();
+  f.job.observedPlayerAt = f.now() - 60000;
+  f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 30000, text: "Which corporation is this about?" }] };
+  f.job.lastAskAt = f.now() - 30000; f.job.lastPlayerAt = f.now() - 60000;
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked which corporation." });
+  assert.match(JSON.stringify(r), /waiting/);
 });
