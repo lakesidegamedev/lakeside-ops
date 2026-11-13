@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Desk staff actions: nudge, release, pause and resume a ticket (junior developers and developers) and switch Keir on or off (developers) through a new local operator endpoint that audits each action and posts one line to the staff channel; none of them resolves a ticket or messages the player. A proven-model registry lets developers switch the model for new tickets only, and only to entries that passed the bar with a live check in the last 10 minutes (override is logged and posted to staff).
+
 - Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.
 - Staff ticket board: a new read endpoint `/v5/ticket-board` on the operator and a "Tickets" panel on the Keir hub list every open ticket in one line (what the player asked, where Keir is in plain words, the next step and who owns it, last player message and last Keir answer), with a highlight when a player has had no answer for over 2 hours. Built from the ledger only, no model calls.
 
