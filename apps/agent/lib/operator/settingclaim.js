@@ -64,6 +64,27 @@ function instructionIn(sentence) {
     const stems = stemsOf(cut ? rest.slice(0, cut.index) : rest);
     if (stems.length) return { sentence: s, phrase: s.slice(p.index).slice(0, 160), stems };
   }
+  return stateInstructionIn(s);
+}
+
+// Keir 9.0.5 (replay, 2026-11-14): three more instruction forms reached a player unbacked:
+//   "make sure animations are not turned off in your Android accessibility settings"   (state wanted)
+//   "check your Android accessibility settings"                                         (where to look)
+//   "the only ways to watch it are turning X off ... with Android animations on"         (a gerund way)
+const STATE_WORD = "(?:on|off|enabled|disabled|switched (?:on|off)|turned (?:on|off))";
+const ENSURE = new RegExp(`\\b(?:make sure|ensure|check(?: that| whether)?|confirm(?: that)?|double-check(?: that)?|verify(?: that)?|keep)\\b([^.!?]{1,90}?)\\b(?:is|are|stays?|remains?|is still|are still|has|have)?\\s*(?:not\\s+)?(?:been\\s+)?${STATE_WORD}\\b([^.!?]{0,80})`, "i");
+const LOOK_IN = /\b(?:check|look (?:in|at|under)|open|go into|go to)\s+(?:your|the|their)\s+([\w' -]{2,60}?)\s+(?:settings?|preferences|options|menu)\b/i;
+const GERUND_WAY = /\b(?:only ways?|the way|best way|easiest way|you can (?:watch|play|fix|get)[^.!?]{0,40}?by|by)\b[^.!?]{0,60}?\b(?:turning|switching|disabling|enabling|setting)\b([^.!?]{1,120})/i;
+function stateInstructionIn(s) {
+  if (/\?\s*["')\]]*$/.test(s) && !REQUEST_FORM.test(s)) return null;
+  if (CONFIRM_HEDGE.test(s) || /\b(?:no need to|don(?:'|’)?t need to|do not need to|needn(?:'|’)?t)\b/i.test(s)) return null;
+  for (const re of [ENSURE, LOOK_IN, GERUND_WAY]) {
+    const m = re.exec(s);
+    if (!m) continue;
+    const phrase = m.slice(1).filter(Boolean).join(" ").trim();
+    const stems = stemsOf(phrase);
+    if (stems.length) return { sentence: s, phrase: m[0].trim().slice(0, 160), stems };
+  }
   return null;
 }
 
