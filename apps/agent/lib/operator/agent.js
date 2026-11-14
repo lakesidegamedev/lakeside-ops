@@ -172,9 +172,10 @@ const MUSE_TICKET_NOTE = "\n\n## How to work a ticket here\n\n" +
   "1. Do not list servers or tools; you already have what a ticket needs. The player and the ticket: ticket_history, reporter_state. " +
   "Game data: read_tool on server gamestate (trace_character, trace_sector, trace_corp, character_holdings, recent_turns) or evidence_batch for several at once. " +
   "Game rules: read_tool on server ops-knowledge, tool code_search with claimType mechanic, then code_read on the file it names.\n" +
-  "2. Write a three-line plan (what the player asked, what you will read, what would settle it), then read. Read the code before you state a rule or a cause.\n" +
+  "2. Write a short plan: list every question the player asked (often two or three in one message), what you will read for each, and what would settle it. Then read. Read the code before you state a rule or a cause.\n" +
   "3. The player sees only channel_reply. Your finish summary and your notes are never shown to them. When you know the answer, post it with channel_reply first, then finish.\n" +
-  "4. The answer is one message of at most five short sentences in plain words: what is happening, why, and what they can do. No file names or code. " +
+  "4. Before you post, check your plan: every question gets an answer from what you read, including the second and third ones, and every option the code gives the player is named, not only the first. " +
+  "The answer is one message of at most five short sentences in plain words: what is happening, why, and what they can do. No file names or code. " +
   "If you could not confirm something, say so plainly in that message.\n";
 const TOOL_NOTE = "\n\n## Owner communication\n\nThe owner understands the game but is not a software engineer. Explain what changes for players, who is affected, whether this is for testing or the live game, and the real risk or uncertainty. Approval requests must make the consequence of each option clear. Keep file paths, hashes, formulas and deployment jargon in optional technical details, not the main explanation. Never substitute a list of code changes for an explanation of the player outcome.\n\n## Tool names\n\nYour tools appear as mcp__keir__<name>; the names in this brief refer to them. You have no other tools. End every activation with exactly one finish call.";
 // One line per model activation in the same usage log the metered API period
