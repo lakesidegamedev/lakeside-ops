@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A staff or owner question asked inside a ticket channel now runs on the ticket route like the ticket's own task, and every post it makes there goes through the same claim checks as a player answer (rule, inclusion, "shows" and bug claims). A statement that a player's account is not linked, has no Discord link or has no character needs a read on the ticket that shows it, and is refused once otherwise. Staff keep their pacing exemptions only.
+
 ## 9.0.3 (2026-11-13)
 
 - A real answer that ends "I will update you here once it is live" no longer counts as a holding line, so the "no confirmed answer yet" line is not posted right after an answer. Only a one-sentence post counts as holding by that wording.

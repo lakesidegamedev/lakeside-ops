@@ -267,7 +267,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   // Keir 9 (owner, 2026-11-13): player tickets run on their own route (KEIR_TICKET_PROVIDER, Gemini 4 Hydrogen at launch),
   // everything else on the main route. Its subscription quota is far smaller than all of Keir's traffic, so only player
   // tickets use it; when it is cooling down after a usage limit or a login failure, the ticket runs on the main route.
-  const ticketRouted = (job) => Boolean(config.ticketProvider) && job.kind === "ticket" && job.role !== "owner" && !job.codingParent;
+  // Keir 9.0.3 (owner, 2026-11-13): a staff or owner question asked inside a ticket channel is answered in front of the player,
+  // so its task runs on the same route and under the same checks as the ticket's own task, whoever asked.
+  const replyTicketOf = (job) => job.replyChannel === "app" ? 0 : Number(job.ticket) || Number(/^ticket-.*-(\d+)$/.exec(job.source?.channelName || "")?.[1] || 0);
+  const ticketRouted = (job) => Boolean(config.ticketProvider) && !job.codingParent && (job.kind === "ticket" || (["command", "conversation"].includes(job.kind) && Boolean(replyTicketOf(job))));
   function providerOf(job) {
     const lane = isQuick(job) ? "quick" : "worker";
     if (ticketRouted(job)) {
