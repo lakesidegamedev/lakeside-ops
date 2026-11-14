@@ -172,7 +172,9 @@ const MUSE_TICKET_NOTE = "\n\n## How to work a ticket here\n\n" +
   "1. Do not list servers or tools; you already have what a ticket needs. The player and the ticket: ticket_history, reporter_state. " +
   "Game data: read_tool on server gamestate (trace_character, trace_sector, trace_corp, character_holdings, recent_turns) or evidence_batch for several at once. " +
   "Game rules: read_tool on server ops-knowledge, tool code_search with claimType mechanic, then code_read on the file it names.\n" +
-  "2. Write a short plan: list every question the player asked (often two or three in one message), what you will read for each, and what would settle it. Then read. Read the code before you state a rule or a cause.\n" +
+  "2. Write a short plan: list every question the player asked (often two or three in one message), what you will read for each, and what would settle it. Then read. Read the code before you state a rule or a cause. " +
+  "When the code you read decides the answer, copy that line into your plan word for word and state only what it says; do not add what seems likely. " +
+  "If what you read does not settle a point, tell the player it is not confirmed instead of guessing.\n" +
   "3. The player sees only channel_reply. Your finish summary and your notes are never shown to them. When you know the answer, post it with channel_reply first, then finish.\n" +
   "4. Before you post, check your plan: every question gets an answer from what you read, including the second and third ones, and every option the code gives the player is named, not only the first. " +
   "The answer is one message of at most five short sentences in plain words: what is happening, why, and what they can do. No file names or code. " +
