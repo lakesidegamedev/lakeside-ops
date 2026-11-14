@@ -2353,7 +2353,21 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     if (name === "ticket_history") {
       if (!job.ticket) throw new Error("task has no ticket");
-      const rows = await discord("GET", `/channels/${job.channelId}/messages?limit=50`);
+      // 2026-11-14 (twelve refusals across five tasks): a ticket whose channel was
+      // deleted on closure kept waking on a self-recovery nudge, and orientation reads
+      // history before every activation. Discord answers that read with a bare 404, which
+      // says nothing about what to do next, so the same call came back on each wake. The
+      // closed channel is a settled fact: record it (the next activation then closes the
+      // ticket) and name the exact step, as reporter_state already does.
+      const CLOSED_TICKET = "this ticket's channel no longer exists (the ticket was closed), so there is no history to read; do not retry; finish without posting";
+      if (job.channelClosed) throw new Error(CLOSED_TICKET);
+      let rows;
+      try { rows = await discord("GET", `/channels/${job.channelId}/messages?limit=50`); }
+      catch (e) {
+        if (e.status !== 404) throw e;
+        job.channelClosed = true; ledger.save();
+        throw new Error(CLOSED_TICKET);
+      }
       const claimant = rows.map((m) => ticketClaim(m, config, d.channels[job.channelId]?.claimReleasedAt)).find(Boolean);
       if (claimant) d.channels[job.channelId] = { ...d.channels[job.channelId], claimedBy: claimant };
       // Keir 9.0.2 (ticket 1829): only the player's own messages count as the player writing. A staff or owner message
@@ -3802,7 +3816,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // posts a plain limitation and escalates, then lets the task finish. Waits on a developer or the owner count too.
       // Only once something on the ticket has been read: an ordinary wait before any investigation is the wait
       // rules' business (the full suite on CI, 2026-11-13: five wait and handoff tests broke without this).
-      if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !developerTask(job) && !developerTicket(job) && !ownerDirected(job)
+      // A deleted channel has no reader left: an obligation to post cannot be met there, and refusing finish
+      // only sent the task back to the same missing channel (2026-11-14, twelve closed-ticket refusals).
+      if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !job.channelClosed && !developerTask(job) && !developerTicket(job) && !ownerDirected(job)
           && Object.values(d.jobs).some((j) => ticketOf(j) === ticketOf(job) && (j.lastGameReadAt || j.lastCodeReadAt || j.replyAttemptRefusedAt))
           && process.env.KEIR_UNANSWERED_GUARD !== "0") {
         const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1), human = humanAt(tn);

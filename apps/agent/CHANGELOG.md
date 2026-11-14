@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- `ticket_history` on a ticket whose channel was deleted by closure now records the closure and refuses with the exact next step instead of passing through Discord's bare 404, and a closed ticket may finish without an answer it has nowhere to post.
+
 ## 9.0.5 (2026-11-14)
 
 - Settings instructions that say what state to keep ("make sure animations are not turned off in your Android accessibility settings"), where to look ("check your phone's display settings") or "the only way is turning X off" are checked like other setting instructions.
