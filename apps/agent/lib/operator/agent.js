@@ -467,7 +467,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // Keir 2.3: private notes about this ticket's reporter (never for player tasks).
     if (broker.notebook && job.ticket && job.role !== "player") { try { const r = await broker.reporterOf(job); if (r?.id) context.playerNotes = broker.notebook.notesFor(r.id); } catch {} }
     const recallPlayer = job.role === "player" ? undefined : job.role === "owner" ? "*" : job.reporterCharacter?.id || undefined;
-    context.notebook = !compact && broker.notebook ? broker.notebook.recall([job.source?.content, ...requestInbox.map((m) => m?.content), job.summary].filter(Boolean).join(" "), { ticket: job.ticket, k: 6, player: recallPlayer, job: job.id, via: "context" }) : undefined;
+    // Keir 9: a ticket task always starts with at most three labelled, fresh notes (lib/operator/ticketrecall.js); other tasks keep the wider recall.
+    const recallTexts = [job.source?.content, ...requestInbox.map((m) => m?.content), job.summary].filter(Boolean);
+    context.notebook = !broker.notebook ? undefined
+      : job.kind === "ticket" && job.ticket && !job.codingParent ? (() => { const tr = require("./ticketrecall"), reads = ledger.data.ticketLearn?.[String(job.ticket)]?.reads || []; return broker.notebook.recallForTicket(tr.queryFor({ texts: recallTexts, reads }), { ticket: job.ticket, player: recallPlayer, job: job.id, accept: tr.relevantTo({ texts: recallTexts, reads }) }); })()
+      : !compact ? broker.notebook.recall(recallTexts.join(" "), { ticket: job.ticket, k: 6, player: recallPlayer, job: job.id, via: "context" }) : undefined;
     mark("context");
     if (!quick && config.knowledgePreparation) context.knowledge = await require("./knowledge-context").prepareKnowledgeContext(job,
       (input, readSignal) => broker.tool(job, "read_tool", input, readSignal), config.knowledgePreparation, signal);
