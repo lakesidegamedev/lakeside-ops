@@ -15,7 +15,7 @@ function setup({ reporter = { username: "linked_player" } } = {}) {
   const mcp = { servers: () => ["support", "heal-ops"], list: async () => [], call: async (...a) => {
     calls.push(a);
     if (a[1] === "support_get") return { number: 123, title: "Slideshow skips", reporter, intake: { cardMessageId: "555555555555555555" } };
-    if (a[1] === "heal_query" && a[2].collection === "users") return { matched: 1, docs: [{ _id: "6a19c66d1ed3632485eb98d4", username: a[2].filter.username }] };
+    if (a[1] === "heal_query" && a[2].collection === "users") return { matched: 1, docs: [{ _id: "5f00000000000000000000a1", username: a[2].filter.username, discordId: "test-discord-link", discordLinkedAt: "2026-07-19T09:10:32.040Z" }] };
     if (a[1] === "heal_query" && a[2].collection === "characters") return { matched: 1, docs: [{ name: "Ada Vance", sequentialId: 4242 }] };
     return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } };
   } };
@@ -42,7 +42,8 @@ test("an unlinked reporter may still be asked", async () => {
 test("reporter_state resolves a reporter linked by username: account and characters, no 'not linked' error", async () => {
   const f = setup();
   const r = await f.broker.tool(f.job, "reporter_state", {});
-  assert.deepEqual(r.account, { username: "linked_player", linked: true });
+  assert.deepEqual(r.account, { username: "linked_player", linked: true, discordLinked: true, discordLinkedAt: "2026-07-19" });
+  assert.doesNotMatch(JSON.stringify(r), /test-discord-link/, "the Discord id itself is never returned");
   assert.equal(r.characters[0].name, "Ada Vance");
   assert.match(r.instruction, /Never ask the player who they are/);
 });
@@ -54,7 +55,7 @@ test("while the player is owed an answer, pacing does not hold back the answer (
   f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 60000, jobId: f.job.id, text: "I am checking why the slideshow skips." }] };
   f.ledger.data.unansweredFinishes = { 123: { humanAt: f.now() - 60000, refused: 1 } };
   f.job.lastCodeReadAt = f.now() - 30000;
-  await f.broker.tool(f.job, "channel_reply", { message: "The slideshow moves on when each slide's progress bar finishes animating. With animations turned off on your phone, that bar finishes instantly, so it jumps to the end. Turn animations back on for now: Settings, Accessibility, then switch off Remove animations. A fix is being made." });
+  await f.broker.tool(f.job, "channel_reply", { message: "The slideshow moves on when each slide's progress bar finishes animating. With animations turned off on your phone, that bar finishes instantly, so it jumps to the end. A fix is being made." });
 });
 
 test("without an owed answer, the ten-minute pacing rule still applies", async () => {
