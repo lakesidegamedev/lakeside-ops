@@ -5,6 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- An account fact in a ticket channel (link, Discord link, characters, real-money purchases, refunds or subscriptions) must rest on a read made in the same activation. With no such read it is refused twice, then goes out labelled "I have not checked this yet, so it may be wrong".
 - A staff or owner question asked inside a ticket channel now runs on the ticket route like the ticket's own task, and every post it makes there goes through the same claim checks as a player answer (rule, inclusion, "shows" and bug claims). A statement that a player's account is not linked, has no Discord link or has no character needs a read on the ticket that shows it, and is refused once otherwise. Staff keep their pacing exemptions only.
 
 ## 9.0.3 (2026-11-13)

@@ -61,16 +61,38 @@ const FALSE_CLAIM = "Not linked. Their account exists but carries no Discord lin
 
 test("an owner task cannot tell the ticket channel an account is unlinked without a read, once", async () => {
   const f = setup();
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: FALSE_CLAIM }), (e) => /nothing read on this ticket shows that/.test(e.message));
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: FALSE_CLAIM }), (e) => /nothing read in this activation shows that/.test(e.message));
   assert.equal(f.posts().length, 0);
   assert.equal(f.audits("account_claim_refused").length, 1);
   assert.ok(!f.job.replyRefusedPending, "never blocks finishing");
   const src = fs.readFileSync(path.join(__dirname, "../lib/operator/broker.js"), "utf8");
   const pacing = new RegExp(/const PACING_REFUSAL = \/(.*)\/i;/.exec(src)[1], "i");
   assert.ok(pacing.test(ac.REFUSAL({ kind: "link", sentence: "s", reason: "unread" })) && pacing.test(ac.REFUSAL({ kind: "link", sentence: "s", reason: "contradicted" })));
-  // Refused once only: the same task can then say it.
+  // Keir 9.0.4: refused twice, then it goes out labelled as not checked, never as a fact.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: FALSE_CLAIM }), /nothing read in this activation/);
+  assert.equal(f.audits("account_claim_refused").length, 2);
   await f.broker.tool(f.job, "channel_reply", { message: FALSE_CLAIM });
-  assert.equal(f.audits("account_claim_refused").length, 1);
+  assert.match(f.posts().at(-1), /I have not checked this yet, so it may be wrong: not linked\. I have not checked this yet, so it may be wrong: their account exists but carries no Discord link/i);
+});
+
+test("Keir 9.0.4: an account fact needs a read in this activation; an older activation's read does not count", async () => {
+  const f = setup();
+  f.job.activationAt = 5000;
+  f.job.reporterInspection = { at: 4000, account: { username: "u", linked: true }, characters: [] };
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Their account is not linked." }), /nothing read in this activation/);
+  f.job.reporterInspection = { at: 6000, account: { username: "u", linked: true }, characters: [] };
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Their account is not linked." }), /shows a link or a character/);
+});
+
+test("Keir 9.0.4: purchase and refund statements are account facts; 'I cannot see their purchases' is not", async () => {
+  assert.equal(ac.accountClaim("They did not get a refund on Patreon last month.").kind, "purchase");
+  assert.equal(ac.accountClaim("They have already purchased the supporter perk.").kind, "purchase");
+  assert.equal(ac.accountClaim("I cannot see their Patreon purchases from here, so I have not checked whether they got a refund."), null);
+  assert.equal(ac.accountClaim("Has the player bought the supporter perk?"), null);
+  assert.equal(ac.accountClaim("Confirmed: the licence was charged twice."), null);
+  const f = setup();
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "They did not get a refund on Patreon last month." }), /nothing read in this activation/);
+  await f.broker.tool(f.job, "channel_reply", { message: "I cannot see their Patreon purchases from here, so I have not checked whether they got a refund." });
 });
 
 test("a read showing the link makes 'not linked' a refusal, and the true statement goes out", async () => {
