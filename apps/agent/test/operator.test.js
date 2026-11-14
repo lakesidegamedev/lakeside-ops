@@ -3116,3 +3116,19 @@ test("Keir 9: a ticket on the ticket route falls back to the main route when the
  current = m; await agent.run(m, new AbortController().signal);
  assert.equal(attempts.at(-1), "agy");
 });
+
+test("Keir 9: Muse ticket briefs carry the Muse ticket note; other runners and non-ticket Muse tasks do not", async () => {
+ const run = async (provider, fields) => {
+  const f = fixture(), j = f.ledger.createJob("mn-" + provider + fields.kind, { role: "support", source: {}, deadline: 9999999999999, ...fields }); j.state = "running";
+  let brief = null;
+  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
+   config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, providerOverride: provider },
+   invokeImpl: async (a) => { brief = a.brief; await f.broker.tool(j, "finish", { state: "waiting", summary: "Waiting." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+  await agent.run(j, new AbortController().signal).catch(() => {});
+  return brief || "";
+ };
+ const { MUSE_TICKET_NOTE } = require("../lib/operator/agent");
+ assert.ok((await run("muse:muse-spark-1.3-contributor@high", { kind: "ticket", ticket: 501 })).includes(MUSE_TICKET_NOTE));
+ assert.ok(!(await run("opencode:opencode-go/deepseek-v4.1-flash@high", { kind: "ticket", ticket: 502 })).includes(MUSE_TICKET_NOTE));
+ assert.ok(!(await run("muse:muse-spark-1.3-contributor@high", { kind: "finding" })).includes(MUSE_TICKET_NOTE));
+});

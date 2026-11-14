@@ -165,6 +165,17 @@ function normalizeImage(source) {
 // Stop the CLI shortly before the operator's own deadline so a long task is
 // saved and continued rather than aborted.
 const turnBudget = (ms) => ms > 60000 ? ms - 10000 : ms;
+// Keir 9 (owner, 2026-11-14): Muse Spark plans first and tends to keep its answer in its own summary. On replayed tickets it
+// spent a third of its calls listing tools, made fewer game reads than DeepSeek, and twice finished with the verified answer
+// in its summary and nothing posted. This note fits the ticket path to that style; other runners do not get it.
+const MUSE_TICKET_NOTE = "\n\n## How to work a ticket here\n\n" +
+  "1. Do not list servers or tools; you already have what a ticket needs. The player and the ticket: ticket_history, reporter_state. " +
+  "Game data: read_tool on server gamestate (trace_character, trace_sector, trace_corp, character_holdings, recent_turns) or evidence_batch for several at once. " +
+  "Game rules: read_tool on server ops-knowledge, tool code_search with claimType mechanic, then code_read on the file it names.\n" +
+  "2. Write a three-line plan (what the player asked, what you will read, what would settle it), then read. Read the code before you state a rule or a cause.\n" +
+  "3. The player sees only channel_reply. Your finish summary and your notes are never shown to them. When you know the answer, post it with channel_reply first, then finish.\n" +
+  "4. The answer is one message of at most five short sentences in plain words: what is happening, why, and what they can do. No file names or code. " +
+  "If you could not confirm something, say so plainly in that message.\n";
 const TOOL_NOTE = "\n\n## Owner communication\n\nThe owner understands the game but is not a software engineer. Explain what changes for players, who is affected, whether this is for testing or the live game, and the real risk or uncertainty. Approval requests must make the consequence of each option clear. Keep file paths, hashes, formulas and deployment jargon in optional technical details, not the main explanation. Never substitute a list of code changes for an explanation of the player outcome.\n\n## Tool names\n\nYour tools appear as mcp__keir__<name>; the names in this brief refer to them. You have no other tools. End every activation with exactly one finish call.";
 // One line per model activation in the same usage log the metered API period
 // used. The subscription bills no dollars, so cost is recorded as unknown
@@ -552,7 +563,8 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       const lane = quick ? "quick" : "worker";
       // API model loops use OpenCode; native Rust transports remain explicit.
       const viaRust = !["ollama", "deepseek", "opencode"].includes(p) && rustLaneAllowed(config, job, lane);
-      const runnerBrief = compact ? chatContext.SMALL_BRIEF + (job.voiceMode ? chatContext.VOICE_NOTE : "") : p === "claude" && !viaRust ? (leanCtx ? leanCtx.brief + TOOL_NOTE : brief) + skillText : common.brief;
+      const runnerBrief = compact ? chatContext.SMALL_BRIEF + (job.voiceMode ? chatContext.VOICE_NOTE : "") : p === "claude" && !viaRust ? (leanCtx ? leanCtx.brief + TOOL_NOTE : brief) + skillText
+        : p === "muse" && job.kind === "ticket" && process.env.KEIR_MUSE_TICKET_NOTE !== "0" ? common.brief + MUSE_TICKET_NOTE : common.brief;
       ledger.audit("activation_skills", { job: job.id, lane: skillLane, skills: skillBrief.names, disabled: config.skills === false,
         skillChars: skillText.length, skillBytes: Buffer.byteLength(skillText), briefChars: runnerBrief.length, briefBytes: Buffer.byteLength(runnerBrief),
         degraded: skillBrief.errors.length > 0 });
@@ -689,4 +701,4 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   }
   return { run, canRun: () => true, openToolSession };
 }
-module.exports = { STEP_LIMIT_TEXT, emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };
+module.exports = { MUSE_TICKET_NOTE, STEP_LIMIT_TEXT, emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };
