@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.0.3 (2026-11-13)
+
+- A real answer that ends "I will update you here once it is live" no longer counts as a holding line, so the "no confirmed answer yet" line is not posted right after an answer. Only a one-sentence post counts as holding by that wording.
+- When `reporter_state` resolves a username-linked reporter with exactly one character, that character becomes the ticket's reporter for player-private reads, as a profile link did.
+- The /keir desk says plainly when the kill switch has stopped Keir (doctor, status and per-ticket answers), instead of "Keir is on" and "waiting on a free worker slot".
+
 ## 9.0.2 (2026-11-13)
 
 - A ticket whose reporter has a linked game account (the ticket carries the game username) is no longer treated as unlinked: `reporter_state` looks up the account and its characters, and asking a linked player for their character name, username or account is refused (at most twice per ticket).

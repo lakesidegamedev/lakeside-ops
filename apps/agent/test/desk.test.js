@@ -76,3 +76,24 @@ test("router with part 2 absent says not available yet; present modules are call
   const ok = await handle({ command: "keir", sub: "pause", member: as("junior") }, { ...deps, actions: { pause: async () => "Paused." } });
   assert.equal(ok.content, "Paused.");
 });
+
+test("Keir 9.0.3: doctor, status and a ticket say plainly when the kill switch has stopped Keir", () => {
+  const s = { ...mk([job("a", 7, { state: "queued" })]), killSwitch: { reason: "Keir 9 launch watch: contradicted claim" } };
+  assert.match(read.doctor(s), /STOPPED by the kill switch \(Keir 9 launch watch/);
+  assert.match(read.status(s), /STOPPED by the kill switch/);
+  assert.match(read.doctor(s, 7), /stopped by the kill switch/);
+  assert.match(read.doctor(s, 7), /Waiting on: the kill switch to be released/);
+  assert.doesNotMatch(read.doctor(s, 7), /starts by itself\. If/);
+  assert.doesNotMatch(read.doctor(mk([job("a", 7)])), /kill switch/);
+});
+
+test("Keir 9.0.3: the kill switch file is read like the operator reads it", () => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const { readKillSwitch } = require("../lib/desk/state");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "desk-ks-")), f = path.join(dir, "kill-switch");
+  assert.equal(readKillSwitch(f), null);
+  fs.writeFileSync(f, "off\n"); assert.equal(readKillSwitch(f), null);
+  fs.writeFileSync(f, JSON.stringify({ reason: "watch", until: new Date(Date.now() + 3600000).toISOString() })); assert.equal(readKillSwitch(f).reason, "watch");
+  fs.writeFileSync(f, JSON.stringify({ reason: "old", until: new Date(Date.now() - 1000).toISOString() })); assert.equal(readKillSwitch(f), null);
+  fs.writeFileSync(f, "maintenance window\n"); assert.equal(readKillSwitch(f).reason, "maintenance window");
+});
