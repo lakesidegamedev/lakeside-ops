@@ -1,4 +1,12 @@
 "use strict";
+// A tool result is capped for the model's context. The cut used to be silent, so a model could read the start of a long
+// file and treat it as the whole thing (Keir 9.1, 2026-11-14: a Muse probe read a cut-off file and said so; others may not).
+const RESULT_CAP = 22000;
+function capResult(text) {
+  if (text.length <= RESULT_CAP) return text;
+  const note = `\n[Cut off: showing ${RESULT_CAP} of ${text.length} characters. Anything after this point was not shown. Ask for a narrower range or a more specific query before relying on what is missing.]`;
+  return text.slice(0, RESULT_CAP - note.length) + note;
+}
 // Loopback MCP endpoint that exposes the broker's tools to a headless Claude
 // Code session. Each activation gets its own unguessable path bound to one job,
 // its tool list and its abort signal; nothing else is reachable through it.
@@ -84,7 +92,7 @@ function createToolServer({ broker, normalizeImage, port = 0, effectGuard = fals
       const images = result?.image ? [result.image] : result?._images || [];
       const safe = result && typeof result === "object" ? { ...result } : result;
       if (safe && typeof safe === "object") { delete safe._images; delete safe.image; }
-      const content = [{ type: "text", text: redactSecrets(JSON.stringify(safe ?? null)).slice(0, 22000) }];
+      const content = [{ type: "text", text: capResult(redactSecrets(JSON.stringify(safe ?? null))) }];
       require("./submitgates").remember(session, content[0].text);
       for (const source of images) {
         try { const img = normalizeImage(source); content.push({ type: "image", data: img.data, mimeType: img.media_type }); }
@@ -143,4 +151,4 @@ function createToolServer({ broker, normalizeImage, port = 0, effectGuard = fals
   }
   return { open, close: () => server.close() };
 }
-module.exports = { createToolServer };
+module.exports = { capResult, createToolServer };

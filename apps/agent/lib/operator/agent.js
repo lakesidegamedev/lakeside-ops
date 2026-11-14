@@ -165,6 +165,19 @@ function normalizeImage(source) {
 // Stop the CLI shortly before the operator's own deadline so a long task is
 // saved and continued rather than aborted.
 const turnBudget = (ms) => ms > 60000 ? ms - 10000 : ms;
+// Keir 9.1 (owner, 2026-11-14: every lane on Muse Spark 1.3 Contributor). Fitted to failures seen on Muse, live and on the
+// 12-ticket replay bench: it answered an owner's "close this" with "Noted" and left the close to a "coordinator" that does not
+// exist; after a refused post it sent an acknowledgement instead of the corrected answer (2 of 8 xhigh cases had no answer);
+// most of its refusals were rules or causes stated before any code was read; and it answered the first of several questions.
+// KEIR_MUSE_NOTE=0 turns it off.
+const MUSE_NOTE = "\n\n## Working on this runner\n\n" +
+  "1. You are the one who acts. There is no coordinator, other agent or later step that will do it for you. When the owner or a developer asks for something (close this ticket, reply to the player, check a figure, merge, file it), do it now with your own tools in this activation. " +
+  "Closing a ticket is support_action with tool support_resolve, after the player has the final answer; if it is refused, the refusal says what is missing, so fix that and try again or tell the person who asked exactly what blocks it.\n" +
+  "2. A refused tool call is an instruction, not a dead end. Read the reason, rewrite or gather what it asks for, and call the tool again. Never replace a refused answer with an acknowledgement, a \"looking into it\" or \"nothing new\".\n" +
+  "3. Read before you state. A game rule, a cause, or a claim that one value includes another needs the code that decides it: read_tool on server ops-knowledge, tool code_search with claimType mechanic, then code_read on the file it names. " +
+  "Copy the deciding line into your plan word for word and state only what it says. If what you read does not settle it, say it is not confirmed instead of guessing. A result marked \"Cut off\" was not read in full.\n" +
+  "4. Your tools are already listed. Do not list servers or tools unless a tool you need is missing; use evidence_batch to make several reads in one call.\n" +
+  "5. Only channel_reply and support_action messages reach people; your finish summary and notes do not. Answer every question in the latest message, including the second and third, name every option the code gives, then post, then finish.\n";
 const TOOL_NOTE = "\n\n## Owner communication\n\nThe owner understands the game but is not a software engineer. Explain what changes for players, who is affected, whether this is for testing or the live game, and the real risk or uncertainty. Approval requests must make the consequence of each option clear. Keep file paths, hashes, formulas and deployment jargon in optional technical details, not the main explanation. Never substitute a list of code changes for an explanation of the player outcome.\n\n## Tool names\n\nYour tools appear as mcp__keir__<name>; the names in this brief refer to them. You have no other tools. End every activation with exactly one finish call.";
 // One line per model activation in the same usage log the metered API period
 // used. The subscription bills no dollars, so cost is recorded as unknown
@@ -182,7 +195,8 @@ function usageRecord(job, result, durationMs, model, provider = "claude-cli-subs
     toolCalls: Number.isInteger(toolCalls) && toolCalls >= 0 ? toolCalls : null,
     emptyActivation: typeof empty === "boolean" ? empty : null,
     tokens: { input: u.input_tokens ?? null, output: u.output_tokens ?? null, cacheRead: u.cache_read_input_tokens ?? null, cacheWrite: u.cache_creation_input_tokens ?? null,
-      cacheWrite5m: u.cache_creation?.ephemeral_5m_input_tokens ?? null, cacheWrite1h: u.cache_creation?.ephemeral_1h_input_tokens ?? null },
+      cacheWrite5m: u.cache_creation?.ephemeral_5m_input_tokens ?? null, cacheWrite1h: u.cache_creation?.ephemeral_1h_input_tokens ?? null, reasoning: u.reasoning_tokens ?? null },
+    ...(result?.provenance?.allowance ? { allowance: { windowPercent: result.provenance.allowance.window?.used_percent ?? null, weeklyPercent: result.provenance.allowance.weekly?.used_percent ?? null } } : {}),
     usageVersion: 2, attempt: result?.provenance?.cliAttempt || result?.provenance?.attempt || null, runtime: result?.provenance?.runtime || null, engine: result?.provenance?.engine || null, taskState: job.state, parent: job.codingParent || null,
     contextBudget: job.contextBudget || null,
     inputIncludesCache: provider.startsWith("codex-") || provider.startsWith("antigravity-"),
@@ -234,6 +248,21 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   const COOLDOWN_MS = 30 * 60000;
   const cooled = (runner) => (ledger.data.routeCooldown?.[runner] || 0) > Date.now();
   // Returns true when the job was moved to another route and requeued.
+  // Keir 9.1: Muse reports its subscription allowance after every run. Before the 5-hour window or the weekly limit runs
+  // out, Muse cools down until that window resets, so new activations take the fallback route instead of failing mid-task.
+  function guardAllowance(job, result) {
+    const a = result?.provenance?.allowance;
+    if (!a || job.provider?.runner !== "muse") return false;
+    const ceiling = Number(config.museQuotaCeiling) > 0 ? Number(config.museQuotaCeiling) : 95;
+    const hit = [["window", a.window], ["weekly", a.weekly]].filter(([, w]) => Number(w?.used_percent) >= ceiling);
+    if (!hit.length) return false;
+    const until = Math.max(...hit.map(([, w]) => Number(w.resets_at_ms) > Date.now() ? Number(w.resets_at_ms) : Date.now() + COOLDOWN_MS));
+    const cd = (ledger.data.routeCooldown ||= {});
+    if ((cd.muse || 0) >= until) return false;
+    cd.muse = until;
+    ledger.audit("muse_allowance_cooldown", { job: job.id, limits: hit.map(([k, w]) => `${k} ${w.used_percent}%`), until: new Date(until).toISOString(), ceiling });
+    return true;
+  }
   function switchOnUsageLimit(job, text) {
     const runner = job.provider?.runner;
     const auth = AUTH_FAILED.test(text);
@@ -552,7 +581,8 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       const lane = quick ? "quick" : "worker";
       // API model loops use OpenCode; native Rust transports remain explicit.
       const viaRust = !["ollama", "deepseek", "opencode"].includes(p) && rustLaneAllowed(config, job, lane);
-      const runnerBrief = compact ? chatContext.SMALL_BRIEF + (job.voiceMode ? chatContext.VOICE_NOTE : "") : p === "claude" && !viaRust ? (leanCtx ? leanCtx.brief + TOOL_NOTE : brief) + skillText : common.brief;
+      const runnerBrief = compact ? chatContext.SMALL_BRIEF + (job.voiceMode ? chatContext.VOICE_NOTE : "") : p === "claude" && !viaRust ? (leanCtx ? leanCtx.brief + TOOL_NOTE : brief) + skillText
+        : p === "muse" && config.museNote !== false ? common.brief + MUSE_NOTE : common.brief;
       ledger.audit("activation_skills", { job: job.id, lane: skillLane, skills: skillBrief.names, disabled: config.skills === false,
         skillChars: skillText.length, skillBytes: Buffer.byteLength(skillText), briefChars: runnerBrief.length, briefBytes: Buffer.byteLength(runnerBrief),
         degraded: skillBrief.errors.length > 0 });
@@ -578,6 +608,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       throw error;
     } finally { close(); clearTimeout(nudge); if (liveness) clearInterval(liveness); }
     recordUsage(job, result, Date.now() - startedAt, effortUsed, session);
+    if (guardAllowance(job, result)) ledger.save();
     job.rounds += result.num_turns || session.calls || 1; job.updatedAt = Date.now(); ledger.save();
     // Keir 8: a provider that ran out of quota or is rate limiting is skipped for a while and the job
     // moves to the fallback route, instead of every job retrying the dead route (OpenCode Go, 2026-11-03).
@@ -689,4 +720,4 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   }
   return { run, canRun: () => true, openToolSession };
 }
-module.exports = { STEP_LIMIT_TEXT, emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };
+module.exports = { MUSE_NOTE, STEP_LIMIT_TEXT, emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };
