@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.1.0 (2026-11-14)
+
+- Muse runs on Muse Code's lean "empty" preset: about 11k fewer input tokens per model call (a five-call probe fell from 140k to 99k) with every Keir tool still loaded. `KEIR_MUSE_PRESET=""` restores the stock preset.
+- Muse runs stream JSON, so token use (input, output, cached, reasoning) and the subscription allowance land in usage.jsonl instead of nulls.
+- When a Muse run reports its 5-hour or weekly allowance at or above `KEIR_MUSE_QUOTA_CEILING` (default 95%), Muse cools down until that window resets and new work takes the fallback route instead of failing mid-task.
+- Muse's own "ask the user" tool is withheld in headless runs, so a run can never sit waiting for an answer nobody can give.
+- Muse activations carry a short working note: act on owner and developer requests yourself (closing a ticket is support_resolve), treat a refusal as instructions and post the corrected answer, read the deciding code before stating a rule, answer every question. `KEIR_MUSE_NOTE=0` turns it off.
+- A tool result over the 22,000-character cap now ends with a visible "Cut off" notice instead of stopping silently, for every runner.
+
 ## 9.0.5 (2026-11-14)
 
 - Settings instructions that say what state to keep ("make sure animations are not turned off in your Android accessibility settings"), where to look ("check your phone's display settings") or "the only way is turning X off" are checked like other setting instructions.

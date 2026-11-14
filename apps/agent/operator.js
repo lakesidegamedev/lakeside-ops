@@ -87,7 +87,7 @@ const config = {
   // Vision lane (owner, 2026-10-14: "use spark standard"). Any task whose
   // screenshot matters runs here; the standard tier does not train on data.
   visionProvider: env.KEIR_VISION_PROVIDER || "claude:claude-sonnet-5-5@medium",
-  agyModel: env.KEIR_AGY_MODEL || "gemini-3.8-flash", museModel: env.KEIR_MUSE_MODEL || "muse-wonder-1.0",
+  agyModel: env.KEIR_AGY_MODEL || "gemini-3.8-flash", museModel: env.KEIR_MUSE_MODEL || "muse-wonder-1.0", museQuotaCeiling: Number(env.KEIR_MUSE_QUOTA_CEILING) || 95, museNote: env.KEIR_MUSE_NOTE !== "0",
   // Jev picks each activation's effort (low to xhigh); KEIR_DYNAMIC_EFFORT=0 pins medium.
   dynamicEffort: env.KEIR_DYNAMIC_EFFORT !== "0", routeEffortCeiling: env.KEIR_ROUTE_EFFORT_CEILING !== "0",
   skills: env.KEIR_SKILLS !== "0",

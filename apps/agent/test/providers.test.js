@@ -79,8 +79,8 @@ test("Antigravity receives large briefs over stdin rather than a host path its s
 test("muse runs headless with shell, writes and web off and Keir's MCP server pinned", async () => {
   let args;
   let env;
-  const r = await invokeMuse({ ...base(), spawnImpl: fakeSpawn("final answer", (cmd, a, o) => { args = a; env = o?.env || {}; }) });
-  for (const flag of ["--disable-shell", "--disable-write", "--disable-web-tools", "--trust-workspace"]) assert.ok(args.includes(flag), flag);
+  const r = await invokeMuse({ ...base(), spawnImpl: fakeSpawn(museStream("final answer"), (cmd, a, o) => { args = a; env = o?.env || {}; }) });
+  for (const flag of ["--disable-shell", "--disable-write", "--disable-web-tools", "--trust-workspace", "--disable-request-user-input", "--json"]) assert.ok(args.includes(flag), flag);
   // Muse Code 1.4 requires session logging and loads MCP servers only in a trusted workspace (2026-11-12).
   assert.ok(!args.includes("--no-session-log"));
   // Keir 9: Muse runs with an empty home so the owner's personal skills and memory never load.
@@ -88,6 +88,29 @@ test("muse runs headless with shell, writes and web off and Keir's MCP server pi
   assert.ok(args.some((a) => a.startsWith("mcp_servers.keir=") && a.includes("/mcp/abc")));
   assert.equal(args[args.indexOf("--max-model-steps") + 1], "6");
   assert.deepEqual([r.result, r.is_error], ["final answer", false]);
+});
+
+// Muse Code --json output: one JSON event per line (shape recorded from Muse Code 1.4.20 on 2026-11-14).
+function museStream(text, usage = { calls: 3, models: [{ model: "muse-spark-1.3-contributor", input_tokens: 90000, cached_tokens: 50000, output_tokens: 700, reasoning_tokens: 300 }],
+  allowance: { weekly: { used_percent: 9, resets_at_ms: 1794787200000 }, window: { used_percent: 2, resets_at_ms: 1794668208000 } } }) {
+  return [{ payload_type: "run.lifecycle.started", payload: {} }, { payload_type: "run.output.delta", payload: { text: text.slice(0, 3) } }, { payload_type: "run.output.delta", payload: { text: text.slice(3) } },
+    { payload_type: "run.usage", payload: { kind: "run_usage", ...usage } }, { payload_type: "run.terminal.completed", payload: {} }].map((e) => JSON.stringify(e)).join("\n") + "\n";
+}
+
+test("muse reports its token use and subscription allowance from the JSON stream", async () => {
+  const r = await invokeMuse({ ...base(), spawnImpl: fakeSpawn(museStream("the answer"), () => {}) });
+  assert.equal(r.result, "the answer");
+  assert.deepEqual(r.usage, { input_tokens: 90000, output_tokens: 700, cache_read_input_tokens: 50000, reasoning_tokens: 300 });
+  assert.equal(r.num_turns, 3);
+  assert.equal(r.provenance.allowance.weekly.used_percent, 9);
+});
+
+test("muse runs on the lean empty preset unless KEIR_MUSE_PRESET says otherwise", () => {
+  const { museArgs } = require("../lib/operator/providers");
+  const a = (env) => museArgs({ ws: "/w", model: "m", effort: "high", maxTurns: 4, url: "http://x/mcp", promptFile: "/p", env });
+  assert.equal(a({})[a({}).indexOf("--preset") + 1], "empty");
+  assert.ok(!a({ KEIR_MUSE_PRESET: "" }).includes("--preset"));
+  assert.equal(a({ KEIR_MUSE_PRESET: "native-basic" })[a({ KEIR_MUSE_PRESET: "native-basic" }).indexOf("--preset") + 1], "native-basic");
 });
 
 test("a failed muse run surfaces as a model request failure", async () => {
@@ -188,9 +211,25 @@ test("audit: a muse run removes its temp directory, on success and on failure", 
   process.env.TMPDIR = root;
   try {
     const left = () => fs.readdirSync(root).filter((n) => n.startsWith("keir-muse-tmp-"));
-    await invokeMuse({ ...base(), spawnImpl: fakeSpawn("ok", () => {}) });
+    await invokeMuse({ ...base(), spawnImpl: fakeSpawn(museStream("ok"), () => {}) });
     assert.deepEqual(left(), []);
     await assert.rejects(invokeMuse({ ...base(), spawnImpl: fakeSpawn("", () => {}, 2) }), /muse exited 2/);
     assert.deepEqual(left(), []);
   } finally { if (saved === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = saved; }
+});
+
+test("tool results longer than the cap say they were cut off", () => {
+  const { capResult } = require("../lib/operator/toolserver");
+  assert.equal(capResult("short"), "short");
+  const r = capResult("x".repeat(30000));
+  assert.equal(r.length, 22000);
+  assert.match(r, /Cut off: showing 22000 of 30000 characters/);
+});
+
+test("muse activations carry the Muse working note: act yourself, retry refusals, read before stating", () => {
+  const { MUSE_NOTE } = require("../lib/operator/agent");
+  assert.match(MUSE_NOTE, /There is no coordinator/);
+  assert.match(MUSE_NOTE, /support_resolve/);
+  assert.match(MUSE_NOTE, /refused tool call is an instruction/);
+  assert.match(MUSE_NOTE, /code_search with claimType mechanic/);
 });

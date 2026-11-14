@@ -14,7 +14,7 @@ const PATH = host.searchPath();
 
 function spawnBounded(spawnImpl, cmd, args, opts, timeoutMs, signal, input = "") {
   return new Promise((resolve, reject) => {
-    const {onStdout,...spawnOptions}=opts;
+    const {onStdout,maxOut=4e6,...spawnOptions}=opts;
     const child = spawnImpl(cmd, args, { ...spawnOptions, detached: true, stdio: ["pipe", "pipe", "pipe"] });
     let out = "", err = "", timedOut = false;
     let termination;
@@ -22,7 +22,7 @@ function spawnBounded(spawnImpl, cmd, args, opts, timeoutMs, signal, input = "")
     const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
     signal.addEventListener("abort", kill, { once: true });
     if (signal.aborted) kill();
-    child.stdout.on("data", (c) => { out += c; onStdout?.(c); if (out.length > 4e6) kill(); });
+    child.stdout.on("data", (c) => { out += c; onStdout?.(c); if (out.length > maxOut) kill(); });
     child.stderr.on("data", (c) => { err = (err + c).slice(-4000); });
     child.on("error", (e) => { clearTimeout(timer); reject(e); });
     child.on("close", async (code) => {
@@ -112,6 +112,29 @@ async function invokeCursor({ spawnImpl, stateDir, model = "auto", brief, prompt
 }
 
 /** Muse (Meta) headless. Shell, writes and web are off; Keir's tools come over MCP. */
+// Keir 9.1 (owner, 2026-11-14: every lane on Muse Spark 1.3 Contributor). Measured on Muse Code 1.4.20 against Keir's own
+// tool server: the stock coding-agent preset sends about 30k input tokens of Muse's own instructions on every model call;
+// the "empty" preset sends about 19k, and the same five-call task fell from 140k to 99k input tokens with every Keir tool
+// still loaded. KEIR_MUSE_PRESET="" restores the stock preset. --json returns token use and the subscription allowance,
+// which Keir records and uses to step off Muse before the quota runs out.
+function museEvents(out) {
+  const events = [];
+  for (const line of String(out || "").split("\n")) { if (!line.trim()) continue; try { events.push(JSON.parse(line)); } catch {} }
+  const text = events.filter((e) => e.payload_type === "run.output.delta").map((e) => e.payload?.text || "").join("");
+  const usage = events.filter((e) => e.payload_type === "run.usage").map((e) => e.payload).at(-1) || null;
+  const terminal = events.filter((e) => /^run\.terminal\./.test(e.payload_type || "")).at(-1) || null;
+  const sum = (k) => (usage?.models || []).reduce((n, m) => n + (Number(m[k]) || 0), 0);
+  return { events, text, terminal, allowance: usage?.allowance || null, calls: usage ? Number(usage.calls) || null : null,
+    usage: usage ? { input_tokens: sum("input_tokens"), output_tokens: sum("output_tokens"), cache_read_input_tokens: sum("cached_tokens"), reasoning_tokens: sum("reasoning_tokens") } : {} };
+}
+function museArgs({ ws, model, effort, maxTurns, url, promptFile, env = process.env }) {
+  const preset = env.KEIR_MUSE_PRESET ?? "empty";
+  return ["exec", "--json", "--trust-workspace", "--workspace", ws, "--model", model, "--effort", effort, "--no-foreign-personal-context",
+    ...(preset ? ["--preset", preset] : []),
+    "--disable-shell", "--disable-write", "--disable-web-tools", "--disable-reminders", "--disable-request-user-input", "--approval-mode", "never",
+    "--max-model-steps", String(maxTurns), "-c", `mcp_servers.keir=${JSON.stringify({ url, transport: "streamable_http" })}`, "--prompt-file", promptFile];
+}
+const MUSE_STEP_LIMIT = /max(imum)?[ -]model[ -]steps|step (cap|limit)|did not reach a terminal state within \d+ step/i;
 async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, maxTurns, timeoutMs, signal }) {
   const { dir, cleanup } = scratch(stateDir, "muse-runs");
   // Declared outside the try so the finally block can remove it (it was scoped inside, so cleanup never ran).
@@ -128,15 +151,17 @@ async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, u
     fs.writeFileSync(promptFile, `${brief}\n\n## This activation (JSON)\n\n${prompt}\n`, { mode: 0o600 });
     // Muse Code 1.4: MCP servers load only in a trusted workspace (the workspace is an empty scratch dir), and
     // local session logging is required, so --no-session-log is gone (2026-11-12: Keir's tools never reached Muse).
-    const args = ["exec", "--trust-workspace", "--workspace", ws, "--model", model, "--effort", effort, "--no-foreign-personal-context",
-      "--disable-shell", "--disable-write", "--disable-web-tools", "--disable-reminders", "--approval-mode", "never",
-      "--max-model-steps", String(maxTurns), "-c", `mcp_servers.keir=${JSON.stringify({ url, transport: "streamable_http" })}`, "--prompt-file", promptFile];
-    const r = await spawnBounded(spawnImpl, "muse", args, { cwd: ws, env: { HOME: museHome, XDG_CONFIG_HOME: path.join(host.home(), ".config"), PATH, LANG: "C.UTF-8", TMPDIR: tmp } }, timeoutMs, signal);
-    if (r.timedOut) return { subtype: "error_max_turns", is_error: true, timedOut: true };
-    if (r.code === null) return { subtype: "error_max_turns", is_error: true, interrupted: true };
-    if (/max(imum)?[ -]model[ -]steps|step (cap|limit)|did not reach a terminal state within \d+ step/i.test(r.err)) return { subtype: "error_max_turns", is_error: true, result: r.out.trim() };
+    // --disable-request-user-input: a headless run has nobody to answer Muse's own question tool.
+    const args = museArgs({ ws, model, effort, maxTurns, url, promptFile });
+    const r = await spawnBounded(spawnImpl, "muse", args, { cwd: ws, env: { HOME: museHome, XDG_CONFIG_HOME: path.join(host.home(), ".config"), PATH, LANG: "C.UTF-8", TMPDIR: tmp }, maxOut: 64e6 }, timeoutMs, signal);
+    const parsed = museEvents(r.out);
+    const provenance = { billing: "subscription", accounting: "muse-run-usage", allowance: parsed.allowance, modelCalls: parsed.calls };
+    if (r.timedOut) return { subtype: "error_max_turns", is_error: true, timedOut: true, usage: parsed.usage, provenance };
+    if (r.code === null) return { subtype: "error_max_turns", is_error: true, interrupted: true, usage: parsed.usage, provenance };
+    const terminalText = JSON.stringify(parsed.terminal?.payload || "");
+    if (MUSE_STEP_LIMIT.test(r.err) || MUSE_STEP_LIMIT.test(terminalText)) return { subtype: "error_max_turns", is_error: true, result: parsed.text.trim(), usage: parsed.usage, provenance };
     if (r.code !== 0) failed(r.code, r.err, "muse");
-    return { result: r.out.trim(), num_turns: null, is_error: false, subtype: "success", usage: {} };
+    return { result: parsed.text.trim(), num_turns: parsed.calls, is_error: false, subtype: "success", usage: parsed.usage, provenance };
   } finally { cleanup(); if (tmp) { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} } }
 }
 
@@ -217,4 +242,4 @@ function deepseekKey() {
   if (process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY;
   try { return JSON.parse(fs.readFileSync(host.credential(".config/lakeside/deepseek.json"), "utf8")).api_key; } catch { return null; }
 }
-module.exports = { spawnBounded, invokeAgy, invokeCursor, invokeMuse, invokeCodex, invokeRust, ollamaKey, deepseekKey };
+module.exports = { spawnBounded, invokeAgy, invokeCursor, invokeMuse, museEvents, museArgs, invokeCodex, invokeRust, ollamaKey, deepseekKey };
