@@ -127,15 +127,18 @@ function museEvents(out) {
   return { events, text, terminal, allowance: usage?.allowance || null, calls: usage ? Number(usage.calls) || null : null,
     usage: usage ? { input_tokens: sum("input_tokens"), output_tokens: sum("output_tokens"), cache_read_input_tokens: sum("cached_tokens"), reasoning_tokens: sum("reasoning_tokens") } : {} };
 }
-function museArgs({ ws, model, effort, maxTurns, url, promptFile, env = process.env }) {
+// Muse treats every configured MCP server as required and refuses to start when one is unreachable. Tool-less generation
+// (the Ops widget line, the diary, knowledge distillation) passes a placeholder URL, so on Muse it failed every time
+// (2026-11-14, "starmer line failed"). Attach Keir's server only when the activation has tools.
+function museArgs({ ws, model, effort, maxTurns, url, promptFile, tools, env = process.env }) {
   const preset = env.KEIR_MUSE_PRESET ?? "empty";
   return ["exec", "--json", "--trust-workspace", "--workspace", ws, "--model", model, "--effort", effort, "--no-foreign-personal-context",
     ...(preset ? ["--preset", preset] : []),
     "--disable-shell", "--disable-write", "--disable-web-tools", "--disable-reminders", "--disable-request-user-input", "--approval-mode", "never",
-    "--max-model-steps", String(maxTurns), "-c", `mcp_servers.keir=${JSON.stringify({ url, transport: "streamable_http" })}`, "--prompt-file", promptFile];
+    "--max-model-steps", String(maxTurns), ...(Array.isArray(tools) && !tools.length ? [] : ["-c", `mcp_servers.keir=${JSON.stringify({ url, transport: "streamable_http" })}`]), "--prompt-file", promptFile];
 }
 const MUSE_STEP_LIMIT = /max(imum)?[ -]model[ -]steps|step (cap|limit)|did not reach a terminal state within \d+ step/i;
-async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, maxTurns, timeoutMs, signal }) {
+async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, tools, maxTurns, timeoutMs, signal }) {
   const { dir, cleanup } = scratch(stateDir, "muse-runs");
   // Declared outside the try so the finally block can remove it (it was scoped inside, so cleanup never ran).
   let tmp = null;
@@ -152,7 +155,7 @@ async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, u
     // Muse Code 1.4: MCP servers load only in a trusted workspace (the workspace is an empty scratch dir), and
     // local session logging is required, so --no-session-log is gone (2026-11-12: Keir's tools never reached Muse).
     // --disable-request-user-input: a headless run has nobody to answer Muse's own question tool.
-    const args = museArgs({ ws, model, effort, maxTurns, url, promptFile });
+    const args = museArgs({ ws, model, effort, maxTurns, url, promptFile, tools });
     const r = await spawnBounded(spawnImpl, "muse", args, { cwd: ws, env: { HOME: museHome, XDG_CONFIG_HOME: path.join(host.home(), ".config"), PATH, LANG: "C.UTF-8", TMPDIR: tmp }, maxOut: 64e6 }, timeoutMs, signal);
     const parsed = museEvents(r.out);
     const provenance = { billing: "subscription", accounting: "muse-run-usage", allowance: parsed.allowance, modelCalls: parsed.calls };

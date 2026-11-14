@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.1.1 (2026-11-14)
+
+- Tool-less Muse runs (the Ops widget line, the diary, knowledge distillation) no longer fail at startup: Muse refuses to start when a configured tool server is unreachable, so it now gets Keir's server only when the run has tools.
+
 ## 9.1.0 (2026-11-14)
 
 - Muse runs on Muse Code's lean "empty" preset: about 11k fewer input tokens per model call (a five-call probe fell from 140k to 99k) with every Keir tool still loaded. `KEIR_MUSE_PRESET=""` restores the stock preset.
