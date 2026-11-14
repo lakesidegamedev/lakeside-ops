@@ -97,3 +97,12 @@ test("Keir 9.0.3: after reporter_state resolves a username-linked reporter's one
   assert.equal(f.job.reporterCharacter.id, "4242");
   assert.equal(f.job.reporterCharacter.name, "Ada Vance");
 });
+
+test("Keir 9.0.5: the player's own ticket record and Keir's earlier posts do not back a settings instruction", async () => {
+  const f = setup();
+  f.job.lastCodeReadAt = f.now() - 1000;
+  f.job.evidenceText = '\n[read_tool] {"kind":"ticket","number":123,"description":"Wrapped skips on my Android phone, animations off?","publicUpdates":[{"message":"make sure animations are on in your Android accessibility settings"}]}' +
+    '\n[read_tool] {"path":"src/components/settings/QuickSettingsPanels.tsx","text":"Interface section: Reduced motion toggle sets data-reduce-motion"}';
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "If that is already off, make sure animations are not turned off in your Android accessibility settings." }), /names that setting/);
+  await f.broker.tool(f.job, "channel_reply", { message: "Open Settings in the game, look under Interface, and turn Reduced motion off." });
+});

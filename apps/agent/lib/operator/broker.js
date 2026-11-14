@@ -850,10 +850,17 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("bug_claim_hedged", { job: job.id, ticket: ticketNo, sentence: claim.sentence.slice(0, 160) });
     return bugClaim.hedge(message, claim, require("./playercopy").MAX_CHARS);
   }
+  // Keir 9.0.5 (replay, 2026-11-14): what backs a settings instruction is a read of the game (code, game data), never the
+  // player's own report or messages. The ticket record carried the player's "Android ... animations" words, and that let
+  // "check your Android accessibility settings" through.
+  // Also Keir's own earlier posts inside the ticket record (publicUpdates): one unbacked instruction must not back the next.
+  // Matches JSON stored once or twice encoded.
+  const PLAYER_RECORD = /\\?"kind\\?"\s*:\s*\\?"ticket\\?"|\\?"reporter\\?"\s*:|\\?"description\\?"\s*:|\\?"authorId\\?"\s*:|\\?"publicUpdates\\?"\s*:/;
+  const settingReadTexts = (ticketNo, jobs) => ticketReadTexts(ticketNo, jobs).filter((t) => !PLAYER_RECORD.test(String(t)));
   // Same for an instruction to change a setting that no read on the ticket names (Keir 9.0.4, ticket 1829).
   function softenSettingClaims(job, ticketNo, message) {
     if ((job.fastLane && !job.fastLane.escalated) || (d.settingClaimRefusals?.[ticketNo] || 0) < settingClaim.MAX_REFUSALS) return message;
-    const bad = settingClaim.unbackedSettingClaims(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)));
+    const bad = settingClaim.unbackedSettingClaims(message, settingReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)));
     if (!bad.length) return message;
     ledger.audit("setting_claim_hedged", { job: job.id, ticket: ticketNo, phrase: bad[0].phrase.slice(0, 160) });
     return settingClaim.hedge(message, bad, require("./playercopy").MAX_CHARS);
@@ -1021,7 +1028,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
       const refusals = (d.settingClaimRefusals ||= {});
       if ((refusals[ticketNo] || 0) < settingClaim.MAX_REFUSALS) {
-        const bad = settingClaim.unbackedSettingClaims(message, ticketReadTexts(ticketNo, sameTicketJobs));
+        const bad = settingClaim.unbackedSettingClaims(message, settingReadTexts(ticketNo, sameTicketJobs));
         if (bad.length) {
           refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
           ledger.audit("setting_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], phrase: bad[0].phrase.slice(0, 160) });

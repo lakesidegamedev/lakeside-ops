@@ -137,3 +137,21 @@ test("the refusal text is listed in PACING_REFUSAL so finishing is never blocked
   const pacing = new RegExp(/const PACING_REFUSAL = \/(.*)\/i;/.exec(src)[1], "i");
   assert.ok(pacing.test(sc.REFUSAL({ phrase: "x" })));
 });
+
+test("Keir 9.0.5: 'make sure X is off', 'check your X settings' and 'the only way is turning X off' are instructions (replay, 2026-11-14)", () => {
+  const sc = require("../lib/operator/settingclaim");
+  const gameRead = ["Interface section: Reduced motion toggle (settings.reducedMotion), sets data-reduce-motion on the page"];
+  for (const t of [
+    "If it is already off there, make sure animations are not turned off in your Android accessibility settings.",
+    "If it is already off there, check your Android accessibility settings and make sure animations are turned on.",
+    "Right now, the only ways to watch it are turning Reduced motion off in Settings under Interface with Android animations on.",
+    "Check your phone display settings.",
+    "Make sure battery saver is turned off.",
+  ]) assert.ok(sc.unbackedSettingClaims(t, gameRead).length, t);
+  for (const t of [
+    "Make sure Reduced motion is off under Settings, Interface.",
+    "Is Reduced motion turned on in your game settings?",
+    "You do not need to change any phone setting.",
+    "I have not confirmed it, but check your phone's animation settings.",
+  ]) assert.equal(sc.unbackedSettingClaims(t, gameRead).length, 0, t);
+});

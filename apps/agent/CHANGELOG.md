@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.0.5 (2026-11-14)
+
+- Settings instructions that say what state to keep ("make sure animations are not turned off in your Android accessibility settings"), where to look ("check your phone's display settings") or "the only way is turning X off" are checked like other setting instructions.
+- What backs a settings instruction is a read of the game (code, game data), never the player's own ticket report or Keir's earlier posts in it.
+
 ## 9.0.4 (2026-11-13)
 
 - The "I haven't got a confirmed answer for you yet" line is never posted once a real answer has gone out since the player last wrote (a holding line after it does not change that). While an answer attempt on the ticket was refused in the last 15 minutes, finishing is refused up to twice more per player message, telling Keir to post its reshaped answer now; after that the line is allowed, so finishing is never blocked.
