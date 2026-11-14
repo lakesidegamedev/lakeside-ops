@@ -233,3 +233,11 @@ test("muse activations carry the Muse working note: act yourself, retry refusals
   assert.match(MUSE_NOTE, /refused tool call is an instruction/);
   assert.match(MUSE_NOTE, /code_search with claimType mechanic/);
 });
+
+test("tool-less muse generation runs without an MCP server; a run with tools keeps Keir's", () => {
+  const { museArgs } = require("../lib/operator/providers");
+  const base = { ws: "/w", model: "m", effort: "high", maxTurns: 1, url: "http://127.0.0.1:1", promptFile: "/p", env: {} };
+  assert.ok(!museArgs({ ...base, tools: [] }).some((a) => String(a).startsWith("mcp_servers.")));
+  assert.ok(museArgs({ ...base, tools: [{ name: "finish" }] }).some((a) => String(a).startsWith("mcp_servers.keir=")));
+  assert.ok(museArgs(base).some((a) => String(a).startsWith("mcp_servers.keir=")), "callers that pass no tool list keep the server");
+});
