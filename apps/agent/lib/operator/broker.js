@@ -15,7 +15,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
 // A post asking the player who they are (ticket 1829: "If you share your character name here").
 const ASKS_IDENTITY = /\bwhich (?:character|account)\b[^.!\n]{0,40}\?|\b(?:share|tell me|send|give me|let me know|post|confirm|what(?:'|’)?s|what is|which is)\b[^.?!\n]{0,40}\b(?:(?:your|the) )?(?:character(?:'s|’s)? name|character|in-?game name|username|user name|account(?: name)?|ign)\b/i;
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|asks the player who they are|states a fact about the player's account|says the account is not linked or has no character|calls behaviour a bug, fault or defect/i;
+const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|asks the player who they are|states a fact about the player's account|says the account is not linked or has no character|calls behaviour a bug, fault or defect|tells the player to change a setting/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -24,6 +24,7 @@ const ruleLookup = require("./rulelookup");
 const readClaim = require("./readclaim");
 const bugClaim = require("./bugclaim");
 const accountClaim = require("./accountclaim");
+const settingClaim = require("./settingclaim");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const crypto = require("node:crypto");
@@ -849,6 +850,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("bug_claim_hedged", { job: job.id, ticket: ticketNo, sentence: claim.sentence.slice(0, 160) });
     return bugClaim.hedge(message, claim, require("./playercopy").MAX_CHARS);
   }
+  // Same for an instruction to change a setting that no read on the ticket names (Keir 9.0.4, ticket 1829).
+  function softenSettingClaims(job, ticketNo, message) {
+    if ((job.fastLane && !job.fastLane.escalated) || (d.settingClaimRefusals?.[ticketNo] || 0) < settingClaim.MAX_REFUSALS) return message;
+    const bad = settingClaim.unbackedSettingClaims(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)));
+    if (!bad.length) return message;
+    ledger.audit("setting_claim_hedged", { job: job.id, ticket: ticketNo, phrase: bad[0].phrase.slice(0, 160) });
+    return settingClaim.hedge(message, bad, require("./playercopy").MAX_CHARS);
+  }
   function guardTicketPostRules(job, ticketNo, message, opts = {}) {
     require("./advicerouting").guard(job, d, message);
     guardPlayerRegister(job, ticketNo, message);
@@ -1004,6 +1013,19 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
           refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
           ledger.audit("account_claim_refused", { job: job.id, ticket: ticketNo, claim: claim.kind, reason: claim.reason });
           throw new Error(accountClaim.REFUSAL(claim));
+        }
+      }
+    }
+    // Keir 9.0.4 (ticket 1829): "turn off X in Settings" says what controls the behaviour. It needs a read on this ticket that
+    // names that setting; otherwise refused, at most twice per ticket, then labelled unconfirmed by code (softenSettingClaims).
+    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+      const refusals = (d.settingClaimRefusals ||= {});
+      if ((refusals[ticketNo] || 0) < settingClaim.MAX_REFUSALS) {
+        const bad = settingClaim.unbackedSettingClaims(message, ticketReadTexts(ticketNo, sameTicketJobs));
+        if (bad.length) {
+          refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
+          ledger.audit("setting_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], phrase: bad[0].phrase.slice(0, 160) });
+          throw new Error(settingClaim.REFUSAL(bad[0]));
         }
       }
     }
@@ -2050,7 +2072,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
         await guardTicketPost(job, ticketNo, message);
-        message = softenAccountClaims(job, ticketNo, softenBugClaims(job, ticketNo, softenUnreadClaims(job, ticketNo, message)));
+        message = softenSettingClaims(job, ticketNo, softenAccountClaims(job, ticketNo, softenBugClaims(job, ticketNo, softenUnreadClaims(job, ticketNo, message))));
         message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
         // ticket already named the reporter's company and the page they had open.
@@ -2288,19 +2310,22 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // which made Keir ask a linked player for their character name.
       if (!ticket.reporter?.profileUrl && ticket.reporter?.username) {
         const username = String(ticket.reporter.username);
-        const users = await mcp.call("heal-ops", "heal_query", {env:"prod", collection:"users", filter:{username}, projection:{_id:1, username:1}, limit:2}, false, signal);
+        const users = await mcp.call("heal-ops", "heal_query", {env:"prod", collection:"users", filter:{username}, projection:{_id:1, username:1, discordId:1, discordLinkedAt:1}, limit:2}, false, signal);
         if (users.docs?.length !== 1 || users.docs[0].username !== username) throw new Error("the ticket's linked game username did not match exactly one account");
         const userId = String(users.docs[0]._id);
+        // Keir 9.0.4 (owner): whether the account has a Discord link, and since when. The Discord id itself is never returned.
+        const discordLinked = Boolean(users.docs[0].discordId), discordLinkedAt = discordLinked && users.docs[0].discordLinkedAt ? String(users.docs[0].discordLinkedAt).slice(0, 10) : null;
+        const account = { username, linked: true, discordLinked, ...(discordLinkedAt ? { discordLinkedAt } : {}) };
         const fields = ["name", "sequentialId", "countryId", "homeState", "currentOffice"];
         const chars = await mcp.call("heal-ops", "heal_query", {env:"prod", collection:"characters", filter:{$expr:{$eq:[{$toString:"$userId"}, userId]}}, projection:Object.fromEntries(fields.map(k => [k,1])), limit:10}, false, signal);
         const characters = (chars.docs || []).map((c) => Object.fromEntries(fields.filter(k => c[k] !== undefined).map(k => [k,c[k]])));
-        job.reporterInspection = {at:now(), ticket:inspectedTicket, account:{username, linked:true}, characters};
+        job.reporterInspection = {at:now(), ticket:inspectedTicket, account, characters};
         // Keir 9.0.3 (replay finding): with exactly one character, it is the reporter for player-private reads, as a profile link was.
         if (characters.length === 1 && inspectedTicket === job.ticket && characters[0].sequentialId) {
           for (const j of [job, ...Object.values(d.jobs).filter((x) => x.ticket === job.ticket && x !== job)]) j.reporterCharacter = { ...(j.reporterCharacter || {}), id: String(characters[0].sequentialId), name: characters[0].name || null, username };
         }
         ledger.save();
-        return {environment:"prod", ticket:inspectedTicket, checkedAt:now(), account:{username, linked:true}, characters,
+        return {environment:"prod", ticket:inspectedTicket, checkedAt:now(), account, characters,
           instruction: characters.length ? "The reporter's linked account and its characters, from the live game. Never ask the player who they are or for their character name." : "The reporter's account is linked but has no current character. Never ask the player who they are; ask only for what you cannot read, if anything."};
       }
       let profile; try { profile = new URL(ticket.reporter?.profileUrl); } catch { throw new Error("ticket has no linked character profile"); }
@@ -3382,7 +3407,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenSettingClaims(job, job.ticket, softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).
@@ -3778,11 +3803,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // "looking into it" and the task parked).
         // The code-written introduction ("Hi, I'm Keir, the support assistant ...") is not an answer either (Hydrogen replay, 2026-11-13:
         // a refused first answer, then a wait for the player behind the introduction alone).
-        const holdingOnly = last && (isStall(last.text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(last.text || "").trim()) || sentences(String(last.text || "")).length <= 1 && /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
+        // Keir 9.0.4 (ticket 1829): one test for "is this post a holding line", used for the owed check and for the limitation
+        // line. A real answer anywhere since the player last wrote means they are not owed one, whatever was posted after it.
+        const holdingText = (text) => isStall(text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(text || "").trim()) || /^i haven(?:'|’)?t got a confirmed answer for you yet/i.test(String(text || "").trim()) || sentences(String(text || "")).length <= 1 && /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(text || "").trim());
+        const holdingOnly = last && holdingText(last.text);
         // Keir 9.0.3 (live ticket, 2026-11-13): a real answer that ends "I will update you here once it is live" is not a
         // holding line; only a one-sentence post counts by that wording. The limitation line followed a real answer by a minute.
         // A wait for the player's own reply has its own, stricter "nothing posted" refusal below; only a holding line is added here.
-        const owed = human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
+        const realAnswered = human > 0 && (d.ticketPosts?.[tn] || []).some((p) => !isCardPost(p) && p.at >= human && !holdingText(p.text));
+        const owed = !realAnswered && human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
         if (owed) {
           const all = (d.unansweredFinishes ||= {});
           let rec = all[tn];
@@ -3791,6 +3820,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             rec.refused += 1; ledger.save();
             ledger.audit("unanswered_finish_refused", { job: job.id, ticket: tn, refusals: rec.refused });
             throw new Error("Not finished: the player has had no answer since they last wrote. Post what you found to them now (channel_reply, at most five short sentences, only what you read), or tell them plainly what you could not confirm, then finish. Waiting on the developers or the owner does not excuse a missing answer.");
+          }
+          // Keir 9.0.4 (ticket 1829): an answer attempt refused in the last 15 minutes means a reshaped answer is on its way
+          // (the first draft was refused by the outgoing screen, the rewrite by pacing, then the limitation line went out).
+          // Tell Keir to post it now, at most twice per player message; after that the limitation line is allowed.
+          const recentRefusal = Object.values(d.jobs).some((j) => ticketOf(j) === tn && (j.replyAttemptRefusedAt || 0) > human && now() - j.replyAttemptRefusedAt < 15 * 60000);
+          if (!rec.limitationPostedAt && recentRefusal && (rec.reshapeRefused || 0) < 2) {
+            rec.reshapeRefused = (rec.reshapeRefused || 0) + 1; ledger.save();
+            ledger.audit("unanswered_reshape_refused", { job: job.id, ticket: tn, refusals: rec.reshapeRefused });
+            throw new Error("Not finished: an answer to the player was refused a few minutes ago and nothing has been posted since. Post your reshaped answer now, short and in the player's words, with no file or code names, then finish.");
           }
           if (!rec.limitationPostedAt) {
             // Third attempt: the code answers for the task so the player is never left with silence.

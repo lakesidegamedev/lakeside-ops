@@ -16,7 +16,9 @@ const PURCHASE_SHOWN = /\b(?:purchase|payment|patreon|subscription|refund|order|
 // "I could not confirm", "not verified": the sentence says outright that it is not established.
 const UNCONFIRMED = /\b(?:not (?:yet )?(?:been )?(?:confirmed|verified|established|sure|certain|clear)|unconfirmed|unverified|(?:haven(?:'|’)?t|have not|hasn(?:'|’)?t|has not|couldn(?:'|’)?t|could not|can(?:'|’)?t|cannot) (?:yet )?(?:confirm(?:ed)?|verif(?:y|ied)|tell|say|establish(?:ed)?|check(?:ed)?|read)\b|(?:do not|don(?:'|’)?t) (?:yet )?know (?:if|whether)|not sure (?:if|whether))\b/i;
 // What a read shows when the account does have a link or a character.
-const LINK_SHOWN = /\bdiscord\w*"?\s*[:=]\s*"?\d{5,}|"?linked"?\s*[:=]\s*true\b/i;
+const DISCORD_SHOWN = /\bdiscord(?:Id|_id)"?\s*[:=]\s*"?\d{5,}|"?discordLinked"?\s*[:=]\s*true\b/i;
+const DISCORD_ABSENT = /"?discordLinked"?\s*[:=]\s*false\b/i;
+const LINK_SHOWN = /\bdiscord(?:Id|_id)"?\s*[:=]\s*"?\d{5,}|"linked"\s*[:=]\s*true\b|\blinked\s*[:=]\s*true\b/i;
 const CHARACTER_SHOWN = /\bsequentialId"?\s*[:=]\s*"?\d+|"?characters"?\s*[:=]\s*\[\s*\{/i;
 
 // The first sentence stating an account fact, or null: { kind: "link" | "discord" | "character", sentence }.
@@ -45,9 +47,14 @@ function unbackedAccountClaim(message, { reads = [], inspections = [] } = {}) {
     if (characterShown) return { ...claim, reason: "contradicted" };
     return reads.length || inspections.length ? null : { ...claim, reason: "unread" };
   }
+  // Keir 9.0.4: "linked to the ticket" (the game account behind the reporter's username) and "Discord link" are different facts.
+  if (claim.kind === "discord") {
+    const discordShown = DISCORD_SHOWN.test(text) || inspections.some((i) => i?.account?.discordLinked === true);
+    const discordAbsent = DISCORD_ABSENT.test(text) || inspections.some((i) => i?.account?.discordLinked === false);
+    if (discordShown) return { ...claim, reason: "contradicted" };
+    return discordAbsent || /discord/i.test(text) ? null : { ...claim, reason: "unread" };
+  }
   if (linkShown) return { ...claim, reason: "contradicted" };
-  // "No Discord link" needs a read that includes the Discord field at all; the linked-account lookup does not.
-  if (claim.kind === "discord") return /discord/i.test(text) ? null : { ...claim, reason: "unread" };
   return reads.length || inspections.length ? null : { ...claim, reason: "unread" };
 }
 
