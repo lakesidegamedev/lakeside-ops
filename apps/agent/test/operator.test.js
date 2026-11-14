@@ -2840,6 +2840,8 @@ test("the owner's direct question in a ticket is answered at once, not held behi
   // Another Keir task posted in this ticket a moment ago, and Keir has posted three times since a human wrote.
   (f.ledger.data.ticketPosts ||= {})[123] = [{ at: 4990, jobId: "other-task", text: "Your tax bill is 35% of profit." }];
   (f.ledger.data.monologue ||= {})[123] = { humanAt: 0, count: 3, at: 4990 };
+  // Keir 9.0.4: an answer posted into a ticket channel rests on the code whoever asked; this one read it.
+  owner.lastCodeReadAt = 4985;
   const r = await f.broker.tool(owner, "channel_reply", { message: "Not ignored: I read it and did nothing with it, because cash only moves on your own recorded approval." });
   assert.ok(r && !r.skipped, JSON.stringify(r));
 });
