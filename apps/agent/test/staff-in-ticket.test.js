@@ -55,7 +55,7 @@ function setup(extra = {}) {
   job.state = "running"; ledger.data.disclosed = { 123: { at: 1, posted: true } };
   const posts = () => calls.filter((c) => c[1] === "support_public_update" && c[2].deliver === true).map((c) => c[2].message);
   const audits = (kind) => (ledger.data.audit || []).filter((a) => a.kind === kind);
-  return { ledger, broker, job, posts, audits, config };
+  return { ledger, broker, job, posts, audits, config, dir };
 }
 const FALSE_CLAIM = "Not linked. Their account exists but carries no Discord link.";
 
@@ -134,7 +134,7 @@ function routeFixture(job) {
   const f = setup(job);
   const seen = [];
   const agent = createAgent({ ledger: f.ledger, broker: f.broker,
-    config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: path.dirname(f.ledger.file || os.tmpdir()), workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
+    config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
       providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
     invokeImpl: async ({ runner, model }) => { seen.push([runner, model]); await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Waiting." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
   return { f, agent, seen };
