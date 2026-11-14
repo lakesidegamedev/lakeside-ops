@@ -39,6 +39,16 @@ function releaseOf(file) {
   try { return fs.readFileSync(file, "utf8").split("\n")[0].trim().slice(0, 60) || null; } catch { return null; }
 }
 
+// Keir 9.0.3: the kill switch file (see lib/operator/killswitch.js). Missing or "off"/"0" = released; JSON {reason, until}
+// or free text = engaged; unreadable = engaged (fails closed, like the operator).
+function readKillSwitch(file) {
+  let raw;
+  try { raw = fs.readFileSync(file, "utf8"); } catch (e) { return e.code === "ENOENT" ? null : { reason: "unreadable" }; }
+  const text = raw.trim();
+  if (/^(?:off|0)?$/i.test(text)) return null;
+  try { const j = JSON.parse(text); if (j.until && Date.parse(j.until) <= Date.now()) return null; return { reason: String(j.reason || "engaged"), until: j.until || null }; }
+  catch { return { reason: text.split("\n")[0].slice(0, 200) }; }
+}
 function loadState(cfg, { now = Date.now() } = {}) {
   return {
     now,
@@ -46,7 +56,8 @@ function loadState(cfg, { now = Date.now() } = {}) {
     release: releaseOf(cfg.releaseFile),
     ledger: readLedger(path.join(cfg.stateDir, "ledger.json")),
     usage: readUsage(path.join(cfg.stateDir, "usage.jsonl")),
+    killSwitch: readKillSwitch(path.join(cfg.stateDir, "kill-switch")),
   };
 }
 
-module.exports = { loadState, readLedger, readUsage, unitActive, releaseOf };
+module.exports = { loadState, readLedger, readUsage, unitActive, releaseOf, readKillSwitch };

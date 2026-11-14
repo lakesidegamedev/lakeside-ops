@@ -2262,7 +2262,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const fields = ["name", "sequentialId", "countryId", "homeState", "currentOffice"];
         const chars = await mcp.call("heal-ops", "heal_query", {env:"prod", collection:"characters", filter:{$expr:{$eq:[{$toString:"$userId"}, userId]}}, projection:Object.fromEntries(fields.map(k => [k,1])), limit:10}, false, signal);
         const characters = (chars.docs || []).map((c) => Object.fromEntries(fields.filter(k => c[k] !== undefined).map(k => [k,c[k]])));
-        job.reporterInspection = {at:now(), ticket:inspectedTicket, account:{username, linked:true}, characters}; ledger.save();
+        job.reporterInspection = {at:now(), ticket:inspectedTicket, account:{username, linked:true}, characters};
+        // Keir 9.0.3 (replay finding): with exactly one character, it is the reporter for player-private reads, as a profile link was.
+        if (characters.length === 1 && inspectedTicket === job.ticket && characters[0].sequentialId) {
+          for (const j of [job, ...Object.values(d.jobs).filter((x) => x.ticket === job.ticket && x !== job)]) j.reporterCharacter = { ...(j.reporterCharacter || {}), id: String(characters[0].sequentialId), name: characters[0].name || null, username };
+        }
+        ledger.save();
         return {environment:"prod", ticket:inspectedTicket, checkedAt:now(), account:{username, linked:true}, characters,
           instruction: characters.length ? "The reporter's linked account and its characters, from the live game. Never ask the player who they are or for their character name." : "The reporter's account is linked but has no current character. Never ask the player who they are; ask only for what you cannot read, if anything."};
       }
@@ -3741,7 +3746,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // "looking into it" and the task parked).
         // The code-written introduction ("Hi, I'm Keir, the support assistant ...") is not an answer either (Hydrogen replay, 2026-11-13:
         // a refused first answer, then a wait for the player behind the introduction alone).
-        const holdingOnly = last && (isStall(last.text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(last.text || "").trim()) || /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
+        const holdingOnly = last && (isStall(last.text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(last.text || "").trim()) || sentences(String(last.text || "")).length <= 1 && /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(last.text || "").trim()));
+        // Keir 9.0.3 (live ticket, 2026-11-13): a real answer that ends "I will update you here once it is live" is not a
+        // holding line; only a one-sentence post counts by that wording. The limitation line followed a real answer by a minute.
         // A wait for the player's own reply has its own, stricter "nothing posted" refusal below; only a holding line is added here.
         const owed = human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
         if (owed) {

@@ -97,7 +97,7 @@ function doctor(state, ticket) {
     const oldest = waiting.slice().sort((a, b) => touched(a) - touched(b))[0];
     const cooled = cooledRoutes(state);
     const lines = [
-      `Keir is ${state.active ? (state.ledger?.paused ? "on but paused" : "on") : "OFF (the service is not running)"}${state.release ? `, release ${clean(String(state.release).split(/\s+/).filter((x) => !/^[0-9a-f]{12,}$/.test(x)).join(" ") || state.release)}` : ""}.`,
+      `Keir is ${state.active ? (state.killSwitch ? `STOPPED by the kill switch (${state.killSwitch.reason})` : state.ledger?.paused ? "on but paused" : "on") : "OFF (the service is not running)"}${state.release ? `, release ${clean(String(state.release).split(/\s+/).filter((x) => !/^[0-9a-f]{12,}$/.test(x)).join(" ") || state.release)}` : ""}.`,
       `${queued.length} queued, ${jobs.length} open tickets in all.`,
       oldest ? `Oldest waiting: ticket ${ticketOf(oldest)}, ${span(state.now - touched(oldest))}.` : "Nothing is waiting.",
       cooled.length ? `Provider: ${cooled.map((c) => `${clean(c.runner)} is capped for another ${span(c.until - state.now)}`).join("; ")}.` : "Provider: no route is capped.",
@@ -111,9 +111,10 @@ function doctor(state, ticket) {
   const job = jobs.find(open) || jobs[0];
   if (!open(job)) return cap(`Keir finished its work on ticket ${n} (${clean(job.state)}, ${ago(state, touched(job))}). Nothing is pending.`);
   const d = diagnose(state, job), err = lastError(state, job);
-  const lines = [`Ticket ${n}: ${state.active ? "" : "Keir is OFF. "}${d.step}.`, `Waiting on: ${d.waits}.`];
+  const lines = [`Ticket ${n}: ${!state.active ? "Keir is OFF. " : state.killSwitch ? `Keir is stopped by the kill switch (${state.killSwitch.reason}), so nothing runs until a developer releases it. ` : ""}${d.step}.`, `Waiting on: ${state.killSwitch && state.active ? "the kill switch to be released" : d.waits}.`];
   if (err) lines.push(`Last error: ${err}`);
-  if (d.help) lines.push(`What you can do: ${d.help}`);
+  if (state.killSwitch) lines.push("What you can do: a developer reviews why it stopped, then releases the kill switch; queued work then starts by itself.");
+  else if (d.help) lines.push(`What you can do: ${d.help}`);
   return cap(lines.join("\n"));
 }
 
@@ -124,7 +125,7 @@ function status(state) {
   const route = jobs.map((j) => j.provider).filter(Boolean).at(-1);
   const model = clean(route?.model || latest?.model || "unknown"), provider = clean(route?.runner || latest?.provider || "unknown");
   return cap([
-    `Keir is ${state.active ? (state.ledger?.paused ? "on but paused" : "on") : "OFF"}${state.release ? `, release ${clean(String(state.release).split(/\s+/).filter((x) => !/^[0-9a-f]{12,}$/.test(x)).join(" ") || state.release)}` : ""}.`,
+    `Keir is ${state.active ? (state.killSwitch ? `STOPPED by the kill switch (${state.killSwitch.reason})` : state.ledger?.paused ? "on but paused" : "on") : "OFF"}${state.release ? `, release ${clean(String(state.release).split(/\s+/).filter((x) => !/^[0-9a-f]{12,}$/.test(x)).join(" ") || state.release)}` : ""}.`,
     `Model: ${model} via ${provider}.`,
     `Open tickets: ${jobs.length}. In progress: ${by("progress")}. Waiting on staff: ${by("staff")}. Waiting on the player: ${by("player")}.${by("other") ? ` Parked or blocked: ${by("other")}.` : ""}`,
   ].join("\n"));
