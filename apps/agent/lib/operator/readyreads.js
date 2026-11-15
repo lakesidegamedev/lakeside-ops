@@ -36,6 +36,13 @@ const SEEDS = [
   ["what shares do I own", "gamestate", "character_holdings"],
   ["who controls my company", "gamestate", "character_holdings"],
   ["why did the turn fail", "turndiag", "turn_failure_detail"],
+  // Keir 10 (W3): military, bonds, budgets and the wiki.
+  ["how many generals, ships, fleets or wings does my country have", "gamestate", "military_roster"],
+  ["what is our army and navy supply or port capacity", "gamestate", "military_roster"],
+  ["why did my bond price change or what bonds do I hold", "gamestate", "trace_bonds"],
+  ["what is the national budget, treasury or deficit over the last years", "gamestate", "country_fiscal_history"],
+  ["how do I do this, what does this mechanic mean, where is it explained", "lore", "lore_wiki_search"],
+  ["what does this term mean in the game wiki", "lore", "lore_glossary"],
 ];
 
 const hash = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);

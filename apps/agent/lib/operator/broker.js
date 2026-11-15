@@ -91,7 +91,15 @@ const SUPPORT_READS = {
     // Keir 7 (lakeside-code #69, from Keir's own capability requests): live
     // nominations and their vote deadlines, the reporter's shareholdings
     // (reporter-scoped below), and the public commodity market.
-    "nomination_records", "character_holdings", "commodity_market"],
+    "nomination_records", "character_holdings", "commodity_market",
+    // Keir 10 (W3): military forces, the reporter's own bond positions
+    // (reporter-scoped via PLAYER_PRIVATE) and a country's closed fiscal years.
+    // alt_ring_audit and alt_rank stay staff-only: owner and developer tasks read
+    // them through the full server list, automatic player tasks never do.
+    "military_roster", "trace_bonds", "country_fiscal_history"],
+  // Keir 10 (W3): the game's own lore wiki and glossary, the same public text the
+  // player-facing wiki shows. "How do I ..." tickets had no rulebook to read.
+  lore: ["lore_wiki_search", "lore_wiki_page", "lore_glossary", "lore_country", "lore_parties", "lore_organizations"],
 };
 const META_SUMMARY = /\b(no (further|new|additional) (post|reply|response|message)s? (is |was )?(needed|required|necessary)|nothing (further |more )?to (post|add|say)|already (answered|replied|posted|addressed|handled)\b|source channel|the (player|reporter|owner|developer) (was|has been|is) (told|answered|updated)|(task|activation|job) (finished|complete|completed|done))/i;
 // Raw game-record reads for support tasks. Account, auth, ticket, payment and
@@ -239,7 +247,8 @@ function rawReadArgs(tool, args) {
 const FINDING_READS = {
   "heal-ops": ["heal_list", "heal_detect", ...SUPPORT_READS["heal-ops"]],
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
-  gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "character_holdings"].includes(n)), "invariant_check"],
+  gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "character_holdings", "trace_bonds"].includes(n)), "invariant_check"],
+  lore: SUPPORT_READS.lore,
   engine: SUPPORT_READS.engine,
   sentry: SUPPORT_READS.sentry,
   "ops-knowledge": SUPPORT_READS["ops-knowledge"],
@@ -253,7 +262,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 };
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
-const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings"]);
+const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings", "trace_bonds"]);
 const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
@@ -4327,4 +4336,4 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
