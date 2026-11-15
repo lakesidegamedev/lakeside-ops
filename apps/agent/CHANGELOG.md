@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.0.1 (2026-11-15)
+
+- A task that runs out of time twice alerts the owner once. Three background findings were being put back to waiting and re-blocked on every tick, which repeated the alert about once a second.
+
 ## 10.0.0 (2026-11-15)
 
 - How-to, where-is and strategy questions filed in the bug channel are routed as questions (lighter context, answer and close) unless they describe something broken.
