@@ -11,6 +11,7 @@ const TARGETS = [
   { dir: "", re: /^claude-stream-(.+)\.jsonl$/, kind: "file" },
   { dir: "", re: /^codex-stream-(.+)\.jsonl$/, kind: "file" },
   { dir: "cli-attempts", re: /^(.+)\.json$/, kind: "file" },
+  { dir: "muse-traces", re: /^(.+)\.jsonl$/, kind: "file" },
   { dir: "codex-runs", re: /^[\w-]+$/, kind: "dir" },
 ];
 

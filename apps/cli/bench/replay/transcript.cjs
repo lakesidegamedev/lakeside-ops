@@ -5,6 +5,21 @@
 const fs = require('node:fs'), path = require('node:path');
 const clip = (v, n = 1500) => { const t = typeof v === 'string' ? v : JSON.stringify(v); return t == null ? '' : t.length > n ? t.slice(0, n) + ` ...[${t.length - n} more]` : t; };
 
+// Muse writes no private reasoning; its trace holds the text it wrote between steps and its tool events, in order.
+function narration(file) {
+  let lines; try { lines = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return null; }
+  const out = []; let buf = '';
+  const flush = () => { if (buf.trim()) out.push(`> ${buf.trim().replace(/\n/g, '\n> ')}`); buf = ''; };
+  for (const e of lines) {
+    const t = e.payload_type || '';
+    if (t === 'run.output.delta') { buf += e.payload?.text || ''; continue; }
+    if (/tool|mcp|function_call/i.test(t)) { flush(); out.push(`- [${t}] ${clip(e.payload?.name || e.payload?.tool || e.payload, 300)}`); }
+    else if (/^run\.terminal/.test(t)) { flush(); out.push(`- [${t}] ${clip(e.payload?.terminal || e.payload, 200)}`); }
+  }
+  flush();
+  return out.length ? out.join('\n') : null;
+}
+
 function activationBlocks(raw) {
   return raw.map((a, i) => {
     const r = a.result || {};
@@ -13,7 +28,7 @@ function activationBlocks(raw) {
     return [`### Activation ${i + 1} (${a.lane || 'worker'}, ${Math.round((a.ms || 0) / 1000)}s)`,
       a.error ? `Runner error: ${a.error}` : `Outcome: ${r.subtype || 'unknown'}${r.is_error ? ' (error)' : ''}${r.num_turns != null ? `, ${r.num_turns} turns` : ''}`,
       r.result ? `Model final text:\n\n> ${clip(r.result, 3000).replace(/\n/g, '\n> ')}` : 'Model final text: none',
-      ...extra].join('\n');
+      ...extra, ...(r.provenance?.trace ? [`Model narration in order (trace ${path.basename(r.provenance.trace)}):\n\n${narration(r.provenance.trace) || 'empty'}`] : [])].join('\n');
   }).join('\n\n');
 }
 

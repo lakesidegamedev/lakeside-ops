@@ -119,6 +119,7 @@ function transcriptCandidates(attempt, stateDir) {
     path.join(stateDir, "opencode-runtime", attempt, "transcript.json"),
     path.join(stateDir, `claude-stream-${attempt}.jsonl`),
     path.join(stateDir, `codex-stream-${attempt}.jsonl`),
+    path.join(stateDir, "muse-traces", `${attempt}.jsonl`),
     path.join(stateDir, "cli-attempts", `${attempt}.json`),
   ];
 }

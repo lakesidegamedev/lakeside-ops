@@ -137,8 +137,21 @@ function museArgs({ ws, model, effort, maxTurns, url, promptFile, tools, env = p
     "--disable-shell", "--disable-write", "--disable-web-tools", "--disable-reminders", "--disable-request-user-input", "--approval-mode", "never",
     "--max-model-steps", String(maxTurns), ...(Array.isArray(tools) && !tools.length ? [] : ["-c", `mcp_servers.keir=${JSON.stringify({ url, transport: "streamable_http" })}`]), "--prompt-file", promptFile];
 }
+// Keir 10: Muse exposes no private reasoning, only the text it writes between tool calls. Keep the run's event
+// stream (without the lifecycle bookkeeping) so a failure or a replay can be read in order. KEIR_TRACE=0 turns it off;
+// the operator's retention pass ages these files out with the other per-run files.
+function saveMuseTrace(stateDir, attemptId, events, env = process.env) {
+  if (env.KEIR_TRACE === "0" || !stateDir || !attemptId || !Array.isArray(events) || !events.length) return null;
+  try {
+    const dir = path.join(stateDir, "muse-traces"); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const keep = events.filter((e) => !/^(task\.lifecycle|runtime\.command|task\.stream)\./.test(e.payload_type || ""));
+    const file = path.join(dir, `${String(attemptId).replace(/[^\w.-]/g, "")}.jsonl`);
+    fs.writeFileSync(file, keep.map((e) => JSON.stringify(e)).join("\n") + "\n", { mode: 0o600 });
+    return file;
+  } catch { return null; }
+}
 const MUSE_STEP_LIMIT = /max(imum)?[ -]model[ -]steps|step (cap|limit)|did not reach a terminal state within \d+ step/i;
-async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, tools, maxTurns, timeoutMs, signal }) {
+async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, url, tools, maxTurns, timeoutMs, signal, attemptId }) {
   const { dir, cleanup } = scratch(stateDir, "muse-runs");
   // Declared outside the try so the finally block can remove it (it was scoped inside, so cleanup never ran).
   let tmp = null;
@@ -158,7 +171,8 @@ async function invokeMuse({ spawnImpl, stateDir, model, effort, brief, prompt, u
     const args = museArgs({ ws, model, effort, maxTurns, url, promptFile, tools });
     const r = await spawnBounded(spawnImpl, "muse", args, { cwd: ws, env: { HOME: museHome, XDG_CONFIG_HOME: path.join(host.home(), ".config"), PATH, LANG: "C.UTF-8", TMPDIR: tmp }, maxOut: 64e6 }, timeoutMs, signal);
     const parsed = museEvents(r.out);
-    const provenance = { billing: "subscription", accounting: "muse-run-usage", allowance: parsed.allowance, modelCalls: parsed.calls };
+    const trace = saveMuseTrace(stateDir, attemptId, parsed.events);
+    const provenance = { billing: "subscription", accounting: "muse-run-usage", allowance: parsed.allowance, modelCalls: parsed.calls, ...(trace ? { trace } : {}) };
     if (r.timedOut) return { subtype: "error_max_turns", is_error: true, timedOut: true, usage: parsed.usage, provenance };
     if (r.code === null) return { subtype: "error_max_turns", is_error: true, interrupted: true, usage: parsed.usage, provenance };
     const terminalText = JSON.stringify(parsed.terminal?.payload || "");
@@ -245,4 +259,4 @@ function deepseekKey() {
   if (process.env.DEEPSEEK_API_KEY) return process.env.DEEPSEEK_API_KEY;
   try { return JSON.parse(fs.readFileSync(host.credential(".config/lakeside/deepseek.json"), "utf8")).api_key; } catch { return null; }
 }
-module.exports = { spawnBounded, invokeAgy, invokeCursor, invokeMuse, museEvents, museArgs, invokeCodex, invokeRust, ollamaKey, deepseekKey };
+module.exports = { spawnBounded, invokeAgy, invokeCursor, invokeMuse, museEvents, museArgs, saveMuseTrace, invokeCodex, invokeRust, ollamaKey, deepseekKey };
