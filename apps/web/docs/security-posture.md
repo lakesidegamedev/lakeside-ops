@@ -35,7 +35,7 @@ Applied by `deploy/security/harden-host.sh` (idempotent, safe to re-run):
 
 | Control | Setting | Why |
 | --- | --- | --- |
-| Host firewall | `ufw`, default deny inbound, only 22/80/443 tcp + 443/udp | Nothing else is reachable from the internet |
+| Host firewall | `ufw`, default deny inbound, only 22/80/443 tcp + 443/udp (plus 25/tcp on the US box for mail) | Nothing else is reachable from the internet |
 | fail2ban | `sshd` (aggressive, 3 tries, 1h) + `recidive` (4 weeks) | ~1k–8k credential-stuffing attempts/day |
 | SSH | key-only, `prohibit-password`, no X11/agent forwarding, `MaxAuthTries 4` | Removes password guessing entirely |
 | auditd | identity/sudo/ssh/systemd/cron/module/mount watchers | Kernel-level trail of privilege and trust changes |
@@ -48,7 +48,13 @@ filtering breaks multi-homed container traffic.
 
 ### Port policy
 
-Public inbound is exactly `22/tcp`, `80/tcp`, `443/tcp`, `443/udp`. Caddy
+Public inbound is exactly `22/tcp`, `80/tcp`, `443/tcp`, `443/udp`, with one
+per-host addition: the US box also admits `25/tcp`, because it receives mail
+for the staff mailboxes at lakesidegames.net (added 2026-11-13). That listener
+accepts mail only for our own mailboxes and never relays; outbound mail from
+our services uses a separate listener on loopback and the container network.
+The addition lives in `EXPECTED_INBOUND_EXTRA` in `security-service.js` and in
+`harden-host.sh`; change both together. Caddy
 terminates TLS and proxies to loopback. Before this change the EU box also
 accepted inbound on `3400` (sim API), `8090` (a basicauth admin vhost whose
 backend had been dead) and `19732` (worldsim MCP) — all three are now denied by

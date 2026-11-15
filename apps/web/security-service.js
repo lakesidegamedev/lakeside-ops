@@ -37,6 +37,10 @@ const HOSTS = Object.freeze([
 ]);
 
 const EXPECTED_INBOUND = new Set(["22/tcp", "80/tcp", "443/tcp", "443/udp"]);
+// Per-host additions to the documented set. The US box receives mail for
+// lakesidegames.net (staff mailboxes), so it also admits SMTP.
+const EXPECTED_INBOUND_EXTRA = Object.freeze({ us: ["25/tcp"] });
+const expectedInbound = (host) => new Set([...EXPECTED_INBOUND, ...(EXPECTED_INBOUND_EXTRA[host.id] || [])]);
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const SEVERITY_WEIGHT = { critical: 25, high: 10, medium: 4, low: 1, info: 0 };
@@ -151,12 +155,13 @@ const RULES = [
       );
     }
     const allowed = new Set((fw.allowedInbound || []).map((a) => a.port));
-    const unexpected = [...allowed].filter((p) => !EXPECTED_INBOUND.has(p));
+    const expected = expectedInbound(host);
+    const unexpected = [...allowed].filter((p) => !expected.has(p));
     if (unexpected.length) {
       out.push(
         finding(host, "firewall-unexpected-open", "medium",
           `Firewall admits ${unexpected.length} port(s) beyond the documented set`,
-          `Allowed: ${[...allowed].join(", ")}. Documented set: ${[...EXPECTED_INBOUND].join(", ")}.`,
+          `Allowed: ${[...allowed].join(", ")}. Documented set: ${[...expected].join(", ")}.`,
           "Close any port that is not required by a public site: ufw delete allow <port>",
         ),
       );
