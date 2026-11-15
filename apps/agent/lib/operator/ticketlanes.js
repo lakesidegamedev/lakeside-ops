@@ -174,7 +174,7 @@ function laneBrief(job, briefText, config = {}, { read = (f) => require("node:fs
   try { core = read(config.coreBriefFile || require("node:path").join(require("node:path").dirname(config.briefFile || ""), "KEIR-CORE.md")); } catch { return null; }
   const { sections } = require("./briefprofile").split(briefText);
   const extra = sections.filter((s) => lane.extraSections.includes(s.title)).map((s) => s.body.trim());
-  const block = `## Lane: ${job.lane}\n\nThis ticket is routed to the ${job.lane} lane${job.laneReason ? ` (${job.laneReason})` : ""}. It is finished when: ${lane.exit}\n\nWork the steps in context.playbook. context.caseFile holds what is known, what the player was told and promised, and what is open; context.whatChanged leads a wake. Never repeat a post the case file shows you made, and never ask the player for what the case file, the channel or their records already show.`;
+  const block = `## Lane: ${job.lane}\n\nThis ticket is routed to the ${job.lane} lane${job.laneReason ? ` (${job.laneReason})` : ""}. It is finished when: ${lane.exit}\n\nWork the steps in context.playbook. context.caseFile holds what is known, what the player was told and promised, and what is open; context.whatChanged leads a wake. Never repeat a post the case file shows you made, and never ask the player for what the case file, the channel or their records already show. Each separate problem gets its own row on the progress card and its own raise_to_developers; never put two problems in one issue.`;
   return [core.trim(), ...extra, block].join("\n\n");
 }
 

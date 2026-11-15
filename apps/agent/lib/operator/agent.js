@@ -545,7 +545,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // otherwise spends its first rounds on (KEIR_ORIENTATION=0 turns it off).
     if (config.orientation !== false && job.kind === "ticket" && job.ticket && job.role !== "player" && !quick && !compact && !job.codingParent && discover) {
       mark("context");
-      context.orientation = await require("./orientation").orient((name, input) => broker.tool(job, name, input, signal), ticketCompact && laneDef.readServers ? { servers: laneDef.readServers, maxServers: 3 } : {});
+      context.orientation = await require("./orientation").orient((name, input) => broker.tool(job, name, input, signal), { ...(ticketCompact && laneDef.readServers ? { servers: laneDef.readServers, maxServers: 3 } : {}), ...(job.lane === "outage" ? { skipReporter: true } : {}) });
       if (ticketCompact) for (const [k, v] of Object.entries(context.orientation.tools || {})) context.orientation.tools[k] = v.slice(0, 24);
       mark("orientation");
       if (context.orientation.timings) preflightParts.orientationSteps = context.orientation.timings;

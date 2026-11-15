@@ -81,12 +81,12 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
       if (follow && i + 1 < MAX_ACTIVATIONS) { env.playerReply(follow.text); continue; }
       if (job.state !== 'waiting') break;
       // Keir 10: a task that set its own short wake (its next step, not the player's reply) is woken as production would.
-      if (job.wakeAt && job.waitingFor !== 'player_reply' && Number(job.wakeAt) - Date.now() <= 6 * 3600000 && i + 1 < MAX_ACTIVATIONS) continue;
+      if (job.wakeAt && (job.waitingFor?.kind || job.waitingFor) !== 'player_reply' && Number(job.wakeAt) - Date.now() <= 6 * 3600000 && i + 1 < MAX_ACTIVATIONS) continue;
       // The player answers the newest question posted this activation, if any.
       // A question mark, or any post when Keir finished waiting on the player (imperative asks:
       // "send a screenshot and tell me which page"). KBX3 2026-10-28.
       const fresh = env.events.slice(0).filter((e) => e.kind === 'post' && String(e.text || '').trim()).slice(asked).reverse();
-      const q = fresh.find((e) => /\?/.test(e.text)) || (job.waitingFor === 'player_reply' || /\b(?:tell me|let me know|send (?:me )?|reply with)\b/i.test(fresh[0]?.text || '') ? fresh[0] : undefined);
+      const q = fresh.find((e) => /\?/.test(e.text)) || ((job.waitingFor?.kind || job.waitingFor) === 'player_reply' || /\b(?:tell me|let me know|send (?:me )?|reply with)\b/i.test(fresh[0]?.text || '') ? fresh[0] : undefined);
       if (!q) break;
       const hit = (sc.answers || []).find((a) => a.when.test(q.text));
       env.playerReply(hit ? hit.text : sc.fallbackAnswer || "I'm not sure what you mean.");
