@@ -271,14 +271,14 @@ test("a wake with nothing new says so instead of replaying the ticket", () => {
   assert.ok(delta.since);
 });
 
-test("the question lane counts the player's questions and tells the model to close after eight or a day", () => {
+test("the question lane counts the player's questions and tells the model to wrap up after eight or a day", () => {
   const job = withText("q0?", { lane: "question", at: NOW });
   casefile.observe(job);
   assert.equal(lanes.questionLimit(job, NOW + MIN), null);
   for (let i = 1; i <= 8; i++) { job.inbox = [{ role: "player", messageId: `m${i}`, at: new Date(NOW + i).toISOString(), content: `question ${i}?` }]; casefile.observe(job); }
   assert.equal(job.playerMessageCount, 9);
   const limit = lanes.questionLimit(job, NOW + MIN);
-  assert.ok(limit); assert.match(limit.instruction, /fresh ticket|open_ticket/);
+  assert.ok(limit); assert.match(limit.instruction, /raise_to_developers/);
   const old = withText("q?", { lane: "question", at: NOW - 25 * H }); old.source.at = new Date(NOW - 25 * H).toISOString();
   assert.ok(lanes.questionLimit(old, NOW));
   assert.equal(lanes.questionLimit({ ...old, lane: "bug" }, NOW), null);

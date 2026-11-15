@@ -19,7 +19,7 @@ const LANES = Object.freeze({
     playbook: "question", maxRounds: 10, fullFirst: false, skills: false,
     extraSections: [], directTools: ["open_ticket", "raise_to_developers"],
     readServers: ["ops-knowledge", "gamestate", "support"],
-    exit: "Every question the player asked is answered or redirected, from game knowledge and the code. No progress card and no owner decision unless a real defect turned up; then it is spun out as its own ticket.",
+    exit: "Every question the player asked is answered or redirected, from game knowledge and the code. No progress card and no owner decision unless a real defect turned up; then it is filed with raise_to_developers and worked here as a bug.",
   },
   bug: {
     playbook: "bug_report", maxRounds: 16, fullFirst: true, skills: true,
@@ -160,9 +160,10 @@ function questionLimit(job, now = Date.now()) {
   if (job.lane !== "question") return null;
   const humans = [job.source, ...(job.requestInbox || []), ...(job.playerMessages || [])].filter((m) => m && !["system", "assistant"].includes(m.role) && !m.investigationResult && !m.codingResult);
   const count = Math.max(job.playerMessageCount || 0, new Set(humans.map((m) => m.messageId || m.content)).size);
-  const age = now - (Date.parse(job.source?.at || "") || job.at || now);
+  // The task's own start, not the message stamp: a replayed or back-dated message must not look a day old (replay 2026-11-15).
+  const age = now - (job.at || Date.parse(job.source?.at || "") || now);
   if (count < QUESTION_LIMIT.messages && age < QUESTION_LIMIT.ms) return null;
-  return { questions: count, hours: Math.round(age / HOUR), instruction: "This ticket has run long (eight questions or a day). Answer what is open now and close it. For anything new, tell the player to open a fresh ticket, or open one yourself with open_ticket. Do not start new investigations here." };
+  return { questions: count, hours: Math.round(age / HOUR), instruction: "This ticket has run long (eight questions or a day). Answer what is open now. A new defect is filed here with raise_to_developers and worked as a bug; a new unrelated question can be answered briefly. Do not start long new investigations of strategy here." };
 }
 
 // The compact ticket brief: the core brief, the lane's extra sections from the full

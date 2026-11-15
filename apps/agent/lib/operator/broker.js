@@ -3770,6 +3770,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Weaker models name the tool loosely ("public_update", an MCP prefix,
       // `name` instead of `tool`); map those, and say exactly what is allowed
       // (ticket 1542: Spark was refused twice and the answer waited).
+      // Keir 10 (replay 2026-11-15): Muse sent the whole call one level down, {args: {tool, args}}; unwrap it.
+      if (!input.tool && !input.name && input.args && typeof input.args === "object" && (input.args.tool || input.args.name)) { const inner = input.args; for (const k of Object.keys(input)) delete input[k]; Object.assign(input, inner); }
       { const want = String(input.tool || input.name || "").replace(/^mcp__\w+__/, "").trim();
         input.tool = SUPPORT_WRITES.includes(want) ? want : SUPPORT_WRITES.includes(`support_${want}`) ? `support_${want}` : want; }
       if (!SUPPORT_WRITES.includes(input.tool)) throw new Error(`support write is outside standing permission: tool must be one of ${SUPPORT_WRITES.join(", ")}. To answer the player: tool "support_public_update", args {"message": "..."}.`);

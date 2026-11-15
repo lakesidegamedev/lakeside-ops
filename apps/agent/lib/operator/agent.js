@@ -526,7 +526,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     context.ticketRecord = ticketCompact ? undefined : ticketRecordRead;
     if (laneDef) {
       const limit = lanes.questionLimit(job);
-      context.lane = { id: job.lane, why: job.laneReason, exit: laneDef.exit, ...(job.lane === "question" ? { spinOut: "If you verify a defect or the player raises a new, unrelated problem, do not widen this ticket: raise the bug (raise_to_developers) or open a separate ticket (open_ticket) and tell the player.", ...(limit ? { limit } : {}) } : {}) };
+      context.lane = { id: job.lane, why: job.laneReason, exit: laneDef.exit, ...(job.lane === "question" ? { spinOut: "If you verify a defect, file it here with raise_to_developers (kind bug) and give it its own row on the progress card; the ticket then works it as a bug. Never ask the player to open another ticket for it. After answering a question, finish waiting for the player: the ticket closes by itself after the grace period, so do not call support_resolve.", ...(limit ? { limit } : {}) } : {}) };
     }
     context.playbook = require("./playbooks").contextFor(job, ledger.data);
     // Keir 10: lessons the nightly review filed for this lane (lane names differ slightly in lanelessons.js).
