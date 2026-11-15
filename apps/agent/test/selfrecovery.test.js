@@ -166,3 +166,11 @@ test("blocked work nobody can act on closes after six hours, but never with an u
   assert.match(dead.summary, /closed after being blocked/);
   assert.equal(risky.state, "blocked");
 });
+
+test("a task its deadline blocked is left for the owner, not turned back into a developer wait (Keir 10.0.1)", () => {
+  const t0 = 1_000_000_000;
+  const expired = { id: "x1", state: "blocked", kind: "finding", at: t0, updatedAt: t0, deadlineBlockedAt: t0, raisedToDevelopers: [{ id: 255100, blocking: true }] };
+  const w = world([expired], t0);
+  w.advance(6.5 * 3600000); w.r.tick([]);
+  assert.equal(expired.state, "blocked");
+});

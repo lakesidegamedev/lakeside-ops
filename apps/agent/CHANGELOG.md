@@ -7,7 +7,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## 10.0.1 (2026-11-15)
 
-- A task that runs out of time twice alerts the owner once. Three background findings were being put back to waiting and re-blocked on every tick, which repeated the alert about once a second.
+- A task that runs out of time twice alerts the owner once. Three background findings were being put back to waiting and re-blocked on every tick, which repeated the alert about once a second. Self-recovery no longer turns such a task back into a developer wait (that was the loop).
 
 ## 10.0.0 (2026-11-15)
 

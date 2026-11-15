@@ -192,6 +192,9 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
       // Blocked on a developer handoff that is still open is a developer wait,
       // not dead work. Dismissing it also self-closed the handoff (ticket 1760,
       // card 255014), so the work it asked for was dropped.
+      // Keir 10.0.1: a task its deadline blocked is the owner's to move; turning it back into a developer wait made the deadline
+      // re-block it on the next tick, forever (249 recoveries in two minutes, 2026-11-15).
+      if (j.deadlineBlockedAt) continue;
       if (!restart && (j.raisedToDevelopers || []).some((r) => r.blocking && r.id && !r.releasedAt && !r.selfOwned)) {
         j.state = "waiting";
         j.wakeAt = now() + DEAD_STUCK_MS;
