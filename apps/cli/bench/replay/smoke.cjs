@@ -1,0 +1,21 @@
+'use strict';
+const { createEnv } = require('./env.cjs');
+const os = require('node:os'), fs = require('node:fs'), path = require('node:path');
+(async () => {
+  const sc = { ...require('./scenarios/dev/wage-desktop.cjs'), dir: require('node:path').join(__dirname, 'scenarios', 'dev') };
+  const env = createEnv({ scenario: sc, dir: fs.mkdtempSync(path.join(os.tmpdir(), 'replay-')) });
+  const { broker, job } = env; job.state = 'running';
+  const step = async (name, input) => { try { const r = await broker.tool(job, name, input); console.log('OK  ', name, JSON.stringify(r).slice(0, 160)); } catch (e) { console.log('ERR ', name, e.message.slice(0, 220)); } };
+  await step('progress_update', { message: "Checking your shipyard's staffing and the wage change now." });
+  await step('read_servers', {});
+  await step('read_tool', { server: 'gamestate', tool: 'trace_sector', args: { corporation: 'Tyneside Shipworks' } });
+  await step('reporter_state', {});
+  await step('ticket_history', {});
+  await step('channel_reply', { message: 'Did you change the wage in the desktop app or on the website?' });
+  await step('status_card', { items: [{ name: 'Shipyard has no workers after a wage change', stage: 'found' }] });
+  await step('raise_to_developers', { kind: 'bug', title: 'Desktop app wage change leaves the sector with no wage', detail: 'Desktop app sends the wage as text; the server stores no wage; hiring stops.', issue: { summary: 'Wage from the desktop app is not saved', steps: ['Set a wage in the desktop app'], expected: 'Wage saved', actual: 'No wage, workers leave' } });
+  await step('raise_to_developers', { kind: 'bug', title: 'Desktop app wage change leaves the sector with no wage', detail: 'Same report.', issueNumber: 812, issue: { summary: 'Desktop app wage not saved', steps: ['Set wage in desktop app'], expected: 'Saved', actual: 'Not saved' } });
+  await step('support_action', { tool: 'support_public_update', args: { message: 'Found it: the desktop app is not saving your wage, a known fault the developers are fixing. Set the wage again on the website and hiring restarts next turn.' } });
+  await step('finish', { state: 'waiting', summary: 'Answered; waiting for the player.', waitFor: 'player_reply' });
+  console.log('\nEVENTS', env.events.map((e) => e.kind + (e.tool ? ':' + e.tool : '') + (e.via ? ':' + e.via : '')).join(' '));
+})();
