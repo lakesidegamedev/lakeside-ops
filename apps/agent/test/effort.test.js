@@ -88,3 +88,16 @@ test("non-ticket tasks keep the fixed operator override", async () => {
   const r = await activationEffort({ history: [], source: { content: "How does the vote work?" } }, { config: { effortOverride: "high" }, runner: "claude" });
   assert.deepEqual(r, { effort: "high", via: "operator-override" });
 });
+
+test("the player-ticket route effort is also a ceiling: a first-time rules question drops to medium, a bug stays at the route effort", async () => {
+  const { activationEffort } = require("../lib/operator/effort");
+  const provider = { assignedBy: "ticket-route", routeEffort: "high" };
+  const q = { ticket: 7, history: [], provider, source: { content: "How does the party leader vote work?" }, tags: { kind: "mechanics_question", complexity: "simple" } };
+  const lowered = await activationEffort(q, { config: { effortOverride: "high" }, runner: "claude" });
+  assert.equal(lowered.effort, "medium");
+  assert.match(lowered.via, /^ticket-route:lowered:first-time rules question/);
+  const bug = await activationEffort({ ...q, tags: { kind: "bug_report" } }, { config: { effortOverride: "high" }, runner: "claude" });
+  assert.deepEqual(bug, { effort: "high", via: "ticket-route" });
+  const low = await activationEffort({ ...q, provider: { ...provider, routeEffort: "low" } }, { config: {}, runner: "claude" });
+  assert.equal(low.effort, "low");
+});

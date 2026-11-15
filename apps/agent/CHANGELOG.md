@@ -5,7 +5,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
-- Effort per ticket question: with the operator effort override set, it is now a ceiling for tickets. A first-time plain rules question with no figures runs at medium; bug reports, money or figures, turn or outage questions, a refused, retracted or out-of-steps earlier attempt, and any activation after the player disputed an answer stay at the ceiling. Never below medium unless the ceiling is lower. The reason is recorded in the usage record. Non-ticket tasks are unchanged.
+- Effort per ticket question: the player-ticket route effort (and the operator effort override) is now a ceiling for tickets. A first-time plain rules question with no figures runs at medium; bug reports, money or figures, turn or outage questions, a refused, retracted or out-of-steps earlier attempt, and any activation after the player disputed an answer stay at the ceiling. Never below medium unless the ceiling is lower. The reason is recorded in the usage record. Non-ticket tasks are unchanged.
 
 - When several players report the same fault, Keir reuses one checked answer. A new ticket that matches an earlier one on at least two independent signals (similar wording, the support search, the same screen or file, place or turn) within 72 hours gets that ticket's answer as context, but only if it was posted with a code-written "From:" line and was not later corrected or disputed by its player. The new task still has to read the new player's own figures. A draft that takes the opposite direction on the same fault ("working as designed" against "a bug") is refused once with both texts; the next post goes out. The tickets are linked, not merged.
 
