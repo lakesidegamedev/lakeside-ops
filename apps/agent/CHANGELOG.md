@@ -7,6 +7,7 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 - Every closed ticket now gets a score from 0 to 100 from signals Keir already records (reopens, corrections, player complaints, staff feedback, refused tool calls, activations, owner decisions, hours open). The nightly self-review starts from the four lowest-scored tickets of the last three days and files its lessons under the lane they belong to instead of the brief.
 - Capability gaps are ranked: a gap hit by a task on a low-scored ticket counts double. `bin/keir-gaps.js` prints the top ten with their board card ids.
+- `deploy/release.sh --replay-gate` (off by default) runs the known-failure replay set on the live release and on the build and refuses the release if a scenario that passed on live now fails. The weekly builder (`deploy/keir-builder.*`) is in the tree but not installed.
 - The replay benchmark is back in the tree, with seven known-failure scenarios from real tickets (`--set k10`) and a transcript saved per run.
 
 ## 9.2.0 (2026-11-15)

@@ -8,6 +8,11 @@
 #                                 Weekly train (5.1): refused unless the last train is 6+
 #                                 days old and the commit has soaked 24h on main; --hotfix
 #                                 bypasses with a reason, logged in $root/releases.jsonl.
+#                                 --replay-gate (optional, off by default): once the build and its
+#                                 tests pass, run the k10 replay set once on the live release (only
+#                                 when its baseline is missing or stale) and once on this build, and
+#                                 refuse if any scenario that passed on live now fails. Costs real
+#                                 model runs, so it is never implied by --stage or --hotfix.
 #   deploy/release.sh --rollback  point current back at the previous release
 #   deploy/release.sh --status    show current, previous and what each unit is running
 # It never starts, stops or restarts a service. A flip takes effect for a
@@ -52,10 +57,11 @@ case "${1:-}" in
 esac
 
 ref=$1; shift
-hotfix=""; is_hotfix=0; stage_only=0
+hotfix=""; is_hotfix=0; stage_only=0; replay_gate=0
 while (( $# )); do
   case "$1" in
     --stage) stage_only=1; shift ;;
+    --replay-gate) replay_gate=1; shift ;;
     --hotfix) is_hotfix=1; hotfix=${2:?hotfix needs a reason}; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -101,6 +107,35 @@ if [[ ! -d $dir ]]; then
   mv "$tmp" "$dir" && chmod -R a-w "$dir"
   [[ $tmp == "$build" ]] || rm -rf "$build"
 fi
+# Optional replay gate (--replay-gate). The replay harness lives in the source checkout; the
+# release trees under test are passed to it with KEIR_REPLAY_AGENT. One run per scenario.
+replay_pending=""
+if (( replay_gate )) && [[ $(target current) != "$dir" ]]; then
+  top=$(git -C "$repo" rev-parse --show-toplevel)
+  gate_js="$dir/bin/keir-replay-gate.js"
+  baseline="$root/replay-baseline.json"
+  out="$root/replay/$(date -u +%Y%m%dT%H%M%S)"; mkdir -p "$out"
+  live=$(target current)
+  run_set() { # <agent-tree> <out-dir>
+    KEIR_REPLAY_AGENT="$1" KEIR_REPLAY_LABEL="$(basename "$2")" node "$top/apps/cli/bench/replay/run.cjs" --set k10 --scenario all --repeat 1 --concurrency 2 --out "$2" >"$2.log" 2>&1 || true
+  }
+  if [[ -n $live && -f $live/RELEASE ]]; then
+    live_sha=$(awk '{print $1}' "$live/RELEASE")
+    if [[ $(node "$gate_js" sha "$baseline") != "$live_sha" ]]; then
+      echo "replay gate: baselining the live release ${live_sha:0:12}"
+      run_set "$live" "$out/live"
+      node "$gate_js" summarize "$out/live" "$live_sha" > "$baseline"
+    fi
+    echo "replay gate: running the k10 set on ${sha:0:12}"
+    run_set "$dir" "$out/candidate"
+    node "$gate_js" summarize "$out/candidate" "$sha" > "$out/candidate-summary.json"
+    node "$gate_js" compare "$baseline" "$out/candidate-summary.json" \
+      || { echo "refusing: replay gate failed (transcripts in $out/candidate)" >&2; exit 1; }
+    replay_pending="$out/candidate-summary.json"
+  else
+    echo "replay gate: no live release to compare with, skipping" >&2
+  fi
+fi
 if (( stage_only )); then echo "staged and tested: $dir (current unchanged)"; exit 0; fi
 version=$(awk '{print $2}' "$dir/RELEASE")
 tag="v$version"
@@ -129,6 +164,8 @@ old=$(target current)
 if [[ $old == "$dir" ]]; then echo "already current: $dir"; status; exit 0; fi
 [[ -n $old ]] && flip previous "$old"
 flip current "$dir"
+# The gated build is the new baseline for the next release.
+[[ -z $replay_pending ]] || cp "$replay_pending" "$root/replay-baseline.json"
 node -e 'const [f,sha,version,v]=process.argv.slice(1);const x=JSON.parse(v);require("fs").appendFileSync(f,JSON.stringify({at:Date.now(),sha,version,kind:x.kind,reason:x.reason})+"\n")' "$train_log" "$sha" "$version" "$verdict"
 echo "current -> $dir. Nothing was restarted."
 status
