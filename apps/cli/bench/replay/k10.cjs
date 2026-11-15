@@ -47,7 +47,8 @@ function gradeK10(events, spec) {
     add('process', 'finish_accepted', fin.length > 0 && fin.at(-1).ok === true, fin.length ? `last finish ok=${fin.at(-1).ok}` : 'never finished');
   }
   if (k.maxRefusals != null) { const bad = attempts.filter((e) => e.ok === false); add('process', 'few_refusals', bad.length <= k.maxRefusals, `${bad.length} refused, limit ${k.maxRefusals}`); }
-  if (k.prCreated) add('state', 'fix_pr_published', events.some((e) => e.kind === 'pr_create'), 'pull request');
+  // A fix counts as set in motion when Keir published a pull request itself or a coding worker was queued for the filed bug.
+  if (k.prCreated) add('state', 'fix_pr_published', events.some((e) => e.kind === 'pr_create' || e.kind === 'coding_worker'), 'pull request or queued coding worker');
   if (k.cards != null) { const n = events.filter((e) => e.kind === 'mcp' && e.server === 'ops-knowledge' && e.tool === 'kanban_add').length; add('state', 'separate_cards', n === k.cards, `${n} cards created, expected ${k.cards}`); }
   if (k.maxDecisions != null) { const n = events.filter((e) => e.kind === 'decision').length; add('state', 'decisions_within_limit', n <= k.maxDecisions, `${n} decisions, limit ${k.maxDecisions}`); }
   if (k.merges != null) { const n = events.filter((e) => e.kind === 'mcp' && e.server === 'support' && e.tool === 'support_merge').length; add('state', 'merge_count', n === k.merges, `${n} merges`); }

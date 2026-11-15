@@ -203,7 +203,11 @@ function createEnv({ scenario: sc, dir, configOverrides = {}, clock: clk = { t: 
   const notebook = require(AGENT + '/lib/operator/knowledge').createNotebook({ file: path.join(dir, 'notebook.json') });
   // Optional seeded memory (KBX2 stale-note traps): notes exactly as an earlier task would have saved them.
   for (const n of sc.notebook || []) notebook.remember({ by: 'replay-seed', ...n });
-  const broker = createBroker({ ledger, config, mcp, discord, sandbox, exec, now, notebook });
+  // Keir 10: production queues a coding worker for a filed bug (codingworkers.js, run by the operator loop). The replay
+  // records the queued build as an event instead of running it, so a scenario can grade that the fix was set in motion.
+  let workerRuns = 0;
+  const codingWorkers = () => ({ dispatch: async (spec) => { const id = `cw-replay-${++workerRuns}`; events.push({ kind: 'coding_worker', run: id, issue: spec.issue || null, changeClass: spec.changeClass || null, title: spec.title }); return { run: { id } }; } });
+  const broker = createBroker({ ledger, config, mcp, discord, sandbox, exec, now, notebook, codingWorkers });
   // Every broker tool call is recorded as an attempt ('tool', with ok/error), so
   // grading can see what was tried and refused, not only what took effect.
   // Owner decisions and privileged action requests the call opened are

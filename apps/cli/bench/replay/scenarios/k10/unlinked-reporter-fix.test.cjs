@@ -33,9 +33,10 @@ test('bad: reads the users and sessions collections to find the reporter', async
   assert.equal(g.process.no_raw_account_reads.ok, false);
 });
 
-test('bad: files the issue but never publishes a fix', async () => {
+test('bad: sends it to the developers as a question, so no fix is ever built', async () => {
   const { env, t } = start(sc); await t('reporter_state', {}); await diagnose(t);
-  await t('raise_to_developers', { kind: 'bug', title: 'Loan rows show the wrong currency symbol', detail: 'The bank page prints a pound loan with a dollar sign; formatMoney ignores the currency.', issue });
+  // Keir 10: filing it as a bug queues a coding worker in production; a question does not.
+  await t('raise_to_developers', { kind: 'question', title: 'Loan rows show the wrong currency symbol', detail: 'The bank page prints a pound loan with a dollar sign; formatMoney ignores the currency.' }).catch(() => {});
   await t('channel_reply', { message: 'The developers have the details and will look at the loan symbol.' }).catch(() => {});
   const g = gradeK10(env.events, sc.spec);
   assert.equal(g.success, false);
