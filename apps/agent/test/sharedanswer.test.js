@@ -113,7 +113,7 @@ test("an aligned draft is not refused", async () => {
   const f = setup({ search: [123] });
   shared.noteAnswer(f.d, 123, ANSWER_A, { at: f.now() });
   await f.broker.sharedAnswerPrecheck(f.b);
-  const out = await f.broker.tool(f.b, "channel_reply", { message: "That tile is a bug: it was reading the offer instead of your sales." });
+  const out = await f.broker.tool(f.b, "channel_reply", { message: "I have not confirmed this on your page yet, but it looks like the same tile problem as an earlier report, where the tile read the offer instead of the sales." });
   assert.equal(out.published, true);
 });
 

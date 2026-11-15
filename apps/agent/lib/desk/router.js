@@ -24,8 +24,15 @@ async function handle({ command = "keir", sub, options = {}, member } = {}, deps
   if (sub === "status") return reply(read.status(state), true);
   if (sub === "waiting") return reply(read.waiting(state), true);
   if (sub === "why") return reply(read.why(state, ticket), true);
-  const mod = ACTION_SUBS.has(sub) ? (deps.actions !== undefined ? deps.actions : optional("./actions")) : MODEL_SUBS.has(sub) ? (deps.models !== undefined ? deps.models : optional("./models")) : null;
-  const fn = mod && (typeof mod[sub] === "function" ? mod[sub] : typeof mod.run === "function" ? (a) => mod.run(sub, a) : null);
+  // Staff actions (Keir 9, feature F2): nudge, release, pause, resume, on and off run through actions.run;
+  // "model" lists the proven-model registry, or queues a selection when a provider and model are given.
+  const actor = { id: member?.id || null, role: level >= 3 ? "dev" : level >= 2 ? "junior" : "mod" };
+  const isAction = ACTION_SUBS.has(sub) || sub === "on" || sub === "off";
+  const mod = isAction ? (deps.actions !== undefined ? deps.actions : optional("./actions")) : MODEL_SUBS.has(sub) ? (deps.models !== undefined ? deps.models : optional("./models")) : null;
+  let fn = null;
+  if (mod && typeof mod[sub] === "function") fn = mod[sub];
+  else if (mod && isAction && typeof mod.run === "function") fn = () => mod.run({ action: sub, ticket, actor, config: deps.config });
+  else if (mod && sub === "model" && typeof mod.view === "function") fn = () => (options.provider && options.model && typeof mod.select === "function" ? mod.select({ provider: options.provider, model: options.model, effort: options.effort, override: options.override, actor, config: deps.config }) : mod.view(deps.config));
   if (!fn) return reply("That command is not available yet.");
   try {
     const out = await fn({ options, member, level, state });

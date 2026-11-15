@@ -6,11 +6,11 @@ const MOD = "1483975767703552111";
 function start() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "desk-http-"));
   fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify({ jobs: {}, audit: [] }));
-  const p = spawn(process.execPath, [path.join(__dirname, "../bin/keir-desk.js"), "--http"], { env: { ...process.env, ASK_API_SECRET: SECRET, KEIR_DESK_PORT: String(PORT), KEIR_STATE_DIR: dir }, stdio: ["ignore", "pipe", "pipe"] });
+  const p = spawn(process.execPath, [path.join(__dirname, "../bin/keir-desk.js"), "--http"], { env: { ...process.env, ASK_API_SECRET: SECRET, KEIR_DESK_PORT: String(PORT), KEIR_STATE_DIR: dir, KEIR_OPERATOR_PORT: "19798", KEIR_OPERATOR_ADMIN_TOKEN: "test-token-not-real", KEIR_KILL_SWITCH_FILE: path.join(dir, "kill-switch") }, stdio: ["ignore", "pipe", "pipe"] });
   return new Promise((resolve) => p.stdout.on("data", (d) => /listening/.test(String(d)) && resolve(p)));
 }
 const post = (body, secret) => fetch(`http://127.0.0.1:${PORT}/api/keir/desk/command`, { method: "POST", headers: { "content-type": "application/json", ...(secret ? { "x-ask-secret": secret } : {}) }, body: JSON.stringify(body) });
-test("desk http: secret required, roles enforced, actions not available yet, replies capped", async (t) => {
+test("desk http: secret required, roles enforced, actions reach the operator, replies capped", async (t) => {
   const p = await start(); t.after(() => p.kill());
   assert.equal((await post({ command: "keir", sub: "status", member: { roles: [MOD] } })).status, 401);
   assert.equal((await post({ command: "keir", sub: "status", member: { roles: [MOD] } }, "wrong")).status, 401);
@@ -21,6 +21,7 @@ test("desk http: secret required, roles enforced, actions not available yet, rep
   assert.match(none.content, /do not have a role/);
   const dev = "1470571508689535188";
   const act = await (await post({ command: "keir", sub: "nudge", options: { ticket: 5 }, member: { roles: [dev] } }, SECRET)).json();
-  assert.match(act.content, /not available yet/);
+  // No operator listens on the test port, so the action reports Keir as off and changes nothing.
+  assert.match(act.content, /Keir is off right now/);
   assert.equal((await fetch(`http://127.0.0.1:${PORT}/other`, { method: "POST" })).status, 404);
 });

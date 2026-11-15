@@ -97,3 +97,15 @@ test("Keir 9.0.3: the kill switch file is read like the operator reads it", () =
   fs.writeFileSync(f, JSON.stringify({ reason: "old", until: new Date(Date.now() - 1000).toISOString() })); assert.equal(readKillSwitch(f), null);
   fs.writeFileSync(f, "maintenance window\n"); assert.equal(readKillSwitch(f).reason, "maintenance window");
 });
+
+test("router sends staff actions through actions.run with the caller's role and the model command through the registry", async () => {
+  const calls = [];
+  const deps = { loadState: () => mk([]), actions: { run: async (a) => { calls.push(a); return { content: "Nudged." }; } }, models: { view: async () => ({ content: "registry" }), select: async (a) => { calls.push(a); return { content: "queued" }; } } };
+  assert.equal((await handle({ command: "keir", sub: "nudge", options: { ticket: 9 }, member: as("junior") }, deps)).content, "Nudged.");
+  assert.deepEqual({ action: calls[0].action, ticket: calls[0].ticket, role: calls[0].actor.role }, { action: "nudge", ticket: 9, role: "junior" });
+  await handle({ command: "keir", sub: "off", member: as("dev") }, deps);
+  assert.equal(calls[1].action, "off"); assert.equal(calls[1].actor.role, "dev");
+  assert.match((await handle({ command: "keir", sub: "off", member: as("junior") }, deps)).content, /role/);
+  assert.equal((await handle({ command: "keir", sub: "model", member: as("dev") }, deps)).content, "registry");
+  assert.equal((await handle({ command: "keir", sub: "model", options: { provider: "muse", model: "m" }, member: as("dev") }, deps)).content, "queued");
+});
