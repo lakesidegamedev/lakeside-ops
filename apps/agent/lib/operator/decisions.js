@@ -83,8 +83,19 @@ function buttons(id, options = null, review = null) {
 // Model-written text must never be able to forge a verdict line.
 const clean = (t) => String(t || "").replace(/\*\*Decision:\*\*/gi, "Decision:").replace(/[\u2013\u2014]/g, ",").trim().slice(0, 1500);
 
-function render(question, { onBehalf, signoff, options, review } = {}) {
-  if (options) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Choose one**\n${question.slice(0, 450)}\n\n${options.map(o => `${o.id}. **${o.label}**${o.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`).join("\n")}\n\nYour choice sets the direction. Any action requiring approval gets a separate proposal.`;
+// Keir 10 (one owner digest per ticket): one DM per ticket. The head question is shown in full; every other open question on
+// the ticket is listed under it with its options, recommended first. Each question stays its own decision, so an answer maps
+// back to exactly one question.
+function digestBlock(siblings) {
+  if (!siblings || !siblings.length) return "";
+  const lines = siblings.slice(0, 8).map((y, i) => {
+    const rec = (y.options || []).find((o) => o.recommended), rest = (y.options || []).filter((o) => o !== rec);
+    return `**Question ${i + 2}:** ${y.question.slice(0, 220)}\n${[rec, ...rest].filter(Boolean).map((o) => `   ${o.id}. ${o.label}${o.recommended ? " (recommended)" : ""}`).join("\n")}`;
+  });
+  return `\n\n**${siblings.length} more open question${siblings.length === 1 ? "" : "s"} on this ticket** (answer each in the app, or here once the one above is answered):\n${lines.join("\n")}${siblings.length > 8 ? `\n...and ${siblings.length - 8} more in the app.` : ""}`;
+}
+function render(question, { onBehalf, signoff, options, review, digest } = {}) {
+  if (options) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Choose one**\n${question.slice(0, 450)}\n\n${options.map(o => `${o.id}. **${o.label}**${o.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`).join("\n")}${digestBlock(digest)}\n\nYour choice sets the direction. Any action requiring approval gets a separate proposal.`.slice(0, 1990);
   if (review?.human) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**${review.title}**\n${require("./approvalcopy").body(review)}\n\n**Approve:** ${review.approve}\n**Decline:** ${review.decline}\n**Ask a question:** send this back to Keir without approving it.`;
   if (review) {
     const scope = JSON.stringify(review.scope).replace(/\*\*Decision:\*\*/gi, "Decision:");
@@ -97,11 +108,14 @@ function render(question, { onBehalf, signoff, options, review } = {}) {
 // Shared short preview for app work lists; permission copy is never rewritten.
 function firstSentence(text) { const m = /^[\s\S]{20,220}?[.!?](\s|$)/.exec(String(text)); return (m ? m[0] : String(text).slice(0, 200)).trim(); }
 
+const ticketOfDecision = (d, x) => x.ticket || d.jobs?.[x.jobId]?.ticket || null;
+const digestSiblings = (d, head) => Object.values(d.decisions || {}).filter((y) => y.state === "pending" && y.digestOf === head.id).sort((a, b) => a.at - b.at);
+
 /** Open (or reuse) a pending decision for a job, optionally bound to an action. */
 // binds: { number, head } of an AHDGame PR the question asks the owner to
 // merge. An approval then records an exact merge approval at that head
 // (Keir 5.1.1), so later promotions carrying it chain instead of re-asking.
-function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null, decisionKey = null, options = null, explanation = null }) {
+function openDecision(ledger, config, { jobId, actionId = null, question, signoff = false, binds = null, decisionKey = null, options = null, explanation = null, ticket = null }) {
   const choices = options == null ? null : normalizeOptions(options);
   if (choices && (actionId || signoff || binds)) throw new Error("A choice cannot be bound to an action approval");
   if (signoff && !actionId && !binds) throw new Error("Sign-off requires a bound action or exact PR head");
@@ -122,10 +136,16 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
   if (review?.human) text = require("./approvalcopy").body(review);
   else if(review?.description) text = review.description;
   const decision = { id, jobId, actionId, ...(choices ? { options: choices, type: "choice" } : {}), ...(review ? { review, approvalBinding: binding(action, binds), type: "approval" } : {}), question: text, state: "pending", at: Date.now(), sent: {}, ...(decisionKey ? { decisionKey } : {}), ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
+  // Keir 10: a second owner choice on a ticket that already has one waiting joins that DM instead of sending another.
+  const tn = ticket || d.jobs?.[jobId]?.ticket || null;
+  const head = choices && !actionId && !signoff && !binds && tn ? Object.values(d.decisions).find((y) => y.state === "pending" && y.type === "choice" && !y.actionId && !y.digestOf && Number(ticketOfDecision(d, y)) === Number(tn)) : null;
+  if (tn) decision.ticket = tn;
+  if (head) { decision.digestOf = head.id; decision.digested = true; head.digested = true; head.digestDirty = Date.now(); }
   d.decisions[id] = decision;
   // The durable decision is already exposed by the authenticated app API and
   // app push collector. App-only delivery does not mint an approval receipt.
-  if (!require("./decisionpolicy").appDecisions(config)) ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, decision), { components: buttons(id, choices, review), decision: id, recipient: config.ownerId });
+  if (head) ledger.audit("decision_digested", { decision: id, head: head.id, ticket: tn });
+  else if (!require("./decisionpolicy").appDecisions(config)) ledger.notify(`ask:${id}:${config.ownerId}`, "owner", render(text, { ...decision, digest: digestSiblings(d, decision) }), { components: buttons(id, choices, review), decision: id, recipient: config.ownerId });
   ledger.audit("decision_opened", { decision: id, job: jobId, action: actionId, signoff: Boolean(signoff) });
   return decision;
 }
@@ -198,9 +218,9 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       if (a.approvalMessage) { d.actions[a.id] = a; x.actionId = a.id; ledger.audit("decision_bound_approval", { decision: x.id, action: a.id, pr: args.number, head: args.head }); }
     }
     if (job && !["done", "dismissed", "cancelled"].includes(job.state)) {
-      const line = selected ? `${who} chose: ${selected.label}${selected.detail ? `. ${selected.detail}` : ""}. This is direction, not execution approval.` : verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
+      const line = selected ? `${who} chose${x.digested ? ` for "${x.question.slice(0, 160)}"` : ""}: ${selected.label}${selected.detail ? `. ${selected.detail}` : ""}. This is direction, not execution approval.` : verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
       (job.inbox ||= []).push({ authorId: actor, role: actor === config.ownerId ? "owner" : "support", content: line, at: new Date(now()).toISOString(), decision: x.id });
-      delete job.ownerDecisionPending;
+      if (!Object.values(d.decisions || {}).some((y) => y !== x && y.state === "pending" && y.jobId === x.jobId)) delete job.ownerDecisionPending;
       delete job.recoveryReviewRequired;
       job.state = "queued"; job.wakeAt = 0;
     }
@@ -268,6 +288,16 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     // Bound legacy cleanup and rotate failures so old copies cannot monopolize
     // the operator loop or starve newer decisions.
     for (const x of obsolete.sort((a, b) => (a.cleanupAttemptAt || 0) - (b.cleanupAttemptAt || 0)).slice(0, 6)) { x.cleanupAttemptAt = now(); await closeOut(x); }
+    // Keir 10: when the head question of a ticket's digest is answered, withdrawn or expired, the next open question becomes the
+    // head and its DM (listing the rest) goes out. One live DM per ticket, whatever happened to the one before it.
+    for (const x of Object.values(d.decisions || {})) {
+      if (x.state !== "pending" || !x.digestOf) continue;
+      const head = d.decisions?.[x.digestOf];
+      if (head && head.state === "pending") continue;
+      const next = Object.values(d.decisions).filter((y) => y.state === "pending" && y.digestOf === x.digestOf).sort((a, b) => a.at - b.at)[0];
+      for (const y of Object.values(d.decisions)) if (y.state === "pending" && y.digestOf === x.digestOf) y.digestOf = y === next ? undefined : next.id;
+      ledger.audit("decision_digest_promoted", { decision: next.id, ticket: ticketOfDecision(d, next) }); ledger.save();
+    }
     for (const x of Object.values(d.decisions || {})) {
       if (x.state !== "pending") continue;
       const obsoleteReason = require("./decisionpolicy").obsoleteReason(x, d);
@@ -297,9 +327,22 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       }
       if (await check(x)) continue;
       if ((action && action.expiresAt && action.expiresAt < now()) || (!action && !x.ownerHold && now() - x.at > PLAIN_EXPIRY_MS)) { expire(x, action); await closeOut(x); continue; }
+      // A question waiting inside a ticket's digest has no DM of its own; the head's DM lists it.
+      if (x.digestOf) continue;
+      const digest = digestSiblings(d, x);
       const ownerKey = `ask:${x.id}:${config.ownerId}`;
-      if (!require("./decisionpolicy").appDecisions(config) && !x.sent[config.ownerId] && !d.outbox[ownerKey]) {
-        ledger.notify(ownerKey, "owner", render(x.question, x), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
+      if (x.digestDirty && x.sent[config.ownerId] && !require("./decisionpolicy").appDecisions(config)) {
+        // A question joined this ticket's digest: replace the DM with one that lists it.
+        const prev = x.sent[config.ownerId];
+        if (prev?.messageId && !prev.deleted) { try { await discord("DELETE", `/channels/${prev.channelId}/messages/${prev.messageId}`); } catch { /* an old copy that cannot be removed is harmless */ } }
+        delete x.sent[config.ownerId];
+        x.digests = (x.digests || 0) + 1;
+        ledger.notify(`ask:${x.id}:${config.ownerId}:d${x.digests}`, "owner", render(x.question, { ...x, digest }), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
+      }
+      if (x.digestDirty && !x.sent[config.ownerId] && d.outbox[ownerKey] && !d.outbox[ownerKey].deliveredAt) d.outbox[ownerKey].content = render(x.question, { ...x, digest });
+      delete x.digestDirty;
+      if (!require("./decisionpolicy").appDecisions(config) && !x.sent[config.ownerId] && !d.outbox[ownerKey] && !x.digests) {
+        ledger.notify(ownerKey, "owner", render(x.question, { ...x, digest }), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
         ledger.save();
       }
       if (x.ownerHold && now() - (x.lastPingAt || x.at) >= REPING_MS) {
@@ -308,7 +351,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
         if (!require("./decisionpolicy").appDecisions(config)) {
           const prev = x.sent?.[config.ownerId];
           if (prev?.messageId && !prev.deleted) { try { await discord("DELETE", `/channels/${prev.channelId}/messages/${prev.messageId}`); } catch { /* an old copy that cannot be removed is harmless */ } delete x.sent[config.ownerId]; }
-          ledger.notify(`ask:${x.id}:${config.ownerId}:r${x.pings}`, "owner", render(`Still waiting on you, asked ${waited} hours ago, and the player is waiting too.\n\n${x.question}`, x), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
+          ledger.notify(`ask:${x.id}:${config.ownerId}:r${x.pings}`, "owner", render(`Still waiting on you, asked ${waited} hours ago, and the player is waiting too.\n\n${x.question}`, { ...x, digest: digestSiblings(d, x) }), { components: buttons(x.id, x.options, x.review), decision: x.id, recipient: config.ownerId });
         }
         ledger.audit("decision_reping", { decision: x.id, job: x.jobId, pings: x.pings, waitedHours: waited, changeClass: x.changeClass || null });
         ledger.save();
@@ -341,4 +384,4 @@ function withdrawDecisions(ledger, jobId, reason) {
   }
 }
 
-module.exports = { REPING_MS, normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
+module.exports = { digestSiblings, REPING_MS, normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };

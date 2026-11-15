@@ -5,6 +5,48 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.0.0 (2026-11-15)
+
+- How-to, where-is and strategy questions filed in the bug channel are routed as questions (lighter context, answer and close) unless they describe something broken.
+- A defect Keir finds by reading the code can be named to the player once it is filed and Keir's recorded fact cites the file it read; before, only code that labelled its own bug counted, so Keir told players a confirmed fault was unconfirmed.
+- Filing a second, different bug on the same ticket no longer stalls on the first one being offered back as a possible duplicate.
+- A bare "Thanks." after a real answer no longer forces a filler reply from the player-reply wait either.
+
+- Database reads no longer silently drop game settings whose names mention Discord, email or sessions (for example the setting that makes Discord linking required for new characters). Only personal identifiers, contact details and credentials are withheld, and a read now names any field it withheld, so a withheld field is never reported as missing.
+- A bare acknowledgement from the player ("Ok.", "thanks", "will check it out") after a real answer no longer forces Keir to post again before it can finish.
+
+- New tool `check_draft`: Keir can check a draft player post before sending it. It runs every content check a real post runs and lists all the problems at once with a fix for each, plus the post budget. It posts nothing, records nothing and leaves every refusal counter as it was.
+- Two new checks on every player post, also run by `check_draft`: a post that says the opposite of an earlier post on the same ticket (a fix is being built, then no fix is being built; live, then not live; available, then not available; can, then cannot) is refused unless it starts with "Correction:", and a post that calls something available when a read in the same task says it is locked ("not available until", "unlocks in", "opens in <year>") is refused. A "Correction:" post is never treated as a repeat of the post it corrects.
+- The brief now has one shipping rule instead of three: bug and display fixes outside the economy and turn-engine paths ship by themselves on green checks; economy, turn engine, migrations, money heals and rule, balance or economy-behaviour changes need the owner's yes (once per ticket chain unless huge), and main promotions of those wait for the owner's waking hours.
+- Every Muse run keeps its step trail (the text Muse writes between steps and its tool events, in order) so failures and replays can be read step by step. Muse exposes no private reasoning. The trails age out with the other per-run files.
+
+- Every distinct problem raised to the developers gets its own board item. If the board returns an item that already holds a different problem, Keir retries once with a distinguishing title and otherwise records nothing and says why. Only an explicit appendTo joins an existing item.
+- A public issue no longer needs the reporter looked up or linked, so an unlinked reporter's bug can be filed and shipped. The issue still refuses the player's character name, username and channel name.
+- One owner message per ticket: a second owner choice on a ticket that already has one waiting joins the first message (all open questions listed, recommended option first) instead of sending another. Each question stays its own decision, so each answer maps back to its own question. When the first is answered the next one takes over the message. The 12 hour reminder is unchanged.
+- Before its first run on a ticket, Keir gathers the reads that ticket type almost always needs (wiki and code for questions, the reporter and their recent clicks for bugs, turn status for outages, Ask health before a strategy redirect) and starts from them. Lessons from the nightly review now show for the ticket's lane.
+- A tool result marked stale at the top level no longer crashes the call.
+
+- A refused extra post can no longer trap a ticket task. When the player's latest message already has a real answer, a later refused post does not mark the player as owed an answer, and finishing clears a leftover mark. When an answer really is owed, one corrected post gets past the ten minute and three post pacing rules. Pacing refusals now list the post budget (posts left before a pause, when a long post is allowed, whether an answer is owed, the last post).
+- Keir now groups its own failures (reasoning, tool, provider, process, player) into fingerprinted groups in events.db, with the model transcript for each sample. A 15 minute scan files one board card per new, spiking or release-regressing failure; `bin/keir-failures.js` (top, new, release, show, backfill) and `GET /failures` read them. Optional Sentry output with `KEIR_SENTRY_DSN`, optional daily digest with `KEIR_FAILURE_DM=1`. Per-run files older than 14 days are listed daily and deleted only with `KEIR_RETENTION=apply`. The weekly builder brief includes the top reasoning and tool failure groups.
+- New `ask` tool: whether Ask is answering and its recent refusal rate, what Ask told the ticket's reporter, and a desk query to test a question before redirecting. When Ask is failing or down, the advice redirect is switched off and the context says why. Needs two read-only endpoints on the Ask service (branch `keir10/ask-bridge` in ask-site).
+- New `resolve_reporter` tool, and `reporter_state` now falls back to it: finds a reporter's account and current and retired characters from the ticket link, game username, linked Discord account or repeated page visits, without asking the player who they are and without returning emails, sessions or Discord ids.
+- New `player_trail` tool: the reporter's page views, clicks, rage clicks and errors around a time from PostHog, with replay links for developers (needs `POSTHOG_PERSONAL_API_KEY` and `POSTHOG_PROJECT_ID`).
+- New `request_log` tool: the reporter's recent API requests with status from the game's access log (no durations; page loads are not logged).
+- New `turn_status` tool and function: state, current turn, last turn finished, expected next turn, minutes overdue, lock heartbeat age and last failure phase. `request_action` gains kind `turn_lock_reset`: a dry-run plan by default, then an owner-approved heal that clears only the stale lock flag.
+- `github` gains `pr_diff`, `pr_comment` and `rerun_check`. `view_page` takes a path, a device (desktop, iphone, android), reduced motion and dark mode.
+- Ticket tasks can now read a country's military roster, the reporter's own bond positions, a country's fiscal history and the game's lore wiki, glossary, parties and organisations. The alt-ring tools stay staff only.
+- Every closed ticket now gets a score from 0 to 100 from signals Keir already records (reopens, corrections, player complaints, staff feedback, refused tool calls, activations, owner decisions, hours open). The nightly self-review starts from the four lowest-scored tickets of the last three days and files its lessons under the lane they belong to instead of the brief.
+- Capability gaps are ranked: a gap hit by a task on a low-scored ticket counts double. `bin/keir-gaps.js` prints the top ten with their board card ids.
+- `deploy/release.sh --replay-gate` (off by default) runs the known-failure replay set on the live release and on the build and refuses the release if a scenario that passed on live now fails. The weekly builder (`deploy/keir-builder.*`) is in the tree but not installed.
+- The replay benchmark is back in the tree, with seven known-failure scenarios from real tickets (`--set k10`) and a transcript saved per run.
+- Every ticket is routed to one lane before the model runs: question, bug, data repair, outage, people (account, ban, recovery), idea or advice. The router uses the intake tags, the channel, the player's words, open incidents and, for "the turn is stuck" tickets, a live check of the turn lock and recent turns. The lane and its reason are recorded, and a later change needs a stated reason.
+- An outage ticket is worked as one incident and no longer asks for the reporter's corporation or sector records. A question ticket ends when every question is answered: no progress card and no owner decision unless a real defect turned up, which is spun out as its own ticket. After eight questions or a day, the model is told to answer and close, and to offer a fresh ticket for new topics.
+- Ticket context is now sized by lane and wake type. Question, idea, people and advice tickets, and every wake, run on the core brief, the lane's steps, a case file and what changed, instead of the whole manual. Bug, data repair and outage tickets still start with the full context. Skills load only for those three lanes.
+- New case file per ticket: what is known, what the player was told (last eight posts), what was promised, open questions, fixes and their stages, and posts left when the post budget exists. A wake leads with what changed since the last run and skips orientation and read discovery unless the lane changed or six hours passed.
+- Wake cap in code: a ticket job runs the model at most six times an hour and 40 a day unless a human message arrived; beyond that it waits and one `wake_capped` audit row is recorded.
+- The stuck-ticket sweeper skips tickets whose support record is closed, resolved or merged.
+- A one-fix status card now moves forward by itself when its receipt arrives (merged, on the sandbox, live on the main server); the model is woken only when a fix is live and the player's figures must be checked.
+
 ## 9.2.1 (2026-11-15)
 
 ### Fixed

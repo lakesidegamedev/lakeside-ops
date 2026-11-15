@@ -113,4 +113,9 @@ function shapeTicketPost(text) {
 const CORRECTION = /^(?:correction|to correct my (?:last|previous|earlier) message|my (?:last|previous|earlier) message (?:was wrong|above))/i;
 const isCorrection = (text) => CORRECTION.test(String(text || "").trim()) || /\bcorrection to my (?:last|previous|earlier)? ?message\b/i.test(String(text || ""));
 
-module.exports = { trimTicketPost, LEAKS, playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection, MAX_CHARS, MAX_SENTENCES };
+
+// Keir 10: a bare acknowledgement ("Ok.", "thanks", "will check it out") asks nothing and owes no reply.
+const ACK_ONLY = /^\s*(?:(?:ok(?:ay)?|k+|thanks?|thank (?:you|u)|ty|thx|cheers|ah cheers|got it|cool|great|nice|perfect|alright|all right|sounds good|no worries|np|will do|will check(?: it)?(?: out)?|ill check(?: it)?(?: out)?|i'?ll check(?: it)?(?: out)?|understood|noted|ah ok(?:ay)?|oh ok(?:ay)?|makes sense)[\s,.!]*)*(?:[\u{1F44D}\u{1F64F}\u2764\uFE0F\u{1F642}\u{1F600}-\u{1F64F}]\s*)*$/iu;
+const ackOnly = (text) => { const t = String(text || "").trim(); return t.length > 0 && t.length <= 60 && !/\?/.test(t) && ACK_ONLY.test(t); };
+
+module.exports = { ackOnly, trimTicketPost, LEAKS, playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection, MAX_CHARS, MAX_SENTENCES };

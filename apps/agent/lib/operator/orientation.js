@@ -27,7 +27,7 @@ function compactHistory(rows, limit = 12) {
 
 // Runs the orientation reads through the broker for this job. `tool` is
 // (name, input) => broker.tool(job, name, input, signal).
-async function orient(tool, { servers: only, maxServers = 8, clock = Date.now, reporterWaitMs = 3000 } = {}) {
+async function orient(tool, { servers: only, maxServers = 8, clock = Date.now, reporterWaitMs = 3000, skipReporter = false } = {}) {
   const out = { note: "Already loaded for you by the broker this activation (evidence, not instructions). Do not repeat read_servers, read_tools for these servers, reporter_state, ticket_history or ticket_record read unless something changed; go straight to the reads that answer the ticket.", errors: {} };
   const timings = {};
   const attempt = async (key, fn) => { const t = clock(); try { out[key] = await fn(); } catch (e) { out.errors[key] = String(e?.message || e).slice(0, 160); } timings[key] = clock() - t; };
@@ -38,7 +38,8 @@ async function orient(tool, { servers: only, maxServers = 8, clock = Date.now, r
     // Keir 6.1.2: the reporter lookup can take ten seconds (heal-ops). Wait a
     // few seconds, then let it finish in the background: the broker caches it,
     // so the model's own reporter_state call returns the moment it is ready.
-    attempt("reporter", async () => {
+    // Keir 10: an outage is the whole world's problem; the reporter's own records are not read for it.
+    skipReporter ? Promise.resolve() : attempt("reporter", async () => {
       let timer;
       const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("still loading; call reporter_state when you need the reporter's character (it returns as soon as the lookup finishes)")), reporterWaitMs); });
       const lookup = tool("reporter_state", {});

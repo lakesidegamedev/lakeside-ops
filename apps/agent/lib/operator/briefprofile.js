@@ -88,20 +88,20 @@ const PAGE = 10000;
 const page = (text, offset = 0) => ({ text: text.slice(offset, offset + PAGE), totalChars: text.length, nextOffset: offset + PAGE < text.length ? offset + PAGE : null });
 
 // Everything agent.js needs for one lean activation, or null when the job runs full.
-const CORE_DIRECT = ["finish", "submit_result", "retry_result", "finish_patch", "edit_verify", "checkpoint", "channel_reply", "progress_update", "support_action",
+const CORE_DIRECT = ["finish", "submit_result", "retry_result", "finish_patch", "edit_verify", "checkpoint", "check_draft", "channel_reply", "progress_update", "support_action",
   "calculate", "view_attachment", "read_servers", "read_tools", "read_tool", "ticket_history", "reporter_state", "ticket_record", "handoff",
   // Workspace tools stay direct when the broker, not the model's own tools, works the snapshot.
   "shell", "evidence_batch", "local_file", "repository_snapshot"];
 // Workspace tools a hybrid activation replaces with the model's own (sandboxed) tools.
 const WORKSPACE_TOOLS = ["shell", "evidence_batch", "local_file"];
-function lean({ job, quick, briefText, tools, skills, skillLane, skillsRoot, skillNames, enabled = true, coreText = null, hybrid = false }) {
+function lean({ job, quick, briefText, tools, skills, skillLane, skillsRoot, skillNames, enabled = true, coreText = null, hybrid = false, extraDirect = [] }) {
   if (!enabled || job.voiceMode) return null;
   const profile = coreText ? "core" : profileOf(job, quick);
   if (hybrid) tools = tools.filter((t) => !WORKSPACE_TOOLS.includes(t.name));
   const { text, omitted } = coreText ? { text: coreText.trim(), omitted: split(briefText).sections } : trim(briefText, profile, job);
   const deferTools = ["work", "finding", "quick", "core"].includes(profile);
   // The core profile keeps only everyday and completion tools direct; everything else loads on demand.
-  const deferred = !deferTools ? [] : profile === "core" ? tools.filter((t) => !CORE_DIRECT.includes(t.name)) : tools.filter((t) => RARE_TOOLS.includes(t.name));
+  const deferred = !deferTools ? [] : profile === "core" ? tools.filter((t) => !CORE_DIRECT.includes(t.name) && !extraDirect.includes(t.name)) : tools.filter((t) => RARE_TOOLS.includes(t.name));
   const direct = tools.filter((t) => !deferred.includes(t));
   const sessionTools = [...direct, LOAD_CONTEXT, ...(deferred.length ? [CALL_TOOL] : [])];
   const catalog = [];

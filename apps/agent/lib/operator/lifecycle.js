@@ -60,6 +60,19 @@ const DEFAULT_WAKE_MS = 4 * 3600000;
 // off (5 min, doubling, capped at 6 h); the owner hears about it once, at this count.
 const CLOSE_CHECK_BASE_MS = 5 * 60000, CLOSE_CHECK_MAX_MS = 6 * 3600000, CLOSE_CHECK_ALERT_AT = 4;
 
+// Keir 10 wake cap (code, no model): a ticket job runs the model at most 6 times an hour and 40 a day
+// unless a human message arrived. agent.run records each start in job.runStarts. Over the cap the job
+// waits until the oldest counted run ages out, and one "wake_capped" audit row says so.
+const WAKE_CAP = Object.freeze({ perHour: 6, perDay: 40 });
+function wakeCapped(j, now) {
+  const runs = (j.runStarts || []).filter((t) => now - t < 24 * 3600000).sort((a, b) => a - b);
+  const hour = runs.filter((t) => now - t < 3600000);
+  if (hour.length >= WAKE_CAP.perHour) return { window: "hour", count: hour.length, until: hour[hour.length - WAKE_CAP.perHour] + 3600000 };
+  if (runs.length >= WAKE_CAP.perDay) return { window: "day", count: runs.length, until: runs[runs.length - WAKE_CAP.perDay] + 24 * 3600000 };
+  return null;
+}
+const capApplies = (j) => j.kind === "ticket" && j.ticket && !j.codingParent && j.role !== "owner" && !j.internalProbe;
+
 const audit = (kind, detail) => ({ type: "audit", kind, detail });
 const notify = (key, destination, content) => ({ type: "notify", key, destination, content });
 
@@ -119,6 +132,14 @@ function wakeStep(j, ctx) {
   // note) is still unread when that run settles as blocked; it must wake the
   // task rather than wait for a human.
   else if (j.state === "blocked" && j.inbox?.length && !j.codingParent && !j.internalProbe && !j.channelClosed) { j.state = "queued"; effects.push(audit("requeued_for_inbox", { job: j.id, ticket: j.ticket || null, messages: j.inbox.length })); }
+  // The wake cap gates every route into "queued": timers, internal mail, sweeper nudges. A human message always passes.
+  if (capApplies(j)) {
+    const cap = j.state === "queued" && !humanInbox(j) ? wakeCapped(j, now) : null;
+    if (cap) {
+      j.state = "waiting"; j.wakeAt = Math.max(cap.until, now + 60000);
+      if (!j.wakeCappedAt) { j.wakeCappedAt = now; effects.push(audit("wake_capped", { job: j.id, ticket: j.ticket, window: cap.window, runs: cap.count, until: j.wakeAt })); }
+    } else if (j.wakeCappedAt && (humanInbox(j) || !wakeCapped(j, now))) delete j.wakeCappedAt;
+  }
   const expiry = require("./deadline").expireDeadline(j, now, { lifetimeMs: ctx.config.taskLifetimeMs });
   if (expiry === "extended") effects.push(audit("deadline_extended", { job: j.id, ticket: j.ticket || null, until: j.deadline }));
   else if (expiry === "blocked") effects.push(notify(`deadline:${j.id}`, "owner", `Task ${j.id}: ${j.summary}`));
@@ -241,4 +262,4 @@ function adoptFromIntake(ledger, ch, rows, { staff, category, number, config, no
   return job;
 }
 
-module.exports = { TERMINAL, NOT_HUMAN, humanInbox, applyEffects, wakeStep, onRunError, sweepClosedChannel, adoptOpenChannel, adoptFromIntake };
+module.exports = { WAKE_CAP, wakeCapped, TERMINAL, NOT_HUMAN, humanInbox, applyEffects, wakeStep, onRunError, sweepClosedChannel, adoptOpenChannel, adoptFromIntake };

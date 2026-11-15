@@ -13,6 +13,8 @@
 // (copy guards, scope, inactive tasks) say nothing about missing tools and are
 // ignored. Filing is read and write to the kanban only.
 
+// Keir 10: a hit from a task on a low-scored closed ticket counts double, so the gaps that hurt tickets rise first.
+const LOW_SCORE_WEIGHT = 2;
 const WINDOW_MS = 7 * 86400000;
 const MIN_HITS = 3, MIN_TASKS = 2;
 const REFILE_MS = 24 * 3600000;
@@ -57,14 +59,19 @@ function createCapabilityGaps({ ledger, mcp, events = null, now = () => Date.now
       if (!s) continue;
       const g = groups.get(s.sig) || { ...s, hits: 0, tasks: new Set(), samples: [] };
       g.hits++; if (a.job) g.tasks.add(a.job);
+      const ticket = a.ticket || d.jobs?.[a.job]?.ticket;
+      const low = Boolean(ticket) && require("./ticketscore").isLow(d, ticket);
+      g.weighted = (g.weighted || 0) + (low ? LOW_SCORE_WEIGHT : 1); if (low) g.lowHits = (g.lowHits || 0) + 1;
       if (g.samples.length < 3 && a.error) g.samples.push(String(a.error).replace(/\s+/g, " ").slice(0, 200));
       groups.set(s.sig, g);
     }
     const state = (d.capabilityGaps ||= {});
     let filed = 0;
-    for (const g of [...groups.values()].sort((a, b) => b.hits - a.hits)) {
+    for (const g of [...groups.values()].sort((a, b) => (b.weighted || b.hits) - (a.weighted || a.hits))) {
       if (g.hits < MIN_HITS || g.tasks.size < MIN_TASKS) continue;
       const known = state[g.sig];
+      // Keep the ranking weight fresh even when nothing is re-filed.
+      if (known) { known.weighted = g.weighted; known.lowHits = g.lowHits || 0; }
       if (known && known.hits === g.hits) continue;
       if (known?.at && now() - known.at < REFILE_MS && g.hits < (known.hits || 0) * 2) continue;
       const detail = `${g.what}\n\nSeen ${g.hits} times across ${g.tasks.size} tasks in the last 7 days.${g.samples.length ? `\nExamples:\n${g.samples.map((x) => `- ${x}`).join("\n")}` : ""}\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.`;
@@ -72,10 +79,10 @@ function createCapabilityGaps({ ledger, mcp, events = null, now = () => Date.now
         if (known?.kanbanId) {
           await mcp.call("ops-knowledge", "work_report", { id: known.kanbanId, event: "progress", actor: "keir", summary: `Now ${g.hits} hits across ${g.tasks.size} tasks in 7 days.`, idempotency_key: `gap:${g.sig}:${g.hits}` }, true);
         } else {
-          const card = await mcp.call("ops-knowledge", "kanban_add", { product: "lakeside-mcp", kind: "capability", lane: "inbox", actor: "keir", impact: g.hits >= 10 ? "high" : "medium", title: g.title.slice(0, 280), detail: detail.slice(0, 19000) }, true);
+          const card = await mcp.call("ops-knowledge", "kanban_add", { product: "lakeside-mcp", kind: "capability", lane: "inbox", actor: "keir", impact: g.weighted >= 10 ? "high" : "medium", title: g.title.slice(0, 280), detail: detail.slice(0, 19000) }, true);
           state[g.sig] = { ...(state[g.sig] || {}), kanbanId: Number(card?.id) || null };
         }
-        state[g.sig] = { ...state[g.sig], hits: g.hits, tasks: g.tasks.size, at: now() };
+        state[g.sig] = { ...state[g.sig], hits: g.hits, weighted: g.weighted, lowHits: g.lowHits || 0, tasks: g.tasks.size, title: g.title.slice(0, 200), at: now() };
         ledger.audit("capability_gap_filed", { sig: g.sig, hits: g.hits, tasks: g.tasks.size, kanbanId: state[g.sig].kanbanId });
         filed++;
       } catch (e) { log(`capability gaps: ${e.message}`); }
@@ -86,4 +93,10 @@ function createCapabilityGaps({ ledger, mcp, events = null, now = () => Date.now
   return { tick };
 }
 
-module.exports = { createCapabilityGaps, signatureOf, MIN_HITS, MIN_TASKS };
+// Ranked gap ledger: highest weighted hits first (low-scored tickets count double), ties by raw hits then tasks.
+function rank(data, top = 10) {
+  return Object.entries(data.capabilityGaps || {}).map(([sig, g]) => ({ sig, kanbanId: g.kanbanId || null, title: g.title || sig, hits: g.hits || 0, weighted: g.weighted ?? g.hits ?? 0, lowHits: g.lowHits || 0, tasks: g.tasks || 0, at: g.at || null }))
+    .sort((a, b) => b.weighted - a.weighted || b.hits - a.hits || b.tasks - a.tasks || a.sig.localeCompare(b.sig)).slice(0, top).map((g, i) => ({ rank: i + 1, ...g }));
+}
+
+module.exports = { rank, createCapabilityGaps, signatureOf, MIN_HITS, MIN_TASKS };
