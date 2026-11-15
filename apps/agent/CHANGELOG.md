@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.0.0 (2026-11-15)
+
 - How-to, where-is and strategy questions filed in the bug channel are routed as questions (lighter context, answer and close) unless they describe something broken.
 - A defect Keir finds by reading the code can be named to the player once it is filed and Keir's recorded fact cites the file it read; before, only code that labelled its own bug counted, so Keir told players a confirmed fault was unconfirmed.
 - Filing a second, different bug on the same ticket no longer stalls on the first one being offered back as a possible duplicate.
