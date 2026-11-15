@@ -21,7 +21,8 @@ module.exports = {
   spec: {
     liveReadServers: ['gamestate', 'engine'],
     noDecision: true,
-    answerMust: { says_strategy_unavailable: /strategy (?:help|advice)[^.]*(?:temporarily unavailable|not available right now)|(?:temporarily unavailable|not available right now)[^.]*strategy/i, answers_supply_location: /supply/i },
+    // Keir 10 review: with Ask down, a short answer grounded in what Keir read is fine; the test is no redirect to a broken Ask.
+    answerMust: { answers_supply_location: /supply/i },
     k10: { maxPosts: 2, finishAccepted: true, forbidPost: { ask_redirect: /ask\.lakesidegames|\buse Ask\b|\btry Ask\b|\bAsk (?:tool|page|site)\b/i, invented_strategy: /\byou should (?:push|hold)|\bpush north\b(?! or)|\bholding the line is (?:better|best)/i } },
   },
 };

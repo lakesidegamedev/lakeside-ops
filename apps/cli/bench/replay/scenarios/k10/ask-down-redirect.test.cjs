@@ -24,5 +24,5 @@ test('bad: invents strategy advice and never says help is down', async () => {
   await t('channel_reply', { message: 'You should push north, the front looks weak. Supply is shown on the war page.' }).catch(() => {});
   const g = gradeK10(env.events, sc.spec);
   assert.equal(g.success, false);
-  assert.equal(g.state.says_strategy_unavailable.ok, false);
+  assert.ok(JSON.stringify(g).includes('invented_strategy'), 'the invented strategy post is what fails it');
 });
