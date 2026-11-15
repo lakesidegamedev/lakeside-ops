@@ -1325,6 +1325,45 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     catch (e) { notice.state = "blocked"; notice.summary = String(e.message).slice(0, 300); ledger.save(); throw e; }
   }
 
+  // Keir 10 wait engine: where code already knows a stage change (a PR merged, a release on the sandbox or the
+  // main server), the card moves without a model run. The card's own evidence gate still applies, and a card
+  // never moves back here. evidence is only recorded for the audit row.
+  async function advanceCardStage(ticketNo, itemName, stage, evidence = {}) {
+    const n = Number(ticketNo), card = d.statusCards?.[n];
+    if (!card?.items?.length) return { advanced: false, reason: "no card" };
+    const item = card.items.find((i) => i.name === itemName);
+    if (!item) return { advanced: false, reason: "no such item" };
+    if (item.blocked || ["answered", "confirmed"].includes(item.stage) || statusCard.stageIndex(stage) <= statusCard.stageIndex(item.stage)) return { advanced: false, reason: "not forward" };
+    const items = card.items.map((i) => (i === item ? { ...i, stage } : i));
+    try {
+      const r = await adminStatusCard(n, { items, status: card.status || "" });
+      ledger.audit("card_stage_advanced", { ticket: n, item: itemName, from: item.stage, to: stage, evidence: JSON.stringify(evidence).slice(0, 200) });
+      return { advanced: true, ...r };
+    } catch (e) { return { advanced: false, reason: String(e.message).slice(0, 200) }; }
+  }
+  async function stageTick() {
+    const moved = [];
+    for (const [n, card] of Object.entries(d.statusCards || {})) {
+      const root = d.jobs[d.seen[`ticket:${n}`]];
+      // Evidence is per ticket, not per fix, so only a one-fix card moves by itself; a card with several fixes stays with the model.
+      if (!root || ["done", "cancelled", "dismissed", "paused"].includes(root.state) || root.channelClosed || root.resolved || !card.messageId || (card.items || []).length !== 1) continue;
+      const target = statusCard.stageFromEvidence(ticketEvidence(Number(n)), null);
+      if (!target) continue;
+      for (const item of card.items || []) {
+        const r = await advanceCardStage(n, item.name, target, { stage: target }).catch(() => ({ advanced: false }));
+        if (!r.advanced) continue;
+        moved.push({ ticket: Number(n), item: item.name, stage: target });
+        // Only a fix reaching the main server needs the model: it must check the player's own figures and tell them.
+        if (target === "main") {
+          root.inbox = [...(root.inbox || []), { role: "system", authorId: "stage-engine", at: new Date(now()).toISOString(), content: `The fix for "${item.name}" is live on the main server. After the next turn, read the player's own figures, then tell them plainly whether it is fixed.` }].slice(-20);
+          if (root.state === "waiting") { root.state = "queued"; delete root.wakeAt; }
+        }
+      }
+    }
+    if (moved.length) ledger.save();
+    return moved;
+  }
+
   async function waitingUpdate(job, info) {
     // With a status card, a CI wait refreshes the card instead of posting.
     const card = job.ticket && d.statusCards?.[job.ticket];
@@ -4280,7 +4319,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

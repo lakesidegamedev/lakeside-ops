@@ -9,6 +9,13 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - Capability gaps are ranked: a gap hit by a task on a low-scored ticket counts double. `bin/keir-gaps.js` prints the top ten with their board card ids.
 - `deploy/release.sh --replay-gate` (off by default) runs the known-failure replay set on the live release and on the build and refuses the release if a scenario that passed on live now fails. The weekly builder (`deploy/keir-builder.*`) is in the tree but not installed.
 - The replay benchmark is back in the tree, with seven known-failure scenarios from real tickets (`--set k10`) and a transcript saved per run.
+- Every ticket is routed to one lane before the model runs: question, bug, data repair, outage, people (account, ban, recovery), idea or advice. The router uses the intake tags, the channel, the player's words, open incidents and, for "the turn is stuck" tickets, a live check of the turn lock and recent turns. The lane and its reason are recorded, and a later change needs a stated reason.
+- An outage ticket is worked as one incident and no longer asks for the reporter's corporation or sector records. A question ticket ends when every question is answered: no progress card and no owner decision unless a real defect turned up, which is spun out as its own ticket. After eight questions or a day, the model is told to answer and close, and to offer a fresh ticket for new topics.
+- Ticket context is now sized by lane and wake type. Question, idea, people and advice tickets, and every wake, run on the core brief, the lane's steps, a case file and what changed, instead of the whole manual. Bug, data repair and outage tickets still start with the full context. Skills load only for those three lanes.
+- New case file per ticket: what is known, what the player was told (last eight posts), what was promised, open questions, fixes and their stages, and posts left when the post budget exists. A wake leads with what changed since the last run and skips orientation and read discovery unless the lane changed or six hours passed.
+- Wake cap in code: a ticket job runs the model at most six times an hour and 40 a day unless a human message arrived; beyond that it waits and one `wake_capped` audit row is recorded.
+- The stuck-ticket sweeper skips tickets whose support record is closed, resolved or merged.
+- A one-fix status card now moves forward by itself when its receipt arrives (merged, on the sandbox, live on the main server); the model is woken only when a fix is live and the player's figures must be checked.
 
 ## 9.2.0 (2026-11-15)
 

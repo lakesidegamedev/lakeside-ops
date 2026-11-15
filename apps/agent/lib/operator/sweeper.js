@@ -30,6 +30,15 @@ const DEFAULTS = Object.freeze({ staleMs: 6 * HOUR, unansweredMs: 30 * MIN, wind
 const NOT_PROGRESS = /^(?:ticket-update|reply|status-card|delivery)(?::|$)/;
 const CLOSED = new Set(["done", "cancelled", "dismissed"]);
 
+// Keir 10: a ticket whose support record says closed, resolved or merged is not stuck, whatever the job state
+// says (1812 was escalated to the owner a day after it was closed). The record status reaches the ledger
+// through ticketoutcomes (the 15 minute reconcile) and through an optional supportClosed(root) hook.
+const SUPPORT_CLOSED = new Set(["resolved", "closed", "merged"]);
+function supportRecordClosed(d, n, root, hook) {
+  for (const o of Object.values(d.ticketOutcomes || {})) if (Number(o.ticket) === Number(n) && !o.superseded && (SUPPORT_CLOSED.has(String(o.status)) || o.mergedInto)) return true;
+  try { return Boolean(hook?.(root)); } catch { return false; }
+}
+
 function ts(v) { const n = typeof v === "number" ? v : Date.parse(v || ""); return Number.isFinite(n) ? n : 0; }
 
 function inActiveHours(at, cfg = DEFAULTS) {
@@ -71,7 +80,7 @@ function decideTicket(t, now, cfg = DEFAULTS) {
   return { action: "investigate", reason };
 }
 
-function createSweeper({ ledger, config, now = () => Date.now(), log = () => {}, held = () => null, killSwitch = null, wake = null, investigate = null, cfg = {} }) {
+function createSweeper({ ledger, config, now = () => Date.now(), log = () => {}, held = () => null, killSwitch = null, wake = null, investigate = null, supportClosed = null, cfg = {} }) {
   const d = ledger.data, c = { ...DEFAULTS, ...cfg };
   const ticketsOf = () => {
     const by = new Map();
@@ -88,7 +97,7 @@ function createSweeper({ ledger, config, now = () => Date.now(), log = () => {},
     const t = trust(d), p = (t.progress[n] ||= {}), sweep = t.sweeps[n] || {};
     const root = jobs.filter((j) => j.kind === "ticket" && j.ticket === n).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
     if (!root) return null;
-    const open = !root.channelClosed && !root.resolved && !CLOSED.has(root.state);
+    const open = !root.channelClosed && !root.resolved && !CLOSED.has(root.state) && !supportRecordClosed(d, n, root, supportClosed);
     const lastHumanAt = Math.max(0, ...jobs.map((j) => Math.max(ts(j.observedPlayerAt), ts(j.lastPlayerAt))));
     const lastReplyAt = Math.max(0, p.lastReplyAt || 0, ...jobs.map((j) => ts(j.lastPublishedAt)));
     const fp = fingerprint(jobs);
@@ -161,4 +170,4 @@ function createSweeper({ ledger, config, now = () => Date.now(), log = () => {},
   return { tick, snapshot, status: () => ({ lastSweepAt: trust(d).lastSweepAt || null, tracked: Object.keys(trust(d).sweeps).length }) };
 }
 
-module.exports = { DEFAULTS, decideTicket, inActiveHours, createSweeper };
+module.exports = { supportRecordClosed, DEFAULTS, decideTicket, inActiveHours, createSweeper };

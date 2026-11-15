@@ -14,7 +14,22 @@ function literalGreeting(job) {
 // Owner, 2026-10-23: voice ran on the full 66K-character brief, so DeepSeek
 // Flash took 12 seconds per round and the speaker heard "a closer look" after
 // 15 seconds. Voice now runs on the small brief with its reads preloaded.
+// Keir 10: a routed ticket's profile follows its lane and wake type, not the
+// tagger's confidence (1,913 of 1,915 ticket runs were "full", about 173k chars).
+// "ticket" is the compact ticket profile: core brief, the lane's playbook, the
+// case file and what changed. Full context stays for the first activation of the
+// investigation lanes (bug, data_repair, outage) and for one run after a lane
+// change into one of them. The model can still load any omitted section.
+function ticketProfile(job) {
+  const lanes = require("./ticketlanes"), lane = lanes.def(job);
+  if (!lane) return null;
+  const wake = (job.activationCount || 0) > 1;
+  if (job.fullContextNext) return "full";
+  return lane.fullFirst && !wake ? "full" : "ticket";
+}
 function profile(job) {
+  const lanes = require("./ticketlanes");
+  if (lanes.isTicketJob(job) && lanes.laneOf(job) && !job.resultSchema && !job.voiceMode) return ticketProfile(job);
   if (job.voiceMode && job.kind === "conversation" && !job.ticket && !job.codingParent && !job.source?.attachments?.length && !job.appAttachments?.length) return "voice";
   if (job.kind !== "conversation" || job.ticket || job.codingParent || job.resultSchema || job.voiceMode || job.source?.attachments?.length || job.appAttachments?.length || job.contextImages || job.appSteering) return "full";
   if (literalGreeting(job)) return "minimal";

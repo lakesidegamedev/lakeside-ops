@@ -394,6 +394,8 @@ tickers.every("ownerwait", 5 * 60000, async () => {
 });
 tickers.every("ciwatch", 60000, async () => {
   try { await ciWatch.tick(); } catch (e) { log(`ciwatch: ${e.message}`); }
+  // Keir 10: cards move on receipts, without a model run (broker.stageTick).
+  try { await broker.stageTick?.(); } catch (e) { log(`stage engine: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
 });
 // Keir 8.4: stuck-ticket sweeper and the daily trust report.
