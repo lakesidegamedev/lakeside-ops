@@ -4982,6 +4982,14 @@ const server = http.createServer(async (req, res) => {
   // this route only reads files, so page loads never touch the game database.
   if ((req.method === "GET" || req.method === "HEAD") && (pathname === "/reset-watch" || pathname === "/api/reset-watch")) {
     const session = await resolveSession(req);
+    if (!session && pathname === "/reset-watch") {
+      // Signed out (or the session lapsed): send to sign-in like the other pages
+      // instead of a bare "Forbidden".
+      addSecurityHeaders(res);
+      res.writeHead(302, { Location: "/", "Cache-Control": "no-store" });
+      res.end();
+      return;
+    }
     if (!canReadDeveloperView(session, pathname)) return pathname === "/api/reset-watch" ? json(res, 403, { error: "forbidden" }) : denyHtml();
     const resetWatch = require("./reset-watch");
     const dir = process.env.RESET_WATCH_DIR || "/var/lib/lakeside-ops-dashboard/reset-watch";
