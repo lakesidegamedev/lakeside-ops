@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.1.2 (2026-11-15)
+
+- Read A House Divided crash reports from Sentry through a new read-only tool server, including lookup by the short reference players see on error pages. The retired GlitchTip integration is removed.
+
 - Keir can read the new `sentry` MCP server (issues, one issue with its latest event, lookup by a player's error ref, new issues since a time) in ticket, finding, engineering and owner reads.
 
 ## 9.1.1 (2026-11-14)
