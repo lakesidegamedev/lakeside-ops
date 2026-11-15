@@ -28,6 +28,7 @@ const { createStaleRefreshCache, warmUntilReady } = require("./dashboard-snapsho
 const { renderPrometheusMetrics } = require("./prometheus-metrics");
 const { verifySignature: verifyGithubSig, reviewPullRequest } = require("./pr-review");
 const { startCommunityWorkers, runTriageTick } = require("./triage-worker");
+const { fetchUnresolvedIssues, sentryConfigured } = require("./sentry-api");
 const { notifyDiscord: notifyOpsDiscord, COLORS: OPS_COLORS } = require("./ops-discord");
 const { TOKENS_CSS } = require("./design-system");
 const { FONT_LINKS, BASE_CSS, escHtml, NAV_CSS, MODVIEW_JS, modviewBanner, SIDEBAR, renderSidebar, renderNavbar, CMDK_CSS, CMDK_JS, renderCommandPalette, renderShell, injectNav, OPS_BAR_H } = require("./ops-shell");
@@ -1540,7 +1541,7 @@ const APPS = [
   ...(LEARN_INSTALLED ? [{ name: "Learning Center", desc: "Interactive game-mechanics & architecture modules.", icon: "graduation-cap", href: "/learn", minRole: "admin" }] : []),
   { name: "Project Guide", desc: "Architecture & systems reference for the codebase.", icon: "book-open", href: "/project-guide", minRole: "admin" },
   { name: "Status", desc: "Public server / uptime status page.", icon: "activity", href: "/status", minRole: "moderator" },
-  { name: "Error Tracking", desc: "GlitchTip issues, crashes & breadcrumbs.", icon: "shield-alert", href: "https://ops.lakesidegames.net/errors", minRole: "admin", external: true },
+  { name: "Error Tracking", desc: "Sentry issues, crashes & breadcrumbs.", icon: "shield-alert", href: "https://sentry.io/organizations/lakeside-games/issues/", minRole: "admin", external: true },
   { name: "Workflows (CI/CD)", desc: "Woodpecker pipelines & build status.", icon: "git-branch", href: "https://workflows.lakesidegames.net", minRole: "admin", external: true },
 ];
 
@@ -1785,7 +1786,7 @@ function renderDashboard(session, m, reports, gamesHealth, warming = false) {
     return `<a class="game-chip" href="/games" style="--gs-accent:${g.accent}" title="${escHtml(g.name)} — open the Games hub"><span class="gname">${escHtml(g.name)}</span><span class="gsub">${escHtml(sub)}</span><span class="gdot ${dot}"></span></a>`;
   }).join("")}</div>`;
   const t = m.traffic, tok = t && t.ok;
-  const u = m.users, g = m.glitchtip, r = m.railway;
+  const u = m.users, g = m.sentry, r = m.railway;
   // The whole dashboard is admin-only (moderators are redirected at the route),
   // but admin-gate the sensitive widgets defensively so they can never leak.
   const isAdmin = session.role === "admin";
@@ -1835,7 +1836,7 @@ function renderDashboard(session, m, reports, gamesHealth, warming = false) {
   const visTile = `<div class="tile"><div class="tlabel">${icon("eye", { size: 13 })} Visitors today</div><div class="tnum">${tok ? t.uniquesToday.toLocaleString() : "—"}</div>${tok ? sparkline(t.series.map((s) => s.uniques)) : ""}<div class="tsub">${tok ? "Cloudflare · " + t.uniques7d.toLocaleString() + " in 7d" : t && t.reason === "not configured" ? "set CLOUDFLARE_API_TOKEN" : "(" + escHtml((t && t.reason) || "error") + ")"}</div></div>`;
   const pvTile = `<div class="tile"><div class="tlabel">${icon("trending-up", { size: 13 })} Page views · 7d</div><div class="tnum">${tok ? t.pageViews7d.toLocaleString() : "—"}</div><div class="tsub">${tok ? Math.round(t.pageViews7d / 7).toLocaleString() + " / day avg" : "Cloudflare traffic"}</div></div>`;
   const plTile = `<a class="tile" href="/db" title="Browse users in the database"><div class="tlabel">${icon("user", { size: 13 })} Players</div><div class="tnum">${u && u.ok ? u.total.toLocaleString() : "—"}</div><div class="tsub">${u && u.ok ? (u.new7d ? "+" + u.new7d + " this week · " : "") + u.banned + " banned" : ""}</div></a>`;
-  const isTile = `<a class="tile ${g && g.ok && g.count > 0 ? "alert" : ""}" href="https://ops.lakesidegames.net/errors" target="_blank" rel="noopener" title="View errors in GlitchTip"><div class="tlabel">${icon("shield-alert", { size: 13 })} Open issues</div><div class="tnum">${g && g.ok ? g.count : "—"}</div><div class="tsub">${g && g.ok ? "GlitchTip unresolved" : g && g.reason === "not configured" ? "set GLITCHTIP_*" : ""}</div></a>`;
+  const isTile = `<a class="tile ${g && g.ok && g.count > 0 ? "alert" : ""}" href="https://sentry.io/organizations/lakeside-games/issues/" target="_blank" rel="noopener" title="View errors in Sentry"><div class="tlabel">${icon("shield-alert", { size: 13 })} Open issues</div><div class="tnum">${g && g.ok ? g.count : "—"}</div><div class="tsub">${g && g.ok ? "Sentry unresolved" : g && g.reason === "not configured" ? "set SENTRY_AUTH_TOKEN" : ""}</div></a>`;
   const fmtBig = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k" : "" + n);
   const reqTile = `<div class="tile"><div class="tlabel">${icon("zap", { size: 13 })} Requests · 7d</div><div class="tnum">${tok ? fmtBig(t.requests7d) : "—"}</div><div class="tsub">${tok ? fmtBig(Math.round(t.requests7d / 7)) + " / day" : "Cloudflare"}</div></div>`;
   const cacheTile = `<div class="tile"><div class="tlabel">${icon("shield", { size: 13 })} Cache hit</div><div class="tnum">${tok && t.cacheHit != null ? t.cacheHit + "%" : "—"}</div><div class="tsub">${tok ? "served from CDN" : "Cloudflare"}</div></div>`;
@@ -1860,7 +1861,7 @@ function renderDashboard(session, m, reports, gamesHealth, warming = false) {
     ? (g.issues.length
         ? g.issues.map((i) => `<div class="iss-row"><span class="pill ${i.level === "error" ? "bad" : i.level === "warning" ? "warn" : ""}">${escHtml(i.level || "info")}</span><span class="t">${escHtml(i.title || "")}</span><span class="n">${i.seen ? "×" + i.seen : ""}</span></div>`).join("")
         : `<p class="empty-note">No unresolved issues.</p>`)
-    : dnote("GlitchTip", g && g.reason === "not configured" ? "Set <code>GLITCHTIP_URL</code> + <code>GLITCHTIP_API_TOKEN</code>." : "(" + escHtml((g && g.reason) || "error") + ")");
+    : dnote("Sentry", g && g.reason === "not configured" ? "Set <code>SENTRY_AUTH_TOKEN</code>." : "(" + escHtml((g && g.reason) || "error") + ")");
 
   // ── LLM usage bar (Kimi vs Ollama, 7d) — admin-only ──
   const lu = m.llmUsage || { kimi: { calls: 0, totalTokens: 0 }, ollama: { calls: 0, totalTokens: 0 }, windowDays: 7 };
@@ -1943,7 +1944,7 @@ function renderDashboard(session, m, reports, gamesHealth, warming = false) {
       ${llmBar}
       <div class="dcard col-8"><h2>${icon("activity", { size: 14 })} System health<a class="viewlink" href="/status">Full status →</a></h2>${up}</div>
       <div class="dcard col-4"><h2>${icon("git-branch", { size: 14 })} Railway deploys<a class="viewlink" href="https://railway.com/dashboard" target="_blank" rel="noopener">Railway →</a></h2>${railBody}</div>
-      <div class="dcard col-12"><h2>${icon("shield-alert", { size: 14 })} Recent errors${isAdmin && isEnabled("codeAgent") ? `<button class="viewlink triage-btn" onclick="triageIssues(this)" title="Launch a code session seeded with the open GlitchTip issues">${icon("sparkles", { size: 13 })} Triage issues →</button>` : ""}<a class="viewlink" href="https://ops.lakesidegames.net/errors" target="_blank" rel="noopener">GlitchTip →</a></h2>${gtBody}</div>
+      <div class="dcard col-12"><h2>${icon("shield-alert", { size: 14 })} Recent errors${isAdmin && isEnabled("codeAgent") ? `<button class="viewlink triage-btn" onclick="triageIssues(this)" title="Launch a code session seeded with the open Sentry issues">${icon("sparkles", { size: 13 })} Triage issues →</button>` : ""}<a class="viewlink" href="https://sentry.io/organizations/lakeside-games/issues/" target="_blank" rel="noopener">Sentry →</a></h2>${gtBody}</div>
     </div>
     ${isAdmin ? renderReportSummaryCard(reports && reports[0]) : ""}
   </div></details>
@@ -2139,11 +2140,11 @@ ${themeToggle('fixed')}
         <div class="dir-desc">Live read-only viewer. Browse collections and documents.</div>
         <div class="dir-meta"><b id="db-count">—</b> collections<span class="arrow">${icon('arrow-right', { size: 15 })}</span></div>
       </a>
-      <a href="https://ops.lakesidegames.net/errors/" target="_blank" rel="noopener" class="dir-card rise admin-only" style="--c:#f87171">
+      <a href="https://sentry.io/organizations/lakeside-games/issues/" target="_blank" rel="noopener" class="dir-card rise admin-only" style="--c:#f87171">
         <div class="dir-icon">${icon('shield-alert', { size: 23 })}</div>
         <div class="dir-title">Error Tracking</div>
-        <div class="dir-desc">GlitchTip error monitoring and performance traces.</div>
-        <div class="dir-meta">GlitchTip<span class="arrow">${icon('external-link', { size: 14 })}</span></div>
+        <div class="dir-desc">Sentry error monitoring and performance traces.</div>
+        <div class="dir-meta">Sentry<span class="arrow">${icon('external-link', { size: 14 })}</span></div>
       </a>
       <a href="/reports" class="dir-card rise admin-only" style="--c:#f472b6">
         <div class="dir-icon">${icon('clipboard', { size: 23 })}</div>
@@ -3414,7 +3415,7 @@ function buildAutomatedTicketFixPrompt(ticket, extra = {}) {
     "ONLY attempt a fix if this is a genuine product/code defect (bug in game or site code). If it is moderation, interpersonal/support-policy, account-management, a how-to question, or any other non-coding concern: STOP immediately without opening a PR, without committing, and without posting anywhere — leave a one-line explanation in your final response and exit. Do not waste tokens on non-code work.",
     "",
     "First, use the support MCP tool `support_get` with kind `ticket` and number " + ticketNumber + ". Treat that full record as canonical. It includes all reporter messages and screenshot attachments as viewable images: inspect every supplied image before deciding the fix.",
-    "Use the relevant MCPs to investigate live context where useful (ops knowledge first, then game-state/engine/GlitchTip/community as applicable). Read the repository instructions and trace the actual implementation; reproduce or otherwise validate the reported behavior before editing.",
+    "Use the relevant MCPs to investigate live context where useful (ops knowledge first, then game-state/engine/Sentry/community as applicable). Read the repository instructions and trace the actual implementation; reproduce or otherwise validate the reported behavior before editing.",
     "You may use Discord MCP `discord_read` only to re-read the ticket channel if needed. Never reply in ticket channels, never DM players, never answer Discord messages, and never call `discord_send` (it is disabled). When the verified work is genuinely resolved, use support MCP `support_resolve` with a plain player-facing summary, actions taken, follow-up, and source `agent`; the bot then delivers the receipt and closes the Discord ticket channel.",
     "",
     "As soon as you have a safe, verified coding fix: run the relevant checks, commit, and prepare the PR. Immediately BEFORE opening the PR, call support MCP `support_notify_ops_findings` with kind `ticket`, number " + ticketNumber + ", and a 1–2 paragraph diagnosis (root cause / what you found — not the code-change summary). That posts to #operations with \"PR on the way.\" Then open the PR in the same turn — do not wait for a human nudge or the 30-minute recheck.",
@@ -6199,30 +6200,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   // POST /api/issues/triage — admin: seed a code-agent session with the current
-  // open GlitchTip issues so the agent can investigate + triage them against the
+  // open Sentry issues so the agent can investigate + triage them against the
   // codebase and propose fixes. Same mechanism as /api/{tickets,suggestions}/:id/launch.
   if (req.method === "POST" && pathname === "/api/issues/triage") {
     if (!(await requireAdmin())) return jsonResponse(403, { error: "Forbidden" });
     try {
       if (!codeSessionManager) return jsonResponse(503, { error: "Code session manager not ready" });
 
-      // Fetch open issues from GlitchTip (same API the dashboard tile / triage worker use).
-      const gtUrl = process.env.GLITCHTIP_URL;
-      const gtToken = process.env.GLITCHTIP_API_TOKEN;
-      const gtOrg = process.env.GLITCHTIP_ORG_SLUG || "ahd";
-      if (!gtUrl || !gtToken) return jsonResponse(503, { error: "GlitchTip not configured" });
-      let issues = [];
-      try {
-        const r = await fetch(`${gtUrl.replace(/\/+$/, "")}/api/0/organizations/${gtOrg}/issues/?query=is:unresolved&limit=25`, {
-          headers: { Authorization: "Bearer " + gtToken },
-          signal: AbortSignal.timeout(10000),
-        });
-        if (!r.ok) return jsonResponse(502, { error: "GlitchTip http " + r.status });
-        const payload = await r.json();
-        if (Array.isArray(payload)) issues = payload;
-      } catch (e) {
-        return jsonResponse(502, { error: "GlitchTip fetch failed: " + e.message });
-      }
+      // Fetch open issues from Sentry (same API the dashboard tile / triage worker use).
+      if (!sentryConfigured()) return jsonResponse(503, { error: "Sentry not configured" });
+      const fetched = await fetchUnresolvedIssues({ limit: 25, statsPeriod: "7d", timeoutMs: 10000 });
+      if (!fetched.ok) return jsonResponse(502, { error: "Sentry " + fetched.reason });
+      const issues = fetched.issues;
 
       const top = issues.slice(0, 10).map((i, n) => ({
         n: n + 1,
@@ -6234,10 +6223,10 @@ const server = http.createServer(async (req, res) => {
 
       const issueList = top.length
         ? top.map((i) => `${i.n}. [${i.level}] ${i.title}${i.culprit ? `\n   culprit: ${i.culprit}` : ""}\n   events seen: ${i.count}`).join("\n\n")
-        : "(GlitchTip returned no open issues right now — confirm via the dashboard before concluding there is nothing to triage.)";
+        : "(Sentry returned no open issues right now — confirm via the dashboard before concluding there is nothing to triage.)";
 
       const seedPrompt = [
-        "You are triaging the current open production error issues from GlitchTip for the A House Divided game.",
+        "You are triaging the current open production error issues from Sentry for the A House Divided game.",
         "",
         `Here are the top ${top.length} open (unresolved) issues:`,
         "",
@@ -6256,7 +6245,7 @@ const server = http.createServer(async (req, res) => {
       const db = await getDb();
       await db.collection("code_sessions").updateOne(
         { sessionId: codeSession.sessionId },
-        { $set: { seedPrompt, title: `Triage ${top.length} GlitchTip issue${top.length === 1 ? "" : "s"}`, updatedAt: new Date() } }
+        { $set: { seedPrompt, title: `Triage ${top.length} Sentry issue${top.length === 1 ? "" : "s"}`, updatedAt: new Date() } }
       );
 
       return jsonResponse(200, { sessionId: codeSession.sessionId, issueCount: top.length });
@@ -9934,8 +9923,8 @@ async function initializeCodeSessionManager() {
 }
 initializeCodeSessionManager();
 
-// ─── COMMUNITY TRIAGE + GLITCHTIP WORKERS ────────────────────────────
-// Read-only LLM triage of new tickets/suggestions + GlitchTip new-issue polling.
+// ─── COMMUNITY TRIAGE + SENTRY WORKERS ────────────────────────────
+// Read-only LLM triage of new tickets/suggestions + Sentry new-issue polling.
 // Never crashes the host: each loop is internally wrapped.
 if (process.env.OPS_PASSIVE !== "1") {
   try {

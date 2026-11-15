@@ -1,0 +1,25 @@
+[Unit]
+Description=Lakeside Sentry MCP (read-only, loopback :9740)
+After=network.target
+
+[Service]
+Type=simple
+# Same layering as the ops-knowledge MCP: the ops store holds the shared agent tokens.
+# the Sentry read token lives in its own file.
+EnvironmentFile=/root/projects/LSGD-ops-dash/.env
+EnvironmentFile=/etc/lakeside-ops-store.env
+EnvironmentFile=/etc/lakeside-mcp-fleet.env
+EnvironmentFile=/etc/lakeside-platform/sentry-read.env
+Environment=HOME=/root
+Environment=SENTRY_MCP_PORT=9740
+WorkingDirectory=/opt/lakeside-ops-web/current/mcp
+ExecStart=/root/.hermes/node/bin/node /opt/lakeside-ops-web/current/mcp/sentry-server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+MemoryMax=256M
+Slice=lakeside.slice
+
+[Install]
+WantedBy=multi-user.target

@@ -6,13 +6,14 @@
 // item, and posts a Discord embed (best-effort). Everything is wrapped so a
 // failure can never crash the host process.
 //
-// This module also hosts the GlitchTip new-issue poller, since both are simple
+// This module also hosts the Sentry new-issue poller, since both are simple
 // periodic Mongo/HTTP loops.
 
 const fs = require("fs");
 const path = require("path");
 const { ObjectId } = require("mongodb");
 const { notifyDiscord, COLORS } = require("./ops-discord");
+const { fetchUnresolvedIssues, sentryConfigured, SENTRY_WEB } = require("./sentry-api");
 const {
   pollTicketPrOpsTldrs,
   OPS_TLDR_POLL_MS,
@@ -783,9 +784,9 @@ async function runTriageTick(getDb, opts = {}) {
   return { processed: results.filter((r) => r && (r.assessed || r.error)).length, results };
 }
 
-// ── GlitchTip new-issue poller ─────────────────────────────────────────
-const GLITCHTIP_SEEN_FILE = path.join(__dirname, "data", "glitchtip-seen.json");
-const GLITCHTIP_POLL_MS = parseInt(process.env.GLITCHTIP_POLL_MS || "300000", 10); // 5 min
+// ── Sentry new-issue poller ─────────────────────────────────────────
+const SENTRY_SEEN_FILE = path.join(__dirname, "data", "sentry-seen.json");
+const SENTRY_POLL_MS = parseInt(process.env.SENTRY_POLL_MS || "300000", 10); // 5 min
 
 function loadSeen(file) {
   try {
@@ -803,28 +804,13 @@ function saveSeen(file, set) {
   }
 }
 
-async function pollGlitchtipOnce() {
-  const url = process.env.GLITCHTIP_URL;
-  const token = process.env.GLITCHTIP_API_TOKEN;
-  const org = process.env.GLITCHTIP_ORG_SLUG || "ahd";
-  // `url` is the INTERNAL API endpoint (e.g. http://localhost:8000) — never use
-  // it to build user-facing links. The public GlitchTip UI is proxied here:
-  const webBase = (process.env.GLITCHTIP_WEB_URL || process.env.GLITCHTIP_DOMAIN || "https://ops.lakesidegames.net/errors").replace(/\/+$/, "");
-  if (!url || !token) return { skipped: "not configured" };
-  let issues;
-  try {
-    const r = await fetch(`${url.replace(/\/+$/, "")}/api/0/organizations/${org}/issues/?query=is:unresolved&limit=25`, {
-      headers: { Authorization: "Bearer " + token },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!r.ok) return { error: "http " + r.status };
-    issues = await r.json();
-  } catch (e) {
-    return { error: e.message };
-  }
-  if (!Array.isArray(issues)) return { error: "unexpected payload" };
+async function pollSentryOnce() {
+  if (!sentryConfigured()) return { skipped: "not configured" };
+  const r = await fetchUnresolvedIssues({ limit: 25, statsPeriod: "24h", timeoutMs: 10000 });
+  if (!r.ok) return { error: r.reason };
+  const issues = r.issues;
 
-  const seen = loadSeen(GLITCHTIP_SEEN_FILE);
+  const seen = loadSeen(SENTRY_SEEN_FILE);
   const isFirstRun = seen.size === 0;
   let posted = 0;
   for (const iss of issues) {
@@ -833,22 +819,21 @@ async function pollGlitchtipOnce() {
     seen.add(id);
     // On the very first run, learn the baseline silently to avoid a flood.
     if (isFirstRun) continue;
-    const link = `${webBase}/${org}/issues/${id}`;
     await notifyDiscord({
-      kind: "glitchtip",
+      kind: "sentry",
       title: `🐛 New error: ${iss.title || iss.culprit || id}`.slice(0, 240),
       description: (iss.culprit || iss.metadata?.value || "").slice(0, 1000),
-      url: link,
+      url: iss.permalink || `${SENTRY_WEB()}/issues/${id}/`,
       color: iss.level === "error" || iss.level === "fatal" ? COLORS.red : COLORS.yellow,
       fields: [
         { name: "Level", value: String(iss.level || "error"), inline: true },
         { name: "Events", value: String(iss.count ?? "?"), inline: true },
       ],
-      footer: "GlitchTip",
+      footer: "Sentry",
     }).catch(() => {});
     posted++;
   }
-  saveSeen(GLITCHTIP_SEEN_FILE, seen);
+  saveSeen(SENTRY_SEEN_FILE, seen);
   return { posted, total: issues.length, baseline: isFirstRun };
 }
 
@@ -1002,7 +987,7 @@ function startCommunityWorkers({ getDb, launchTicketFix, requestTicketRecheck } 
   if (typeof getDb !== "function") throw new Error("startCommunityWorkers requires { getDb }");
 
   // Triage loop: kick once on startup, then on an interval. Skipped entirely
-  // when the kill switch is off — the GlitchTip, backup and ops-TLDR pollers
+  // when the kill switch is off — the Sentry, backup and ops-TLDR pollers
   // below are unrelated to triage and keep running.
   if (TRIAGE_ENABLED) {
     const triageOnce = () =>
@@ -1017,15 +1002,15 @@ function startCommunityWorkers({ getDb, launchTicketFix, requestTicketRecheck } 
     console.log("[triage] DISABLED via TRIAGE_ENABLED=0 — no automated triage will run");
   }
 
-  // GlitchTip poller.
-  const glitchOnce = () =>
-    pollGlitchtipOnce()
+  // Sentry poller.
+  const sentryOnce = () =>
+    pollSentryOnce()
       .then((r) => {
-        if (r && r.posted) console.log("[glitchtip]", JSON.stringify(r));
+        if (r && r.posted) console.log("[sentry]", JSON.stringify(r));
       })
-      .catch((e) => console.error("[glitchtip] poll failed:", e.message));
-  setTimeout(glitchOnce, 15000);
-  setInterval(glitchOnce, GLITCHTIP_POLL_MS);
+      .catch((e) => console.error("[sentry] poll failed:", e.message));
+  setTimeout(sentryOnce, 15000);
+  setInterval(sentryOnce, SENTRY_POLL_MS);
 
   // New-backup watcher.
   const backupOnce = () =>
@@ -1052,8 +1037,8 @@ function startCommunityWorkers({ getDb, launchTicketFix, requestTicketRecheck } 
   console.log(
     `[triage] community workers started (tick ${
       TRIAGE_ENABLED ? `${TICK_MS}ms` : "DISABLED"
-    }, glitchtip ${GLITCHTIP_POLL_MS}ms, backups ${BACKUP_POLL_MS}ms, ops-tldr ${OPS_TLDR_POLL_MS}ms)`
+    }, sentry ${SENTRY_POLL_MS}ms, backups ${BACKUP_POLL_MS}ms, ops-tldr ${OPS_TLDR_POLL_MS}ms)`
   );
 }
 
-module.exports = { startCommunityWorkers, runTriageTick, pollGlitchtipOnce, pollBackupsOnce, parseAssessment, ticketAutoRepairEnabled };
+module.exports = { startCommunityWorkers, runTriageTick, pollSentryOnce, pollBackupsOnce, parseAssessment, ticketAutoRepairEnabled };

@@ -6,6 +6,7 @@
 const { engineHealth } = require("./engine-health");
 const { recentEvents } = require("./platform-events");
 const { getWorldIntelligence } = require("./world-intelligence");
+const { fetchUnresolvedIssues } = require("./sentry-api");
 
 async function pingHealth(url, ms = 3000) {
   const t0 = Date.now();
@@ -132,26 +133,10 @@ async function getRailway() {
   }
 }
 
-async function getGlitchtip() {
-  const url = process.env.GLITCHTIP_URL;
-  const token = process.env.GLITCHTIP_API_TOKEN;
-  const org = process.env.GLITCHTIP_ORG_SLUG || "ahd";
-  if (!url || !token) return { ok: false, reason: "not configured" };
-  try {
-    const r = await fetch(`${url}/api/0/organizations/${org}/issues/?query=is:unresolved&limit=10`, {
-      headers: { Authorization: "Bearer " + token },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!r.ok) return { ok: false, reason: "http " + r.status };
-    const issues = await r.json();
-    return {
-      ok: true,
-      count: Array.isArray(issues) ? issues.length : 0,
-      issues: (Array.isArray(issues) ? issues : []).slice(0, 5).map((i) => ({ title: i.title, level: i.level, seen: i.count })),
-    };
-  } catch (e) {
-    return { ok: false, reason: e && e.name === "TimeoutError" ? "timeout" : "unreachable" };
-  }
+async function getSentry() {
+  const r = await fetchUnresolvedIssues({ limit: 10, statsPeriod: "24h", timeoutMs: 5000 });
+  if (!r.ok) return { ok: false, reason: r.reason };
+  return { ok: true, count: r.issues.length, issues: r.issues.slice(0, 5).map((i) => ({ title: i.title, level: i.level, seen: Number(i.count) || 0 })) };
 }
 
 // Site traffic from Cloudflare's GraphQL Analytics API (the domain is proxied,
@@ -289,12 +274,12 @@ async function getLlmUsage(db) {
 }
 
 async function getDashboardMetrics(db) {
-  const [uptime, users, game, railway, glitchtip, traffic, tickets, llmUsage, engine, platformEvents] = await Promise.all([
+  const [uptime, users, game, railway, sentry, traffic, tickets, llmUsage, engine, platformEvents] = await Promise.all([
     getUptime(db),
     getUsers(db),
     getGame(db),
     getRailway(),
-    getGlitchtip(),
+    getSentry(),
     getCloudflare(),
     getTickets(db),
     getLlmUsage(db),
@@ -302,7 +287,7 @@ async function getDashboardMetrics(db) {
     recentEvents(12).catch(() => []),
   ]);
   const world = await getWorldIntelligence(db, engine);
-  return { uptime, users, game, railway, glitchtip, traffic, tickets, llmUsage, engine, platformEvents, world, at: new Date().toISOString() };
+  return { uptime, users, game, railway, sentry, traffic, tickets, llmUsage, engine, platformEvents, world, at: new Date().toISOString() };
 }
 
 module.exports = { getDashboardMetrics, getLlmUsage, getKumaStatus };

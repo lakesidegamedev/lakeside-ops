@@ -73,6 +73,8 @@ const SUPPORT_READS = {
   "heal-ops": ["heal_query", "heal_count", "heal_collections"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
   turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_failure_detail"],
+  // Player-facing error refs ("Ref: 584ffe8b") and client crashes, from the read-only Sentry MCP.
+  sentry: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_new_since"],
   // Corporation and sector traces are the same public game data the corp pages
   // show; without them ticket tasks asked players for screenshots of their own
   // P&L (ticket 1522).
@@ -238,6 +240,7 @@ const FINDING_READS = {
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
   gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "character_holdings"].includes(n)), "invariant_check"],
   engine: SUPPORT_READS.engine,
+  sentry: SUPPORT_READS.sentry,
   "ops-knowledge": SUPPORT_READS["ops-knowledge"],
 };
 // Reads that count as looking a person or case up before saying "I can't tell" (clarify.lookupRequiredRefusal).
