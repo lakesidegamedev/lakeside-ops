@@ -6,7 +6,7 @@
 // know the slideshow had skipped before the player could say so.
 //
 // Credentials come from the environment, never a file read here:
-//   POSTHOG_PERSONAL_API_KEY  a personal key with query:read
+//   POSTHOG_READ_API_KEY      a personal key with query:read (POSTHOG_PERSONAL_API_KEY also accepted)
 //   POSTHOG_PROJECT_ID        the game's project id
 //   POSTHOG_HOST              optional, default https://eu.posthog.com
 // The game identifies a player to PostHog by their account id (distinct_id), and
@@ -38,7 +38,7 @@ function createPlayerTrail({ env = process.env, fetcher = fetch, resolveIdentity
   async function call(job, input, signal) {
     if (job.role === "player") throw new Error("players cannot read activity trails through Keir");
     if (!job.ticket) throw new Error("player_trail needs an assigned ticket: it reads the reporter only");
-    const key = env.POSTHOG_PERSONAL_API_KEY, project = env.POSTHOG_PROJECT_ID, host = String(env.POSTHOG_HOST || "https://eu.posthog.com").replace(/\/+$/, "");
+    const key = env.POSTHOG_READ_API_KEY || env.POSTHOG_PERSONAL_API_KEY, project = env.POSTHOG_PROJECT_ID, host = String(env.POSTHOG_HOST || "https://eu.posthog.com").replace(/\/+$/, "");
     if (!key || !/^\d{1,12}$/.test(String(project || ""))) return { configured: false, note: "The activity trail (PostHog) is not configured on this host. Do not tell the player their activity cannot be seen; say you could not check it." };
     const who = await resolveIdentity(job, signal);
     if (!who?.matched || !HEX24.test(who.private?.userId || "")) return { matched: false, note: "The reporter's account could not be tied to this ticket (see resolve_reporter), so no activity can be read." };
