@@ -43,7 +43,8 @@ function createEnv({ scenario: sc, dir, configOverrides = {}, clock: clk = { t: 
   const SCHEMAS = { support_public_update: { type: 'object', required: ['kind', 'number', 'message'], properties: { kind: { type: 'string', enum: ['ticket'] }, number: { type: 'integer' }, update_kind: { type: 'string', enum: ['development', 'heal', 'production', 'progress', 'context'] }, message: { type: 'string', minLength: 1, maxLength: 1400 }, deliver: { type: 'boolean' } } } };
   const SUPPORT_TOOLS = ['support_public_update', 'support_set_status', 'support_tracker_note', 'support_tracker_sync', 'support_resolve', 'support_get', 'support_search', 'support_list', 'support_create_suggestion'];
   const mcp = {
-    servers: () => ['gamestate', 'support', 'ops-knowledge', 'heal-ops'],
+    // k10: a scenario can model another read server (turndiag, engine) through sc.mcp.
+    servers: () => [...new Set(['gamestate', 'support', 'ops-knowledge', 'heal-ops', ...Object.keys(sc.mcp || {})])],
     identity: (server) => ({ server, endpoint: 'replay://' + server }),
     list: async (server) => [...new Set([...(server === 'support' ? SUPPORT_TOOLS : server === 'gamestate' ? Object.keys(sc.game || {}).map((t) => (t === 'character' ? 'trace_character' : t)) : ['knowledge_query', 'kanban_add', 'kanban_list', 'work_report']), ...Object.keys(sc.mcp?.[server] || {})])]
       .map((name) => ({ name, description: `${server} ${name} (replay fixture)`, inputSchema: SCHEMAS[name] || { type: 'object', additionalProperties: true } })),
