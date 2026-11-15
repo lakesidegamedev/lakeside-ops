@@ -40,6 +40,16 @@ function buildServerFor(client) {
     { ref: z.string().describe("event id or 8 character prefix, with or without 'Ref:'"), project,
       statsPeriod: z.string().optional().default("14d") },
     run(args => sentry.lookupEvent(client, args.ref, args)));
+  server.tool("sentry_player_errors",
+    "Errors one player hit, for support tickets: pass the reporter's account id (userId) or character id, optionally the page path they mention (e.g. /actions) and the time they describe (around, ISO) with a window. Returns matching events newest first, and for the latest few the exception, top frames and a readable step trail (requests with status codes and page navigation just before the error).",
+    { userId: z.string().optional().describe("the player's account id (from the support ticket reporter)"),
+      characterId: z.string().optional(),
+      page: z.string().optional().describe("page path or fragment, e.g. /actions or stockmarket"),
+      around: z.string().optional().describe("ISO time the player says it happened; omit to use statsPeriod"),
+      windowMinutes: z.number().int().min(5).max(1440).optional().default(60),
+      statsPeriod: z.string().optional().default("7d"),
+      detail: z.number().int().min(0).max(5).optional().default(3), project },
+    run(args => sentry.playerErrors(client, args)));
   server.tool("sentry_new_since",
     "Unresolved issues first seen after a timestamp. For watchers: pass the last check time.",
     { since: z.string().describe("ISO timestamp"), project, limit: z.number().int().min(1).max(100).optional().default(50) },

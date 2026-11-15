@@ -68,6 +68,20 @@ function shapeIssue(i) {
   };
 }
 
+// One readable line per breadcrumb: what the player did, not what they typed.
+// The game only ships method, path and status for requests and from/to paths
+// for navigation, so nothing here can carry a payload.
+function describeCrumb(b) {
+  const d = (b && b.data) || {};
+  if ((b.category === "fetch" || b.category === "xhr") && d.url) {
+    return `${d.method || "GET"} ${d.url}${d.status_code != null ? ` -> ${d.status_code}` : ""}`;
+  }
+  if (b.category === "navigation" && (d.from || d.to)) return `navigate ${d.from || "?"} -> ${d.to || "?"}`;
+  if (b.category && b.category.startsWith("ui.") && b.message) return `${b.category.slice(3)} ${String(b.message).slice(0, 120)}`;
+  if (b.category === "console" && b.message) return `console ${String(b.message).slice(0, 120)}`;
+  return null;
+}
+
 const tagMap = event => Object.fromEntries((event.tags || []).map(t => [t.key, t.value]));
 
 function shapeEvent(event) {
@@ -80,9 +94,10 @@ function shapeEvent(event) {
     function: f.function || null, file: f.filename || f.absPath || null, line: f.lineNo ?? null, col: f.colNo ?? null, inApp: !!f.inApp,
   }));
   const crumbs = entries.find(e => e.type === "breadcrumbs");
-  const crumbTail = (crumbs && crumbs.data && Array.isArray(crumbs.data.values) ? crumbs.data.values : []).slice(-10).map(b => ({
+  const crumbTail = (crumbs && crumbs.data && Array.isArray(crumbs.data.values) ? crumbs.data.values : []).slice(-15).map(b => ({
     timestamp: iso(b.timestamp), category: b.category || null, level: b.level || null,
     message: b.message ? String(b.message).slice(0, 200) : null,
+    step: describeCrumb(b),
   }));
   const req = entries.find(e => e.type === "request");
   const tags = tagMap(event);
@@ -97,6 +112,8 @@ function shapeEvent(event) {
     topFrames, tags: picked, breadcrumbs: crumbTail,
     url: (req && req.data && req.data.url) || tags.url || null,
     userId: event.user && event.user.id ? String(event.user.id) : null,
+    characterId: tags["character.id"] || null,
+    countryId: tags["country.id"] || null,
   };
 }
 
@@ -159,4 +176,45 @@ async function newSince(client, { since, project, limit = 50 }) {
   return issues.filter(i => i.firstSeen && new Date(i.firstSeen) > t);
 }
 
-module.exports = { SentryError, createClient, shapeIssue, shapeEvent, normaliseRef, matchEventPrefix, listIssues, getIssue, lookupEvent, newSince };
+// Search syntax for one player's errors: account id, character id and an
+// optional page path. Values are quoted so ids and paths cannot inject terms.
+function playerQuery({ userId, characterId, page }) {
+  const q = (v) => `"${String(v).replace(/["\\]/g, "")}"`;
+  const terms = [];
+  if (userId) terms.push(`user.id:${q(userId)}`);
+  if (characterId) terms.push(`character.id:${q(characterId)}`);
+  if (page) terms.push(`url:*${String(page).replace(/[\s"*\\]/g, "")}*`);
+  return terms.join(" ");
+}
+
+function windowFor({ around, windowMinutes = 60 }) {
+  if (!around) return null;
+  const t = new Date(around);
+  if (Number.isNaN(t.getTime())) throw new SentryError("around must be an ISO timestamp.", 400);
+  const ms = Math.min(Math.max(windowMinutes, 5), 24 * 60) * 60000;
+  return { start: new Date(t.getTime() - ms).toISOString(), end: new Date(t.getTime() + ms).toISOString() };
+}
+
+async function playerErrors(client, { userId, characterId, page, around, windowMinutes = 60, statsPeriod = "7d", detail = 3, project } = {}) {
+  if (!userId && !characterId) throw new SentryError("Give the player's account id (userId) or character id.", 400);
+  const projects = project ? await client.projectIds([].concat(project)) : undefined;
+  const win = windowFor({ around, windowMinutes });
+  const { data } = await client.getPaged(`/organizations/${client.org}/events/`, {
+    field: ["id", "title", "timestamp", "url", "issue", "project", "release"], dataset: "errors",
+    query: playerQuery({ userId, characterId, page }), sort: "-timestamp", per_page: 50, project: projects,
+    ...(win ? win : { statsPeriod }),
+  });
+  const events = data.map(r => ({ eventId: r.id, ref: String(r.id || "").slice(0, 8), title: r.title, timestamp: r.timestamp, url: r.url || null, issue: r.issue || null, project: r.project || null }));
+  const detailed = [];
+  for (const e of events.slice(0, Math.min(Math.max(detail, 0), 5))) {
+    if (!e.project) continue;
+    try { detailed.push(shapeEvent(await client.get(`/projects/${client.org}/${encodeURIComponent(e.project)}/events/${encodeURIComponent(e.eventId)}/`))); }
+    catch (err) { if (!(err instanceof SentryError) || err.status === 401 || err.status === 429) throw err; }
+  }
+  return {
+    count: events.length, window: win || { statsPeriod }, events, detailed,
+    note: events.length ? undefined : "No errors for this player in the window. Browser errors carry the account id only from the game release that added it (2026-11-15); older reports cannot be matched to a player.",
+  };
+}
+
+module.exports = { describeCrumb, playerQuery, windowFor, playerErrors, SentryError, createClient, shapeIssue, shapeEvent, normaliseRef, matchEventPrefix, listIssues, getIssue, lookupEvent, newSince };

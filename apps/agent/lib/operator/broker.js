@@ -74,7 +74,7 @@ const SUPPORT_READS = {
   engine: ["engine_health", "recent_turns", "economy_pulse"],
   turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_failure_detail"],
   // Player-facing error refs ("Ref: 584ffe8b") and client crashes, from the read-only Sentry MCP.
-  sentry: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_new_since"],
+  sentry: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_player_errors", "sentry_new_since"],
   // Corporation and sector traces are the same public game data the corp pages
   // show; without them ticket tasks asked players for screenshots of their own
   // P&L (ticket 1522).

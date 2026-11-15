@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.1.3 (2026-11-15)
+
+- Ticket tasks can find the errors a reporting player hit with sentry_player_errors: by the reporter's account id, the page they name and the time they describe, with a readable step trail before each error.
+
 ## 9.1.2 (2026-11-15)
 
 - Read A House Divided crash reports from Sentry through a new read-only tool server, including lookup by the short reference players see on error pages. The retired GlitchTip integration is removed.
