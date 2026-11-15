@@ -2043,10 +2043,10 @@ test("Keir's first post in a new ticket is preceded once by the expectations not
   assert.equal(g.calls.filter(c => /developer or moderator/.test(JSON.stringify(c))).length, 0);
 });
 
-test("a non-economy promotion to the live server asks for one sign-off; Ariane telling Keir to ship counts", async () => {
+test("a non-economy promotion of a rule change asks for one sign-off; Ariane telling Keir to ship counts", async () => {
   const route = [[/compare\/main\.\.\.staging/, { ahead_by: 1, files: files("src/components/Shop.tsx"), commits: [{ sha: "s1s1s1s1s1s1", parents: [{}], commit: { message: "fix(shop): label (#10)" } }] }], [/commits\/staging$/, { sha: "s1s1s1s1s1s1" }], green];
   const f = githubFixture(route);
-  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, requiresOwner: true, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
   const r = await f.broker.tool(j, "github", { action: "promote", to: "main" });
   assert.equal(r.approvalRequired, true);
   assert.match(f.ledger.data.actions[r.action].args.summary, /^Ship to the live server for ticket 9\. This promotion carries 1 change: fix\(shop\): label/);
@@ -2060,13 +2060,18 @@ test("a non-economy promotion to the live server asks for one sign-off; Ariane t
   // Ariane saying ship in the ticket is the sign-off: no new DM, and a pending one is retired.
   const h = githubFixture(route);
   const ariane = h.config.staffIds[0];
-  const t9 = running(h, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  const t9 = running(h, { role: "support", kind: "ticket", ticket: 9, requiresOwner: true, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
   const pending = await h.broker.tool(t9, "github", { action: "promote", to: "main" });
   h.ledger.data.shipSignoffs = { 9: { by: ariane, messageId: "400000000000000001", at: 5000 } };
   await assert.rejects(h.broker.tool(t9, "github", { action: "promote", to: "main" }), /pulls\?state=open&base=main/);
   assert.ok(h.ledger.data.audit.some((a) => a.kind === "ship_signoff_direct" && a.by === ariane));
   assert.equal(h.ledger.data.actions[pending.action].state, "superseded");
   assert.equal(h.ledger.data.shipSignoffs[9], undefined, "one sign-off ships once");
+  // Keir 10.0.2 (owner, 2026-11-15): a plain bug or display fix promoted by hand ships without a sign-off.
+  const p = githubFixture(route);
+  const plain = running(p, { role: "support", kind: "ticket", ticket: 11, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  await assert.rejects(p.broker.tool(plain, "github", { action: "promote", to: "main" }), /pulls\?state=open&base=main/, "past the sign-off gate");
+  assert.equal(Object.values(p.ledger.data.decisions || {}).length, 0, "no DM");
 });
 
 test("execute_action on an approved merge or promotion points back to the github tool and spends nothing", async () => {
@@ -2111,14 +2116,14 @@ test("Keir 4.2: the ticket's one yes ships a non-huge fix without another sign-o
   const route = [[/compare\/main\.\.\.staging/, { ahead_by: 1, files: files("src/components/Shop.tsx"), commits: [{ sha: "s1s1s1s1s1s1", parents: [{}], commit: { message: "fix(shop): label (#10)" } }] }], [/commits\/staging$/, { sha: "s1s1s1s1s1s1" }], green];
   const f = githubFixture(route);
   f.ledger.data.ticketAuthority = { 9: { by: f.config.ownerId, messageId: "400000000000000002", how: "directed", at: 4000 } };
-  const j = running(f, { role: "support", kind: "ticket", ticket: 9, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  const j = running(f, { role: "support", kind: "ticket", ticket: 9, requiresOwner: true, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
   await assert.rejects(f.broker.tool(j, "github", { action: "promote", to: "main" }), /pulls\?state=open&base=main/, "past the sign-off gate");
   assert.ok(f.ledger.data.audit.some((a) => a.kind === "ticket_authority_carried" && a.ticket === 9));
   assert.equal(Object.values(f.ledger.data.decisions || {}).length, 0, "no DM");
-  // A different ticket has no yes and still asks.
+  // A different ticket with a rule change has no yes and still asks.
   const g = githubFixture(route);
   g.ledger.data.ticketAuthority = { 9: { by: g.config.ownerId, messageId: "400000000000000002", how: "directed", at: 4000 } };
-  const k = running(g, { role: "support", kind: "ticket", ticket: 10, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
+  const k = running(g, { role: "support", kind: "ticket", ticket: 10, requiresOwner: true, pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/10"] });
   const r = await g.broker.tool(k, "github", { action: "promote", to: "main" });
   assert.equal(r.approvalRequired, true);
 });

@@ -2995,7 +2995,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           let consent = scopedConsent;
           // An empty range ships nothing, so it asks nothing (ticket 1514: a
           // redundant ask then held back the closing message).
-          const shipSignoff = input.action === "promote" && to === "main" && Array.isArray(sensitive) && !sensitive.length && files.length > 0;
+          // Keir 10.0.2 (owner, 2026-11-15): a hand promotion of non-sensitive changes ships without a sign-off, like the coding
+          // worker path. Economy and turn-engine files still ask (sensitive above); a rule or balance change on this task still asks.
+          const shipSignoff = input.action === "promote" && to === "main" && Array.isArray(sensitive) && !sensitive.length && files.length > 0 && job.requiresOwner === true;
           if (!scopedOwner && (!sensitive || sensitive.length || shipSignoff)) {
             const list = sensitive ? sensitive.slice(0, 6).join(", ") + (sensitive.length > 6 ? ` and ${sensitive.length - 6} more` : "") : "file list unavailable";
             const what = input.action === "merge" ? `PR ${Number(input.number)} changes` : `Promoting ${from} to ${to} carries changes to`;
