@@ -217,7 +217,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     const metadata = { release, toolCalls: session?.calls, empty: measured ? emptyActivation(result, session) : null };
     try {
       const [model, provider] = providerOf(job);
-      fs.appendFileSync(usageFile, JSON.stringify({ ...usageRecord(job, result, durationMs, model, provider, metadata), effort: effort?.effort || null, effortVia: effort?.via || null }) + "\n", { mode: 0o600 });
+      const row = { ...usageRecord(job, result, durationMs, model, provider, metadata), effort: effort?.effort || null, effortVia: effort?.via || null };
+      fs.appendFileSync(usageFile, JSON.stringify(row) + "\n", { mode: 0o600 });
+      config.failures?.fromUsage(row); // Keir 10: activation count and outcome failure
     } catch {}
   }
   // Keir 7 fast lane. Opt-in by config so a caller that does not set it

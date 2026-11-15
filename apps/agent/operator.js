@@ -127,6 +127,12 @@ for (const c of require("./lib/operator/routing").enforce(config, { allowBlocked
 // and the operator release that produced it.
 const releaseId = (() => { try { return fs.readFileSync(path.join(__dirname, "RELEASE"), "utf8").trim().split(/\s+/)[0]; } catch { return null; } })();
 const events = openSink(path.join(config.stateDir, "events.db"), { release: releaseId });
+// Keir 10: failure tracking. Recorder is best effort; events.failures is read by attachSink, config.failures by the agent.
+const failures = events.enabled ? require("./lib/operator/failures").createRecorder({ db: events.db, release: releaseId, stateDir: config.stateDir, log: (m) => console.error(`[keir] ${m}`),
+  lookupJob: (id) => { const j = ledger.data.jobs[id]; return j ? { lane: j.provider?.lane || null, provider: j.provider?.runner || null, model: j.provider?.model || null, ticket: j.ticket || null } : null; } }) : null;
+events.failures = failures; config.failures = failures;
+const failureSentry = require("./lib/operator/sentryout").createSentry({ dsn: env.KEIR_SENTRY_DSN, release: releaseId, log: (m) => console.error(`[keir] ${m}`) });
+for (const ev of ["uncaughtException", "unhandledRejection"]) process.on(ev, (err) => { try { failures?.exception(err, ev); failureSentry?.captureException(err, { kind: ev }); } catch {} });
 attachSink(ledger, events);
 recoverRejectedWrites(ledger);
 recoverAuthBlocked(ledger);
@@ -409,6 +415,19 @@ const sweeper = require("./lib/operator/sweeper").createSweeper({ ledger, config
     if (require("./lib/operator/ticketpause").pauseFor(ledger.data, job)) return "paused by the owner";
     return null;
   } });
+// Keir 10: failure scan every 15 minutes (new kinds, spikes, release regressions) files one card per fingerprint; retention daily.
+const failureCard = async ({ title, detail, existingCardId, fingerprint }) => {
+  if (existingCardId) { await mcp.call("ops-knowledge", "work_report", { id: existingCardId, event: "progress", actor: "keir", summary: title.slice(0, 200), idempotency_key: `failure:${fingerprint}:${Math.floor(Date.now() / 21600000)}` }, true); return existingCardId; }
+  const card = await mcp.call("ops-knowledge", "kanban_add", { product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", actor: "keir", title, detail: detail.slice(0, 19000) }, true);
+  return Number(card?.id) || null;
+};
+if (failures) tickers.every("failures", 15 * 60000, async () => {
+  const r = await failures.scan(Date.now(), { file: env.KEIR_FAILURE_CARDS === "0" ? null : failureCard, sentry: failureSentry });
+  if (r.filed.length) log(`failures: ${r.filed.length} alert(s) filed`);
+  const day = new Date().toISOString().slice(0, 10), st = (ledger.data.failureState ||= {});
+  if (st.retentionDay !== day) { st.retentionDay = day; const ret = require("./lib/operator/retention"); ret.run({ stateDir: config.stateDir, protect: ret.protectedIds({ db: events.db, jobs: ledger.data.jobs }), apply: env.KEIR_RETENTION === "apply", log }); ledger.save(); }
+  if (env.KEIR_FAILURE_DM === "1" && st.dmDay !== day) { st.dmDay = day; ledger.notify(`failures-digest:${day}`, "owner", failures.digest()); ledger.save(); }
+}, { immediateMs: 120000 });
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
 const guardianStatus = () => { try { return JSON.parse(require("node:fs").readFileSync(env.KEIR_GUARDIAN_STATUS_FILE || "/var/lib/keir-guardian/status.json", "utf8")); } catch { return null; } };
 const trustReporter = require("./lib/operator/trustreport").createTrustReporter({ ledger, config, log, killSwitch, mcp, readGuardian: guardianStatus });
@@ -764,6 +783,7 @@ function drain() {
     const controller = new AbortController(), startedAt = Date.now(); active[lane] = { job, controller, startedAt };
     const deadline = setTimeout(() => controller.abort(), laneTimeoutMs(lane, config.maxTurnMs));
     agent.run(job, controller.signal).catch((e) => {
+      if (!controller.signal.aborted && !stopping) failures?.exception(e, "activation");
       const out = lifecycle.onRunError(job, e, { now: Date.now(), aborted: controller.signal.aborted, stopping, paused: d.paused, startedAt,
         supportDeferred: (j) => config.supportDeferred(j), staffHeld, claimedBy: (id) => d.channels[id]?.claimedBy,
         pauseFor: (j) => require("./lib/operator/ticketpause").pauseFor(d, j), staffActiveUntil: (j) => rootJob(j, d.jobs).staffActiveUntil || 0, redact: redactSecrets });
@@ -797,6 +817,11 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (!authorized(req)) return reply(401, { error: "unauthorized" });
+  if (req.url.startsWith("/failures") && req.method === "GET" && failures) {
+    const q = new URL(req.url, "http://x").searchParams, m = /^(\d+)([hdm])$/.exec(q.get("since") || "24h");
+    const since = m ? Number(m[1]) * { h: 3600000, d: 86400000, m: 60000 }[m[2]] : 86400000;
+    return reply(200, { since: q.get("since") || "24h", stats: failures.stats, groups: failures.groups({ since, cls: q.get("class") || null, limit: Math.min(100, Number(q.get("limit")) || 30) }), release: failures.releaseRates(failures.releases()[0]) });
+  }
   if (req.url === "/v5/github/mention" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 2000) return reply(413, { error: "too large" }); }
     try { return reply(202, await prMention.handle(JSON.parse(raw || "{}"))); }

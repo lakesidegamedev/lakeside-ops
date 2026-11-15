@@ -7,5 +7,5 @@ const argv = process.argv.slice(2), opt = (k) => { const i = argv.indexOf(k); re
 const file = opt("--ledger") || path.join(process.env.KEIR_OPERATOR_STATE_DIR || "/var/lib/keir-operator", "ledger.json");
 let data;
 try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { console.error(`cannot read ledger ${file}: ${e.message}`); process.exit(1); }
-const plan = require("../lib/operator/builderplan").planBuilder(data, { top: Math.max(1, Math.min(10, Number(opt("--top")) || 5)) });
+const plan = require("../lib/operator/builderplan").planBuilder(data, { top: Math.max(1, Math.min(10, Number(opt("--top")) || 5)), failures: require("../lib/operator/failures").topFromFile(path.join(path.dirname(file), "events.db"), 5) });
 console.log(JSON.stringify(plan));

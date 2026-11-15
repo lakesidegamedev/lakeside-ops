@@ -12,7 +12,7 @@ function repoFor(gap) {
   return /allowlist|outside (?:support|quick read) scope|not allowed|closed to support reads/i.test(`${gap.title} ${gap.sig}`) ? "lakeside-ops" : "lakeside-code";
 }
 
-function planBuilder(data, { top = 5, date = new Date().toISOString().slice(0, 10) } = {}) {
+function planBuilder(data, { top = 5, date = new Date().toISOString().slice(0, 10), failures = [] } = {}) {
   const gaps = rank(data, top);
   if (!gaps.length) return null;
   const groups = {};
@@ -25,6 +25,7 @@ function planBuilder(data, { top = 5, date = new Date().toISOString().slice(0, 1
     `# Keir weekly builder, ${date}`, "",
     `Keir, the support agent for A House Divided, keeps hitting these gaps in its read tools. Close as many as you safely can in this repository (${repo}) in ONE pull request: add the purpose-built read the tasks were missing, fix the argument shape that keeps failing, or allow the read for support tasks when the data is safe for players' ticket channels.`, "",
     "Gaps, ranked:", ...lines, "",
+    ...(failures.length ? ["Keir's own most frequent reasoning and tool failures this week (context, fix what is in this repository if it is a tool or read gap; see the board for the rest):", ...failures.slice(0, 5).map((f) => `- ${f.class}/${f.kind}: ${String(f.title).slice(0, 140)} (${f.count} times, ${f.tickets} tickets)`), ""] : []),
     "Rules:",
     "- Work only in this worktree. Read the board card for each gap (ops-knowledge kanban_get) for the examples Keir collected.",
     "- Read-only capabilities only. Never add a write, never open access to account, sign-in, payment or contact data.",

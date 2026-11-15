@@ -53,15 +53,16 @@ function openSink(file, { release = null, now = () => Date.now() } = {}) {
   function append(kind, fields = {}) {
     const { taskId = null, attemptId = null, ticket = null, actor = null, ...payload } = fields || {};
     try {
-      insert.run(now(), String(kind), taskId, attemptId, Number.isFinite(Number(ticket)) && ticket !== null ? Number(ticket) : null, actor, release, JSON.stringify(payload).slice(0, 20000));
-    } catch (e) { console.error(`[keir] event sink write failed: ${e.message}`); }
+      const r = insert.run(now(), String(kind), taskId, attemptId, Number.isFinite(Number(ticket)) && ticket !== null ? Number(ticket) : null, actor, release, JSON.stringify(payload).slice(0, 20000));
+      return Number(r.lastInsertRowid);
+    } catch (e) { console.error(`[keir] event sink write failed: ${e.message}`); return null; }
   }
   const kindStmt = db.prepare("SELECT at, kind, task_id, ticket, payload FROM events WHERE kind = ? AND at >= ? ORDER BY id DESC LIMIT ?");
   // Keir 7: one kind of event since a time, newest first (capability gaps).
   const byKind = (kind, since, limit = 20000) => kindStmt.all(String(kind), Number(since) || 0, limit).map((r) => { let p = {}; try { p = JSON.parse(r.payload); } catch {} return { ...p, at: r.at, kind: String(r.kind).replace(/^audit:/, ""), job: p.job || r.task_id, ticket: r.ticket }; });
   const count = () => Number(countStmt.get().n);
   const recent = ({ ticket = null, limit = 50 } = {}) => recentStmt.all(ticket, ticket, limit).map((r) => ({ ...r, payload: JSON.parse(r.payload) }));
-  return { enabled: true, append, count, recent, byKind, close: () => db.close() };
+  return { enabled: true, db, append, count, recent, byKind, failures: null, close: () => db.close() };
 }
 
 // Attempt to task: a ticket job belongs to task `ticket:N`; anything else to
@@ -82,8 +83,10 @@ function attachSink(ledger, sink) {
   ledger.audit = (kind, detail = {}) => {
     audit(kind, detail);
     const job = detail.job ? ledger.data.jobs[detail.job] : null;
-    sink.append(`audit:${kind}`, { taskId: job ? taskIdOf(job, ledger.data.jobs) : detail.ticket ? `ticket:${detail.ticket}` : null,
+    const id = sink.append(`audit:${kind}`, { taskId: job ? taskIdOf(job, ledger.data.jobs) : detail.ticket ? `ticket:${detail.ticket}` : null,
       attemptId: detail.job || null, ticket: detail.ticket ?? job?.ticket ?? null, actor: detail.actor || null, ...detail });
+    // Keir 10: classify failure kinds as they are audited (best effort, never throws).
+    try { sink.failures?.fromAudit(kind, { ...detail, ticket: detail.ticket ?? job?.ticket ?? null }, id ? { src: `ev:${id}` } : {}); } catch {}
   };
   return ledger;
 }
