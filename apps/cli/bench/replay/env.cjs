@@ -187,6 +187,18 @@ function createEnv({ scenario: sc, dir, configOverrides = {}, clock: clk = { t: 
   }
   // Production settings the broker reads at creation (child routes for delegation).
   Object.assign(config, configOverrides);
+  // Keir 10: a scenario can model the HTTP services behind native tools (the Ask site). sc.http maps a path to a JSON body or a
+  // function (body) => JSON; anything unmapped answers 404. Ask is then configured exactly as in production.
+  if (sc.http) {
+    config.askUrl = 'http://ask.replay.invalid'; config.askSecret = 'replay-secret';
+    config.w3Fetch = async (url, opts = {}) => {
+      const p = new URL(url).pathname, h = sc.http[p];
+      if (h === undefined) return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+      const body = typeof h === 'function' ? h(opts.body ? JSON.parse(opts.body) : {}) : h;
+      events.push({ kind: 'http', path: p });
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
+    };
+  }
   // Production passes a notebook (remember, recall, player notes); each trial gets its own, empty.
   const notebook = require(AGENT + '/lib/operator/knowledge').createNotebook({ file: path.join(dir, 'notebook.json') });
   // Optional seeded memory (KBX2 stale-note traps): notes exactly as an earlier task would have saved them.

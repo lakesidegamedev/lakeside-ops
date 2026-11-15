@@ -80,6 +80,8 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
       const follow = (sc.followUps || []).find((f) => f.after === i);
       if (follow && i + 1 < MAX_ACTIVATIONS) { env.playerReply(follow.text); continue; }
       if (job.state !== 'waiting') break;
+      // Keir 10: a task that set its own short wake (its next step, not the player's reply) is woken as production would.
+      if (job.wakeAt && job.waitingFor !== 'player_reply' && Number(job.wakeAt) - Date.now() <= 6 * 3600000 && i + 1 < MAX_ACTIVATIONS) continue;
       // The player answers the newest question posted this activation, if any.
       // A question mark, or any post when Keir finished waiting on the player (imperative asks:
       // "send a screenshot and tell me which page"). KBX3 2026-10-28.

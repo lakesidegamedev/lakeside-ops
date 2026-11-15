@@ -1052,6 +1052,18 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const live = (jobs || []).flatMap((j) => String(j.evidenceText || "").split(/\n\[([a-z_]+)\] /).slice(1).reduce((acc, v, i, all) => (i % 2 === 0 && !SELF_READS.has(v) ? [...acc, all[i + 1] || ""] : acc), []));
     return [...live, ...(d.ticketObservations?.[ticketNo] || []).filter((o) => !SELF_READS.has(o.tool)).map((o) => o.result)];
   }
+  // Keir 10 (replay 2026-11-15): code rarely labels its own bug, so a defect found by reading code could never be named, and Keir
+  // told a player "I have not confirmed this is a fault" after confirming it. A filed bug on this ticket plus a recorded fact whose
+  // source is a file this ticket actually read backs the label. An opinion about what the rule ought to be still has neither.
+  function filedBugBacking(ticketNo, jobs) {
+    const filed = Object.values(d.keirIssues || {}).some((x) => x.ticket === ticketNo || x.tickets?.includes(ticketNo)) || (jobs || []).some((j) => (j.issues || []).length);
+    if (!filed) return [];
+    const reads = ticketReadTexts(ticketNo, jobs).join("\n");
+    return (knowledge.ticketRecord(ledger, ticketNo).facts || []).filter((f) => !f.closedAt && f.source && f.text).filter((f) => {
+      const file = /([\w./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|rs|py|json))\b/.exec(String(f.source))?.[1];
+      return file && reads.includes(file);
+    }).map((f) => `bug: ${f.text}`);
+  }
   const ticketPlayerText = (job) => [job.source?.content, ...(job.requestInbox || []).map((m) => m?.content), ...(job.inbox || []).filter((m) => m && m.role === "player").map((m) => m.content),
     ...(d.channelContext?.[job.channelId || job.replyChannel] || []).filter((m) => m.role !== "assistant" && m.authorId !== config.botId).slice(-15).map((m) => m.content)].filter(Boolean).join(" ");
   // The reads on this ticket that say anything about the reporter's account: reporter_state results and users or characters queries.
@@ -1083,7 +1095,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   // Same for a sentence that calls behaviour a bug or says it needs a code change with no read marking it a fault.
   function softenBugClaims(job, ticketNo, message) {
     if ((job.fastLane && !job.fastLane.escalated) || (d.bugClaimRefusals?.[ticketNo] || 0) < bugClaim.MAX_REFUSALS) return message;
-    const claim = bugClaim.unbackedBugClaim(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), ticketPlayerText(job));
+    const tj = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
+    const claim = bugClaim.unbackedBugClaim(message, [...ticketReadTexts(ticketNo, tj), ...filedBugBacking(ticketNo, tj)], ticketPlayerText(job));
     if (!claim) return message;
     ledger.audit("bug_claim_hedged", { job: job.id, ticket: ticketNo, sentence: claim.sentence.slice(0, 160) });
     return bugClaim.hedge(message, claim, require("./playercopy").MAX_CHARS);
@@ -1256,7 +1269,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
       const refusals = (d.bugClaimRefusals ||= {});
       if ((refusals[ticketNo] || 0) < bugClaim.MAX_REFUSALS) {
-        const claim = bugClaim.unbackedBugClaim(message, ticketReadTexts(ticketNo, sameTicketJobs), ticketPlayerText(job));
+        const claim = bugClaim.unbackedBugClaim(message, [...ticketReadTexts(ticketNo, sameTicketJobs), ...filedBugBacking(ticketNo, sameTicketJobs)], ticketPlayerText(job));
         if (claim) {
           refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
           ledger.audit("bug_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], pattern: claim.pattern });
@@ -1890,7 +1903,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return job.reporterCharacter;
   }
   // Keir 10 (W3): ask, player_trail, resolve_reporter, turn_status, request_log.
-  const w3 = require("./w3tools").createW3Tools({ config, mcp, staff: (job) => job.role === "owner" || developerTask(job), now, log: (m) => config.log?.(m) });
+  const w3 = require("./w3tools").createW3Tools({ config, mcp, ...(config.w3Fetch ? { fetcher: config.w3Fetch } : {}), staff: (job) => job.role === "owner" || developerTask(job), now, log: (m) => config.log?.(m) });
   // Keir 2.0: the numbers and text of everything read this activation are the
   // evidence a public post may quote (see guardNumbers and secondLook).
   const NO_EVIDENCE = new Set(["check_draft", "channel_reply", "progress_update", "checkpoint", "finish", "handoff", "task_progress", "ticket_record", "remember"]);
@@ -2218,13 +2231,16 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // are checked locally and force does not skip them. distinctFrom lists
         // the ones the caller has read and judged a different problem.
         const distinct = new Set((Array.isArray(input.distinctFrom) ? input.distinctFrom : []).map(Number));
+        // Keir 10 (replay 2026-11-15): the loose GitHub search (score 0.08) offered back the issue this task had just filed for a
+        // different defect on the same ticket. Those are excluded from the search only; the local check above still compares them.
+        const ownFiled = new Set((job.issues || []).map(Number));
         const recent = Object.values(d.keirIssues || {}).filter((x) => x.state === "open" && now() - (x.at || 0) < 86400000 && !distinct.has(x.number) && x.title && similarity(x.title, built.title) >= 0.2);
         if (recent.length) return { raised: false, issueCandidates: recent.slice(0, 3).map((x) => ({ number: x.number, title: x.title })), instruction: "Keir filed these issues in the last day and they may be this problem. If one is, call raise_to_developers again with issueNumber set to it. If none is, call again with distinctFrom listing their numbers." };
         if (!input.force) {
           const q = [...words(built.title)].slice(0, 6).join(" ");
           const found = await gh([`search/issues?q=${encodeURIComponent(`repo:${GITHUB_OWNER}/AHDGame is:issue is:open ${q}`)}&per_page=10`]);
           if (!Array.isArray(found?.items)) throw new Error("duplicate search unavailable; retry before filing a public issue");
-          const candidates = (found?.items || []).map((i) => ({ number: i.number, title: i.title, score: similarity(`${i.title} ${String(i.body || "").slice(0, 600)}`, `${built.title} ${built.body.slice(0, 600)}`) })).filter((i) => i.score >= 0.08).sort((a, b) => b.score - a.score).slice(0, 3);
+          const candidates = (found?.items || []).filter((i) => !ownFiled.has(Number(i.number))).map((i) => ({ number: i.number, title: i.title, score: similarity(`${i.title} ${String(i.body || "").slice(0, 600)}`, `${built.title} ${built.body.slice(0, 600)}`) })).filter((i) => i.score >= 0.08).sort((a, b) => b.score - a.score).slice(0, 3);
           if (candidates.length) return { raised: false, issueCandidates: candidates.map(({ number, title }) => ({ number, title })), instruction: "These open GitHub issues may be the same problem. If one is, call raise_to_developers again with issueNumber set to it and your evidence in issue. If none is, call again with force: true." };
         }
         // Keir 8: a hidden marker lets an uncertain filing be found again on GitHub.
@@ -4242,7 +4258,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (last && !/\?/.test(last.text) && /\b(?:I am|I'm|I will|I'll)\s+(?:still\s+)?(?:checking|looking into|investigating|tracing|finding out|working out|come back|report back|check)\b|\bbefore I (?:say|give)\b/i.test(last.text))
           throw new Error("Not finished: you just told the player you are still checking something, so a wait for their reply would leave that promise hanging. Do the check now, or finish waiting with wakeAfterMinutes of 30 or less.");
       }
-      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && !outputBlocked(job) && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
+      // Keir 10 (replay 2026-11-15): three "Thanks." got three filler posts; a bare acknowledgement after a real answer owes nothing.
+      const ackOwesNothing = job.kind === "ticket" && job.ticket && ackOnly(lastHumanText(ticketOf(job))) && (d.ticketPosts?.[ticketOf(job)] || []).some((p) => !isCardPost(p) && !holdingPost(p.text));
+      if (state === "waiting" && input.waitFor === "player_reply" && job.kind === "ticket" && job.ticket && !job.codingParent && !outputBlocked(job) && !ackOwesNothing && ((job.lastAskAt || 0) < (job.lastPlayerAt || 0) || (!job.lastAskAt && !job.lastPublishedAt && (job.observedPlayerAt || 0) > 0))) throw new Error("Not finished: you are waiting for the player's reply, but nothing has been posted to them since they last wrote. If a post was refused, fix it and post it (support_action support_public_update, at most five short sentences), then finish again.");
       // Keir 5.6.2: one open question must not stall a ticket's other fixes.
       // Ticket 1577 (2026-10-16) waited six hours on "which page is the logo
       // on?" while three buildable display fixes sat paused on its card. The

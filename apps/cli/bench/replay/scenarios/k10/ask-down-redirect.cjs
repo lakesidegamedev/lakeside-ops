@@ -16,6 +16,8 @@ module.exports = {
   },
   mcp: { 'ops-knowledge': { code_search: () => ({ results: [{ path: 'src/app/war/FrontPanel.tsx', text: 'The front panel shows ownSupply for each front line under the war page.' }] }) },
     engine: { engine_health: () => ({ status: 'ok', turn: 240, components: { ask: { status: 'failing', since: '2026-10-19T07:10:00Z', detail: 'answers time out' } } }) } },
+  // The Ask site as the real ask tool sees it (Keir 10 ask bridge): up, but refusing most answers.
+  http: { '/healthz': { ok: true }, '/api/keir-ask/health': { status: 'failing', refusalRate: 0.86, total: 50, answered: 7, refused: 43, empty: 0, hours: 24 } },
   spec: {
     liveReadServers: ['gamestate', 'engine'],
     noDecision: true,

@@ -66,6 +66,10 @@ const PLAYBOOK_LANE = { mechanics_question: "question", bug_report: "bug", data_
 const TURN_TEXT = /\bturn\b[\s\S]{0,80}\b(?:stuck|frozen|overdue|late|processing|not\s+(?:advanc|process|run|mov|tick|happen)|(?:has|have|had|is|are|does|did)(?:n.?t|\s+not)\s+(?:advanc|process|run|mov|tick|happen)|hasn.?t\s+(?:advanc|process|run|mov))|\b(?:stuck|frozen|overdue)\b[\s\S]{0,40}\bturn\b|\bturn\s*\d+\b[\s\S]{0,30}\boverdue\b|\bgame\b[\s\S]{0,40}\b(?:frozen|down|not\s+updating)\b/i;
 const PEOPLE_TEXT = /\b(?:ban(?:ned)?|unban|appeal|suspend(?:ed)?|locked\s+out|account\s+recovery|recover(?:y)?\s+(?:my\s+)?account|hacked|password\s+reset|can.?t\s+log\s*in|cannot\s+log\s*in|harass(?:ment|ing|ed)?|cheat(?:ing|er)|report(?:ing)?\s+(?:a\s+)?player|multi.?account|alt\s+account)\b/i;
 
+// A how-to or where-is question with no symptom of something broken. Players often file these in the bug channel
+// (replay 2026-11-15: "Where can I see how much tax my company owes" went to the full bug lane).
+const HOWTO_TEXT = /^\s*(?:how (?:do|can|should|would) (?:i|we|you)|how to|where (?:do|can|is|are|would) (?:i|we|you|the|my)?|what (?:does|do|is|are) (?:a |an |the )?\w+|what's|which (?:unit|branch|office|page|tab|button)|can i\b|is there (?:a|any) way|is it possible|is it better|should i\b|what(?:'s| is) the best|which is (?:better|best)|why (?:can't|cannot|don't|doesn't) i see)/im;
+const SYMPTOM_TEXT = /\b(?:bug|broken|error|crash\w*|glitch\w*|stuck|frozen|wrong|incorrect|missing|disappear\w*|vanish\w*|not (?:working|showing|loading|saving|updating)|doesn'?t (?:work|show|load|save|update)|won'?t (?:work|load|let)|can'?t (?:click|load|open|save)|keeps? (?:failing|resetting)|lost|charged|double|negative|nan|undefined|refund)\b/i;
 const latest = (job) => [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter((m) => m && m.role !== "system")].filter(Boolean);
 const textOf = (job) => [job.source?.title, ...latest(job).slice(-4).map((m) => m.content)].filter(Boolean).join("\n").slice(0, 4000);
 
@@ -100,9 +104,10 @@ function route(job, d = {}, live = null) {
   if (tag === "moderation" || ["moderation", "investigation", "account", "appeal"].includes(cat)) return out("people", "moderation or account matter");
   if (tag !== "data_repair" && PEOPLE_TEXT.test(text) && !["bug_report"].includes(tag)) return out("people", "the ticket is about an account, ban or conduct matter");
   if (tag === "data_repair") return out("data_repair", "someone asks for live data to be corrected");
+  if (tag !== "bug_report" && HOWTO_TEXT.test(text) && !SYMPTOM_TEXT.test(text)) return out("question", "a how-to or where-is question that reports nothing broken");
   if (tag === "bug_report" || cat === "bug") return out("bug", cat === "bug" && tag !== "bug_report" ? "bug channel" : "intake tagged it a bug");
   if (["design_feedback", "feature_request"].includes(tag)) return out("idea", "an idea or design argument");
-  if (tag === "mechanics_question" || cat === "mechanics" || cat === "gameplay") return out("question", tag === "mechanics_question" ? "intake tagged it a how-to question" : "mechanics channel");
+  if (tag === "mechanics_question" || cat === "mechanics" || cat === "gameplay" || cat === "question") return out("question", tag === "mechanics_question" ? "intake tagged it a how-to question" : "mechanics channel");
   if (tag === "gameplay_advice") return out("advice", "intake tagged it gameplay advice");
   if (PEOPLE_TEXT.test(text)) return out("people", "the ticket is about an account, ban or conduct matter");
   return { ...out("bug", "no clear signal, so the full investigation lane"), defaulted: true };
@@ -173,4 +178,4 @@ function laneBrief(job, briefText, config = {}, { read = (f) => require("node:fs
   return [core.trim(), ...extra, block].join("\n\n");
 }
 
-module.exports = { laneBrief, textOf, LANES, LANE_IDS, PLAYBOOK_LANE, TURN_TEXT, QUESTION_LIMIT, route, assign, change, laneOf, def, isTicketJob, gatherLive, turnTrouble, rethink, questionLimit };
+module.exports = { HOWTO_TEXT, SYMPTOM_TEXT, laneBrief, textOf, LANES, LANE_IDS, PLAYBOOK_LANE, TURN_TEXT, QUESTION_LIMIT, route, assign, change, laneOf, def, isTicketJob, gatherLive, turnTrouble, rethink, questionLimit };

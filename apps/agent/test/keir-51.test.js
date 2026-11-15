@@ -325,3 +325,11 @@ test("duplicate sweep: the hourly task does not repeat the duplicate comment whe
   assert.deepEqual(closed, [4142]);
   assert.match(comments[0], /<!-- keir:duplicate:4142:4140 -->$/);
 });
+
+test("Keir 10: the issue this task just filed for another defect is not offered back by the search (replay 2026-11-15)", async () => {
+  const f = brokerFixture([[/search\/issues/, { items: [{ number: 900, title: "Bank loan row shows wrong currency symbol", body: "page shows symbol" }] }], [/repos\/lakesidegamedev\/AHDGame\/issues$/, { number: 901, html_url: "https://github.com/lakesidegamedev/AHDGame/issues/901" }]]);
+  const job = f.l.createJob("cmd:y", { kind: "command", role: "owner", actorId: "111111111111111111", repository: "AHDGame", deadline: 9e15, source: {} }); job.state = "running";
+  job.issues = [900];
+  const r = await f.b.tool(job, "raise_to_developers", locIssue("Bill page vote count header lags the recorded votes list"));
+  assert.equal(r.issue, 901);
+});

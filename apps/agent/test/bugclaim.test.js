@@ -179,3 +179,18 @@ test("the fast lane is exempt", async () => {
   assert.equal(f.posts().length, 1);
   assert.equal(f.audits("bug_claim_refused").length, 0);
 });
+
+test("Keir 10: a defect found by reading code is backed once it is filed and its recorded fact cites the file read (replay 2026-11-15)", async () => {
+  const code = JSON.stringify({ path: "src/lib/format/money.ts", text: "export function formatMoney(amount, currency, anchor) { return SYMBOLS[anchor] + amount; }" });
+  const f = setup(code);
+  await f.read();
+  const msg = "The sign is wrong: the money formatter puts the anchor currency sign on your pound loan.";
+  // Not filed yet: the label is refused, as before.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: msg }), /calls behaviour a bug, fault or defect/);
+  // Filed as a bug with a fact sourced to the file this ticket read: the label goes out.
+  f.ledger.data.keirIssues = { 900: { number: 900, state: "open", title: "Loan row shows the anchor sign", ticket: 123 } };
+  await f.broker.tool(f.job, "ticket_record", { op: "add", kind: "fact", source: "src/lib/format/money.ts:4", text: "formatMoney uses the anchor currency sign instead of the loan currency sign" });
+  f.advance(11);
+  await f.broker.tool(f.job, "channel_reply", { message: msg });
+  assert.equal(f.posts().length, 1);
+});

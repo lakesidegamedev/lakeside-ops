@@ -398,3 +398,13 @@ test("the chat profile follows lane and wake, not tagger confidence", () => {
   assert.equal(cc.profile(ticket()), "full", "an unrouted ticket stays full");
   assert.equal(cc.profile({ ...q, role: "owner" }), "full");
 });
+
+test("how-to and strategy questions filed in the bug channel route to the question lane; symptoms stay bugs (replay 2026-11-15)", () => {
+  const d = { channels: { ch: { category: "bug" } } };
+  const r = (t) => lanes.route({ kind: "ticket", ticket: 1, role: "support", channelId: "ch", source: { content: t } }, d, null).lane;
+  assert.equal(r("Where can I see how much tax my company owes this turn?"), "question");
+  assert.equal(r("Is it better to push north or hold the line?"), "question");
+  assert.equal(r("How do I fix this? My loan shows the wrong currency"), "bug");
+  assert.equal(r("The bank page shows my pound loan with a dollar sign."), "bug");
+  assert.equal(lanes.route({ kind: "ticket", ticket: 1, role: "support", channelId: "q", source: { content: "Hello" } }, { channels: { q: { category: "question" } } }, null).lane, "question");
+});

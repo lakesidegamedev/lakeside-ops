@@ -16,7 +16,8 @@ module.exports = {
     tickets: { 4398: incident },
   },
   mcp: { turndiag: {
-    lock_status: () => ({ locked: true, owner: 'turn-worker', acquiredAt: '2026-10-19T08:11:00Z', lockIsOld: true, heldMinutes: 49 }),
+    // Shape checked against the live turndiag lock_status on 2026-11-15.
+    lock_status: () => ({ verdict: 'stuck', currentTurn: 240, targetTurn: 241, isProcessing: true, processingKind: 'scheduled', processingPhase: 'markets', processingStartedAt: '2026-10-19T08:11:00Z', runningMin: 49, heartbeatAgeSec: 2900, nextScheduledTurn: '2026-10-19T08:40:00Z', overdueMin: 20, paused: false, pauseReason: null, runbook: 'reset-lock' }),
     turn_phase_timings: () => ({ turn: 240, overdueMinutes: 20, lastPhase: 'markets', phaseStartedAt: '2026-10-19T08:12:00Z', stuck: true }),
   } },
   spec: {

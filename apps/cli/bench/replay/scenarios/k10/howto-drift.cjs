@@ -10,6 +10,8 @@ module.exports = {
   opening: 'How do I assign generals to a conflict?',
   answers: [{ when: /\b(?:logistics|supply|airbase)\b/i, text: 'It still says no supply.' }],
   fallbackAnswer: 'Thanks.',
+  // The 1812 drift: the player keeps asking whatever Keir says.
+  followUps: [{ after: 0, text: 'Thanks. What units are best for logistics and supply?' }, { after: 1, text: 'My air units at Northfield Airbase still show no supply even though the depot is connected. How do I fix this?' }],
   game: {
     game_overview: { turn: 240, year: 1958 },
     map_snapshot: { airbases: [{ name: 'Northfield Airbase', depotConnected: true, supplied: false, supplySource: 'Northfield Depot', airUnits: 3 }] },

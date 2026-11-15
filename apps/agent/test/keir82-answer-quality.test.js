@@ -221,6 +221,10 @@ test("Keir 10: a bare acknowledgement after a real answer owes no reply (replay 
   f.advance(1);
   const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; the player acknowledged." });
   assert.equal(r.state, "waiting");
+  // The stricter player_reply wait also accepts a bare thanks (it fired three times in the howto-drift replay).
+  f.job.state = "running"; f.job.lastPlayerAt = f.now(); f.job.lastAskAt = f.now() - 60000;
+  const r2 = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Still answered." });
+  assert.equal(r2.state, "waiting");
   // A real follow-up question is still owed an answer.
   f.job.state = "running";
   f.job.observedPlayerAt = f.now(); f.job.requestInbox.push({ role: "player", content: "Ok but why is it low?", at: new Date(f.now()).toISOString() });

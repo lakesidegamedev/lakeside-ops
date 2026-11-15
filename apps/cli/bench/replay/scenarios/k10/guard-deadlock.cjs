@@ -11,7 +11,8 @@ module.exports = {
   game: { game_overview: { turn: 240, year: 1958 }, trace_corp: { corporation: { name: 'Keeper Freight', currency: 'USD', liquidCapital: 410000 }, taxDueThisTurn: 18200 }, character: { name: 'T. Ibsen', country: 'Eastmark', region: 'South', office: null, corporation: 'Keeper Freight' } },
   mcp: { 'ops-knowledge': { code_search: () => ({ results: [{ path: 'src/app/corporation/Finances.tsx', text: 'The Finances tab of a corporation page lists taxDueThisTurn under Tax.' }] }) } },
   spec: {
-    liveReadServers: ['gamestate'],
+    // A where-is question is answered from the code that draws the page, not from live numbers.
+    liveReadServers: ['gamestate', 'ops-knowledge'],
     noDecision: true,
     k10: { maxPosts: 1, finishAccepted: true, maxRefusals: 1 },
   },

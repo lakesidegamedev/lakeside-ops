@@ -13,10 +13,9 @@ const votes = { kind: 'bug', title: 'Bill page yes count lags the bill list', de
 test('ideal: two defects, two separate items', async () => {
   const { env, t } = start(sc); await reads(t);
   await t('raise_to_developers', loan);
-  // The duplicate check offers the first issue as a candidate; it is a different defect, so force.
+  // Keir 10: the issue this task just filed for the other defect is no longer offered back as a duplicate, so it files at once.
   const second = await t('raise_to_developers', votes);
-  assert.equal(second.raised, false);
-  await t('raise_to_developers', { ...votes, force: true });
+  assert.equal(second.raised, true);
   await t('channel_reply', { message: 'I have raised both as separate items for the developers: the pound loan showing a dollar sign, and the Roads Bill count that is lower on the page than in the list.' });
   const g = gradeK10(env.events, sc.spec);
   assert.equal(g.success, true, JSON.stringify(g, null, 1));

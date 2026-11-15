@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- How-to, where-is and strategy questions filed in the bug channel are routed as questions (lighter context, answer and close) unless they describe something broken.
+- A defect Keir finds by reading the code can be named to the player once it is filed and Keir's recorded fact cites the file it read; before, only code that labelled its own bug counted, so Keir told players a confirmed fault was unconfirmed.
+- Filing a second, different bug on the same ticket no longer stalls on the first one being offered back as a possible duplicate.
+- A bare "Thanks." after a real answer no longer forces a filler reply from the player-reply wait either.
+
 - Database reads no longer silently drop game settings whose names mention Discord, email or sessions (for example the setting that makes Discord linking required for new characters). Only personal identifiers, contact details and credentials are withheld, and a read now names any field it withheld, so a withheld field is never reported as missing.
 - A bare acknowledgement from the player ("Ok.", "thanks", "will check it out") after a real answer no longer forces Keir to post again before it can finish.
 
