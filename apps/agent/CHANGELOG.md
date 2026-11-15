@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.2.0 (2026-11-15)
+
+- The /keir staff desk's actions (nudge, release, pause, resume, on, off) and the model command now reach the operator; they were built apart from the desk router and were never called.
 - A ticket whose sector or record is damaged now gets the repair proposed to the owner for approval instead of only a developer report. The request_heal tool is no longer hidden behind a deferred schema, spells out the action shape (a bare set or unset is accepted), says it works from tickets, and the heal rule is no longer cut from support tasks. Filing a bug now tells the task to propose the data repair as well, and the debugging digest no longer tells it to wait for a root cause before repairing a bad record. Net model-facing text shrinks.
 
 - A ticket task is shown a kept note only when the note shares a game code file or game area with the question; word overlap alone no longer brings in unrelated notes. Notes are kept and shown in plain present tense: "now" is dropped and sentences about changes, fixes or updates are left out.
@@ -12,7 +15,6 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 - Desk staff actions: nudge, release, pause and resume a ticket (junior developers and developers) and switch Keir on or off (developers) through a new local operator endpoint that audits each action and posts one line to the staff channel; none of them resolves a ticket or messages the player. A proven-model registry lets developers switch the model for new tickets only, and only to entries that passed the bar with a live check in the last 10 minutes (override is logged and posted to staff).
 
-- Keir no longer tells a player a fault "has since been fixed" or a rule "has since been changed" without proof from the player's own page.
 - Staff ticket board: a new read endpoint `/v5/ticket-board` on the operator and a "Tickets" panel on the Keir hub list every open ticket in one line (what the player asked, where Keir is in plain words, the next step and who owns it, last player message and last Keir answer), with a highlight when a player has had no answer for over 2 hours. Built from the ledger only, no model calls.
 
 - Effort per ticket question: the player-ticket route effort (and the operator effort override) is now a ceiling for tickets. A first-time plain rules question with no figures runs at medium; bug reports, money or figures, turn or outage questions, a refused, retracted or out-of-steps earlier attempt, and any activation after the player disputed an answer stay at the ceiling. Never below medium unless the ceiling is lower. The reason is recorded in the usage record. Non-ticket tasks are unchanged.
