@@ -16,6 +16,10 @@ function expireDeadline(job, now, { lifetimeMs }) {
   }
   job.state = "blocked";
   job.summary = "Task ran out of time twice; owner needs to choose the next move.";
+  // Keir 10.0.1 (2026-11-15): three finding tasks were put back to waiting on every tick and re-blocked here, so the owner
+  // alert fired about once a second (1,867 times in 30 minutes). Alert once per task; later re-blocks are silent.
+  if (job.deadlineBlockedAt) return "reblocked";
+  job.deadlineBlockedAt = now;
   return "blocked";
 }
 
