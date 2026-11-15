@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.0.2 (2026-11-15)
+
+- A promotion to main that Keir starts by hand ships bug and display fixes without asking for a sign-off, the same as its coding worker (owner, 2026-11-15). Economy and turn-engine changes, and rule or balance changes, still ask once.
+- The activity trail reads PostHog US cloud by default, where the game sends its events.
+
 ## 10.0.1 (2026-11-15)
 
 - A task that runs out of time twice alerts the owner once. Three background findings were being put back to waiting and re-blocked on every tick, which repeated the alert about once a second. Self-recovery no longer turns such a task back into a developer wait (that was the loop).
