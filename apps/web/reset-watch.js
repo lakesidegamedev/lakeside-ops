@@ -667,7 +667,8 @@ function groupReleases(rows) {
 }
 
 function buildMetrics({ autodeployDir }) {
-  const releases = groupReleases(readJsonl(path.join(autodeployDir, "ahd-us-releases.jsonl"), 2000)).slice(-20);
+  const all = groupReleases(readJsonl(path.join(autodeployDir, "ahd-us-releases.jsonl"), 4000));
+  const releases = all.slice(-20);
   const ship = readJsonl(path.join(autodeployDir, "ship-latency.jsonl"), 50).filter((r) => r.sha);
   const worker = releases.filter((r) => r.kind === "worker" && r.ok);
   const failed = releases.filter((r) => !r.ok).length;
@@ -678,6 +679,8 @@ function buildMetrics({ autodeployDir }) {
   const lvl = lastFailed ? "bad" : failed > 0 || (leadMin != null && leadMin > T.releaseLeadWarnMin) ? "warn" : releases.length ? "ok" : "none";
   return {
     releases: releases.slice().reverse().slice(0, 10),
+    // Commit-to-live per successful release, for the over-time chart.
+    series: all.slice(-60).filter((r) => r.ok && r.finishedAt && r.leadS != null).map((r) => ({ kind: r.kind, at: r.finishedAt, leadMin: Math.round(r.leadS / 6) / 10, buildS: r.buildS })),
     count: releases.length,
     buildMedianS: round(median(worker.map((r) => r.buildS)), 0),
     shipMedianS: round(median(worker.map((r) => r.shipS)), 0),
@@ -692,34 +695,57 @@ function buildMetrics({ autodeployDir }) {
 
 // ── collection ───────────────────────────────────────────────────────────────
 
-async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = [], now = new Date() } = {}) {
-  const gs = (await db.collection("gameState").findOne({ _id: "current" }, { projection: { currentTurn: 1, currentYear: 1, iteration: 1, preset: 1, startingYear: 1, nextScheduledTurn: 1, pausedAt: 1, pauseReason: 1 } })) || {};
+// A reset is identified by its world epoch, not its label: a re-run reset can
+// keep the same preset and iteration number (it did on 2026-11-15), and keying
+// by label mixed two worlds' turns into one history.
+const GAME_STATE_PROJECTION = { currentTurn: 1, currentYear: 1, iteration: 1, preset: 1, startingYear: 1, nextScheduledTurn: 1, pausedAt: 1, pauseReason: 1, worldEpochId: 1, worldEpochStartedAt: 1, resetWorldId: 1 };
+
+function worldIdentity(gs) {
+  const it = (gs && gs.iteration) || {};
+  const label = `${(gs && gs.preset) || "world"} · ${it.type || "Iteration"} ${it.number ?? "?"}`;
+  const epoch = gs && (gs.worldEpochId || gs.resetWorldId);
+  const id = epoch ? `${(gs && gs.preset) || "world"}-${String(epoch)}` : `${(gs && gs.preset) || "world"}:${it.type || "Iteration"}-${it.number ?? "?"}`;
+  const startedAt = gs && gs.worldEpochStartedAt ? new Date(gs.worldEpochStartedAt) : null;
+  return { id, label, startedAt: startedAt && !Number.isNaN(startedAt.getTime()) ? startedAt : null };
+}
+
+async function readGameState(db) {
+  return (await db.collection("gameState").findOne({ _id: "current" }, { projection: GAME_STATE_PROJECTION })) || {};
+}
+
+async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = [], turnHistory = [], now = new Date(), gameState = null } = {}) {
+  const gs = gameState || (await readGameState(db));
   const turn = gs.currentTurn ?? null;
   const it = gs.iteration || {};
-  const worldId = `${gs.preset || "world"}:${it.type || "Iteration"}-${it.number ?? "?"}`;
+  const world = worldIdentity(gs);
+  const worldId = world.id;
+  // Only this world's documents: rows left over from before the reset share
+  // turn numbers with the new world.
+  const since = world.startedAt ? { createdAt: { $gte: world.startedAt } } : {};
 
   const [fx, banks, corps, sectors, histTurnDoc, npps, parties, elections, candidates, officials, formations, turnLogs, lastLog, gameConfig] = await Promise.all([
     db.collection("exchangeRates").find({}, { projection: { countryId: 1, rate: 1 } }).toArray(),
     db.collection("centralBanks").find({}, { projection: { countryId: 1, primeRate: 1 } }).toArray(),
     db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
     db.collection("corporateSectors").find({}, { projection: { corporationId: 1, countryId: 1, sectorType: 1, industryModel: 1, mediaDiscriminator: 1, "plantsPnl.profit": 1, "plantsPnl.revenue": 1, "plantsPnl.turn": 1, capacityBookAnchor: 1, constructionInProgressAnchor: 1, capitalStock: 1, operatingCapacityUnits: 1, plantCount: 1, soldFraction: 1, capitalUtilization: 1 } }).toArray(),
-    db.collection("corporationHistory").find({ turn: { $lte: turn ?? 0 } }, { projection: { turn: 1 } }).sort({ turn: -1 }).limit(1).next(),
+    db.collection("corporationHistory").find({ turn: { $lte: turn ?? 0 }, ...since }, { projection: { turn: 1 } }).sort({ turn: -1 }).limit(1).next(),
     db.collection("npps").find({ retiredAt: null }, { projection: { countryId: 1, party: 1, retiredAt: 1 } }).toArray(),
     db.collection("politicalParties").find({}, { projection: { countryId: 1, sequentialId: 1, name: 1, abbreviation: 1, color: 1, regimeStatus: 1 } }).toArray(),
     // Live races plus anything decided in the last two game years: enough for
     // margins and tenure, without re-reading every election the world has held.
-    db.collection("elections").find({ $or: [{ status: "active" }, { endTurn: { $gte: (turn ?? 0) - 2 * TURNS_PER_YEAR } }] }, { projection: { countryId: 1, electionType: 1, status: 1, primaryEndTurn: 1, endTurn: 1, totalSeats: 1 } }).toArray(),
+    db.collection("elections").find({ $or: [{ status: "active" }, { endTurn: { $gte: (turn ?? 0) - 2 * TURNS_PER_YEAR } }], ...since }, { projection: { countryId: 1, electionType: 1, status: 1, primaryEndTurn: 1, endTurn: 1, totalSeats: 1 } }).toArray(),
     db.collection("electionCandidates").find({ status: "active" }, { projection: { electionId: 1, party: 1, status: 1, isNPP: 1, nppId: 1, characterId: 1 } }).toArray(),
     db.collection("electedOfficials").find({}, { projection: { countryId: 1, officeType: 1, party: 1, seatsHeld: 1 } }).toArray(),
     db.collection("governmentFormations").find({}, { projection: { countryId: 1, governingPartyId: 1, status: 1, formedTurn: 1 } }).toArray(),
     // Turn logs are ~45 KB each because of phaseStatuses; only the newest needs them.
-    db.collection("turnLogs").find({}, { projection: { turn: 1, realTime: 1, createdAt: 1, durationMs: 1, outcome: 1, success: 1, failedPhases: 1, "memory.peakRssMb": 1, "build.commit": 1 } }).sort({ turn: -1 }).limit(48).toArray(),
-    db.collection("turnLogs").find({}, { projection: { turn: 1, phaseStatuses: 1 } }).sort({ turn: -1 }).limit(1).next(),
+    // Sorted by time, not turn number: the previous world's logs (24 h TTL) carry higher turn numbers.
+    db.collection("turnLogs").find(since, { projection: { turn: 1, realTime: 1, createdAt: 1, durationMs: 1, outcome: 1, success: 1, failedPhases: 1, "memory.peakRssMb": 1, "build.commit": 1 } }).sort({ createdAt: -1 }).limit(48).toArray(),
+    db.collection("turnLogs").find(since, { projection: { turn: 1, phaseStatuses: 1 } }).sort({ createdAt: -1 }).limit(1).next(),
     db.collection("gameConfig").findOne({}, { projection: { turnLengthMinutes: 1 } }),
   ]);
   const histTurn = histTurnDoc ? histTurnDoc.turn : null;
   const corpHist = histTurn == null ? [] : await db.collection("corporationHistory")
-    .find({ turn: histTurn }, { projection: { corporationId: 1, revenue: 1, income: 1, incomePreDividends: 1 } }).toArray();
+    .find({ turn: histTurn, ...since }, { projection: { corporationId: 1, revenue: 1, income: 1, incomePreDividends: 1 } }).toArray();
   const electionIds = elections.map((e) => e._id);
   const tallies = await db.collection("electionVoteTallies")
     .find({ electionId: { $in: electionIds } }, { projection: { electionId: 1, finalized: 1, totalVotes: 1, candidateParties: 1, turnSnapshots: { $slice: -1 } } }).toArray();
@@ -747,8 +773,10 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   const compOut = competitiveness(margins);
   const domOut = dominance({ officials, formations, partyByKey, parties, turn, history });
 
+  // Turn logs expire after a day, so every turn seen is kept in the world's
+  // turns file (turnHistory) and merged here.
   const turnRecs = turnLogs.slice().reverse().map(turnRecord);
-  const known = new Map(history.filter((h) => h.turnRec).map((h) => [h.turnRec.turn, h.turnRec]));
+  const known = new Map(turnHistory.map((r) => [r.turn, r]));
   for (const r of turnRecs) known.set(r.turn, r);
   const allTurns = [...known.values()].sort((a, b) => a.turn - b.turn);
   const turnsOut = turnMetrics({ turns: allTurns, cadenceMin: null });
@@ -758,13 +786,14 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   const snapshot = {
     v: 1,
     generatedAt: now.toISOString(),
-    world: { id: worldId, preset: gs.preset || null, turn, year: gs.currentYear ?? null, startingYear: gs.startingYear ?? null, iteration: it, paused: !!gs.pausedAt, pauseReason: gs.pauseReason || null, nextTurn: gs.nextScheduledTurn || null, firstTrackedTurn: firstTurn, turnLengthMinutes: gameConfig && gameConfig.turnLengthMinutes },
+    world: { id: worldId, label: world.label, startedAt: world.startedAt ? world.startedAt.toISOString() : null, preset: gs.preset || null, turn, year: gs.currentYear ?? null, startingYear: gs.startingYear ?? null, iteration: it, paused: !!gs.pausedAt, pauseReason: gs.pauseReason || null, nextTurn: gs.nextScheduledTurn || null, firstTrackedTurn: firstTurn, turnLengthMinutes: gameConfig && gameConfig.turnLengthMinutes },
     thresholds: { ...T, enginePaybackTurns: ENGINE_MAX_PAYBACK_TURNS, turnsPerYear: TURNS_PER_YEAR },
     sectors: sectorsOut,
     balance: { countries: countriesOut, forms: formsOut },
     politics: { fields, competitiveness: compOut, dominance: domOut, racesWithVotes: margins.length },
-    infra: { turns: turnsOut, turnSeries: allTurns.slice(-96), slowPhases, builds: buildsOut },
+    infra: { turns: turnsOut, turnSeries: allTurns.slice(-400), slowPhases, builds: buildsOut },
   };
+  Object.defineProperty(snapshot, "turnRecords", { value: turnRecs, enumerable: false });
   snapshot.verdicts = verdicts(snapshot);
   return snapshot;
 }
@@ -801,16 +830,22 @@ function historyRecord(s) {
   return {
     turn: s.world.turn,
     at: s.generatedAt,
+    // [profitable share, median margin, return %/yr, points over prime]
     lanes: Object.fromEntries(s.sectors.lanes.map((l) => [l.lane, [l.profitableShare == null ? null : round(l.profitableShare, 2), l.marginMedian, l.returnPct, l.excessPp]])),
+    sectors: { viable: s.sectors.viable, thin: s.sectors.weak, below: s.sectors.failing, worldReturn: s.sectors.worldReturnPct },
     countries: Object.fromEntries(s.balance.countries.map((c) => [c.country, c.edgePp])),
+    forms: Object.fromEntries(s.balance.forms.forms.map((f) => [f.form, [f.choiceShare == null ? null : round(f.choiceShare, 3), f.edgePp]])),
+    playerCorps: s.balance.forms.playerCorps,
     politics: {
       exec,
       contested: s.politics.fields.reduce((a, r) => a + r.contested, 0),
+      uncontested: s.politics.fields.reduce((a, r) => a + r.uncontested, 0),
       empty: s.politics.fields.reduce((a, r) => a + r.empty, 0),
       races: s.politics.fields.reduce((a, r) => a + r.races, 0),
       enp: Object.fromEntries(s.politics.dominance.map((d) => [d.country, d.enp])),
+      largest: Object.fromEntries(s.politics.dominance.map((d) => [d.country, d.largest ? round(d.largest.share, 3) : null])),
+      close: Object.fromEntries(s.politics.competitiveness.map((c) => [c.country, c.closeShare == null ? null : round(c.closeShare, 3)])),
     },
-    turnRec: s.infra.turns.last,
     v: Object.fromEntries(Object.entries(s.verdicts).map(([k, v]) => [k, v.level])),
   };
 }
@@ -827,6 +862,29 @@ function loadHistory(dir, worldId) {
   return readJsonl(historyPath(dir, worldId), 5000);
 }
 
+function turnsPath(dir, worldId) {
+  return path.join(dir, `turns-${safeName(worldId)}.jsonl`);
+}
+
+function loadTurns(dir, worldId) {
+  return readJsonl(turnsPath(dir, worldId), 20000);
+}
+
+function writeJsonlAtomic(file, rows) {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, rows.map((h) => JSON.stringify(h)).join("\n") + (rows.length ? "\n" : ""));
+  fs.renameSync(tmp, file);
+}
+
+// Upserts every turn record seen this run, keyed by turn.
+function saveTurns(dir, worldId, records) {
+  const byTurn = new Map(loadTurns(dir, worldId).map((r) => [r.turn, r]));
+  for (const r of records || []) if (r && r.turn != null) byTurn.set(r.turn, r);
+  const rows = [...byTurn.values()].sort((a, b) => a.turn - b.turn);
+  writeJsonlAtomic(turnsPath(dir, worldId), rows);
+  return rows.length;
+}
+
 // Appends at most one record per turn. Rewrites atomically so a crash mid-write
 // never leaves a torn line.
 function appendHistory(dir, snapshot) {
@@ -837,9 +895,8 @@ function appendHistory(dir, snapshot) {
   const kept = existing.filter((h) => h.turn !== rec.turn);
   kept.push(rec);
   kept.sort((a, b) => a.turn - b.turn);
-  const tmp = `${file}.tmp`;
-  fs.writeFileSync(tmp, kept.map((h) => JSON.stringify(h)).join("\n") + "\n");
-  fs.renameSync(tmp, file);
+  writeJsonlAtomic(file, kept);
+  if (snapshot.turnRecords) saveTurns(dir, snapshot.world.id, snapshot.turnRecords);
   return { appended: !existing.some((h) => h.turn === rec.turn), file, turns: kept.length };
 }
 
@@ -862,4 +919,5 @@ module.exports = {
   candidateFields, raceMargins, competitiveness, dominance,
   turnRecord, turnMetrics, phaseDurations, buildMetrics, groupReleases,
   collect, verdicts, historyRecord, appendHistory, loadHistory, writeLatest, readLatest, historyPath,
+  worldIdentity, readGameState, loadTurns, saveTurns, turnsPath,
 };

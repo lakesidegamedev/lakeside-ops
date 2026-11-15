@@ -21,11 +21,11 @@ async function main() {
   await client.connect();
   try {
     const db = client.db(process.env.RESET_WATCH_DB || "a-house-divided");
-    const probe = await db.collection("gameState").findOne({ _id: "current" }, { projection: { preset: 1, iteration: 1 } });
-    const it = (probe && probe.iteration) || {};
-    const worldId = `${(probe && probe.preset) || "world"}:${it.type || "Iteration"}-${it.number ?? "?"}`;
+    const gameState = await rw.readGameState(db);
+    const worldId = rw.worldIdentity(gameState).id;
     const history = rw.loadHistory(dir, worldId);
-    const snapshot = await rw.collect(db, { autodeployDir, history });
+    const turnHistory = rw.loadTurns(dir, worldId);
+    const snapshot = await rw.collect(db, { autodeployDir, history, turnHistory, gameState });
     rw.writeLatest(dir, snapshot);
     const res = rw.appendHistory(dir, snapshot);
     console.log(JSON.stringify({ world: snapshot.world.id, turn: snapshot.world.turn, historyTurns: res.turns, verdicts: Object.fromEntries(Object.entries(snapshot.verdicts).map(([k, v]) => [k, v.level])) }));

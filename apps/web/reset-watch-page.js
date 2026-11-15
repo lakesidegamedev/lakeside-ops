@@ -7,6 +7,9 @@
 
 "use strict";
 
+const { lineChart, CHART_CSS, CHART_JS } = require("./reset-watch-charts");
+const rwModel = require("./reset-watch");
+
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -39,21 +42,6 @@ function years(turns, perYear) {
 
 const LEVEL_WORD = { ok: "Healthy", warn: "Watch", bad: "Act", none: "Waiting" };
 const dot = (lvl, title) => `<span class="rw-dot ${esc(lvl || "none")}"${title ? ` title="${esc(title)}"` : ""}></span>`;
-
-// Tiny inline sparkline. Values may contain nulls (gaps).
-function spark(values, { w = 90, h = 22, zero = null, color = "var(--accent)" } = {}) {
-  const pts = values.map((v, i) => [i, v]).filter(([, v]) => v != null && Number.isFinite(v));
-  if (pts.length < 2) return `<span class="rw-muted rw-small">${pts.length ? "1 turn" : ""}</span>`;
-  const ys = pts.map(([, v]) => v).concat(zero != null ? [zero] : []);
-  const min = Math.min(...ys);
-  const max = Math.max(...ys);
-  const span = max - min || 1;
-  const x = (i) => (i / (values.length - 1)) * (w - 2) + 1;
-  const y = (v) => h - 2 - ((v - min) / span) * (h - 4);
-  const d = pts.map(([i, v], k) => `${k ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
-  const zl = zero != null ? `<line x1="0" x2="${w}" y1="${y(zero).toFixed(1)}" y2="${y(zero).toFixed(1)}" class="rw-zero"/>` : "";
-  return `<svg class="rw-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">${zl}<path d="${d}" fill="none" stroke="${color}" stroke-width="1.6"/></svg>`;
-}
 
 // Return bar: the plant's yearly return with the local prime rate as a tick.
 function returnBar(ret, prime, scaleMax) {
@@ -142,9 +130,6 @@ table.rw-t{width:100%;border-collapse:collapse;font-size:.84rem}
 .rw-stat .l{font-size:.72rem;color:var(--text-3);font-weight:600}
 .rw-stat .v{font-size:1.15rem;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
 .rw-stat .v.bad{color:var(--red,#e5484d)}.rw-stat .v.warn{color:var(--amber,#f5a623)}
-.rw-bars{display:flex;align-items:flex-end;gap:2px;height:84px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
-.rw-bars span{flex:1;min-width:2px;max-width:14px;background:var(--accent);border-radius:2px 2px 0 0;opacity:.85}
-.rw-bars span.bad{background:var(--red,#e5484d);opacity:1}
 .rw-list{list-style:none;margin:0;padding:0;font-size:.84rem}
 .rw-list li{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid color-mix(in srgb,var(--border) 60%,transparent)}
 .rw-list li:last-child{border-bottom:0}
@@ -171,7 +156,6 @@ function sectorsSection(s, history) {
   const th = s.thresholds;
   const maxRet = Math.max(4, ...sec.lanes.map((l) => l.returnPct || 0), ...sec.lanes.map((l) => l.primePct || 0)) * 1.1;
   const rows = sec.lanes.map((l) => {
-    const series = history.map((h) => (h.lanes && h.lanes[l.lane] ? h.lanes[l.lane][3] : null));
     const playerCell = l.playerCorps ? `${l.playerCorps}${l.playerProfitableShare != null ? ` <span class="rw-muted">(${pct(l.playerProfitableShare)} profitable)</span>` : ""}` : '<span class="rw-muted">0</span>';
     return `<tr>
       <td>${dot(l.verdict.level, l.verdict.why)} <span class="nm">${esc(l.label)}</span>${l.verdict.level === "ok" ? "" : `<div class="rw-why">${esc(l.verdict.why)}</div>`}</td>
@@ -184,15 +168,16 @@ function sectorsSection(s, history) {
       <td class="n">${pct(l.sellThrough)}</td>
       <td class="n">${l.sites}${l.idle ? ` <span style="color:var(--amber,#f5a623)" title="Built but sold nothing this turn">(${l.idle} idle)</span>` : ""}${l.building ? ` <span class="rw-muted" title="Under construction">+${l.building}</span>` : ""}</td>
       <td class="n">${playerCell}</td>
-      <td>${spark(series, { zero: 0 })}</td>
     </tr>`;
   }).join("");
   return `<section class="rw-sec" id="sectors">
   <h2>Sectors: can a player make money in every one?</h2>
   <p class="q">A sector is worth entering when a new plant earns more per game year than it cost to build, by more than the local prime rate. Below the prime rate a player does better buying bonds. Every seeded site turning a profit is not enough on its own.</p>
   <div class="rw-key"><span><b>${sec.viable}</b> viable</span><span><b>${sec.weak}</b> thin</span><span><b>${sec.failing}</b> below the prime rate</span><span>Best <b>${esc(sec.bestLane || "-")}</b>, worst <b>${esc(sec.worstLane || "-")}</b>, ${fixed(sec.returnSpreadPp)} points apart</span><span>World median <b>${fixed(sec.worldReturnPct)}%</b> a year</span></div>
+  ${sectorCharts(s, history)}
+  <h3>Now</h3>
   <div class="rw-tw"><table class="rw-t">
-    <thead><tr><th>Sector</th><th>New plant return / yr <span class="rw-muted">(tick = prime)</span></th><th class="n">vs prime</th><th class="n">Sites in profit</th><th class="n">Margin</th><th class="n">Pays back</th><th class="n">Plant cost</th><th class="n">Sell-through</th><th class="n">Sites</th><th class="n">Player cos.</th><th>Trend vs prime</th></tr></thead>
+    <thead><tr><th>Sector</th><th>New plant return / yr <span class="rw-muted">(tick = prime)</span></th><th class="n">vs prime</th><th class="n">Sites in profit</th><th class="n">Margin</th><th class="n">Pays back</th><th class="n">Plant cost</th><th class="n">Sell-through</th><th class="n">Sites</th><th class="n">Player cos.</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
   <details class="rw-how"><summary>How this is measured</summary><ul>
     <li>Return on a new plant = per-turn profit per unit of operating capacity, times ${th.turnsPerYear} turns, over the build price per unit (paid capacity cost, <code>capacityBookAnchor</code>). Same formula the engine uses to decide whether it will finance a build; the engine finances only builds that pay back inside ${th.enginePaybackTurns} turns.</li>
@@ -203,7 +188,7 @@ function sectorsSection(s, history) {
 </section>`;
 }
 
-function balanceSection(s) {
+function balanceSection(s, history) {
   const b = s.balance;
   const th = s.thresholds;
   const maxAbs = Math.max(4, ...b.countries.map((c) => Math.abs(c.edgePp || 0)));
@@ -229,8 +214,8 @@ function balanceSection(s) {
   <h2>Balance: is any country or company type overpowered?</h2>
   <p class="q">Each site is compared with the same sector in other countries, so a country is not "strong" just because it hosts high-margin sectors. The bar is how many points a year a new plant there earns above or below the same sector elsewhere.</p>
   <div class="rw-cols">
-    <div><h3>Host countries</h3><div class="rw-tw"><table class="rw-t"><thead><tr><th>Country</th><th>Edge vs same sector elsewhere</th><th class="n">Return</th><th class="n">Prime</th><th class="n">In profit</th><th class="n">Sites</th><th class="n">Player sites</th></tr></thead><tbody>${crows || '<tr><td colspan="7" class="rw-muted">No operating sites</td></tr>'}</tbody></table></div></div>
-    <div><h3>Company legal forms</h3>${formsHtml}</div>
+    <div><h3>Host countries</h3>${countryChart(s, history)}<div class="rw-tw" style="margin-top:10px"><table class="rw-t"><thead><tr><th>Country</th><th>Edge vs same sector elsewhere</th><th class="n">Return</th><th class="n">Prime</th><th class="n">In profit</th><th class="n">Sites</th><th class="n">Player sites</th></tr></thead><tbody>${crows || '<tr><td colspan="7" class="rw-muted">No operating sites</td></tr>'}</tbody></table></div></div>
+    <div><h3>Company legal forms</h3>${formsChart(s, history)}${formsHtml}</div>
   </div>
   <details class="rw-how"><summary>How this is measured</summary><ul>
     <li>Country edge: median over its sites of (site return minus the world median return of that sector). Watch at ±${th.edgeWarnPp} points, act at ±${th.edgeBadPp}.</li>
@@ -268,7 +253,6 @@ function politicsSection(s, history) {
     : `<div class="rw-empty">No votes counted yet. ${esc(waitNote)}</div>`;
   const seated = p.dominance.some((d) => d.seated > 0 || d.executive);
   const drows = p.dominance.map((d) => {
-    const enpSeries = history.map((h) => (h.politics && h.politics.enp ? h.politics.enp[d.country] : null));
     return `<tr>
       <td>${dot(d.level, d.why)} <span class="nm">${esc(d.country)}</span></td>
       <td>${d.seats.length ? d.seats.map((x) => `${partyChip(x)} <span class="rw-muted">${x.seats}</span>`).join(" &nbsp;") : '<span class="rw-muted">nobody seated</span>'}</td>
@@ -277,18 +261,18 @@ function politicsSection(s, history) {
       <td>${partyChip(d.executive)}</td>
       <td class="n">${d.tenureTurns == null ? "-" : years(d.tenureTurns, th.turnsPerYear)}</td>
       <td class="n">${d.handovers}</td>
-      <td>${spark(enpSeries)}</td>
       <td class="why">${d.level === "ok" || d.level === "none" ? (d.byDesign ? "One-party state by constitution" : "") : esc(d.why)}</td>
     </tr>`;
   }).join("");
   return `<section class="rw-sec" id="politics">
   <h2>Politics: enough candidates, close races, nobody rules forever?</h2>
   <p class="q">Three checks. Every race needs at least two sides before the primary deadline, which is where NPP supply shows. Races should be close, not landslides. And no party should hold a supermajority or stay in power for years unchallenged.</p>
-  <h3>Candidate fields (NPP supply)</h3>
+  ${politicsCharts(s, history)}
+  <h3>Candidate fields now (NPP supply)</h3>
   <div class="rw-tw"><table class="rw-t"><thead><tr><th>Country</th><th>Contested / one side / empty</th><th class="n">Races</th><th class="n">Contested</th><th class="n">One side</th><th class="n">Empty</th><th class="n">Parties</th><th class="n">NPPs not running</th><th class="n">Primary deadline</th></tr></thead><tbody>${frows}</tbody></table></div>
   <div class="rw-cols" style="margin-top:6px">
     <div><h3>Who holds power</h3>${seated
-      ? `<div class="rw-tw"><table class="rw-t"><thead><tr><th>Country</th><th>Main chamber</th><th class="n">Largest</th><th class="n">Eff. parties</th><th>Governs</th><th class="n">For</th><th class="n">Handovers</th><th>Trend</th><th></th></tr></thead><tbody>${drows}</tbody></table></div>`
+      ? `<div class="rw-tw"><table class="rw-t"><thead><tr><th>Country</th><th>Main chamber</th><th class="n">Largest</th><th class="n">Eff. parties</th><th>Governs</th><th class="n">For</th><th class="n">Handovers</th><th></th></tr></thead><tbody>${drows}</tbody></table></div>`
       : `<div class="rw-empty">Nobody is seated yet: the reset starts with every office empty and a founding election. ${esc(waitNote)}</div>`}</div>
     <div><h3>How close are races</h3>${compHtml}</div>
   </div>
@@ -303,9 +287,6 @@ function politicsSection(s, history) {
 function infraSection(s) {
   const t = s.infra.turns;
   const b = s.infra.builds;
-  const series = s.infra.turnSeries || [];
-  const maxMs = Math.max(1, ...series.map((x) => x.ms || 0));
-  const bars = series.map((x) => `<span class="${x.outcome !== "clean" || x.failedPhases ? "bad" : ""}" style="height:${Math.max(3, ((x.ms || 0) / maxMs) * 100).toFixed(1)}%" title="Turn ${x.turn}: ${secs(x.ms)}${x.outcome !== "clean" ? ` (${esc(x.outcome)})` : ""}"></span>`).join("");
   const stat = (l, v, cls = "") => `<div class="rw-stat"><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
   const phases = (s.infra.slowPhases || []).map((p) => `<li><span>${esc(p.phase)}</span><span class="rw-muted">${secs(p.ms)}</span></li>`).join("");
   const rel = b.releases.map((r) => `<tr>
@@ -334,7 +315,7 @@ function infraSection(s) {
         ${stat("Late starts", t.late, t.late ? "warn" : "")}
         ${stat("Peak memory", t.peakRssMb ? `${(t.peakRssMb / 1024).toFixed(1)} GB` : "-")}
       </div>
-      <div class="rw-bars" title="Turn duration per turn since tracking began">${bars || '<span class="rw-muted rw-small">no turns yet</span>'}</div>
+      ${turnChart(s)}
     </div>
     <div>
       <h3>Slowest phases, last turn</h3>
@@ -352,7 +333,8 @@ function infraSection(s) {
     ${stat("Failed", b.failed, b.failed ? "bad" : "")}
     ${stat("Needed retries", b.retried, b.retried ? "warn" : "")}
   </div>
-  <div class="rw-tw"><table class="rw-t"><thead><tr><th>Service</th><th>Commit</th><th>Finished</th><th class="n">Build</th><th class="n">Ship</th><th class="n">Swap</th><th class="n">Total</th><th class="n">Commit to live</th><th class="n">Retries</th></tr></thead><tbody>${rel || '<tr><td colspan="9" class="rw-muted">No releases recorded</td></tr>'}</tbody></table></div>
+  ${releaseChart(s)}
+  <div class="rw-tw" style="margin-top:10px"><table class="rw-t"><thead><tr><th>Service</th><th>Commit</th><th>Finished</th><th class="n">Build</th><th class="n">Ship</th><th class="n">Swap</th><th class="n">Total</th><th class="n">Commit to live</th><th class="n">Retries</th></tr></thead><tbody>${rel || '<tr><td colspan="9" class="rw-muted">No releases recorded</td></tr>'}</tbody></table></div>
   <details class="rw-how"><summary>How this is measured</summary><ul>
     <li>Turn times come from the engine's turn logs, which expire after a day; the tracker keeps its own copy per turn so the whole reset stays visible.</li>
     <li>Watch when p95 turn time passes ${pct(s.thresholds.turnP95WarnShare)} of the cadence, act at ${pct(s.thresholds.turnP95BadShare)} or on any failed turn.</li>
@@ -361,9 +343,99 @@ function infraSection(s) {
 </section>`;
 }
 
+// ── over-time charts ─────────────────────────────────────────────────────────
+
+const STATUS = { ok: "#0ca30c", warn: "#fab219", bad: "#d03b3b" };
+
+function laneLevel(entry, th) {
+  if (!entry) return null;
+  const [prof, , , excess] = entry;
+  if (excess == null) return null;
+  if ((prof != null && prof < th.weakProfitableShare) || excess < th.weakExcessPp) return "bad";
+  if ((prof != null && prof < th.viableProfitableShare) || excess < th.viableExcessPp) return "warn";
+  return "ok";
+}
+
+function sectorCharts(s, history) {
+  const th = s.thresholds;
+  const counts = history.map((h) => {
+    const c = { ok: 0, warn: 0, bad: 0 };
+    for (const e of Object.values(h.lanes || {})) { const l = laneLevel(e, th); if (l) c[l] += 1; }
+    return [h.turn, c];
+  });
+  const head = lineChart([
+    { name: "Viable", short: "viable", color: STATUS.ok, points: counts.map(([t, c]) => [t, c.ok]) },
+    { name: "Thin", short: "thin", color: STATUS.warn, points: counts.map(([t, c]) => [t, c.warn]) },
+    { name: "Below prime", short: "below", color: STATUS.bad, points: counts.map(([t, c]) => [t, c.bad]) },
+  ], { title: "Sectors by verdict", sub: "How many of the 17 sectors are viable, thin or below the prime rate, each turn", yKind: "num", yMin: 0 });
+  const world = lineChart([
+    { name: "World median return", slot: 1, points: history.map((h) => [h.turn, h.sectors ? h.sectors.worldReturn : null]) },
+  ], { title: "World median return on a new plant", sub: "Percent a year, all sectors", yKind: "pct1", yMin: 0, empty: "Starts with the next turn" });
+  // Small multiples share one y scale so sectors compare honestly.
+  const vals = history.flatMap((h) => Object.values(h.lanes || {}).map((e) => e[3])).filter((v) => v != null && Number.isFinite(v));
+  const yMin = Math.min(-2, ...vals);
+  const yMax = Math.max(4, ...vals);
+  const multiples = s.sectors.lanes.map((l) => lineChart([
+    { name: "Points over prime", slot: 1, points: history.map((h) => [h.turn, h.lanes && h.lanes[l.lane] ? h.lanes[l.lane][3] : null]) },
+  ], { compact: true, title: l.label, yKind: "pp", yMin, yMax, refs: [{ y: 0 }], empty: "No sites" }).replace('<div class="rwc-title">', `<div class="rwc-title">${dot(l.verdict.level)}`).replace(/(<div class="rwc-title">.*?)<\/div>/, `$1 <span class="rw-muted" style="margin-left:auto;font-weight:600">${fixed(l.returnPct)}%</span></div>`));
+  return `<div class="rwc-grid2">${head}${world}</div>
+  <h3>Each sector: points a year above the prime rate <span class="rw-muted rw-small">(dashed line = prime; above it the sector pays)</span></h3>
+  <div class="rwc-multi">${multiples.join("")}</div>`;
+}
+
+function countryChart(s, history) {
+  const countries = s.balance.countries.filter((c) => c.sites >= s.thresholds.minSitesForVerdict).map((c) => c.country).sort();
+  return lineChart(countries.slice(0, 8).map((c, i) => ({ name: c, short: c, slot: i + 1, points: history.map((h) => [h.turn, h.countries ? h.countries[c] : null]) })),
+    { title: "Edge vs the same sector elsewhere", sub: "Points a year of new-plant return; 0 is even", yKind: "pp", refs: [{ y: 0 }], yMin: -2, yMax: 2 });
+}
+
+function formsChart(s, history) {
+  const forms = s.balance.forms.forms.map((f) => f.form).slice(0, 8);
+  if (!forms.length) return "";
+  return lineChart(forms.map((f, i) => ({ name: rwModel.legalFormLabel(f), slot: i + 1, points: history.map((h) => [h.turn, h.forms && h.forms[f] ? h.forms[f][0] : null]) })),
+    { title: "Share of new companies by legal form", yKind: "pct", yMin: 0, yMax: 1, refs: [{ y: s.thresholds.choiceWarnShare, label: "watch" }] });
+}
+
+function politicsCharts(s, history) {
+  const fields = lineChart([
+    { name: "Contested", short: "contested", slot: 1, points: history.map((h) => [h.turn, h.politics ? h.politics.contested : null]) },
+    { name: "One side", short: "one side", slot: 2, points: history.map((h) => [h.turn, h.politics ? (h.politics.uncontested ?? (h.politics.races - h.politics.contested - h.politics.empty)) : null]) },
+    { name: "No candidate", short: "empty", slot: 3, points: history.map((h) => [h.turn, h.politics ? h.politics.empty : null]) },
+  ], { title: "Race fields", sub: "Races with two or more sides, one side, or nobody", yKind: "num", yMin: 0 });
+  const countries = s.politics.dominance.map((d) => d.country).sort();
+  const largest = lineChart(countries.map((c, i) => ({ name: c, short: c, slot: i + 1, points: history.map((h) => [h.turn, h.politics && h.politics.largest ? h.politics.largest[c] : null]) })),
+    { title: "Largest party's share of the main chamber", sub: "Dashed line: two-thirds supermajority", yKind: "pct", yMin: 0, yMax: 1, refs: [{ y: s.thresholds.supermajorityShare, label: "2/3" }], empty: "Nobody seated yet. Founding results come when the first races close." });
+  const closeC = s.politics.competitiveness.map((c) => c.country).sort();
+  const close = lineChart(closeC.map((c, i) => ({ name: c, short: c, slot: countries.indexOf(c) + 1 || i + 1, points: history.map((h) => [h.turn, h.politics && h.politics.close ? h.politics.close[c] : null]) })),
+    { title: "Share of close races", sub: `Winning margin under ${s.thresholds.closeMarginPp} points`, yKind: "pct", yMin: 0, yMax: 1, refs: [{ y: 0.3, label: "watch below" }], empty: "No votes counted yet" });
+  return `<div class="rwc-grid2">${fields}${largest}</div><div class="rwc-grid2" style="margin-top:14px">${close}</div>`;
+}
+
+function turnChart(s) {
+  const series = s.infra.turnSeries || [];
+  const dur = lineChart([{ name: "Turn time", slot: 1, points: series.map((t) => [t.turn, t.ms == null ? null : t.ms / 1000]) }],
+    { title: "Turn time", sub: "Seconds per turn", yKind: "sec", yMin: 0, empty: "No turns yet" });
+  const mem = lineChart([{ name: "Peak memory", slot: 7, points: series.map((t) => [t.turn, t.rssMb == null ? null : t.rssMb / 1024]) }],
+    { title: "Peak memory", sub: "GB per turn", yKind: "dec2", yMin: 0, empty: "No turns yet" });
+  return `<div style="display:flex;flex-direction:column;gap:12px">${dur}${mem}</div>`;
+}
+
+function releaseChart(s) {
+  const ser = (s.infra.builds.series || []);
+  const pts = (kind) => ser.filter((r) => r.kind === kind).map((r) => [new Date(r.at).getTime(), r.leadMin]);
+  const lead = lineChart([
+    { name: "Worker", short: "worker", slot: 1, points: pts("worker") },
+    { name: "Web", short: "web", slot: 2, points: pts("web") },
+  ], { title: "Commit to live, per release", sub: "Minutes from the main merge to the service serving it", xKind: "time", yKind: "min", yMin: 0 });
+  const build = lineChart([
+    { name: "Image build", slot: 1, points: ser.filter((r) => r.kind === "worker" && r.buildS != null).map((r) => [new Date(r.at).getTime(), r.buildS / 60]) },
+  ], { title: "Image build time, per release", sub: "Minutes to build the release image", xKind: "time", yKind: "min", yMin: 0 });
+  return `<div class="rwc-grid2">${lead}${build}</div>`;
+}
+
 function makeResetWatchBody({ snapshot, history = [], staleAfterMs = 20 * 60 * 1000 }) {
   if (!snapshot) {
-    return { extraCss: CSS, body: `<div class="rw"><div class="rw-head"><div><h1>Reset Watch</h1><div class="rw-sub">No snapshot yet. The collector writes one every few minutes.</div></div></div></div>` };
+    return { extraCss: CSS + CHART_CSS, body: `<div class="rw"><div class="rw-head"><div><h1>Reset Watch</h1><div class="rw-sub">No snapshot yet. The collector writes one every few minutes.</div></div></div></div>` };
   }
   const s = snapshot;
   const w = s.world;
@@ -372,17 +444,18 @@ function makeResetWatchBody({ snapshot, history = [], staleAfterMs = 20 * 60 * 1
   const body = `<div class="rw">
   <div class="rw-head">
     <div><h1>Reset Watch</h1>
-      <div class="rw-sub">${esc(w.preset || "")} · ${esc(w.iteration && w.iteration.type)} ${esc(w.iteration && w.iteration.number)} · turn ${esc(w.turn)} · ${esc(w.year)}${w.paused ? ' · <b style="color:var(--red,#e5484d)">paused</b>' : ""} · ${tracked} turn${tracked === 1 ? "" : "s"} tracked</div></div>
+      <div class="rw-sub">${esc(w.label || `${w.preset || ""} · ${w.iteration && w.iteration.type} ${w.iteration && w.iteration.number}`)}${w.startedAt ? ` · reset ${esc(new Date(w.startedAt).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))} ET` : ""} · turn ${esc(w.turn)} · ${esc(w.year)}${w.paused ? ' · <b style="color:var(--red,#e5484d)">paused</b>' : ""} · ${tracked} turn${tracked === 1 ? "" : "s"} tracked</div></div>
     <div class="rw-sub">${stale ? '<b style="color:var(--amber,#f5a623)">Snapshot is stale</b> · ' : ""}updated ${esc(ago(s.generatedAt))}${w.nextTurn ? ` · next turn ${esc(new Date(w.nextTurn).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }))} ET` : ""}</div>
   </div>
   ${verdictStrip(s.verdicts || {})}
   ${sectorsSection(s, history)}
-  ${balanceSection(s)}
+  ${balanceSection(s, history)}
   ${politicsSection(s, history)}
   ${infraSection(s)}
 </div>
-<script>setTimeout(function(){location.reload()},120000)</script>`;
-  return { extraCss: CSS, body };
+<script>${CHART_JS}</script>
+<script>setTimeout(function(){location.reload()},300000)</script>`;
+  return { extraCss: CSS + CHART_CSS, body };
 }
 
 module.exports = { makeResetWatchBody };
