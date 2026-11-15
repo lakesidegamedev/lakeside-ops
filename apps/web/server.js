@@ -4978,6 +4978,24 @@ const server = http.createServer(async (req, res) => {
   // Engine — Game Engine Observatory (simulation health).
   if (await handleEconomyRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, denyHtml, json })) return;
 
+  // Reset Watch: the reset tracker. The collector timer writes the snapshot;
+  // this route only reads files, so page loads never touch the game database.
+  if ((req.method === "GET" || req.method === "HEAD") && (pathname === "/reset-watch" || pathname === "/api/reset-watch")) {
+    const session = await resolveSession(req);
+    if (!canReadDeveloperView(session, pathname)) return pathname === "/api/reset-watch" ? json(res, 403, { error: "forbidden" }) : denyHtml();
+    const resetWatch = require("./reset-watch");
+    const dir = process.env.RESET_WATCH_DIR || "/var/lib/lakeside-ops-dashboard/reset-watch";
+    const snapshot = resetWatch.readLatest(dir);
+    const history = snapshot ? resetWatch.loadHistory(dir, snapshot.world.id) : [];
+    if (pathname === "/api/reset-watch") return json(res, snapshot ? 200 : 503, snapshot ? { snapshot, history } : { error: "no snapshot yet" });
+    const { makeResetWatchBody } = require("./reset-watch-page");
+    const { extraCss, body } = makeResetWatchBody({ snapshot, history });
+    addSecurityHeaders(res);
+    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+    res.end(req.method === "HEAD" ? "" : renderShell({ title: "Reset Watch", active: "/reset-watch", role: session.role, extraCss, body }));
+    return;
+  }
+
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/engine") {
     const session = await resolveSession(req);
     if (!canReadDeveloperView(session, pathname)) return denyHtml();
