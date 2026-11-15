@@ -58,6 +58,8 @@ async function reconcileTickets({ ledger, readTicket, now = Date.now(), limit = 
     try { observeTicket(ledger.data, job, await readTicket(job.ticket), now); }
     catch { /* Preserve prior evidence on a sensor failure. Retry next interval. */ }
   }
+  // Keir 10: a closed ticket gets its score once, from what the ledger already holds.
+  try { require("./ticketscore").scoreClosed(ledger.data, now); } catch { /* scoring never blocks reconciliation */ }
   if (due.length) ledger.save();
   return due.length;
 }
