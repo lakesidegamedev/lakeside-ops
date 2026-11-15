@@ -33,13 +33,15 @@ function plan(lane, ctx) {
   const trail = { id: "player_trail", needs: "tool:player_trail", run: (c) => c.tool("player_trail", {}) };
   const turn = { id: "turn_status", needs: "tool:turn_status", run: (c) => c.tool("turn_status", {}) };
   const ask = { id: "ask_health", needs: "tool:ask", run: (c) => c.tool("ask", { action: "health" }) };
+  // Keir 10 (replay 2026-11-15): an outage never found the open incident it belonged to; look for it up front.
+  const similar = { id: "similar_reports", needs: "tool:similar_reports", run: (c) => c.tool("similar_reports", { text: q.slice(0, 300) }) };
   return ({
     question: [wiki, code, ask],
     idea: [wiki, code],
     advice: [ask, wiki],
-    bug: [reporter, trail, code],
+    bug: [reporter, trail, code, similar],
     data_repair: [reporter],
-    outage: [turn],
+    outage: [turn, similar],
     people: [reporter],
   })[lane] || [];
 }

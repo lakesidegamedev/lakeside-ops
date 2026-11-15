@@ -23,7 +23,7 @@ const LANES = Object.freeze({
   },
   bug: {
     playbook: "bug_report", maxRounds: 16, fullFirst: true, skills: true,
-    extraSections: ["Ticket progress card", "Heals and approvals", "Developer handoffs"], directTools: ["status_card", "raise_to_developers", "merge_into_incident", "github"],
+    extraSections: ["Ticket progress card", "Investigation and delegated coding", "Heals and approvals", "Developer handoffs"], directTools: ["status_card", "raise_to_developers", "merge_into_incident", "github", "delegate_fix", "publish_patch"],
     readServers: null,
     exit: "The cause is found from live data and code and the player is told it, and the defect is raised, merged into an incident, fixed or ruled out.",
   },

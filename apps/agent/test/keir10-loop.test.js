@@ -172,7 +172,7 @@ test("question lane: the first activation stays under 40k characters and runs th
   assert.ok(ctx.playbook.steps.some((s) => /spin it out/i.test(s)));
 });
 
-test("bug lane: the first activation is full, then a wake is compact and under 25k", async (t) => {
+test("bug lane: the first activation is full, then a wake is compact and under 35k (it keeps the delegated coding section)", async (t) => {
   const f = fixture(t, { content: "my holdings page shows the wrong total", tags: { kind: "bug_report", complexity: "moderate", kindConfidence: 0.9 }, history: 10 });
   await f.run();
   assert.equal(f.job.lane, "bug");
@@ -184,7 +184,7 @@ test("bug lane: the first activation is full, then a wake is compact and under 2
   assert.equal(f.job.contextBudget.wake, true);
   const total = f.seen.brief.length + f.seen.prompt.length;
   t.diagnostic(`bug wake: brief ${f.seen.brief.length} + context ${f.seen.prompt.length} = ${total}`);
-  assert.ok(total < 25000, `a wake is ${total} characters`);
+  assert.ok(total < 35000, `a wake is ${total} characters`);
   const ctx = JSON.parse(f.seen.prompt);
   assert.ok(Object.keys(ctx)[0] === "whatChanged", "the delta leads the prompt");
   assert.equal(ctx.whatChanged.newMessages, 1);

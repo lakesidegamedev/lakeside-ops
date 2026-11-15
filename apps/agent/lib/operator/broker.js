@@ -1058,10 +1058,11 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   function filedBugBacking(ticketNo, jobs) {
     const filed = Object.values(d.keirIssues || {}).some((x) => x.ticket === ticketNo || x.tickets?.includes(ticketNo)) || (jobs || []).some((j) => (j.issues || []).length);
     if (!filed) return [];
-    const reads = ticketReadTexts(ticketNo, jobs).join("\n");
+    // Files this ticket read: in the read texts of this activation, and in the evidence receipts, which survive wakes.
+    const reads = [ticketReadTexts(ticketNo, jobs).join("\n"), ...(jobs || []).flatMap((j) => (j.evidenceBatches || []).flatMap((b) => (b.queries || []).map((q) => q.path || "")))].join("\n");
     return (knowledge.ticketRecord(ledger, ticketNo).facts || []).filter((f) => !f.closedAt && f.source && f.text).filter((f) => {
-      const file = /([\w./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|rs|py|json))\b/.exec(String(f.source))?.[1];
-      return file && reads.includes(file);
+      const files = String(f.source).match(/[\w./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|rs|py|json)\b/g) || [];
+      return files.some((file) => reads.includes(file));
     }).map((f) => `bug: ${f.text}`);
   }
   const ticketPlayerText = (job) => [job.source?.content, ...(job.requestInbox || []).map((m) => m?.content), ...(job.inbox || []).filter((m) => m && m.role === "player").map((m) => m.content),

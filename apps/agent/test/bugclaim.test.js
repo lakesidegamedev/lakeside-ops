@@ -194,3 +194,13 @@ test("Keir 10: a defect found by reading code is backed once it is filed and its
   await f.broker.tool(f.job, "channel_reply", { message: msg });
   assert.equal(f.posts().length, 1);
 });
+
+test("Keir 10: evidence receipts carry the file read across wakes, and a fact may cite several files", async () => {
+  const f = setup();
+  await f.read();
+  f.ledger.data.keirIssues = { 901: { number: 901, state: "open", title: "Loan row sign", ticket: 123 } };
+  f.job.evidenceBatches = [{ id: "r1", at: 1, queries: [{ op: "read", path: "src/lib/format/money.ts" }] }];
+  await f.broker.tool(f.job, "ticket_record", { op: "add", kind: "fact", source: "gamestate trace_corp + src/app/bank/LoanRow.tsx + src/lib/format/money.ts", text: "the money formatter uses the anchor currency sign instead of the loan currency sign" });
+  await f.broker.tool(f.job, "channel_reply", { message: "The sign is wrong: the money formatter puts the anchor currency sign on your pound loan." });
+  assert.equal(f.posts().length, 1);
+});

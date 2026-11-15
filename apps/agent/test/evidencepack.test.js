@@ -24,7 +24,7 @@ test("a slow or failing read is listed as missing and never throws", async () =>
   const pack = await build({ lane: "outage", question: "turn stuck", servers: [], tools: ["turn_status"], timeoutMs: 50,
     read: async () => ({}), tool: () => new Promise(() => {}) });
   assert.equal(pack.items.length, 0);
-  assert.match(pack.missing[0].reason, /no answer/);
+  assert.match(pack.missing.find((m) => m.id === "turn_status").reason, /no answer/);
 });
 
 test("results are clipped to the character budget", async () => {
