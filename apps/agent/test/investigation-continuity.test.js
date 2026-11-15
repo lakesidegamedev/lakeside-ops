@@ -9,7 +9,7 @@ function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-investigation-continuity-"));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, "ledger.json"), ledger = createLedger(file);
-  const config = { stateDir: dir, ownerId: "owner", staffIds: [], repositories: {}, skills: false, orientation: false, readyReads: false,
+  const config = { stateDir: dir, ownerId: "owner", staffIds: [], repositories: {}, skills: false, orientation: false, readyReads: false, evidencePack: false,
     briefFile: path.join(__dirname, "../KEIR.md"), model: "fixture", taskLifetimeMs: 60000, dynamicEffort: false };
   const job = ledger.createJob("ticket:1234", { kind: "ticket", role: "support", ticket: 1234, channelId: "channel", source: { content: "Please check the savings rate" },
     tags: { kind: "other", complexity: "simple" }, incidentChecked: true, deadline: Date.now() + 60000 });

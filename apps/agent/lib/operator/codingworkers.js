@@ -346,6 +346,9 @@ function createCodingWorkers({
     const c = cc.classifyChange({ declared: run.changeClass, body: pr.body, title: pr.title, blastClass: b.cls });
     if (c.gated) return `its class is ${c.cls} (${c.source})`;
     if (b.cls === "economy") return `it touches economy or turn-worker paths (${b.reasons.slice(0, 3).join(", ")})`;
+    // A database migration is huge under the shipping rule even when its class says bugfix (authority.hugeCode).
+    const migrations = (files || []).filter((f) => require("./authority").MIGRATION_PATHS.test(f));
+    if (migrations.length) return `it carries a database migration (${migrations.slice(0, 3).join(", ")})`;
     if (c.needsDeclaration) return "its change class is not declared";
     run.files = (files || []).slice(0, 60); run.worker = files.some((f) => blast.WORKER_PATHS.test(f));
     return null;
