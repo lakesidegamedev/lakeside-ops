@@ -1,7 +1,7 @@
 // reset-watch-page.js: renders the Reset Watch snapshot (reset-watch.js) as one
 // page. Server-rendered, no client data fetching. Returns { extraCss, body }.
 //
-// Layout rule: one verdict strip, then four sections that each answer one
+// Layout rule: one verdict strip, then five sections that each answer one
 // question in plain words, with the method tucked into a <details> so the page
 // stays readable for someone who just wants to know whether the reset is OK.
 
@@ -9,6 +9,7 @@
 
 const { lineChart, CHART_CSS, CHART_JS } = require("./reset-watch-charts");
 const rwModel = require("./reset-watch");
+const { EXPLOIT_THRESHOLDS } = require("./reset-watch-exploits");
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -80,7 +81,7 @@ const CSS = `
 .rw-sub{color:var(--text-2);font-size:.88rem;margin-top:4px}
 .rw-muted{color:var(--text-3)}
 .rw-small{font-size:.78rem}
-.rw-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.rw-strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
 @media(max-width:900px){.rw-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.rw-strip{grid-template-columns:1fr}}
 .rw-tile{display:block;text-decoration:none;color:inherit;padding:14px 16px;border-radius:12px;border:1px solid var(--border);background:var(--surface)}
@@ -144,6 +145,7 @@ function verdictStrip(v) {
     ["balance", "Balance", "#balance"],
     ["politics", "Politics", "#politics"],
     ["infra", "Infra", "#infra"],
+    ["exploits", "Exploits", "#exploits"],
   ];
   return `<div class="rw-strip">${tiles.map(([k, label, href]) => {
     const t = v[k] || { level: "none" };
@@ -343,6 +345,95 @@ function infraSection(s) {
 </section>`;
 }
 
+const SIGNAL_WORD = {
+  device_fingerprint_exact: "same device", device_fingerprint_fuzzy: "similar device", ip_exact_nonCF: "same home IP",
+  coordinated_login_timing: "log in together", email_pattern_family: "related emails", referral_link: "referral chain",
+  shared_fingerprint: "same device", ip_sharing: "same IP", shared_tracking_cookie: "same browser",
+  login_time_cluster: "log in together", login_ip_scatter: "many IPs", coordinated_login_pattern: "log in together",
+  coordinated_party_funding: "fund the same party", time_velocity: "too many too fast", cash_mismatch: "cash mismatch",
+};
+const word = (t) => SIGNAL_WORD[t] || String(t || "").replace(/_/g, " ");
+
+function exploitsSection(s, history) {
+  const e = s.exploits;
+  if (!e) {
+    return `<section class="rw-sec" id="exploits"><h2>Exploits: is anyone cheating or breaking the economy?</h2><div class="rw-empty">The exploit read failed on the last snapshot. Other sections are unaffected.</div></section>`;
+  }
+  const stat = (l, v, cls = "") => `<div class="rw-stat"><div class="l">${l}</div><div class="v ${cls}">${v}</div></div>`;
+  const th = EXPLOIT_THRESHOLDS;
+  const rings = e.rings.top.map((r) => `<tr>
+      <td>${dot(r.playing && r.confidence >= th.ringConfident ? "warn" : "none")} ${r.members.map((m) => (m ? esc(m) : '<span class="rw-muted">no character</span>')).join(" + ")}</td>
+      <td class="n">${pct(r.confidence)}</td>
+      <td class="why">${esc(r.signals.map(word).join(", "))}</td>
+    </tr>`).join("");
+  const flags = e.flags.top.map((f) => `<tr>
+      <td>${dot(f.severity === "high" ? "bad" : f.severity === "medium" ? "warn" : "none")} <span class="nm">${esc(f.name)}</span>${f.country ? ` <span class="rw-muted">${esc(f.country)}</span>` : ""}</td>
+      <td>${esc(f.severity)}</td>
+      <td class="why">${esc(f.types.map(word).join(", "))}</td>
+    </tr>`).join("");
+  const jumps = e.wealth.rows.map((j) => `<tr>
+      <td>${dot(j.flagged ? "warn" : "none")} <span class="nm">${esc(j.name)}</span></td>
+      <td class="n">${money(j.before)}</td><td class="n">${money(j.after)}</td>
+      <td class="n">+${money(j.gain)}</td><td class="n">${j.ratio == null ? "-" : `${j.ratio}x`}</td>
+    </tr>`).join("");
+  const moneyRows = e.money.top.map((m) => `<li><span>${esc(m.subject)} <span class="rw-muted">${esc(m.kind)} · ${esc(m.types.map(word).join(", "))}</span></span><span class="rw-muted">${m.count} moves · ${money(m.anchor)}</span></li>`).join("");
+  const led = e.ledger;
+  const ledLvl = led.status === "red" ? "bad" : led.status === "amber" ? "warn" : "";
+  return `<section class="rw-sec" id="exploits">
+  <h2>Exploits: is anyone cheating or breaking the economy?</h2>
+  <p class="q">What the game's own detectors flagged in this world: likely alt-account rings, unreviewed abuse flags, suspicious money moves, players whose cash jumped far beyond everyone else, whether the money ledger still balances, and accounts hammering the API. Flags are leads for staff review, not proof.</p>
+  <div class="rw-stats">
+    ${stat("Likely alt rings", e.rings.confident, e.rings.confident ? "warn" : "")}
+    ${stat("Open abuse flags", e.flags.total, e.flags.high ? "warn" : "")}
+    ${stat("High severity", e.flags.high, e.flags.high ? "warn" : "")}
+    ${stat("Flagged money moves", e.money.flagged, e.money.flagged ? "warn" : "")}
+    ${stat("Wealth jumps", e.wealth.flagged, e.wealth.flagged ? "warn" : "")}
+    ${stat("Ledger", esc(led.status), ledLvl)}
+    ${stat("API floods, 2 h", e.flood.recentActors, e.flood.recentActors ? "bad" : "")}
+  </div>
+  ${exploitChart(history)}
+  <div class="rw-cols" style="margin-top:14px">
+    <div>
+      <h3>Likely alt rings <span class="rw-muted rw-small">${e.rings.open} open${e.rings.waiting ? `, ${e.rings.waiting} not playing this world yet` : ""}, scored ${esc(ago(e.rings.scoringAt))}${e.rings.scoringOn ? "" : " · scoring is off or dry-run"}</span></h3>
+      <div class="rw-tw"><table class="rw-t"><thead><tr><th>Accounts (current character)</th><th class="n">Confidence</th><th>Why</th></tr></thead><tbody>${rings || '<tr><td colspan="3" class="rw-muted">No open rings</td></tr>'}</tbody></table></div>
+      <h3>Open abuse flags, this world</h3>
+      <div class="rw-tw"><table class="rw-t"><thead><tr><th>Character</th><th>Severity</th><th>Flags</th></tr></thead><tbody>${flags || '<tr><td colspan="3" class="rw-muted">No open flags</td></tr>'}</tbody></table></div>
+    </div>
+    <div>
+      <h3>Biggest wealth gains${e.wealth.compared != null ? ` <span class="rw-muted rw-small">since turn ${esc(e.wealth.compared)}</span>` : ""}</h3>
+      <div class="rw-tw"><table class="rw-t"><thead><tr><th>Character</th><th class="n">Before</th><th class="n">Now</th><th class="n">Gain</th><th class="n">x</th></tr></thead><tbody>${jumps || `<tr><td colspan="5" class="rw-muted">${e.wealth.compared == null ? "Needs one more turn to compare" : "Nobody gained"}</td></tr>`}</tbody></table></div>
+      <h3>Flagged money moves, by account</h3>
+      <ul class="rw-list">${moneyRows || '<li class="rw-muted">None</li>'}</ul>
+      <h3>Ledger and API</h3>
+      <ul class="rw-list">
+        <li><span>Ledger check, turn ${esc(led.turn ?? "-")}</span><span class="rw-muted">${led.unbalanced} unbalanced · ${led.divergent} divergent · ${led.entries.toLocaleString("en-US")} entries</span></li>
+        <li><span>API abuse scans this world</span><span class="rw-muted">${e.flood.scans} scans · ${e.flood.worldActors} accounts flagged · last ${esc(ago(e.flood.lastScanAt))}</span></li>
+        <li><span>Audit anomalies</span><span class="rw-muted">${e.anomalies.count ? esc(e.anomalies.types.map(word).join(", ")) : "none"}</span></li>
+      </ul>
+    </div>
+  </div>
+  <details class="rw-how"><summary>How this is measured</summary><ul>
+    <li>Alt rings come from the alt-scoring engine (device, IP, login timing, referrals). Shown when open and re-scored in the last ${th.ringFreshHours} h; "likely" means ${pct(th.ringConfident)} confidence or more with at least two of its accounts playing this world. Rings are account-level, so they carry over a reset; a ring with no character yet has not played this world.</li>
+    <li>Abuse flags are the game's suspicious-character list, unreviewed and updated since this world began. Dismissing a flag in admin removes it here.</li>
+    <li>Flagged money moves are player, player-company and party money moves the transaction log marked suspect. Index fund and system trades are left out: the fund cron trips the speed check by design.</li>
+    <li>Wealth gain is personal cash plus savings (the leaderboard definition) compared with the previous turn. Flagged when the gain is at least ${money(th.jumpMinGainAnchor)} and ${th.jumpMedianMultiple}x the median player, and worth at least ${th.jumpMinRatio}x what it was. Median player now: ${money(e.medianWorth)} across ${e.players} characters.</li>
+    <li>Red means the money ledger does not balance or an account flooded the API in the last ${th.floodWindowHours} h. Amber means something needs a staff look.</li>
+  </ul></details>
+</section>`;
+}
+
+function exploitChart(history) {
+  const pts = (k) => history.map((h) => [h.turn, h.x ? h.x[k] : null]);
+  return `<div class="rwc-grid2">${lineChart([
+    { name: "Likely alt rings", short: "rings", slot: 1, points: pts("ringsConfident") },
+    { name: "High-severity flags", short: "high flags", slot: 2, points: pts("flagsHigh") },
+    { name: "Wealth jumps", short: "jumps", slot: 3, points: pts("jumps") },
+  ], { title: "Exploit signals per turn", sub: "Counts at each turn", yKind: "num", yMin: 0, empty: "Starts with the first tracked turn" })}${lineChart([
+    { name: "Open abuse flags", short: "flags", slot: 4, points: pts("flags") },
+    { name: "Flagged money moves", short: "money", slot: 5, points: pts("money") },
+  ], { title: "Abuse flags and flagged money", sub: "Running totals this world", yKind: "num", yMin: 0, empty: "Starts with the first tracked turn" })}</div>`;
+}
+
 // ── over-time charts ─────────────────────────────────────────────────────────
 
 const STATUS = { ok: "#0ca30c", warn: "#fab219", bad: "#d03b3b" };
@@ -452,6 +543,7 @@ function makeResetWatchBody({ snapshot, history = [], staleAfterMs = 20 * 60 * 1
   ${balanceSection(s, history)}
   ${politicsSection(s, history)}
   ${infraSection(s)}
+  ${exploitsSection(s, history)}
 </div>
 <script>${CHART_JS}</script>
 <script>setTimeout(function(){location.reload()},300000)</script>`;

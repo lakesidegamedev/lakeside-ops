@@ -10,6 +10,7 @@
 const fs = require("node:fs");
 const { MongoClient } = require("mongodb");
 const rw = require("../reset-watch");
+const rx = require("../reset-watch-exploits");
 
 async function main() {
   const uri = process.env.RESET_WATCH_MONGODB_URI || process.env.HEAL_MONGODB_URI_PROD;
@@ -25,9 +26,11 @@ async function main() {
     const worldId = rw.worldIdentity(gameState).id;
     const history = rw.loadHistory(dir, worldId);
     const turnHistory = rw.loadTurns(dir, worldId);
-    const snapshot = await rw.collect(db, { autodeployDir, history, turnHistory, gameState });
+    const prevWealth = rx.loadPrevWealth(dir, worldId, gameState.currentTurn ?? 0);
+    const snapshot = await rw.collect(db, { autodeployDir, history, turnHistory, gameState, prevWealth });
     rw.writeLatest(dir, snapshot);
     const res = rw.appendHistory(dir, snapshot);
+    if (snapshot.wealthRecord) rx.saveWealth(dir, worldId, snapshot.wealthRecord);
     console.log(JSON.stringify({ world: snapshot.world.id, turn: snapshot.world.turn, historyTurns: res.turns, verdicts: Object.fromEntries(Object.entries(snapshot.verdicts).map(([k, v]) => [k, v.level])) }));
   } finally {
     await client.close();
