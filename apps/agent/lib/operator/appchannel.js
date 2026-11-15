@@ -213,6 +213,8 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
 
   // Called by the outbox for an entry whose destination job is an app job.
   function deliver(key, entry, job) {
+    // A queued reply can race with cancellation after the model has finished.
+    if (job.state === "cancelled" || job.appCancelledAt != null || rootOf(job)?.state === "cancelled" || rootOf(job)?.appCancelledAt != null) return [];
     const text = ownerText(entry.content).replace(/[–—]/g, ",");
     if (key.startsWith("ack:")) { setStatus(d, job.id, text, now()); job.progressMessageId = `app-status-${job.id}`; return [job.progressMessageId]; }
     // A watch speaks only when its condition is met.
@@ -335,12 +337,12 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
   function cancel(jobId) {
     const job = d.jobs[String(jobId || "")];
     if (!appJob(job)) throw Object.assign(new Error("unknown task"), { status: 404 });
-    if (CLOSED.includes(job.state)) return { state: job.state };
     for (const candidate of Object.values(d.jobs)) {
       let current = candidate; const seen = new Set();
       while (current && !seen.has(current.id)) {
         seen.add(current.id);
         if (current.id === job.id) {
+          candidate.appCancelledAt ??= now();
           if (!CLOSED.includes(candidate.state)) { candidate.state = "cancelled"; candidate.summary = "Stopped from the app."; clearStatus(d, candidate.id); }
           break;
         }

@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.2.1 (2026-11-15)
+
+### Fixed
+- Ending or interrupting a voice call cancels its accepted task and delegated work, including a send still awaiting its receipt. Opening the task preserves it.
+- Cancelled voice work cannot deliver a late queued answer. DeepSeek tool markup with repeated delimiters is rejected instead of shown as an answer.
+
 ## 9.2.0 (2026-11-15)
 
 - The /keir staff desk's actions (nudge, release, pause, resume, on, off) and the model command now reach the operator; they were built apart from the desk router and were never called.
