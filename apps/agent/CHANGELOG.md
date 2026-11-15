@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Every closed ticket now gets a score from 0 to 100 from signals Keir already records (reopens, corrections, player complaints, staff feedback, refused tool calls, activations, owner decisions, hours open). The nightly self-review starts from the four lowest-scored tickets of the last three days and files its lessons under the lane they belong to instead of the brief.
+- Capability gaps are ranked: a gap hit by a task on a low-scored ticket counts double. `bin/keir-gaps.js` prints the top ten with their board card ids.
+- The replay benchmark is back in the tree, with seven known-failure scenarios from real tickets (`--set k10`) and a transcript saved per run.
+
 ## 9.2.0 (2026-11-15)
 
 - The /keir staff desk's actions (nudge, release, pause, resume, on, off) and the model command now reach the operator; they were built apart from the desk router and were never called.
