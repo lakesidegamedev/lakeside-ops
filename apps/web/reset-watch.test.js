@@ -208,3 +208,32 @@ test("page renders every section, escapes text and handles no snapshot", () => {
   assert.match(body, /First results at turn 49/);
   assert.match(makeResetWatchBody({ snapshot: null }).body, /No snapshot yet/);
 });
+
+test("a re-run reset with the same label is a different world", () => {
+  const a = rw.worldIdentity({ preset: "2027-default", iteration: { type: "Iteration", number: 3 }, worldEpochId: "aaa", worldEpochStartedAt: "2026-11-15T06:25:00Z" });
+  const b = rw.worldIdentity({ preset: "2027-default", iteration: { type: "Iteration", number: 3 }, worldEpochId: "bbb", worldEpochStartedAt: "2026-11-15T11:45:25Z" });
+  assert.notEqual(a.id, b.id);
+  assert.equal(a.label, b.label);
+  assert.equal(b.startedAt.toISOString(), "2026-11-15T11:45:25.000Z");
+  assert.equal(rw.worldIdentity({ preset: "p", iteration: { type: "Iteration", number: 1 } }).id, "p:Iteration-1");
+});
+
+test("turn records persist past the turn log expiry", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rw-"));
+  rw.saveTurns(dir, "w", [{ turn: 1, ms: 10 }, { turn: 2, ms: 20 }]);
+  rw.saveTurns(dir, "w", [{ turn: 2, ms: 25 }, { turn: 3, ms: 30 }]);
+  assert.deepEqual(rw.loadTurns(dir, "w").map((r) => [r.turn, r.ms]), [[1, 10], [2, 25], [3, 30]]);
+});
+
+test("line chart renders legend, end labels, data table and escapes names", () => {
+  const { lineChart } = require("./reset-watch-charts");
+  const html = lineChart([
+    { name: "A <x>", slot: 1, points: [[1, 1], [2, 2]] },
+    { name: "B", slot: 2, points: [[1, 2], [2, 2.01]] },
+  ], { title: "T", yKind: "num" });
+  assert.match(html, /rwc-legend/);
+  assert.match(html, /class="rwc-end"/);
+  assert.match(html, /rwc-table/);
+  assert.ok(!html.includes("A <x>"));
+  assert.match(lineChart([{ name: "x", points: [] }], { empty: "None yet" }), /None yet/);
+});
