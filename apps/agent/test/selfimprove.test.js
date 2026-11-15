@@ -74,3 +74,15 @@ test("an answered ticket in its closing grace or with Keir speaking last is a le
   assert.equal(answered.state, "waiting");
   assert.equal(closing.state, "queued"); assert.match(closing.inbox.at(-1).content, /Resolve it now/);
 });
+
+test("reviewBrief lists the worst closed tickets of the last 3 days, max 4, and routes lessons to lanes", () => {
+  const DAY = 86400000, until = 10 * DAY;
+  const sc = (n, score, age) => [n, { ticket: n, score, lane: "bug", closedAt: until - age, penalties: { reopened: 25 } }];
+  const d = { jobs: {}, feedbackLog: [], ticketScores: Object.fromEntries([sc(1, 15, DAY), sc(2, 30, DAY), sc(3, 45, DAY), sc(4, 50, DAY), sc(5, 55, DAY), sc(6, 5, 5 * DAY), sc(7, 95, DAY)]) };
+  const b = reviewBrief(d, until - DAY, until);
+  const lines = b.text.split("\n").filter((l) => /^- Ticket \d+ \(bug, score/.test(l));
+  assert.equal(lines.length, 4);
+  assert.match(lines[0], /Ticket 1 \(bug, score 15\/100\): reopened -25/);
+  assert.ok(!/Ticket (5|6|7) \(bug/.test(b.text));
+  assert.match(b.text, /\[lane:question\].*never added to the brief/);
+});

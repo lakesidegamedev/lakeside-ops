@@ -77,16 +77,20 @@ function reviewBrief(d, since, until) {
   const tickets = Object.values(d.jobs || {}).filter((j) => j.kind === "ticket" && j.ticket && (Number(j.updatedAt) || Date.parse(j.updatedAt || "") || 0) >= since)
     .map((j) => `- Ticket ${j.ticket}: ${j.state}, ${j.rounds || 0} rounds. ${String(j.summary || "").replace(/\s+/g, " ").slice(0, 220)}`);
   const recoveries = (d.recoveries || []).filter((r) => r.at >= since && r.at < until).map((r) => `- ${r.action}${r.ticket ? ` ticket ${r.ticket}` : ""}: ${String(r.reason || "").slice(0, 140)}`);
+  // Keir 10: the review starts from the lowest-scored closed tickets (max 4), not a sample of all of them.
+  const worstLines = require("./ticketscore").worst(d, { since: until - 3 * DAY_MS, limit: 4, below: 80 })
+    .map((t) => `- Ticket ${t.ticket} (${t.lane}, score ${t.score}/100): ${Object.entries(t.penalties).map(([k, v]) => `${k} -${v}`).join(", ") || "no penalties"}`);
   const fb = feedback.map((f) => `- [${f.kind}${f.severity ? `, ${f.severity}` : ""}] ${f.ticket ? `ticket ${f.ticket}, ` : ""}${f.role}: "${f.text}"`);
   return { feedback, text: [
     `Daily self-review for the 24 hours ending ${new Date(until).toISOString()}.`,
     "", `Feedback logged about Keir (${fb.length}):`, ...(fb.length ? fb.slice(0, 40) : ["- none"]),
     "", `Tickets worked (${tickets.length}):`, ...(tickets.length ? tickets.slice(0, 40) : ["- none"]),
+    "", `Worst closed tickets of the last 3 days, lowest score first (${worstLines.length}):`, ...(worstLines.length ? worstLines : ["- none below the bar"]),
     "", `Self-recoveries (stalls, spins, unknown waits) (${recoveries.length}):`, ...(recoveries.length ? recoveries.slice(0, 40) : ["- none"]),
     "", "Do this:",
-    "1. Read the actual conversations (support_get and ticket_history) for every ticket with feedback or a self-recovery, and a sample of the rest.",
+    "1. Read the actual conversations (support_get and ticket_history) for the worst closed tickets above first, then every ticket with feedback or a self-recovery.",
     "2. Find recurring patterns in how you handled them: silence or slow replies, wrong or unverified claims, broken promises, stalls on an unknown outcome, asking players for what you could look up, tone, and what went well.",
-    "3. For each distinct, evidence-backed pattern, call remember with kind lesson: one plain sentence saying what to do differently next time, citing the ticket. Supersede older lessons that this contradicts, with a reason. At most 6 lessons; no lesson without evidence.",
+    "3. For each distinct, evidence-backed pattern, call remember with kind lesson: one plain sentence saying what to do differently next time, citing the ticket. Start the text with the lane it belongs to, [lane:question], [lane:bug], [lane:outage], [lane:account] or [lane:idea], so the lesson is served with that lane's playbook and never added to the brief. Supersede older lessons that this contradicts, with a reason. At most 6 lessons; no lesson without evidence.",
     "4. For a pattern that needs a code or process change in Keir, call raise_to_developers kind question on your own board with the evidence. Do not duplicate an open card.",
     "5. Do not post in any ticket or channel and do not contact players. Finish done with a 3 to 5 line summary: what you learned and what you filed.",
   ].join("\n") };
