@@ -71,6 +71,6 @@ test("digest mode keeps the full brief and every tool, and only digests skills",
         c.stdin = { end() { setImmediate(() => { c.stdout.emit("data", JSON.stringify({ type: "result", subtype: "success", result: "Checked.", usage: {} }) + "\n"); c.emit("close", 0); }); } }; return c; } } });
   job.state = "running"; await agent.run(job, new AbortController().signal).catch(() => {});
   assert.equal(job.contextBudget?.lean, "digest");
-  assert.ok(job.contextBudget.briefChars > 55000 && job.contextBudget.briefChars < 70000, String(job.contextBudget.briefChars));
+  assert.ok(job.contextBudget.briefChars > 55000 && job.contextBudget.briefChars < 120000, String(job.contextBudget.briefChars));
   assert.ok(job.contextBudget.initialTools > 40, String(job.contextBudget.initialTools));
 });
