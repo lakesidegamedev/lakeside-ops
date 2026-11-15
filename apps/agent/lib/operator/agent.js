@@ -526,6 +526,8 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       context.lane = { id: job.lane, why: job.laneReason, exit: laneDef.exit, ...(job.lane === "question" ? { spinOut: "If you verify a defect or the player raises a new, unrelated problem, do not widen this ticket: raise the bug (raise_to_developers) or open a separate ticket (open_ticket) and tell the player.", ...(limit ? { limit } : {}) } : {}) };
     }
     context.playbook = require("./playbooks").contextFor(job, ledger.data);
+    // Keir 10: lessons the nightly review filed for this lane (lane names differ slightly in lanelessons.js).
+    if (job.lane && broker.notebook) { try { const l = require("./lanelessons").lessonsFor(broker.notebook, ({ people: "account", data_repair: "bug", advice: "question" })[job.lane] || job.lane, 4); if (l.length) context.laneLessons = l; } catch {} }
     if (ticketCompact) context.caseFile = caseFileMod.caseFile(ledger, job, { broker });
     // Keir 7: a ticket that only asks how the game works is answered by Ask
     // Keir before any model runs. Anything else, or an answer Ask's own checks
@@ -544,6 +546,19 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       if (ticketCompact) for (const [k, v] of Object.entries(context.orientation.tools || {})) context.orientation.tools[k] = v.slice(0, 24);
       mark("orientation");
       if (context.orientation.timings) preflightParts.orientationSteps = context.orientation.timings;
+    }
+    // Keir 10 evidence pack: the reads this lane nearly always needs, gathered in parallel before the model runs.
+    if (laneDef && discover && job.kind === "ticket" && job.ticket && config.evidencePack !== false) {
+      try {
+        const parse = (v) => { if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } } return v; };
+        const pack = await require("./evidencepack").build({ lane: job.lane, question: require("./ticketlanes").textOf(job),
+          servers: broker.servers?.(job) || [], tools: TOOLS.map((t) => t.name),
+          read: async (server, tool, args) => parse(await broker.tool(job, "read_tool", { server, tool, args }, signal)),
+          tool: async (name, input) => parse(await broker.tool(job, name, input, signal)) });
+        if (pack.items.length || pack.missing.length) context.evidencePack = { ...pack, instruction: "Gathered before you started for this lane. Use it; do not re-run these reads. Items under missing could not be read." };
+        ledger.audit("evidence_pack", { job: job.id, ticket: job.ticket, lane: job.lane, ok: pack.items.map((i) => i.id), missing: pack.missing, ms: pack.ms });
+      } catch (e) { ledger.audit("evidence_pack_failed", { job: job.id, ticket: job.ticket, error: String(e.message).slice(0, 200) }); }
+      mark("evidencePack");
     }
     // Keir 3.1: every open ticket keeps one progress card. Show the current
     // card, or say plainly that it is missing so this activation creates it.
