@@ -212,3 +212,18 @@ test("Keir 9: an ordinary wait with no refused answer and no reads is still allo
   const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked which corporation." });
   assert.match(JSON.stringify(r), /waiting/);
 });
+
+test("Keir 10: a bare acknowledgement after a real answer owes no reply (replay 2026-11-15)", async () => {
+  const f = setup(); f.job.lastGameReadAt = 1; f.job.lastCodeReadAt = 1;
+  await f.broker.tool(f.job, "channel_reply", { message: "Your army supply is on the war page, under each front line." });
+  f.advance(5);
+  f.job.observedPlayerAt = f.now(); f.job.requestInbox = [{ role: "player", content: "Ok.", at: new Date(f.now()).toISOString() }];
+  f.advance(1);
+  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; the player acknowledged." });
+  assert.equal(r.state, "waiting");
+  // A real follow-up question is still owed an answer.
+  f.job.state = "running";
+  f.job.observedPlayerAt = f.now(); f.job.requestInbox.push({ role: "player", content: "Ok but why is it low?", at: new Date(f.now()).toISOString() });
+  f.advance(1);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
+});

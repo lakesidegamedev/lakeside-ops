@@ -64,7 +64,7 @@ const ASKS_WHICH = /\b(?:which|what)\b[^.?!]{0,50}\b(?:bank|corporation|company|
 const DECISION_WORDS = /\b(?:compensat\w*|refund\w*|reimburs\w*|restitution|make (?:them|the player) whole|owner (?:decision|ruling|approval)|please decide|decide whether|needs? (?:a|an) (?:owner |developer )?(?:decision|ruling))\b/i;
 const ordinal = (n) => { const v = n % 100; return `${n}${v >= 11 && v <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`; };
 const DISCLOSURE = "Hi, I'm Keir, the support assistant for A House Divided. I can look into this, help work out whether it's a bug and prepare a fix, but I can't promise it gets resolved until a developer or moderator steps in.";
-const { playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection } = require("./playercopy");
+const { playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection, ackOnly } = require("./playercopy");
 
 const SUPPORT_READS = {
   support: ["support_get", "support_search", "support_list"],
@@ -121,10 +121,22 @@ const RAW_FIELD_CLOSED = /(email|password|passhash|hash$|token|secret|apikey|api
 const RAW_OPERATOR_CLOSED = /^\$(where|function|accumulator)$/;
 // Closed fields are also removed from returned documents: a filter check alone
 // cannot stop an unprojected read from returning them.
-function redactRaw(value, depth = 0) {
-  if (depth > 12 || !value || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map((x) => redactRaw(x, depth + 1));
-  return Object.fromEntries(Object.entries(value).filter(([k]) => !RAW_FIELD_CLOSED.test(k)).map(([k, x]) => [k, redactRaw(x, depth + 1)]));
+// Keir 10 (2026-11-15, mod-chat): the closed pattern matched "discord" anywhere, so the game setting
+// discordLinkRequiredForCharacter was silently cut from a gameConfig read and Keir told staff the requirement
+// was off when it was on. A setting is not personal data: a key shaped like a switch, limit or timer whose
+// value is a boolean, number or null stays readable. Identifiers, contact details and credentials stay closed.
+const RAW_SETTING_SHAPE = /(?:Required|Enabled|Allowed|Disabled|Mode|Stage|Gate|Limit|Timeout|Minutes|Hours|Days|Turns|Size|Count|Verification|Policy)(?:[A-Z]\w*)?$/;
+const rawSetting = (k, v) => RAW_SETTING_SHAPE.test(k) && (v === null || ["boolean", "number"].includes(typeof v));
+const rawClosed = (k, v) => RAW_FIELD_CLOSED.test(k) && !rawSetting(k, v);
+function redactRaw(value, depth = 0, hidden = null) {
+  const top = hidden === null; hidden ||= new Set();
+  let out;
+  if (depth > 12 || !value || typeof value !== "object") out = value;
+  else if (Array.isArray(value)) out = value.map((x) => redactRaw(x, depth + 1, hidden));
+  else out = Object.fromEntries(Object.entries(value).filter(([k, x]) => { const c = rawClosed(k, x); if (c) hidden.add(k); return !c; }).map(([k, x]) => [k, redactRaw(x, depth + 1, hidden)]));
+  // Say what was withheld, by name only, so a hidden field is never read as a missing one.
+  if (top && hidden.size && out && typeof out === "object" && !Array.isArray(out)) out = { ...out, withheldFields: [...hidden].slice(0, 20), withheldNote: "These fields exist in the records but are withheld from Keir as private data. Never say they are absent, off or empty; ask a developer if one matters." };
+  return out;
 }
 const oidOf = (v) => v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && typeof v.$oid === "string" ? v.$oid : null;
 // Coerce read arguments to their JSON schema: numbers to strings and numeric
@@ -230,7 +242,7 @@ function rawReadArgs(tool, args) {
   const collection = String(args.collection || "");
   if (!collection) throw new Error("collection: name the game collection to read; heal_collections lists them");
   if (RAW_READ_CLOSED.test(collection)) throw new Error(`collection "${collection}" is closed to support reads: ${RAW_READ_CLOSED_NOTE}`);
-  const walk = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_FIELD_CLOSED.test(k) || walk(x));
+  const walk = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_FIELD_CLOSED.test(k) && !RAW_SETTING_SHAPE.test(k) || walk(x));
   if (walk(args.filter) || walk(args.projection)) throw new Error("contact, credential and session fields are closed to support reads");
   // Server-side JavaScript is never a read a support task needs.
   const script = (v) => v && typeof v === "object" && Object.entries(v).some(([k, x]) => RAW_OPERATOR_CLOSED.test(k) || script(x));
@@ -969,6 +981,19 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   // The newest thing a human said in this ticket, across every task on it.
   const humanAt = (ticketNo) => Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => Math.max(j.observedPlayerAt || 0, j.lastPlayerAt || 0)));
+  // Keir 10: the text of the latest human message on a ticket, so a bare "Ok." or "thanks" is not treated as owed an answer.
+  const lastHumanText = (ticketNo) => {
+    let best = null;
+    for (const j of Object.values(d.jobs)) {
+      if (ticketOf(j) !== ticketNo) continue;
+      for (const m of [j.source, ...(j.requestInbox || []), ...(j.inbox || [])]) {
+        if (!m || ["system", "assistant"].includes(m.role) || m.investigationResult || m.codingResult || m.bot) continue;
+        const at = Date.parse(m.at || "") || 0;
+        if (!best || at >= best.at) best = { at, text: m.content || m.text || "" };
+      }
+    }
+    return best?.text || "";
+  };
   // Keir 10 (post path): a holding line is not an answer. One test for the finish rule, the refusal flag and the post budget.
   const holdingPost = (text) => isStall(text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(text || "").trim()) || /^i haven(?:'|’)?t got a confirmed answer for you yet/i.test(String(text || "").trim()) || sentences(String(text || "")).length <= 1 && /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(text || "").trim());
   // True when the player's latest message already has a real answer posted (any task on the ticket). With no player message on
@@ -4158,7 +4183,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // holding line; only a one-sentence post counts by that wording. The limitation line followed a real answer by a minute.
         // A wait for the player's own reply has its own, stricter "nothing posted" refusal below; only a holding line is added here.
         const realAnswered = human > 0 && (d.ticketPosts?.[tn] || []).some((p) => !isCardPost(p) && p.at >= human && !holdingText(p.text));
-        const owed = !realAnswered && human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
+        // Keir 10 (replay 2026-11-15): "Ok." after a real answer asked nothing; forcing a reply produced "Got it, glad that helped".
+        const ackAfterAnswer = !realAnswered && human > 0 && ackOnly(lastHumanText(tn)) && (d.ticketPosts?.[tn] || []).some((p) => !isCardPost(p) && !holdingText(p.text));
+        if (ackAfterAnswer) ledger.audit("ack_not_owed", { job: job.id, ticket: tn });
+        const owed = !ackAfterAnswer && !realAnswered && human > 0 && (input.waitFor === "player_reply" ? Boolean(last && last.at >= human && holdingOnly) : (!last || human > last.at || holdingOnly));
         if (owed) {
           const all = (d.unansweredFinishes ||= {});
           let rec = all[tn];

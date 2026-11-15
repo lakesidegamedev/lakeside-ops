@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Database reads no longer silently drop game settings whose names mention Discord, email or sessions (for example the setting that makes Discord linking required for new characters). Only personal identifiers, contact details and credentials are withheld, and a read now names any field it withheld, so a withheld field is never reported as missing.
+- A bare acknowledgement from the player ("Ok.", "thanks", "will check it out") after a real answer no longer forces Keir to post again before it can finish.
+
 - New tool `check_draft`: Keir can check a draft player post before sending it. It runs every content check a real post runs and lists all the problems at once with a fix for each, plus the post budget. It posts nothing, records nothing and leaves every refusal counter as it was.
 - Two new checks on every player post, also run by `check_draft`: a post that says the opposite of an earlier post on the same ticket (a fix is being built, then no fix is being built; live, then not live; available, then not available; can, then cannot) is refused unless it starts with "Correction:", and a post that calls something available when a read in the same task says it is locked ("not available until", "unlocks in", "opens in <year>") is refused. A "Correction:" post is never treated as a repeat of the post it corrects.
 - The brief now has one shipping rule instead of three: bug and display fixes outside the economy and turn-engine paths ship by themselves on green checks; economy, turn engine, migrations, money heals and rule, balance or economy-behaviour changes need the owner's yes (once per ticket chain unless huge), and main promotions of those wait for the owner's waking hours.

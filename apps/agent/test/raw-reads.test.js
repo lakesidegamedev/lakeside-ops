@@ -58,13 +58,17 @@ test("raw reads refuse server-side script and redact closed fields from results"
   assert.throws(() => rawReadArgs("heal_query", { collection: "corporations", filter: { $where: "sleep(1000)" } }), /script operators/);
   assert.throws(() => rawReadArgs("heal_query", { collection: "corporations", filter: { $or: [{ $function: {} }] } }), /script operators/);
   assert.doesNotThrow(() => rawReadArgs("heal_query", { collection: "corporations", filter: { $expr: { $eq: [{ $toString: "$_id" }, "x"] } } }));
-  assert.deepEqual(redactRaw({ docs: [{ name: "Acme", ownerEmail: "a@b", nested: { sessionId: "s", cash: 5 } }] }), { docs: [{ name: "Acme", nested: { cash: 5 } }] });
+  const r = redactRaw({ docs: [{ name: "Acme", ownerEmail: "a@b", nested: { sessionId: "s", cash: 5 } }] });
+  assert.deepEqual(r.docs, [{ name: "Acme", nested: { cash: 5 } }]);
+  assert.deepEqual(r.withheldFields.sort(), ["ownerEmail", "sessionId"]);
 });
 
 test("closed contact fields do not swallow game fields that merely contain the same letters", () => {
   const { rawReadArgs, redactRaw } = require("../lib/operator/broker");
   assert.doesNotThrow(() => rawReadArgs("heal_query", { collection: "corporations", filter: { ownership: { $gt: 0 } }, projection: { membership: 1, leadership: 1, totalShares: 1 } }));
-  assert.deepEqual(redactRaw({ ownership: 1.35, membership: 2, ip: "1.2.3.4", ipAddress: "x", address: "y", passwordHash: "z" }), { ownership: 1.35, membership: 2 });
+  const { withheldFields, withheldNote, ...kept } = redactRaw({ ownership: 1.35, membership: 2, ip: "1.2.3.4", ipAddress: "x", address: "y", passwordHash: "z" });
+  assert.deepEqual(kept, { ownership: 1.35, membership: 2 });
+  assert.ok(withheldFields.includes("passwordHash") && /Never say they are absent/.test(withheldNote));
   for (const field of ["email", "discordId", "sessionToken", "phone", "lastIp"]) assert.throws(() => rawReadArgs("heal_query", { collection: "characters", filter: { [field]: "x" } }), /closed/);
 });
 
@@ -77,4 +81,18 @@ test("a record id given as plain text is retried as a record id", () => {
   assert.deepStrictEqual(hexIdFilter({ buyerCorpId: { $in: [id, "x"] } }).fields, ["buyerCorpId"]);
   assert.equal(hexIdFilter({ name: "Exxon", turn: 5 }), null);
   assert.equal(hexIdFilter({ $or: [{ a: id }] }), null);
+});
+
+test("game settings that mention discord, email or session stay readable; identifiers stay closed (mod-chat 2026-11-15)", () => {
+  const { rawReadArgs, redactRaw } = require("../lib/operator/broker");
+  const r = redactRaw({ docs: [{ _id: "default", discordLinkRequiredForCharacter: true, sessionTimeoutMinutes: 30, emailVerificationRequired: false, marketGuardEnabled: true,
+    discordWebhookUrl: "https://discord.invalid/x", discordId: "123", discordUsername: "someone", ownerEmail: "a@b" }] });
+  assert.equal(r.docs[0].discordLinkRequiredForCharacter, true);
+  assert.equal(r.docs[0].sessionTimeoutMinutes, 30);
+  assert.equal(r.docs[0].emailVerificationRequired, false);
+  for (const k of ["discordWebhookUrl", "discordId", "discordUsername", "ownerEmail"]) { assert.equal(k in r.docs[0], false, k); assert.ok(r.withheldFields.includes(k), k); }
+  // A setting-shaped key holding text is still closed: only switch, number and null values pass.
+  assert.equal("discordGateRequired" in redactRaw({ discordGateRequired: "https://x" }), false);
+  assert.doesNotThrow(() => rawReadArgs("heal_query", { collection: "gameConfig", filter: { discordLinkRequiredForCharacter: true } }));
+  assert.throws(() => rawReadArgs("heal_query", { collection: "users", filter: { discordId: "1" } }), /closed/);
 });
