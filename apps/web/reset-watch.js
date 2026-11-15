@@ -39,6 +39,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const exploits = require("./reset-watch-exploits");
 
 const TURNS_PER_DAY = 24;
 const TURNS_PER_YEAR = 48;
@@ -713,7 +714,7 @@ async function readGameState(db) {
   return (await db.collection("gameState").findOne({ _id: "current" }, { projection: GAME_STATE_PROJECTION })) || {};
 }
 
-async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = [], turnHistory = [], now = new Date(), gameState = null } = {}) {
+async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = [], turnHistory = [], now = new Date(), gameState = null, prevWealth = null } = {}) {
   const gs = gameState || (await readGameState(db));
   const turn = gs.currentTurn ?? null;
   const it = gs.iteration || {};
@@ -782,6 +783,14 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   const turnsOut = turnMetrics({ turns: allTurns, cadenceMin: null });
   const slowPhases = lastLog ? phaseDurations(lastLog).slice(0, 6) : [];
   const buildsOut = buildMetrics({ autodeployDir });
+  // A failing exploit read must not blank the other sections.
+  let exploitsOut = null;
+  try {
+    exploitsOut = await exploits.collectExploits(db, { world, turn, now, prevWealth });
+  } catch (e) {
+    exploitsOut = null;
+    console.error(`reset-watch exploits read failed: ${e.message}`);
+  }
 
   const snapshot = {
     v: 1,
@@ -792,8 +801,10 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
     balance: { countries: countriesOut, forms: formsOut },
     politics: { fields, competitiveness: compOut, dominance: domOut, racesWithVotes: margins.length },
     infra: { turns: turnsOut, turnSeries: allTurns.slice(-400), slowPhases, builds: buildsOut },
+    exploits: exploitsOut,
   };
   Object.defineProperty(snapshot, "turnRecords", { value: turnRecs, enumerable: false });
+  if (exploitsOut) Object.defineProperty(snapshot, "wealthRecord", { value: exploitsOut.wealthRecord, enumerable: false });
   snapshot.verdicts = verdicts(snapshot);
   return snapshot;
 }
@@ -820,6 +831,7 @@ function verdicts(s) {
     balance: { level: balanceLevel, headline: worstCountry ? `${worstCountry.country} ${worstCountry.edgePp > 0 ? "+" : ""}${worstCountry.edgePp} pts` : worstForm ? `${worstForm.label} ${Math.round((worstForm.choiceShare || 0) * 100)}% of picks` : "No country or form stands out", detail: `${countries.length} host countries, ${s.balance.forms.playerCorps} player companies` },
     politics: { level: polLevel, headline: `${contested} of ${races} races contested`, detail: empty ? `${empty} races have no candidate yet` : "Every race has a candidate" },
     infra: { level: infraLevel, headline: `Turns p95 ${secs(t.p95Ms)}`, detail: `${t.failures} failed of the last ${t.count}; releases ${b.commitToLiveMedianMin ?? "?"} min commit to live` },
+    exploits: exploits.exploitVerdict(s.exploits),
   };
 }
 
@@ -846,6 +858,7 @@ function historyRecord(s) {
       largest: Object.fromEntries(s.politics.dominance.map((d) => [d.country, d.largest ? round(d.largest.share, 3) : null])),
       close: Object.fromEntries(s.politics.competitiveness.map((c) => [c.country, c.closeShare == null ? null : round(c.closeShare, 3)])),
     },
+    x: exploits.exploitHistory(s.exploits),
     v: Object.fromEntries(Object.entries(s.verdicts).map(([k, v]) => [k, v.level])),
   };
 }
