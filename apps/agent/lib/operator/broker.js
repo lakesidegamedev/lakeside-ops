@@ -25,6 +25,7 @@ const prMention = require("./prmention");
 const ruleLookup = require("./rulelookup");
 const readClaim = require("./readclaim");
 const bugClaim = require("./bugclaim");
+const claimcheck = require("./claimcheck");
 const accountClaim = require("./accountclaim");
 const settingClaim = require("./settingclaim");
 const { isQuick } = require("./conversation");
@@ -265,7 +266,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
 const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings", "trace_bonds"]);
-const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
+const QUICK_TOOLS = ["check_draft", "ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -843,6 +844,92 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     await guardNeedlessClarification(job, ticketNo, message);
     if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
   }
+  // Keir 10 claim check: check_draft runs every content guard a real post runs, against a draft, and lists all the problems at
+  // once with a fix for each. It posts nothing, records nothing, spends no post budget and leaves every refusal counter as it was,
+  // so the answer it gives is the answer the real post will get (the outgoing semantic screen runs only on the real post).
+  const DRAFT_STATE = ["ruleLookupRefusals", "ruleLookupRefused", "inclusionRefusals", "readClaimRefusals", "bugClaimRefusals", "accountClaimRefusals", "settingClaimRefusals", "identityAskRefusals", "numberCheckRefused", "numberCheckGaveUp", "sharedAnswers", "ticketSymptoms"];
+  const DRAFT_FIXES = {
+    length: "Cut it to at most five short sentences: the answer first, then what happens next. The detail goes on the status card note.",
+    technical: "Rewrite for the player: what was wrong and where the fix stands, in the words on the game's screens. No PR or issue numbers, links, checks, branches or code.",
+    register: "Say what it means for the player in the words the game's own screens use. No paths, hosts, tool names, usernames or Keir's own runtime.",
+    numbers: "Read the figure with a tool first, or call calculate with the expression you used, then post the same figure.",
+    "outcome claim": "Say only what is verified: what you found and what happens next. Say a fix is live only after the release and the check on a turn.",
+    "identity ask": "Look the reporter up with reporter_state; never ask a linked player who they are.",
+    "settings claim": "Name a setting only if a read in this ticket shows it controls the behaviour; otherwise say you have not confirmed the cause.",
+    "bug claim": "Say it is a bug only when a read marks it a fault, or say plainly that it is not confirmed.",
+    "account claim": "Read the reporter's account (reporter_state) before saying anything about their link or characters, or say it was not checked.",
+    "read claim": "Quote only what a read of this ticket shows on that page or record, or say it is not confirmed.",
+    "rule before code": "Search the game code first (ops-knowledge code_search, claimType mechanic), then answer from what it says, or say plainly the rule is not confirmed.",
+    "timid answer": "Read the code that decides it and answer from it instead of hedging.",
+    "either/or question": "The ticket already names what is wrong. Investigate each issue it names and answer, instead of asking the player to pick.",
+    contradiction: "Start the post with \"Correction:\" and say what changed and why, or drop the claim that clashes with the earlier post.",
+    "locked claim": "Say it is not available yet and what it waits on, using the lock you read.",
+    pacing: "Wait, or post a one or two sentence correction or a question. See the post budget below.",
+    "ruled out": "Record new evidence as a fact and close the ruled-out entry first, or drop the claim.",
+  };
+  const classifyProblem = (m) => /sentences, \d+ characters/.test(m) ? "length" : /player's ticket channel|PR or issue numbers/.test(m) ? "technical"
+    : /do(?:es)? not appear in anything/.test(m) ? "numbers" : /outcome Keir has no receipt|states an outcome|told this is live/.test(m) ? "outcome claim"
+    : /asks the player who they are/.test(m) ? "identity ask" : /tells the player to change a setting/.test(m) ? "settings claim"
+    : /calls behaviour a bug|bug, fault or defect/.test(m) ? "bug claim" : /account is not linked|fact about the player's account/.test(m) ? "account claim"
+    : /says what a page|nothing Keir read on this ticket contains that|page still shows|not appear in anything this ticket has read/.test(m) ? "read claim"
+    : /states a game rule or a cause|read the game code|inclusion check/.test(m) ? "rule before code" : /hedg|timid|readable code|guess/i.test(m) ? "timid answer"
+    : /already names what is wrong|pick between/.test(m) ? "either/or question" : /contradicts what the player was told|contradicts the checked answer/.test(m) ? "contradiction"
+    : /says .* is available, but a read/.test(m) ? "locked claim" : /ruled out/.test(m) ? "ruled out"
+    : /posted in ticket|Keir has posted|already got this update|another Keir task|still the newest|waiting on the owner's decision|already has this waiting state|asked the player this|correction is one or two sentences|a developer's own task|still checking/.test(m) ? "pacing"
+    : /private details|internal or engine jargon|runtime|Players never see|not this player's name|tool-call text|Keir's own tool/.test(m) ? "register" : "other";
+  async function draftCheck(job, input) {
+    const raw = input?.message;
+    if (typeof raw !== "string" || !raw.trim()) throw new Error("check_draft needs the draft text in message");
+    const ticketNo = job.ticket || ticketNumberOf(job.source?.channelName);
+    const problems = [], seen = new Set();
+    const add = (m, forced) => { const text = String(m).replace(/^Not posted: /, "").trim(); const check = forced || classifyProblem(m); const key = `${check}:${text.slice(0, 80)}`; if (seen.has(key)) return; seen.add(key); problems.push({ check, problem: text.slice(0, 700), fix: DRAFT_FIXES[check] || "Fix what the problem names, then check the draft again." }); };
+    const snap = Object.fromEntries(DRAFT_STATE.map((k) => [k, d[k] === undefined ? undefined : JSON.stringify(d[k])]));
+    const jobSnap = { unreadContextRefusals: job.unreadContextRefusals, lookupRefusals: job.lookupRefusals };
+    const realAudit = ledger.audit, realSave = ledger.save;
+    let message = raw, shaped = null;
+    // Everything in this block is synchronous, so nothing else can run while the audit and save calls are muted.
+    ledger.audit = () => {}; ledger.save = () => {};
+    try {
+      try { message = publicText(raw); } catch (e) { add(e.message, "register"); message = raw; }
+      if (ticketNo) {
+        try { shaped = shapeTicketPost(message); message = shaped; } catch (e) { add(e.message, "length"); }
+        if (TECHNICAL.test(message)) add("This is the player's ticket channel. Rewrite for the player: no PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.", "technical");
+        try { guardTicketNumbers(job, ticketNo, message); } catch (e) { add(e.message); }
+        try { secondLook(job, ticketNo, message); } catch (e) { add(e.message, "ruled out"); }
+        const reuse = d.sharedAnswers?.[ticketNo];
+        if (reuse && !reuse.refused) { try { const clash = sharedAnswer.contradiction(message, { ticket: reuse.from, answer: reuse.answer }); if (clash) add(clash, "contradiction"); } catch {} }
+        const found = []; try { guardTicketPostRules(job, ticketNo, message, { collect: found }); } catch (e) { found.push(e.message); }
+        for (const m of found) add(m);
+      } else {
+        try { guardNumbers(job, message); } catch (e) { add(e.message); }
+        try { guardPlayerRegister(job, null, message); } catch (e) { add(e.message); }
+      }
+    } finally {
+      ledger.audit = realAudit; ledger.save = realSave;
+      for (const k of DRAFT_STATE) { if (snap[k] === undefined) delete d[k]; else d[k] = JSON.parse(snap[k]); }
+      Object.assign(job, jobSnap);
+    }
+    if (ticketNo) {
+      try {
+        if (ASKS_IDENTITY.test(message) && job.kind === "ticket") {
+          const reporter = await reporterOf(job).catch(() => null);
+          if ((reporter?.username || reporter?.id) && (d.identityAskRefusals?.[ticketNo] || 0) < 2) add("Not posted: this asks the player who they are, but their game account is linked to this ticket.", "identity ask");
+        }
+      } catch { /* the check is advisory */ }
+      try {
+        const clarify = require("./clarify");
+        if (job.role !== "owner" && clarify.isBareEitherOr(message)) {
+          const t = await mcp.call("support", "support_get", { kind: "ticket", number: ticketNo }, false).catch(() => null);
+          const texts = [job.source?.content, ...(job.requestInbox || []).map((m) => m?.content), ...(job.inbox || []).filter((m) => m && m.role !== "system" && m.role !== "assistant").map((m) => m.content)].filter(Boolean);
+          const refusal = clarify.needlessClarification({ message, texts, visits: t?.supportRecentVisits || [] });
+          if (refusal) add(refusal, "either/or question");
+        }
+      } catch { /* the check is advisory */ }
+    }
+    const budget = ticketNo ? postBudget(job) : null;
+    return { ok: problems.length === 0, problems, ...(problems.length === 0 && shaped ? { wouldPost: shaped } : {}), ...(budget ? { postBudget: budget, postBudgetNote: budgetLine(budget) } : {}),
+      note: problems.length ? "Fix every problem listed, then check the draft again before posting. Nothing was posted." : "This draft passes every check run here. The outgoing screen runs once more when you post it with channel_reply." };
+  }
   // Keir 8.4.1 (owner, ticket 1781): a reply that only asks the player to pick between issues
   // they already raised is not posted. The ticket text, its channel and the page visits are read
   // only when the reply has that shape, so ordinary posts cost nothing.
@@ -991,9 +1078,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("setting_claim_hedged", { job: job.id, ticket: ticketNo, phrase: bad[0].phrase.slice(0, 160) });
     return settingClaim.hedge(message, bad, require("./playercopy").MAX_CHARS);
   }
+  // opts.collect (check_draft): every refusal is recorded and the checks carry on, so one call lists all the problems.
+  // Without it the first refusal throws, exactly as before.
   function guardTicketPostRules(job, ticketNo, message, opts = {}) {
-    require("./advicerouting").guard(job, d, message);
-    guardPlayerRegister(job, ticketNo, message);
+    const refuse = (text) => { if (opts.collect) { opts.collect.push(String(text)); return; } throw new Error(text); };
+    const attempt = (fn) => { try { fn(); } catch (e) { if (!opts.collect) throw e; opts.collect.push(String(e.message)); } };
+    attempt(() => require("./advicerouting").guard(job, d, message));
+    attempt(() => guardPlayerRegister(job, ticketNo, message));
     // The owner or a developer asking Keir directly in a ticket is owed the answer now. The
     // pacing rules below (another task just posted, the monologue cap, ten-minute spacing)
     // held the owner's answer back on ticket 1757 (2026-11-03) and read as Keir going silent.
@@ -1007,7 +1098,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (!question && require("./supportblockers").unchangedWait(message)) {
       const old = d.supportWaitingNotices?.[ticketNo];
       if (old?.stage === waitingStage(ticketNo) && humanAt(ticketNo) <= old.humanAt)
-        throw new Error("Not posted: the player already has this waiting state. Keep working privately; post a new finding or verified milestone, not another unchanged deployment notice.");
+        refuse("Not posted: the player already has this waiting state. Keep working privately; post a new finding or verified milestone, not another unchanged deployment notice.");
     }
     const pending = Object.values(d.decisions || {}).find((x) => x.state === "pending" && ticketOf(d.jobs[x.jobId] || {}) === ticketNo);
     if (pending) {
@@ -1016,7 +1107,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       const noticed = (d.ticketPosts?.[ticketNo] || []).filter((p) => p.at >= pending.at && !isCardPost(p)).at(-1) || (d.monologue?.[ticketNo]?.decisionNoticeAt >= pending.at ? { at: d.monologue[ticketNo].decisionNoticeAt } : null);
       if (noticed && !question && !playerSpokeAfter(noticed.at) &&
           (PENDING_APPROVAL.test(message) || require("./supportblockers").unchangedWait(message)))
-        throw new Error(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. Do not repeat this wait; independent findings and answers may still be posted.`);
+        refuse(`Not posted: ticket ${ticketNo} is waiting on the owner's decision (asked ${Math.round((now() - pending.at) / 60000)} min ago) and the player already has one notice about it. Do not repeat this wait; independent findings and answers may still be posted.`);
     }
     // Monologue cap (ticket 1514: 52 Keir messages to 4 human). After three
     // consecutive Keir posts, pause ten minutes instead of silencing the ticket indefinitely.
@@ -1035,46 +1126,55 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (playerAnswered(ticketNo, job)) return false;
       return Boolean(job.replyRefusedPending) || h > 0 && ((rec && rec.humanAt === h && rec.refused > 0 && !rec.limitationPostedAt) || Object.values(d.jobs).some((j) => ticketOf(j) === ticketNo && (j.replyAttemptRefusedAt || 0) > h)); })();
     if (!answeringStaff && !owedNow && mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
-      throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
+      refuse(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
     // The same question again (1592 asked one question four times in 31
     // hours): asking twice is a reminder, a third time is not progress.
     const asked = repeatedQuestion(ticketNo, message);
-    if (asked >= 2) throw new Error(`Not posted: you have already asked the player this ${asked} times. Do not ask again; work with what you have, say what you will assume, or finish waiting for their reply.`);
+    if (asked >= 2) refuse(`Not posted: you have already asked the player this ${asked} times. Do not ask again; work with what you have, say what you will assume, or finish waiting for their reply.`);
     if (isCorrection(message) && sentences(message).length > 2)
-      throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
+      refuse("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
     if (!answeringStaff && !owedNow && run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
-      throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
+      refuse(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
     // A developer asking Keir in the ticket gets one answer, from their own task.
     // The automatic ticket task must not answer it over them (ticket 1510).
     if (job.kind === "ticket") {
       const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
-      if (dev) throw new Error(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
+      if (dev) refuse(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
     }
     const ev = ticketEvidence(ticketNo);
     const claims = outcomeClaims(message);
     const verifiedNow = ev.verified.done && Object.values(d.jobs).some((j) => ticketOf(j) === ticketNo && (j.lastGameReadAt || 0) > humanAt(ticketNo) && (j.turnChecks || []).some((at) => (j.lastGameReadAt || 0) > at));
     const missing = claims.filter((c) => c.kind === "money" ? !(c.future ? ev.money.agreed : ev.money.done) : c.kind === "verified" ? !c.future && !verifiedNow : !c.future && !ev[c.kind].done);
-    if (missing.length) throw new Error(`Not posted: this states an outcome Keir has no receipt for ("${missing[0].sentence}"). ${[...new Set(missing.map((c) => NEED[c.kind]))].join(" ")} Say only what is verified.`);
-    guardTicketQuality(job, ticketNo, message, ev);
+    if (missing.length) refuse(`Not posted: this states an outcome Keir has no receipt for ("${missing[0].sentence}"). ${[...new Set(missing.map((c) => NEED[c.kind]))].join(" ")} Say only what is verified.`);
+    attempt(() => guardTicketQuality(job, ticketNo, message, ev));
     const posts = (d.ticketPosts ||= {})[ticketNo] || [];
     // Keir 8.2 (ticket 1763, 2026-11-05 13:32): two tasks told the player "the fix is live" 20 seconds apart.
     // One release or fix announcement per ticket per 30 minutes, whichever task makes it.
     if (claims.some((c) => (c.kind === "main" || c.kind === "verified") && !c.future)) {
       const said = posts.find((p) => now() - p.at < 30 * 60000 && !isCardPost(p) && outcomeClaims(p.text).some((c) => (c.kind === "main" || c.kind === "verified") && !c.future) && !playerSpokeAfter(p.at));
-      if (said) throw new Error(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
+      if (said) refuse(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
     }
-    guardStall(job, ticketNo, message, posts);
+    attempt(() => guardStall(job, ticketNo, message, posts));
+    // Keir 10: a post must not contradict this ticket's earlier posts without saying "Correction:", and must not call something
+    // available that a read in this activation says is locked. check_draft runs the same two checks.
+    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+      const clash = claimcheck.contradiction(message, posts, { now: now() });
+      if (clash) { ledger.audit("contradiction_refused", { job: job.id, ticket: ticketNo, pred: clash.pred }); refuse(claimcheck.contradictionRefusal(clash)); }
+      const locked = claimcheck.unlockConflict(message, job.evidenceText);
+      if (locked) { ledger.audit("unlock_claim_refused", { job: job.id, ticket: ticketNo, noun: locked.noun }); refuse(claimcheck.unlockRefusal(locked)); }
+    }
     const other = answeringStaff || owedNow ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !isCardPost(p) && !playerSpokeAfter(p.at)).at(-1);
-    if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
+    if (other) refuse(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
     // Ticket 1773 (2026-11-05): a developer's ping started a second task that restated the ticket task's
     // answer 15 seconds later (similarity 0.5). Paraphrased repeats measure 0.41 to 0.79 and unrelated
     // replies 0.05 or less, so within five minutes 0.4 is a repeat, whoever is being answered.
-    const dup = posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6 || !isCardPost(p) && now() - p.at < 5 * 60000 && similarity(p.text, message) >= 0.4);
-    if (dup) throw new Error(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
+    // Keir 10: a post that starts "Correction:" restates the thing it corrects, so it is never a repeat.
+    const dup = isCorrection(message) ? null : posts.find((p) => now() - p.at < 30 * 60000 && similarity(p.text, message) >= 0.6 || !isCardPost(p) && now() - p.at < 5 * 60000 && similarity(p.text, message) >= 0.4);
+    if (dup) refuse(`Not posted: ticket ${ticketNo} already got this update ${Math.round((now() - dup.at) / 60000)} min ago. Post only something new.`);
     // Keir 8.4 (owner, 2026-11-06): hedging away from readable code, and update spam.
     const timid = replyPolicy.timidRefusal(message, { lookups: Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => j.codeLookups || 0)) });
-    if (timid) { ledger.audit("timid_answer_refused", { job: job.id, ticket: ticketNo }); throw new Error(timid); }
+    if (timid) { ledger.audit("timid_answer_refused", { job: job.id, ticket: ticketNo }); refuse(timid); }
     const lastPost = posts.filter((p) => !isCardPost(p)).at(-1);
     const sameTicketJobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
     const spam = opts.system || owedNow ? null : replyPolicy.milestoneRefusal({ message, lastPost, claims, answeringStaff, correction: isCorrection(message),
@@ -1082,7 +1182,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       humanSpokeAfter: lastPost ? humanInChannelSince(job, lastPost.at) : false,
       approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
       newReadSince: lastPost ? sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lastPost.at || (j.lastCodeReadAt || 0) > lastPost.at) : false });
-    if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); throw new Error(spam); }
+    if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); refuse(spam); }
     // Keir 9: a rule or a cause stated before anything in this ticket read the game code is refused once per
     // ticket, so the answer rests on the code and not on the data on screen. Never again after that (no loops).
     // The fast lane posts an Ask answer that is already grounded in the code index, so it is exempt.
@@ -1098,7 +1198,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         if (n === 0 || (n === 1 && !unconfirmed)) {
           refusals[ticketNo] = n + 1; (d.ruleLookupRefused ||= {})[ticketNo] = now(); ledger.save();
           ledger.audit("rule_lookup_required", { job: job.id, ticket: ticketNo, claim: claim.kind, pattern: claim.pattern, attempt: n + 1 });
-          throw new Error(n === 0 ? ruleLookup.REFUSAL : ruleLookup.REFUSAL_UNCONFIRMED);
+          refuse(n === 0 ? ruleLookup.REFUSAL : ruleLookup.REFUSAL_UNCONFIRMED);
         }
       }
     }
@@ -1109,7 +1209,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if ((refusals[ticketNo] || 0) < 2) {
         const texts = [...(ledger.data.ticketObservations?.[ticketNo] || []).map((r) => r.result), ...knowledge.ticketRecord(ledger, ticketNo).facts.filter((f) => !f.closedAt).map((f) => f.text)];
         const refusal = ruleLookup.inclusionRefusal(message, texts);
-        if (refusal) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("inclusion_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo] }); throw new Error(refusal); }
+        if (refusal) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("inclusion_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo] }); refuse(refusal); }
       }
     }
     // Keir 9: a sentence that says what a page, record or panel shows must rest on a read of this ticket that contains those
@@ -1122,7 +1222,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (bad.length && (refusals[ticketNo] || 0) < readClaim.MAX_REFUSALS) {
         refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
         ledger.audit("read_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], clause: bad[0].clause.slice(0, 160) });
-        throw new Error(readClaim.REFUSAL(bad[0]));
+        refuse(readClaim.REFUSAL(bad[0]));
       }
     }
     // Keir 9 (replay 2026-11-13): "this is a bug" / "needs a code change" is a claim. A sentence that labels behaviour a defect
@@ -1135,7 +1235,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         if (claim) {
           refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
           ledger.audit("bug_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], pattern: claim.pattern });
-          throw new Error(bugClaim.REFUSAL(claim));
+          refuse(bugClaim.REFUSAL(claim));
         }
       }
     }
@@ -1148,7 +1248,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         if (claim) {
           refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
           ledger.audit("account_claim_refused", { job: job.id, ticket: ticketNo, claim: claim.kind, reason: claim.reason });
-          throw new Error(accountClaim.REFUSAL(claim));
+          refuse(accountClaim.REFUSAL(claim));
         }
       }
     }
@@ -1161,7 +1261,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         if (bad.length) {
           refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save();
           ledger.audit("setting_claim_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo], phrase: bad[0].phrase.slice(0, 160) });
-          throw new Error(settingClaim.REFUSAL(bad[0]));
+          refuse(settingClaim.REFUSAL(bad[0]));
         }
       }
     }
@@ -1766,7 +1866,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
   const w3 = require("./w3tools").createW3Tools({ config, mcp, staff: (job) => job.role === "owner" || developerTask(job), now, log: (m) => config.log?.(m) });
   // Keir 2.0: the numbers and text of everything read this activation are the
   // evidence a public post may quote (see guardNumbers and secondLook).
-  const NO_EVIDENCE = new Set(["channel_reply", "progress_update", "checkpoint", "finish", "handoff", "task_progress", "ticket_record", "remember"]);
+  const NO_EVIDENCE = new Set(["check_draft", "channel_reply", "progress_update", "checkpoint", "finish", "handoff", "task_progress", "ticket_record", "remember"]);
   async function tool(job, name, input, signal) {
     require("./roles").roleGuard(job, name, input, ledger.data.jobs);
     if (signal?.aborted) throw new Error("activation aborted");
@@ -2268,6 +2368,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "delegate_investigation") return delegation.investigate(job, input.question);
     if (name === "review_fix") return delegation.review(job, input, signal);
     if (name === "read_servers") return readServers(job);
+    if (name === "check_draft") return draftCheck(job, input);
     if (name === "channel_reply") {
       if (job.kind === "ticket" && isModerationChannel(ledger, job.channelId || job.replyChannel)) throw new Error("This is a moderation ticket. Moderators handle it; Keir does not reply in it. Finish without acting.");
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
@@ -4416,7 +4517,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

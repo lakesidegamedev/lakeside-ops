@@ -194,3 +194,71 @@ test("a decision for a different ticket still gets its own DM", async () => {
   await f.broker.tool(other, "raise_to_developers", Q("Marine wording", "Should the marine unit name follow the wing name on the roster screen?", 2));
   assert.equal(Object.values(f.ledger.data.outbox).filter((o) => o.destination === "owner" && o.decision).length, 2);
 });
+
+// ---- item 3: check_draft and the claim check inside the run ----
+test("check_draft lists every problem at once, with a fix for each, and posts nothing", async () => {
+  const f = setup(); f.playerWrote(5);
+  f.job.codeLookups = 0; delete f.job.lastCodeReadAt; // nothing read the game code yet
+  const draft = "Your revenue fell because the California plants were mothballed at turn 675. The fix is live on the main server. See https://github.com/lakesidegamedev/AHDGame/pull/6122 for the change.";
+  const r = await f.broker.tool(f.job, "check_draft", { message: draft });
+  assert.equal(r.ok, false);
+  const checks = r.problems.map((p) => p.check);
+  for (const want of ["technical", "outcome claim", "rule before code"]) assert.ok(checks.includes(want), `${want} in ${checks.join(", ")}`);
+  assert.ok(r.problems.every((p) => p.fix && p.problem), "each problem comes with a fix");
+  assert.equal(r.postBudget.replyOwed, true);
+  assert.match(r.postBudgetNote, /Post budget:/);
+  assert.equal(f.posts().length, 0, "nothing was posted");
+});
+
+test("check_draft leaves no trace: refusal counters, audit, post history and the owed flag are untouched", async () => {
+  const f = setup(); f.playerWrote(5);
+  f.job.codeLookups = 0; delete f.job.lastCodeReadAt;
+  const before = JSON.stringify([f.ledger.data.ruleLookupRefusals, f.ledger.data.readClaimRefusals, f.ledger.data.numberCheckRefused, f.ledger.data.ticketPosts?.[123] ?? null, f.ledger.data.monologue]);
+  const audits = (f.ledger.data.audit || []).length;
+  for (let i = 0; i < 4; i++) await f.broker.tool(f.job, "check_draft", { message: "Your revenue fell because the California plants were mothballed at turn 675." });
+  assert.equal(JSON.stringify([f.ledger.data.ruleLookupRefusals, f.ledger.data.readClaimRefusals, f.ledger.data.numberCheckRefused, f.ledger.data.ticketPosts?.[123] ?? null, f.ledger.data.monologue]), before);
+  assert.equal((f.ledger.data.audit || []).length, audits);
+  assert.equal(f.job.replyRefusedPending, undefined);
+  assert.equal(f.job.replyAttemptRefusedAt, undefined, "a checked draft is not a refused post");
+  // The real post still gets its full refusals: the rule-before-code check has not been used up by the dry runs.
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your revenue fell because the California plants were mothballed at turn 675." }), /game code/);
+});
+
+test("check_draft and the real post agree: a clean draft passes both, a contradicting one fails both with the same text", async () => {
+  const f = setup(); f.playerWrote(30);
+  const clean = await f.broker.tool(f.job, "check_draft", { message: ANSWER });
+  assert.equal(clean.ok, true);
+  assert.ok(clean.wouldPost);
+  (f.ledger.data.ticketPosts ||= {})[123] = [{ at: f.now() - 11 * 60000, jobId: "earlier", kind: "reply", text: "A fix is being built for the supply problem." }];
+  const bad = "No fix is being built for the supply problem.";
+  const c = await f.broker.tool(f.job, "check_draft", { message: bad });
+  assert.equal(c.ok, false);
+  const hit = c.problems.find((p) => p.check === "contradiction");
+  assert.ok(hit, JSON.stringify(c.problems));
+  assert.match(hit.problem, /Correction:/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: bad }), (e) => e.message.replace(/^Not posted: /, "").startsWith(hit.problem.slice(0, 80)));
+  const ok = await f.broker.tool(f.job, "check_draft", { message: `Correction: ${bad} The cause turned out to be a wrong setting.` });
+  assert.equal(ok.problems.filter((p) => p.check === "contradiction").length, 0);
+  await f.broker.tool(f.job, "channel_reply", { message: "Correction: no fix is being built for the supply problem. The cause was a wrong setting." });
+  assert.equal(f.posts().length, 1);
+});
+
+test("an availability claim against a lock read this activation is refused by check_draft and by the real post", async () => {
+  const f = setup(); f.playerWrote(5);
+  f.job.evidenceText = "\n[read_tool] Marine Brigade: not available until 1944. Marine Brigade unlocks in 1944 for every nation.";
+  const draft = "You can recruit the Marine Brigade at your coastal base.";
+  const r = await f.broker.tool(f.job, "check_draft", { message: draft });
+  assert.ok(r.problems.some((p) => p.check === "locked claim" && /not available until 1944/.test(p.problem)), JSON.stringify(r.problems));
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: draft }), /locked/);
+  await f.broker.tool(f.job, "channel_reply", { message: "The Marine Brigade is not available until 1944." });
+  assert.equal(f.posts().length, 1);
+});
+
+test("check_draft is not evidence and works for a conversation task with no ticket", async () => {
+  const f = setup();
+  const conv = f.ledger.createJob("c", { role: "owner", kind: "command", source: {}, deadline: 9e15 }); conv.state = "running";
+  const r = await f.broker.tool(conv, "check_draft", { message: "Your plant is idle." });
+  assert.equal(r.ok, true);
+  assert.equal(r.postBudget, undefined);
+  await assert.rejects(f.broker.tool(conv, "check_draft", { message: "  " }), /needs the draft text/);
+});
