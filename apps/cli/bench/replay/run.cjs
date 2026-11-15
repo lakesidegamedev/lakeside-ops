@@ -3,13 +3,15 @@
 // scenario's stubbed externals. A scripted player answers questions between
 // activations through the job inbox, as the gateway would. Results keep the
 // full event trace, per-activation usage and timing.
-// Usage: node apps/cli/bench/replay/run.cjs --out ABS [--set dev|validation|holdout] --scenario all|id[,id] --route claude:claude-sonnet-5-5@medium[,...] [--arm full] [--repeat 5] [--concurrency 3]
+// Usage: node apps/cli/bench/replay/run.cjs --out ABS [--set dev|validation|holdout|k10] --scenario all|id[,id] --route claude:claude-sonnet-5-5@medium[,...] [--arm full] [--repeat 5] [--concurrency 3]
 require('./guard.cjs');
 const fs = require('node:fs'), path = require('node:path');
 // KEIR_REPLAY_AGENT runs another release's agent tree (e.g. /opt/keir/releases/<id>) on this bench.
 const AGENT = process.env.KEIR_REPLAY_AGENT || path.resolve(__dirname, '../../../agent');
 const { createAgent } = require(AGENT + '/lib/operator/agent');
 const { createEnv } = require('./env.cjs');
+const { gradeK10 } = require('./k10.cjs');
+const { writeTranscript } = require('./transcript.cjs');
 
 // Production limits (/etc/keir-operator.env on 2026-10-19): 36 tool rounds, a
 // 15-minute activation, coding and investigation children on cursor:auto.
@@ -25,7 +27,9 @@ const ARMS = {
 
 // Scenario sets: dev (diagnose and tune), validation (compare candidates), holdout
 // (final promotion only; lives outside the repository, never read while tuning).
-const SETS = { dev: path.join(__dirname, 'scenarios', 'dev'), validation: path.join(__dirname, 'scenarios', 'validation'), holdout: process.env.KEIR_REPLAY_HOLDOUT || '/root/misc/keir-replay-holdout' };
+const SETS = { dev: path.join(__dirname, 'scenarios', 'dev'), validation: path.join(__dirname, 'scenarios', 'validation'), holdout: process.env.KEIR_REPLAY_HOLDOUT || '/root/misc/keir-replay-holdout',
+  // Keir 10 known failures (ticket-audit 2026-11-15). One run per scenario; read the transcripts.
+  k10: path.join(__dirname, 'scenarios', 'k10') };
 function scenarioIds(arg, dir) { const all = fs.readdirSync(dir).filter((f) => f.endsWith('.cjs') && !f.endsWith('.test.cjs')).map((f) => f.slice(0, -4)).sort(); return arg === 'all' ? all : arg.split(','); }
 function loadScenario(dir, id) { const sc = require(path.join(dir, id + '.cjs')); return { ...sc, dir }; }
 const slug = (route) => route.replace(/[^a-z0-9.-]+/gi, '_');
@@ -43,7 +47,11 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
   const config = { ...env.config, ...ARMS[armName], briefFile: path.join(AGENT, 'KEIR.md'), coreBriefFile: path.join(AGENT, 'KEIR-CORE.md'), model: route.split(':')[1]?.split('@')[0],
     workerProvider: route, quickProvider: route, visionProvider: route, maxRounds: MAX_ROUNDS, maxTurnMs: ACTIVATION_MS, codingProvider: CHILD_ROUTE, investigatorProvider: CHILD_ROUTE, quickMaxTurnMs: ACTIVATION_MS, skills: true, dynamicEffort: false,
     rustRunnerLanes: [], usageFile, tagIntake: async () => null };
-  const agent = createAgent({ ledger: env.ledger, broker: env.broker, config });
+  // Keep every provider activation's raw result (final text and anything the runtime exposes) for the transcript.
+  const rawActivations = [];
+  const { invokeCli } = require(AGENT + '/lib/operator/cli-runner');
+  const recordingInvoke = async (opts) => { const t0 = Date.now(); try { const r = await invokeCli(opts); rawActivations.push({ job: opts.job?.id, lane: opts.lane, ms: Date.now() - t0, result: r }); return r; } catch (e) { rawActivations.push({ job: opts.job?.id, lane: opts.lane, ms: Date.now() - t0, error: String(e.message) }); throw e; } };
+  const agent = createAgent({ ledger: env.ledger, broker: env.broker, config, invokeImpl: recordingInvoke });
   const result = { key, set: setDir, scenario: scenarioId, route, arm: label, agent: AGENT, rep, startedAt: new Date().toISOString(), activations: [] };
   const job = env.job;
   try {
@@ -97,6 +105,10 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
   fs.writeFileSync(cell + '/events.json', JSON.stringify(env.events, null, 2));
   fs.writeFileSync(cell + '/channel.json', JSON.stringify(env.messages, null, 2));
   fs.writeFileSync(cell + '/job.json', JSON.stringify(job, null, 2));
+  // Grade with the k10 layer when the scenario is a k10 one, and always write a readable transcript.
+  try { result.grade = gradeK10(env.events, sc.spec); fs.writeFileSync(cell + '/grade.json', JSON.stringify(result.grade, null, 2)); } catch (e) { result.gradeError = String(e.message).slice(0, 300); }
+  fs.writeFileSync(cell + '/raw-activations.json', JSON.stringify(rawActivations, null, 2));
+  writeTranscript(cell, { scenario: sc, result, events: env.events, messages: env.messages, rawActivations });
   fs.writeFileSync(cell + '/result.json', JSON.stringify(result, null, 2));
   fs.appendFileSync(path.join(out, 'results.jsonl'), JSON.stringify(result) + '\n');
   console.log(`DONE ${key} activations=${result.activations.length} state=${job.state} tokens=${Math.round(result.tokens / 1000)}K wall=${Math.round(result.wallMs / 1000)}s${result.error ? ' ERROR' : ''}`);
@@ -106,6 +118,9 @@ async function sim(setDir, scenarioId, route, armName, rep, out) {
 async function main(argv = process.argv.slice(2)) {
   const o = { set: 'dev', scenario: 'all', route: 'claude:claude-sonnet-5-5@medium', arm: 'full', repeat: '1', concurrency: '2' };
   for (let i = 0; i < argv.length; i += 2) o[argv[i].replace(/^--/, '')] = argv[i + 1];
+  // The k10 preset needs no --out: one dated directory in the archive, one run per scenario.
+  if (o.set === 'k10' && !o.out) o.out = `/root/misc/archive/${new Date().toISOString().slice(0, 10)}-keir-replay-k10/${Date.now()}`;
+  if (o.set === 'k10' && Number(o.repeat) > 1 && !process.env.KEIR_REPLAY_ALLOW_REPEAT) throw Error('k10 preset: one run per scenario (set KEIR_REPLAY_ALLOW_REPEAT=1 to override)');
   if (!o.out || !path.isAbsolute(o.out)) throw Error('--out ABSOLUTE_DIR required');
   fs.mkdirSync(o.out, { recursive: true });
   const jobs = [];
