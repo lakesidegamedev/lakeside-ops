@@ -134,6 +134,7 @@ recoverAuthBlocked(ledger);
 // legacy supervisor policy as before, and also to any other operator that
 // owns support, except tickets that operator has handed off.
 const supportOwner = createSupportOwner({ ledger });
+const deskActions = require("./lib/operator/deskactions").createDeskActions({ ledger, config, supportOwner, killSwitch });
 const legacyDeferred = config.supportDeferred.bind(config);
 config.supportDeferred = (job) => ["watchkeeper", "engineering"].includes(job?.operatorRole) || job?.kind === "finding" || ledger.data.jobs[job?.codingParent]?.kind === "finding" ? false : legacyDeferred() || supportOwner.deferred(job);
 const effectShadow = createEffectShadow({ ledger, config });
@@ -324,7 +325,7 @@ setTimeout(learnKnowledge, 10 * 60000).unref();
 setInterval(learnKnowledge, 60 * 60000).unref();
 setInterval(() => broker.issueSweep().catch((e) => log(`issue sweep: ${e.message}`)), 60 * 60000).unref();
 const { createTurnWatch } = require("./lib/operator/capabilities");
-const turnWatch = createTurnWatch({ ledger, log, currentTurn: async () => Number((await mcp.call("gamestate", "game_overview", {}, false)).turn) });
+const turnWatch = createTurnWatch({ ledger, log, onTurn: (job) => broker.pageCheckAfterTurn(job), currentTurn: async () => Number((await mcp.call("gamestate", "game_overview", {}, false)).turn) });
 setInterval(async () => {
   try { await turnWatch.tick(); } catch (e) { log(`turnwatch: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
@@ -816,6 +817,10 @@ const server = http.createServer(async (req, res) => {
         config.usageFile || path.join(config.stateDir, "usage.jsonl"), { since: Math.max(0, until - days * 86400000), until }));
     } catch { return reply(503, { error: "Performance data unavailable" }); }
   }
+  if (req.url?.split("?")[0] === "/v5/ticket-board" && req.method === "GET") {
+    try { return reply(200, require("./lib/operator/ticketboard").ticketBoard(ledger.data, { guildId: config.guildId })); }
+    catch { return reply(503, { error: "Ticket board unavailable" }); }
+  }
   if (req.url === "/v5/usage" && req.method === "GET") {
     const until = Date.now();
     try {
@@ -870,6 +875,11 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/v5/trust/killswitch" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }
     try { const b = JSON.parse(raw || "{}"); return reply(200, b.on === true ? killSwitch.engage({ reason: b.reason, by: "owner via API", until: b.until }) : b.on === false ? killSwitch.release() : killSwitch.state()); }
+    catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
+  }
+  if (req.url === "/v5/desk/action" && req.method === "POST") {
+    let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }
+    try { const r = deskActions.run(JSON.parse(raw || "{}")); drain(); return reply(200, r); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (req.url === "/status" && req.method === "GET") return reply(200, { paused: ledger.data.paused, jobs: Object.values(ledger.data.jobs).map(({ id, kind, role, state, ticket, summary }) => ({ id, kind, role, state, ticket, summary })) });

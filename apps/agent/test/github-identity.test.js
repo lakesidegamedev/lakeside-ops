@@ -54,3 +54,9 @@ test("merges, branch deletion and reads are never wrapped in the Keir identity (
   for (const line of wrapped) assert.ok(!/\/merge|DELETE|git\/refs/.test(line), `Keir identity on a merge or delete: ${line.trim().slice(0, 120)}`);
   assert.ok(wrapped.length >= 8, "the authored writes are wrapped");
 });
+
+test("a filed bug tells the task to propose the data repair too", async (t) => {
+  const f = fixture(t);
+  const r = await f.b.tool(f.job, "raise_to_developers", issue);
+  assert.match(r.instruction, /call request_heal/);
+});

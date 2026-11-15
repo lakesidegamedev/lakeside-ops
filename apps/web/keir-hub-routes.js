@@ -11,6 +11,7 @@
 const { makeKeirHubBody } = require("./keir-hub-page");
 const data = require("./keir-hub-data");
 const { buildHubState } = data;
+const { canReadDeveloperView } = require("./ops-staff-role");
 
 function isKeirHubPath(pathname) { return pathname === "/keir" || pathname === "/api/keir/hub" || pathname.startsWith("/api/keir/hub/"); }
 
@@ -34,6 +35,14 @@ async function handleKeirHubRoute(req, res, pathname, { resolveSession, addSecur
   if (!session) {
     if (pathname.startsWith("/api/")) { addSecurityHeaders(res); res.writeHead(401, { "Content-Type": "application/json", "Cache-Control": "no-store" }); res.end('{"error":"sign in"}'); return true; }
     res.writeHead(302, { Location: "/" }); res.end(); return true;
+  }
+  if (pathname === "/api/keir/hub/tickets" && canReadDeveloperView(session, pathname)) {
+    addSecurityHeaders(res);
+    let status = 200, payload;
+    try { payload = await actions.ticketBoard({}); } catch { status = 503; payload = { error: "Ticket board unavailable" }; }
+    res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(payload));
+    return true;
   }
   if (session.role !== "admin") { addSecurityHeaders(res); res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" }); res.end("Not found"); return true; }
   addSecurityHeaders(res);

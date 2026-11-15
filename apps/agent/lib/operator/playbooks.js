@@ -49,7 +49,7 @@ const PLAYBOOKS = {
   data_repair: (f) => [
     step("read_reporter", "Read the reporter's live records", f.reporter && f.reads >= 1),
     step("verify_loss", "Verify the loss from the ledger or history (trace_account, character history); never take the player's number on trust", f.reads >= 3),
-    step("route", "Request the repair with the evidence (request_heal, which needs approval) or raise it to the developers; never promise money", f.heal || f.raised || f.merged || f.answeredCard),
+    step("route", "Propose the repair with request_heal (the owner approves it) and raise the code bug that caused it; never promise money", f.heal || f.raised || f.merged || f.answeredCard),
     step("tell_player", "Tell the player what was verified and that the repair is with the developers, after their last message", f.answeredSincePlayer),
   ],
   gameplay_advice: (f) => [

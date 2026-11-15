@@ -254,17 +254,49 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
       ...(disputed.length ? { conflictsWith: disputed, conflict: "these notes disagree; read current evidence and record a sourced replacement before relying on either" } : {}) };
   }
   // Player notes are private to that player's support task or developer work.
-  function recall(query, { k = 6, ticket, player, job, via } = {}) {
+  function rank(query, { k, ticket, player, skip }) {
     const q = words(query);
-    const scored = data.notes.filter((n) => live(n) && (!n.player || player === "*" || (player && n.player === String(player)))).map((n) => {
+    return data.notes.filter((n) => live(n) && (!n.player || player === "*" || (player && n.player === String(player))) && !(skip && skip(n))).map((n) => {
       const w = words(n.text + " " + codeSources(n).map((s) => s.path).join(" "));
       let s = 0; for (const x of q) if (w.has(x)) s++;
       if (ticket && noteSources(n).some((r) => r.type === "ticket" && String(r.number) === String(ticket))) s += 5;
       if (n.kind === "lesson" || n.kind === "decision") s += 0.5;
       return { n, s, rank: s * (n.kind === "lesson" ? boost.get(n.id) || 1 : 1) };
     }).filter((x) => x.s >= 2).sort((a, b) => b.rank - a.rank || b.n.at - a.n.at).slice(0, k);
+  }
+  function recall(query, { k = 6, ticket, player, job, via } = {}) {
+    const scored = rank(query, { k, ticket, player });
     if (scored.length) track(scored.map(({ n }) => n), { job, ticket, via });
     return scored.map(({ n }) => project(n));
+  }
+  // Keir 9 (feature C): the few notes a ticket task starts with. Each is labelled by how far it can be trusted,
+  // notes whose code changed are left out, and only the notes actually shown count as recalled.
+  const clipText = (t, n) => { const x = String(t || "").replace(/\s+/g, " ").trim(); return x.length <= n ? x : x.slice(0, Math.max(0, n - 3)).trimEnd() + "..."; };
+  function labelled(n, room) {
+    // Shown in plain present tense, whatever wording an older note was kept in (lib/operator/ticketrecall.js).
+    const { plainPresent } = require("./ticketrecall");
+    const wrongRaw = /Wrong: "(.*?)" Right: "(.*?)"/s.exec(n.text);
+    const wrong = wrongRaw && [wrongRaw[0], wrongRaw[1], plainPresent(wrongRaw[2])];
+    if (n.kind === "lesson") {
+      const head = wrong ? `earlier mistake: "${clipText(wrong[1], Math.floor(room / 3))}" was wrong${wrong[2] ? `, "${clipText(wrong[2], Math.floor(room / 3))}" was right` : ""}` : `earlier mistake: ${clipText(n.text, room)}`;
+      return n.verified === false ? `${head} (not verified against the code)` : head;
+    }
+    if (n.kind === "resolution" || n.verified === false) return `earlier answer on ticket ${n.ticket || "?"}, not verified: ${clipText(plainPresent(n.text.replace(/^Answer given to a player in ticket \d+, not checked against the code \([^)]*\): /, "")), room)}`;
+    if (n.kind === "mechanic" && codeSources(n).length) return `checked rule from the code (${codeSources(n)[0].path}): ${clipText(plainPresent(n.text), room)}`;
+    return `${n.kind === "decision" ? "owner decision" : "note"}: ${clipText(n.text, room)}`;
+  }
+  function recallForTicket(query, { ticket, player, job, via = "ticket-context", k = 3, chars = 600, accept } = {}) {
+    const shown = [], out = [];
+    let used = 0;
+    for (const { n } of rank(query, { k: k * 4, ticket, player, skip: (x) => x.kind === "player" || stale(x) || conflicts(x).length || (accept && !accept(x)) })) {
+      if (shown.length >= k) break;
+      const room = Math.min(chars - used, Math.floor(chars / 2));
+      if (room < 80) break;
+      const text = labelled(n, room - 20).slice(0, room);
+      used += text.length; shown.push(n); out.push({ id: n.id, kind: n.kind, note: text });
+    }
+    if (shown.length) track(shown, { job, ticket, via });
+    return out;
   }
   function curate(actions, { backup = true, by = "curator", allowedIds } = {}) {
     if (backup && fs.existsSync(file)) fs.copyFileSync(file, `${file}.bak-${new Date(now()).toISOString().replace(/[:.]/g, "-")}`);
@@ -395,7 +427,7 @@ function createNotebook({ file, repo = "/root/projects/AHDGame", exec = execFile
     }
     return results;
   }
-  return { flush, recallLog, retire, restore, setBoost, curate, remember, recall, forget, notesFor, forgetDoc, invalidateDoc, replaceDoc, queueStale, refresh, all: () => data.notes.filter(live), archive: () => data.notes.filter((n) => !live(n)), meta: () => (data.meta ||= {}), save };
+  return { flush, recallLog, retire, restore, setBoost, curate, remember, recall, recallForTicket, forget, notesFor, forgetDoc, invalidateDoc, replaceDoc, queueStale, refresh, all: () => data.notes.filter(live), archive: () => data.notes.filter((n) => !live(n)), meta: () => (data.meta ||= {}), save };
 }
 
 // ---------- Code checks (2.1: replaced the Haiku second look) ----------

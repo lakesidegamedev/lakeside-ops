@@ -5,6 +5,24 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 9.2.0 (2026-11-15)
+
+- The /keir staff desk's actions (nudge, release, pause, resume, on, off) and the model command now reach the operator; they were built apart from the desk router and were never called.
+- A ticket whose sector or record is damaged now gets the repair proposed to the owner for approval instead of only a developer report. The request_heal tool is no longer hidden behind a deferred schema, spells out the action shape (a bare set or unset is accepted), says it works from tickets, and the heal rule is no longer cut from support tasks. Filing a bug now tells the task to propose the data repair as well, and the debugging digest no longer tells it to wait for a root cause before repairing a bad record. Net model-facing text shrinks.
+
+- A ticket task is shown a kept note only when the note shares a game code file or game area with the question; word overlap alone no longer brings in unrelated notes. Notes are kept and shown in plain present tense: "now" is dropped and sentences about changes, fixes or updates are left out.
+- A ticket task now always starts with up to three notes from Keir's notebook (about 600 characters), found from the player's question plus the game files and screens the ticket names or has read. Each is labelled "checked rule from the code", "earlier answer on ticket N, not verified" or "earlier mistake: X was wrong, Y was right"; notes whose code file changed are left out, and only the notes shown count as recalled. A recalled note never replaces the code lookup before a rule is stated.
+
+- Desk staff actions: nudge, release, pause and resume a ticket (junior developers and developers) and switch Keir on or off (developers) through a new local operator endpoint that audits each action and posts one line to the staff channel; none of them resolves a ticket or messages the player. A proven-model registry lets developers switch the model for new tickets only, and only to entries that passed the bar with a live check in the last 10 minutes (override is logged and posted to staff).
+
+- Staff ticket board: a new read endpoint `/v5/ticket-board` on the operator and a "Tickets" panel on the Keir hub list every open ticket in one line (what the player asked, where Keir is in plain words, the next step and who owns it, last player message and last Keir answer), with a highlight when a player has had no answer for over 2 hours. Built from the ledger only, no model calls.
+
+- Effort per ticket question: the player-ticket route effort (and the operator effort override) is now a ceiling for tickets. A first-time plain rules question with no figures runs at medium; bug reports, money or figures, turn or outage questions, a refused, retracted or out-of-steps earlier attempt, and any activation after the player disputed an answer stay at the ceiling. Never below medium unless the ceiling is lower. The reason is recorded in the usage record. Non-ticket tasks are unchanged.
+
+- When several players report the same fault, Keir reuses one checked answer. A new ticket that matches an earlier one on at least two independent signals (similar wording, the support search, the same screen or file, place or turn) within 72 hours gets that ticket's answer as context, but only if it was posted with a code-written "From:" line and was not later corrected or disputed by its player. The new task still has to read the new player's own figures. A draft that takes the opposite direction on the same fault ("working as designed" against "a bug") is refused once with both texts; the next post goes out. The tickets are linked, not merged.
+
+- A ticket reply is never called fixed from a deploy alone. Keir records the page figure it first cited as the symptom; once the fix is live and a turn has run, the code re-reads that figure for the player. Changed: the fixed message may post. Unchanged: it is refused, the player is told once that the change is out but their page still shows the old figure, the task is woken, and after three turns it goes to the developers. One re-read per turn.
+
 ## 9.1.3 (2026-11-15)
 
 - Ticket tasks can find the errors a reporting player hit with sentry_player_errors: by the reporter's account id, the page they name and the time they describe, with a readable step trail before each error.
