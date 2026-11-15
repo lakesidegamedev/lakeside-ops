@@ -20,6 +20,8 @@ test('structured tool grants and worker instructions agree on the required submi
  assert.ok(config.permissions.some(p=>p.action==='keir_submit_result'&&p.effect==='allow'));
  const prompt=workerPrompt({prompt:'Work',tools:session.tools});assert.match(prompt,/keir_submit_result/);assert.doesNotMatch(prompt,/call keir_finish and obtain/);
 });
+// The fixtures print a late result after 10 s; finishing under 9 s proves the adapter stopped at the broker
+// finish. The bound was 4 s and failed release qualification under heavy host load (2026-11-15).
 test("Sonnet adapter stops on accepted broker finish and retains deduplicated streamed usage",async t=>{
  const request=fixture(t),{createToolServer}=require("../lib/operator/toolserver");
  const server=createToolServer({broker:{tool:async()=>({state:"done"})},normalizeImage:()=>{throw Error("unused")}});
@@ -37,7 +39,7 @@ await fetch(config.mcpServers.keir.url,{method:'POST',body:JSON.stringify({jsonr
 setTimeout(()=>console.log(JSON.stringify({subtype:'success',result:'unnecessary post-finish generation'})),10000);
 });\n`,{mode:0o700});
  const at=Date.now(),result=await invokeCli({...request,url:session.url,completionUrl:session.completionUrl,claudeBin:executable,signal:new AbortController().signal});
- assert.ok(Date.now()-at<4000);assert.equal(result.result,"verified result");assert.equal(result.provenance.completion,"broker-receipt");assert.equal(result.usage.input_tokens,21);assert.equal(result.usage.output_tokens,103);assert.equal(result.usage.cache_read_input_tokens,10);
+ assert.ok(Date.now()-at<9000);assert.equal(result.result,"verified result");assert.equal(result.provenance.completion,"broker-receipt");assert.equal(result.usage.input_tokens,21);assert.equal(result.usage.output_tokens,103);assert.equal(result.usage.cache_read_input_tokens,10);
  assert.equal(fs.existsSync(result.provenance.transcript),true);
 });
 test("real operator-to-CLI subprocess preserves route, prompt, grants and usage", async t => {
@@ -217,7 +219,7 @@ test('Sol adapter ends on accepted finish without inventing missing token accoun
  const request={...fixture(t),runner:'codex',model:'fixture-model',effort:'low'},server=require('../lib/operator/toolserver').createToolServer({broker:{tool:async()=>({state:'done'})},normalizeImage:()=>{}}),session=await server.open({},request.tools,new AbortController().signal);t.after(()=>{session.close();server.close()});
  const executable=path.join(request.stateDir,'codex-completion-fixture');fs.writeFileSync(executable,`#!/usr/bin/env node
 const fs=require('fs'),path=require('path');const config=fs.readFileSync(path.join(process.env.CODEX_HOME,'config.toml'),'utf8'),url=JSON.parse(config.match(/^url = (.+)$/m)[1]);process.stdin.resume();process.stdin.on('end',async()=>{console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'checking'}}));await fetch(url,{method:'POST',body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'finish',arguments:{state:'done',summary:'verified patch'}}})});setTimeout(()=>console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:123,output_tokens:4}})),10000)});\n`,{mode:0o700});
- const at=Date.now(),r=await invokeCli({...request,codexBin:executable,url:session.url,completionUrl:session.completionUrl,signal:new AbortController().signal});assert.ok(Date.now()-at<4000);assert.equal(r.result,'verified patch');assert.equal(r.provenance.completion,'broker-receipt');assert.deepEqual(r.usage,{});assert.equal(r.provenance.accounting,'unavailable-before-turn-end');
+ const at=Date.now(),r=await invokeCli({...request,codexBin:executable,url:session.url,completionUrl:session.completionUrl,signal:new AbortController().signal});assert.ok(Date.now()-at<9000);assert.equal(r.result,'verified patch');assert.equal(r.provenance.completion,'broker-receipt');assert.deepEqual(r.usage,{});assert.equal(r.provenance.accounting,'unavailable-before-turn-end');
 });
 
 test("Muse billing restriction rejects direct Meta before any worker starts; the Muse Code subscription CLI is allowed (owner 2026-11-12)", async t => {
