@@ -36,7 +36,7 @@ test("shapeEvent keeps wanted tags, in-app frames, breadcrumb tail, id-only user
   assert.strictEqual(e.tags.route, "/senate");
   assert.strictEqual(e.tags.release, "ahd@1.2.3");
   assert.strictEqual(e.tags.secret, undefined);
-  assert.strictEqual(e.breadcrumbs.length, 10);
+  assert.strictEqual(e.breadcrumbs.length, 15);
   assert.strictEqual(e.userId, "u1");
   assert.ok(!JSON.stringify(e).includes("a@b.c") && !JSON.stringify(e).includes("1.2.3.4"));
 });
@@ -82,4 +82,35 @@ test("listIssues resolves project slugs and implies is:unresolved", async () => 
   assert.match(seen[1], /project=7/);
   assert.match(decodeURIComponent(seen[1].replace(/\+/g, " ")), /is:unresolved error_code:CLIENT_ERROR/);
   await assert.rejects(() => s.listIssues(c, { project: "nope" }), /Unknown project/);
+});
+
+test("describeCrumb turns request and navigation crumbs into readable steps", () => {
+  const { describeCrumb } = require("./sentry-client");
+  assert.equal(describeCrumb({ category: "fetch", data: { method: "POST", url: "/api/actions/execute", status_code: 409 } }), "POST /api/actions/execute -> 409");
+  assert.equal(describeCrumb({ category: "navigation", data: { from: "/country/CA", to: "/actions" } }), "navigate /country/CA -> /actions");
+  assert.equal(describeCrumb({ category: "ui.click", message: "button.primary" }), "click button.primary");
+  assert.equal(describeCrumb({ category: "fetch", data: {} }), null);
+});
+
+test("playerQuery quotes ids and strips search syntax from the page", () => {
+  const { playerQuery } = require("./sentry-client");
+  assert.equal(playerQuery({ userId: "u1", page: "/actions" }), 'user.id:"u1" url:*/actions*');
+  assert.equal(playerQuery({ characterId: 'c"1 OR x', page: 'a b"*' }), 'character.id:"c1 OR x" url:*ab*');
+});
+
+test("playerErrors requires an id and searches the window around a time", async () => {
+  const { playerErrors, SentryError } = require("./sentry-client");
+  await assert.rejects(playerErrors({}, {}), SentryError);
+  const calls = [];
+  const client = {
+    org: "o", projectIds: async (s) => s,
+    getPaged: async (path, params) => { calls.push(params); return { data: [{ id: "abcdef1234", title: "Boom", timestamp: "t", url: "/actions", project: "p" }], next: null }; },
+    get: async () => ({ eventID: "abcdef1234", title: "Boom", entries: [{ type: "breadcrumbs", data: { values: [{ category: "fetch", data: { method: "GET", url: "/api/x", status_code: 200 } }] } }], tags: [{ key: "country.id", value: "CA" }], user: { id: "u1" } }),
+  };
+  const out = await playerErrors(client, { userId: "u1", page: "/actions", around: "2026-11-15T04:25:00Z", windowMinutes: 30 });
+  assert.equal(calls[0].query, 'user.id:"u1" url:*/actions*');
+  assert.equal(calls[0].start, "2026-11-15T03:55:00.000Z");
+  assert.equal(out.count, 1);
+  assert.equal(out.detailed[0].breadcrumbs[0].step, "GET /api/x -> 200");
+  assert.equal(out.detailed[0].countryId, "CA");
 });

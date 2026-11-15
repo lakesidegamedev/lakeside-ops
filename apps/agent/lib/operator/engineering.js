@@ -14,7 +14,7 @@ const READS = {
   turndiag: ["turn_phase_timings", "phase_history", "lock_status", "turn_anomalies", "turn_failure_detail"],
   gamestate: ["entity_search", "legislation_catalog", "elections", "game_overview", "countries", "analytics_catalog", "analytics_query", "fx_quote", "player_wealth_statistics", "trace_corp", "trace_sector", "corporation_rankings", "extraction_market", "trace_approval", "invariant_check"],
   engine: ["engine_health", "recent_turns", "economy_pulse"],
-  sentry: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_new_since"],
+  sentry: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_player_errors", "sentry_new_since"],
   "ops-knowledge": ["code_search", "code_read", "code_exact", "knowledge_query", "knowledge_get", "kanban_get"],
 };
 const TOOLS = new Set(["finish_patch", "edit_verify", "evidence_batch", "read_servers", "read_tools", "read_tool", "watch_turn", "repository_snapshot", "shell", "calculate", "recall", "recent_changes", "past_ticket", "similar_reports", "delegate_fix", "delegate_investigation", "review_fix", "publish_patch", "github", "raise_to_developers", "checkpoint", "finish"]);
