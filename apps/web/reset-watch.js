@@ -158,7 +158,7 @@ function siteRows({ sectors, corpById, fxByCountry, primeByCountry = new Map(), 
     const fresh = pnl.turn != null && turn != null && pnl.turn >= turn - 1;
     const rate = num(fxByCountry.get(s.countryId)) || 1;
     const revenueDay = fresh ? num(pnl.revenue) : null;
-    const profitDay = fresh ? num(pnl.profit) : null;
+    const profitDay = fresh ? num(pnl.profit) : (num(s.capitalStock) > 0 ? 0 : null);
     const profitTurnAnchor = profitDay == null ? null : profitDay / TURNS_PER_DAY / rate;
     const capital = num(s.capitalStock) || 0;
     const operating = num(s.operatingCapacityUnits) || capital;
@@ -173,15 +173,20 @@ function siteRows({ sectors, corpById, fxByCountry, primeByCountry = new Map(), 
       returnPct = (100 * unitProfitTurn * TURNS_PER_YEAR) / unitPrice;
     }
     const prime = num(primeByCountry.get(s.countryId));
+    // Built = owns capacity. A built site with no revenue this turn is idle,
+    // and counts against its sector: a player owning it would be losing money.
+    const built = capital > 0;
+    const selling = revenueDay != null && revenueDay > 0;
     rows.push({
       lane: laneOf(s),
       country: s.countryId,
       corpId: String(s.corporationId),
       player: corp.ceoType === "character",
-      operating: revenueDay != null && revenueDay > 0,
-      building: !(capital > 0) || (num(s.constructionInProgressAnchor) || 0) > 0,
-      margin: revenueDay > 0 && profitDay != null ? (100 * profitDay) / revenueDay : null,
-      profitable: profitDay != null ? profitDay > 0 : null,
+      operating: built,
+      idle: built && !selling,
+      building: !built && (num(s.constructionInProgressAnchor) || 0) > 0,
+      margin: selling && profitDay != null ? (100 * profitDay) / revenueDay : null,
+      profitable: built ? (profitDay != null ? profitDay > 0 : false) : null,
       paybackTurns,
       returnPct,
       primePct: prime,
@@ -221,7 +226,8 @@ function sectorMetrics(rows) {
       lane,
       label: LANE_LABEL[lane] || lane,
       sites: op.length,
-      building: all.filter((r) => !r.operating).length,
+      building: all.filter((r) => r.building).length,
+      idle: all.filter((r) => r.idle).length,
       playerSites: all.filter((r) => r.player).length,
       playerCorps: new Set(all.filter((r) => r.player).map((r) => r.corpId)).size,
       profitableShare: share(op.filter((r) => r.profitable).length, op.length),
@@ -232,7 +238,7 @@ function sectorMetrics(rows) {
       excessPp: round(median(op.map((r) => r.excessPp)), 1),
       beatsSafeShare: share(op.filter((r) => r.excessPp != null && r.excessPp > 0).length, op.filter((r) => r.excessPp != null).length),
       plantCostAnchor: round(median(op.map((r) => r.plantCost)), 0),
-      sellThrough: round(median(op.map((r) => r.sellThrough)), 2),
+      sellThrough: round(median(op.filter((r) => !r.idle).map((r) => r.sellThrough)), 2),
       playerProfitableShare: share(op.filter((r) => r.player && r.profitable).length, op.filter((r) => r.player).length),
     };
     m.verdict = sectorVerdict(m);
@@ -355,8 +361,10 @@ function partyKey(country, id) {
 
 function candidateFields({ elections, candidates, npps, parties, turn }) {
   const byElection = new Map();
+  const standing = new Set();
   for (const c of candidates) {
     if (c.status && c.status !== "active") continue;
+    if (c.nppId) standing.add(String(c.nppId));
     const k = String(c.electionId);
     if (!byElection.has(k)) byElection.set(k, []);
     byElection.get(k).push(c);
@@ -364,10 +372,12 @@ function candidateFields({ elections, candidates, npps, parties, turn }) {
   const partiesByCountry = new Map();
   for (const p of parties) partiesByCountry.set(p.countryId, (partiesByCountry.get(p.countryId) || 0) + 1);
   const nppByCountry = new Map();
+  const freeByCountry = new Map();
   const nppPartiesByCountry = new Map();
   for (const n of npps) {
     if (n.retiredAt) continue;
     nppByCountry.set(n.countryId, (nppByCountry.get(n.countryId) || 0) + 1);
+    if (!standing.has(String(n._id))) freeByCountry.set(n.countryId, (freeByCountry.get(n.countryId) || 0) + 1);
     if (n.party && n.party !== "independent") {
       if (!nppPartiesByCountry.has(n.countryId)) nppPartiesByCountry.set(n.countryId, new Set());
       nppPartiesByCountry.get(n.countryId).add(String(n.party));
@@ -409,6 +419,8 @@ function candidateFields({ elections, candidates, npps, parties, turn }) {
       parties,
       partiesWithoutNpps: Math.max(0, parties - partiesWithNpps),
       npps: nppByCountry.get(r.country) || 0,
+      nppsFree: freeByCountry.get(r.country) || 0,
+      nppsFreePerEmptyRace: r.empty > 0 ? round((freeByCountry.get(r.country) || 0) / r.empty, 1) : null,
       nppsPerRace: round(share(nppByCountry.get(r.country) || 0, r.races), 1),
       contestedShare: share(r.contested, r.races),
       turnsToDeadline: turnsLeft,
@@ -686,19 +698,23 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   const it = gs.iteration || {};
   const worldId = `${gs.preset || "world"}:${it.type || "Iteration"}-${it.number ?? "?"}`;
 
-  const [fx, telemetry, corps, sectors, histTurnDoc, npps, parties, elections, candidates, officials, formations, turnLogs, gameConfig] = await Promise.all([
+  const [fx, banks, corps, sectors, histTurnDoc, npps, parties, elections, candidates, officials, formations, turnLogs, lastLog, gameConfig] = await Promise.all([
     db.collection("exchangeRates").find({}, { projection: { countryId: 1, rate: 1 } }).toArray(),
-    db.collection("countryTurnTelemetry").find({ turn: { $gte: (turn ?? 0) - 2 } }, { projection: { turn: 1, country: 1, "macro.primeRate": 1 } }).toArray(),
+    db.collection("centralBanks").find({}, { projection: { countryId: 1, primeRate: 1 } }).toArray(),
     db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
     db.collection("corporateSectors").find({}, { projection: { corporationId: 1, countryId: 1, sectorType: 1, industryModel: 1, mediaDiscriminator: 1, "plantsPnl.profit": 1, "plantsPnl.revenue": 1, "plantsPnl.turn": 1, capacityBookAnchor: 1, constructionInProgressAnchor: 1, capitalStock: 1, operatingCapacityUnits: 1, plantCount: 1, soldFraction: 1, capitalUtilization: 1 } }).toArray(),
-    db.collection("corporationHistory").find({}, { projection: { turn: 1 } }).sort({ turn: -1 }).limit(1).next(),
-    db.collection("npps").find({}, { projection: { countryId: 1, party: 1, retiredAt: 1 } }).toArray(),
+    db.collection("corporationHistory").find({ turn: { $lte: turn ?? 0 } }, { projection: { turn: 1 } }).sort({ turn: -1 }).limit(1).next(),
+    db.collection("npps").find({ retiredAt: null }, { projection: { countryId: 1, party: 1, retiredAt: 1 } }).toArray(),
     db.collection("politicalParties").find({}, { projection: { countryId: 1, sequentialId: 1, name: 1, abbreviation: 1, color: 1, regimeStatus: 1 } }).toArray(),
-    db.collection("elections").find({}, { projection: { countryId: 1, electionType: 1, status: 1, primaryEndTurn: 1, endTurn: 1, totalSeats: 1 } }).toArray(),
-    db.collection("electionCandidates").find({}, { projection: { electionId: 1, party: 1, status: 1, isNPP: 1, nppId: 1, characterId: 1 } }).toArray(),
+    // Live races plus anything decided in the last two game years: enough for
+    // margins and tenure, without re-reading every election the world has held.
+    db.collection("elections").find({ $or: [{ status: "active" }, { endTurn: { $gte: (turn ?? 0) - 2 * TURNS_PER_YEAR } }] }, { projection: { countryId: 1, electionType: 1, status: 1, primaryEndTurn: 1, endTurn: 1, totalSeats: 1 } }).toArray(),
+    db.collection("electionCandidates").find({ status: "active" }, { projection: { electionId: 1, party: 1, status: 1, isNPP: 1, nppId: 1, characterId: 1 } }).toArray(),
     db.collection("electedOfficials").find({}, { projection: { countryId: 1, officeType: 1, party: 1, seatsHeld: 1 } }).toArray(),
     db.collection("governmentFormations").find({}, { projection: { countryId: 1, governingPartyId: 1, status: 1, formedTurn: 1 } }).toArray(),
-    db.collection("turnLogs").find({}, { projection: { turn: 1, realTime: 1, createdAt: 1, durationMs: 1, outcome: 1, success: 1, failedPhases: 1, "memory.peakRssMb": 1, "build.commit": 1, phaseStatuses: 1 } }).sort({ turn: -1 }).limit(48).toArray(),
+    // Turn logs are ~45 KB each because of phaseStatuses; only the newest needs them.
+    db.collection("turnLogs").find({}, { projection: { turn: 1, realTime: 1, createdAt: 1, durationMs: 1, outcome: 1, success: 1, failedPhases: 1, "memory.peakRssMb": 1, "build.commit": 1 } }).sort({ turn: -1 }).limit(48).toArray(),
+    db.collection("turnLogs").find({}, { projection: { turn: 1, phaseStatuses: 1 } }).sort({ turn: -1 }).limit(1).next(),
     db.collection("gameConfig").findOne({}, { projection: { turnLengthMinutes: 1 } }),
   ]);
   const histTurn = histTurnDoc ? histTurnDoc.turn : null;
@@ -709,14 +725,15 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
     .find({ electionId: { $in: electionIds } }, { projection: { electionId: 1, finalized: 1, totalVotes: 1, candidateParties: 1, turnSnapshots: { $slice: -1 } } }).toArray();
 
   const fxByCountry = new Map(fx.map((r) => [r.countryId || r._id, r.rate]));
-  const primeByCountry = new Map();
-  for (const t of telemetry.sort((a, b) => a.turn - b.turn)) {
-    const p = num(t.macro && t.macro.primeRate);
-    if (p != null) primeByCountry.set(t.country, p);
-  }
+  const primeByCountry = new Map(banks.map((b) => [b.countryId || b._id, num(b.primeRate)]));
   const corpById = new Map(corps.map((c) => [String(c._id), c]));
   const histByCorp = new Map(corpHist.map((h) => [String(h.corporationId), h]));
-  const partyByKey = new Map(parties.map((p) => [partyKey(p.countryId, p.sequentialId), p]));
+  // Offices store the party number as a string; accept a record id too.
+  const partyByKey = new Map();
+  for (const p of parties) {
+    partyByKey.set(partyKey(p.countryId, p.sequentialId), p);
+    partyByKey.set(partyKey(p.countryId, String(p._id)), p);
+  }
   const electionById = new Map(elections.map((e) => [String(e._id), e]));
 
   const rows = siteRows({ sectors, corpById, fxByCountry, primeByCountry, turn });
@@ -735,7 +752,6 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   for (const r of turnRecs) known.set(r.turn, r);
   const allTurns = [...known.values()].sort((a, b) => a.turn - b.turn);
   const turnsOut = turnMetrics({ turns: allTurns, cadenceMin: null });
-  const lastLog = turnLogs[0];
   const slowPhases = lastLog ? phaseDurations(lastLog).slice(0, 6) : [];
   const buildsOut = buildMetrics({ autodeployDir });
 

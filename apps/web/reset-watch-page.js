@@ -182,7 +182,7 @@ function sectorsSection(s, history) {
       <td class="n">${years(l.paybackTurns, th.turnsPerYear)}</td>
       <td class="n">${money(l.plantCostAnchor)}</td>
       <td class="n">${pct(l.sellThrough)}</td>
-      <td class="n">${l.sites}${l.building ? ` <span class="rw-muted">+${l.building}</span>` : ""}</td>
+      <td class="n">${l.sites}${l.idle ? ` <span style="color:var(--amber,#f5a623)" title="Built but sold nothing this turn">(${l.idle} idle)</span>` : ""}${l.building ? ` <span class="rw-muted" title="Under construction">+${l.building}</span>` : ""}</td>
       <td class="n">${playerCell}</td>
       <td>${spark(series, { zero: 0 })}</td>
     </tr>`;
@@ -198,7 +198,7 @@ function sectorsSection(s, history) {
     <li>Return on a new plant = per-turn profit per unit of operating capacity, times ${th.turnsPerYear} turns, over the build price per unit (paid capacity cost, <code>capacityBookAnchor</code>). Same formula the engine uses to decide whether it will finance a build; the engine finances only builds that pay back inside ${th.enginePaybackTurns} turns.</li>
     <li>Sector profit is stored per real day (24 turns) in the host currency; it is converted per turn and to anchor at the current rate.</li>
     <li>Viable: at least ${pct(th.viableProfitableShare)} of sites in profit and a median return ${th.viableExcessPp} points or more above the host prime rate. Thin: above the prime rate but by less. Red: below it, or under ${pct(th.weakProfitableShare)} of sites in profit.</li>
-    <li>National state corporations are left out. Sites still under construction are counted as "+N" and not judged.</li>
+    <li>National state corporations are left out. A built site that sold nothing this turn is "idle" and counts as not making money, with zero profit in the return. Sites under construction show as "+N" and are not judged. Sell-through is for selling sites only.</li>
   </ul></details>
 </section>`;
 }
@@ -251,7 +251,7 @@ function politicsSection(s, history) {
       <td class="n">${r.uncontested}</td>
       <td class="n">${r.empty}</td>
       <td class="n">${r.parties}${r.partiesWithoutNpps ? ` <span class="rw-muted">(${r.partiesWithoutNpps} with no NPPs)</span>` : ""}</td>
-      <td class="n">${r.npps} <span class="rw-muted">(${fixed(r.nppsPerRace)}/race)</span></td>
+      <td class="n">${r.nppsFree} <span class="rw-muted">of ${r.npps}</span></td>
       <td class="n">${r.turnsToDeadline == null ? "-" : `${r.turnsToDeadline} turns`}</td>
     </tr>`).join("");
   const resultsTurn = p.fields.map((r) => r.resultsTurn).filter((v) => v != null).sort((a, b) => a - b)[0];
@@ -285,7 +285,7 @@ function politicsSection(s, history) {
   <h2>Politics: enough candidates, close races, nobody rules forever?</h2>
   <p class="q">Three checks. Every race needs at least two sides before the primary deadline, which is where NPP supply shows. Races should be close, not landslides. And no party should hold a supermajority or stay in power for years unchallenged.</p>
   <h3>Candidate fields (NPP supply)</h3>
-  <div class="rw-tw"><table class="rw-t"><thead><tr><th>Country</th><th>Contested / one side / empty</th><th class="n">Races</th><th class="n">Contested</th><th class="n">One side</th><th class="n">Empty</th><th class="n">Parties</th><th class="n">NPPs free</th><th class="n">Primary deadline</th></tr></thead><tbody>${frows}</tbody></table></div>
+  <div class="rw-tw"><table class="rw-t"><thead><tr><th>Country</th><th>Contested / one side / empty</th><th class="n">Races</th><th class="n">Contested</th><th class="n">One side</th><th class="n">Empty</th><th class="n">Parties</th><th class="n">NPPs not running</th><th class="n">Primary deadline</th></tr></thead><tbody>${frows}</tbody></table></div>
   <div class="rw-cols" style="margin-top:6px">
     <div><h3>Who holds power</h3>${seated
       ? `<div class="rw-tw"><table class="rw-t"><thead><tr><th>Country</th><th>Main chamber</th><th class="n">Largest</th><th class="n">Eff. parties</th><th>Governs</th><th class="n">For</th><th class="n">Handovers</th><th>Trend</th><th></th></tr></thead><tbody>${drows}</tbody></table></div>`

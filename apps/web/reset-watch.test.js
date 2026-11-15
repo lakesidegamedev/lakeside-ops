@@ -42,13 +42,33 @@ test("site return converts daily local profit to per-turn anchor and uses paid b
   assert.equal(r.plantCost, 20000);
 });
 
-test("stale plantsPnl is not treated as this turn's result", () => {
+test("a built site with no sales this turn is idle and counts as not profitable", () => {
   const rows = rw.siteRows({
-    sectors: [{ corporationId: "c1", countryId: "US", sectorType: "retail", plantsPnl: { revenue: 10, profit: 5, turn: 1 }, capacityBookAnchor: 10, capitalStock: 1 }],
+    sectors: [
+      { corporationId: "c1", countryId: "US", sectorType: "extraction", plantsPnl: { revenue: 10, profit: 5, turn: 1 }, capacityBookAnchor: 10, capitalStock: 1 },
+      { corporationId: "c1", countryId: "US", sectorType: "extraction", plantsPnl: { revenue: 0, profit: 0, turn: 9 }, capacityBookAnchor: 10, capitalStock: 1 },
+      { corporationId: "c1", countryId: "US", sectorType: "extraction", capitalStock: 0, constructionInProgressAnchor: 500 },
+    ],
     corpById: corpMap([{ _id: "c1", ceoType: "npp" }]), fxByCountry: new Map(), turn: 9,
   });
-  assert.equal(rows[0].operating, false);
-  assert.equal(rows[0].returnPct, null);
+  assert.deepEqual(rows.map((r) => [r.operating, r.idle, r.building, r.profitable]), [[true, true, false, false], [true, true, false, false], [false, false, true, null]]);
+  assert.equal(rows[0].returnPct, 0, "stale result reads as zero profit, not as this turn's profit");
+  const lane = rw.sectorMetrics(rows).lanes.find((l) => l.lane === "extraction");
+  assert.equal(lane.idle, 2);
+  assert.equal(lane.building, 1);
+  assert.equal(lane.profitableShare, 0);
+});
+
+test("NPPs not running excludes NPPs already standing", () => {
+  const [us] = rw.candidateFields({
+    elections: [{ _id: "e1", countryId: "US", status: "active" }, { _id: "e2", countryId: "US", status: "active" }],
+    candidates: [{ electionId: "e1", party: "independent", nppId: "n1", status: "active" }],
+    npps: [{ _id: "n1", countryId: "US" }, { _id: "n2", countryId: "US" }, { _id: "n3", countryId: "US", retiredAt: new Date() }],
+    parties: [], turn: 1,
+  });
+  assert.equal(us.npps, 2);
+  assert.equal(us.nppsFree, 1);
+  assert.equal(us.nppsFreePerEmptyRace, 1);
 });
 
 test("sector verdict: profitable but below the prime rate is red", () => {
