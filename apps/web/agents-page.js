@@ -100,7 +100,7 @@ function connectSnippet(m) {
 ${m.key}:
   command: npx
   args: ["-y", "${esc(m.url)}"]
-  env: { GLITCHTIP_API_ENDPOINT: ".../errors", GLITCHTIP_API_TOKEN: "&lt;TOKEN&gt;", GLITCHTIP_ORGANIZATION_SLUG: "ahousedivided" }</code></pre>`;
+  env: {}</code></pre>`;
   }
   // on-box HTTP — already wired into hermes + cloud-code
   return `<pre><code># /root/.hermes/config.yaml → mcp_servers

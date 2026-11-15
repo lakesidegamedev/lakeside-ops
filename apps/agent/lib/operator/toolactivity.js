@@ -5,6 +5,7 @@ const SOURCES = {
   gamestate: ["Game state", "globe.europe.africa"], support: ["Support", "bubble.left.and.bubble.right"],
   "ops-knowledge": ["Knowledge", "books.vertical"], engine: ["Game engine", "gearshape.2"],
   turndiag: ["Turn diagnostics", "waveform.path.ecg"],
+  sentry: ["Error tracking", "ladybug"],
   community: ["Community", "person.3"], "heal-ops": ["Game records", "externaldrive"],
 };
 const TITLES = { game_overview: "Check game status", trace_corp: "Inspect corporation", trace_sector: "Inspect sector", support_get: "Read ticket", support_search: "Search support", knowledge_query: "Search knowledge", code_read: "Read source", code_search: "Search code", phase_history: "Read turn history" };

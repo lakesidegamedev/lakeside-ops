@@ -3,7 +3,7 @@
 // into read-only investigation findings. A watch can open work and report; it
 // can never authorize an effect. Findings dedupe on (watch, subject) while
 // open, so a flapping signal produces one investigation with a timeline,
-// not a storm of duplicates. Signal adapters (turndiag, GlitchTip, GitHub,
+// not a storm of duplicates. Signal adapters (turndiag, Sentry, GitHub,
 // Railway, provider health) feed evaluate(); this module owns the policy.
 
 const WATCHES = {

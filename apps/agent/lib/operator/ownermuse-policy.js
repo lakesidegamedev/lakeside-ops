@@ -76,6 +76,7 @@ const MCP_READS = {
   "ops-knowledge": ["knowledge_get", "knowledge_query", "code_search", "code_read", "code_exact", "kanban_brief", "kanban_list", "kanban_get"],
   engine: ["engine_health", "economy_pulse", "recent_turns"],
   turndiag: ["turn_phase_timings", "phase_history", "phase_regressions", "turn_anomalies", "lock_status"],
+  sentry: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_new_since"],
   "heal-ops": ["heal_list", "heal_detect", "heal_history", "heal_verify", "heal_query", "heal_count", "heal_status"],
   community: ["community_search"],
 };

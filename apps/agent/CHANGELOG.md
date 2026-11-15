@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir can read the new `sentry` MCP server (issues, one issue with its latest event, lookup by a player's error ref, new issues since a time) in ticket, finding, engineering and owner reads.
+
 ## 9.1.1 (2026-11-14)
 
 - Tool-less Muse runs (the Ops widget line, the diary, knowledge distillation) no longer fail at startup: Muse refuses to start when a configured tool server is unreachable, so it now gets Keir's server only when the run has tools.

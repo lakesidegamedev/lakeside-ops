@@ -1,5 +1,5 @@
 // daily-report.js — gathers telemetry across the WHOLE platform (engine, game,
-// community, support, traffic, errors/GlitchTip, deploys/Railway, LLM usage,
+// community, support, traffic, errors/Sentry, deploys/Railway, LLM usage,
 // security, infra) and has the LLM (Kimi) synthesize a detailed Daily
 // Operations Report: an executive summary (for the dashboard card), detailed
 // sections (for the /reports page), and actionable items (each with a ready
@@ -54,7 +54,7 @@ async function gatherReportData(db) {
         d.community.recentSample24h = recent.map((m) => `[${m.channelName}] ${m.author}: ${(m.content || "").replace(/\n/g, " ").slice(0, 160)}`);
       } catch (e) { d.community = { error: e.message }; }
     })(),
-    // The whole dashboard metrics blob: users, tickets, glitchtip, traffic, railway, llmUsage.
+    // The whole dashboard metrics blob: users, tickets, sentry, traffic, railway, llmUsage.
     (async () => { try { d.metrics = await getDashboardMetrics(db); } catch (e) { d.metrics = { error: e.message }; } })(),
     // Market-rework dials (week-1 clearing/capital watchlist, t900): the four
     // numbers that tell us whether the −24% sim scenario is materializing and
@@ -106,7 +106,7 @@ async function gatherReportData(db) {
 // Readable fact list (embedding raw JSON makes the coding model misbehave).
 function factsText(data) {
   const e = data.engine || {}, g = data.game || {}, c = data.community || {}, inf = data.infra || {}, sec = data.security;
-  const m = data.metrics || {}, gt = m.glitchtip || {}, tr = m.traffic || {}, rw = m.railway || {}, tk = m.tickets || {}, us = m.users || {}, lu = m.llmUsage || {};
+  const m = data.metrics || {}, gt = m.sentry || {}, tr = m.traffic || {}, rw = m.railway || {}, tk = m.tickets || {}, us = m.users || {}, lu = m.llmUsage || {};
   const lt = e.lastTurn, ec = e.economy;
   const lines = [
     `Game: turn ${g.turn} (year ${g.year}), ${g.players} players, ${g.activeElections} active elections, ${g.parties} parties${g.paused ? " — PAUSED" : ""}`,
@@ -119,7 +119,7 @@ function factsText(data) {
     (c.recentSample24h || []).length ? `Actual Discord messages from the last 24h (quote specific ones in the Community section, don't just restate the counts above):\n${c.recentSample24h.slice(0, 40).join("\n")}` : "",
     `Players: ${us.ok ? us.total : "?"} total${us.new7d ? `, +${us.new7d} this week` : ""}${us.banned != null ? `, ${us.banned} banned` : ""}`,
     tr.ok ? `Traffic (Cloudflare): ${tr.uniquesToday} visitors today, ${tr.uniques7d} in 7d, ${tr.pageViews7d} pageviews/7d, ${tr.requests7d} requests/7d, ${tr.cacheHit}% cache hit` : "",
-    `Errors (GlitchTip): ${gt.ok ? `${gt.count} open issues` : "n/a"}${gt.ok && (gt.issues || []).length ? " — top: " + gt.issues.slice(0, 5).map((i) => `[${i.level}] ${i.title}${i.seen ? ` ×${i.seen}` : ""}`).join(" | ") : ""}`,
+    `Errors (Sentry): ${gt.ok ? `${gt.count} open issues` : "n/a"}${gt.ok && (gt.issues || []).length ? " — top: " + gt.issues.slice(0, 5).map((i) => `[${i.level}] ${i.title}${i.seen ? ` ×${i.seen}` : ""}`).join(" | ") : ""}`,
     `Deploys (Railway): ${rw.ok ? (rw.services || []).map((s) => `${s.name}=${(s.status || "?").toLowerCase()}`).join(", ") : "n/a"}`,
     `Support: ${tk.newTickets24h || 0} NEW tickets + ${tk.newSuggestions24h || 0} NEW suggestions opened in the last 24h. ${tk.outstandingTickets} open tickets, ${tk.outstandingSuggestions} open suggestions total, ${tk.completedTickets} resolved all-time, avg ${tk.avgDuration || "n/a"}`,
     sec ? `Security (Semgrep): ${sec.total} findings — ${sec.errors} errors, ${sec.warnings} warnings` : "Security: no recent scan",
@@ -151,7 +151,7 @@ Respond with ONLY valid JSON (no prose, no code fences):
    {"emoji":"💬","title":"Community","body":"..."},
    {"emoji":"📈","title":"Economy","body":"..."},
    {"emoji":"🛟","title":"Support & ops","body":"..."},
-   {"emoji":"🐛","title":"Errors & reliability","body":"<reference the GlitchTip issues by name>"},
+   {"emoji":"🐛","title":"Errors & reliability","body":"<reference the Sentry issues by name>"},
    {"emoji":"🚦","title":"Traffic & deploys","body":"..."},
    {"emoji":"🛡️","title":"Security & infra","body":"..."}
  ],
@@ -160,7 +160,7 @@ Respond with ONLY valid JSON (no prose, no code fences):
  ]
 }
 
-Rules: be detailed and cite ACTUAL numbers/error names. mood="alert" if engine has error flags, a turn failed, or security has errors; "watch" for warnings/pressure/notable error counts; else "good". Create an "actions" item for each genuinely actionable problem (failed engine phases, recurring GlitchTip errors, security errors, stuck elections, churn signals). 0-5 actions. Each agentPrompt must be concrete and standalone.
+Rules: be detailed and cite ACTUAL numbers/error names. mood="alert" if engine has error flags, a turn failed, or security has errors; "watch" for warnings/pressure/notable error counts; else "good". Create an "actions" item for each genuinely actionable problem (failed engine phases, recurring Sentry errors, security errors, stuck elections, churn signals). 0-5 actions. Each agentPrompt must be concrete and standalone.
 
 TELEMETRY:
 ${factsText(data)}`;
@@ -186,7 +186,7 @@ async function buildAndSave(db) {
     metrics: {
       players: data.game && data.game.players, turn: data.game && data.game.turn,
       messages24h: data.community && data.community.messages24h,
-      visitorsToday: (m.traffic || {}).uniquesToday, openIssues: (m.glitchtip || {}).count,
+      visitorsToday: (m.traffic || {}).uniquesToday, openIssues: (m.sentry || {}).count,
       openTickets: (m.tickets || {}).outstandingTickets,
       engineFlags: ((data.engine && data.engine.flags) || []).length,
       securityErrors: data.security && data.security.errors,

@@ -1,13 +1,13 @@
 // ─── OPS DISCORD NOTIFIER ─────────────────────────────────────────────────
 // Small, dependency-free helper for posting ops events (PR reviews, CI/CD,
-// GlitchTip issues, status/downtime) to Discord via channel webhooks.
+// Sentry issues, status/downtime) to Discord via channel webhooks.
 //
 // Webhook URLs come from env. Each event `kind` resolves to its own URL with a
 // fallback to a shared ops webhook, so you can route everything to one channel
 // or split per concern:
 //   pr-review  -> DISCORD_PR_REVIEW_WEBHOOK_URL  || DISCORD_OPS_WEBHOOK_URL
 //   cicd       -> DISCORD_CICD_WEBHOOK_URL       || DISCORD_OPS_WEBHOOK_URL
-//   glitchtip  -> DISCORD_GLITCHTIP_WEBHOOK_URL  || DISCORD_OPS_WEBHOOK_URL
+//   sentry     -> DISCORD_SENTRY_WEBHOOK_URL     || DISCORD_OPS_WEBHOOK_URL
 //   status     -> DISCORD_STATUS_WEBHOOK_URL     || DISCORD_OPS_WEBHOOK_URL
 //
 // If no URL is configured the call is a no-op (returns {skipped:"no webhook"}),
@@ -16,7 +16,7 @@
 const KIND_ENV = {
   "pr-review": "DISCORD_PR_REVIEW_WEBHOOK_URL",
   cicd: "DISCORD_CICD_WEBHOOK_URL",
-  glitchtip: "DISCORD_GLITCHTIP_WEBHOOK_URL",
+  sentry: "DISCORD_SENTRY_WEBHOOK_URL",
   status: "DISCORD_STATUS_WEBHOOK_URL",
   backup: "DISCORD_BACKUP_WEBHOOK_URL",
   security: "DISCORD_SECURITY_WEBHOOK_URL",

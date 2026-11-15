@@ -113,10 +113,9 @@ const MCP_DEFS = [
     localPath: "/mcp/agents",
     desc: "The Paseo agent registry: the coding agents on this box, their workspaces, and the sessions they are running.",
     tools: ["create_workspace", "list_workspaces", "archive_workspace", "create_agent", "send_agent_prompt", "get_agent_status", "list_agents", "cancel_agent", "archive_agent", "kill_agent", "update_agent", "rename_workspace", "list_workspace_scripts", "start_workspace_script", "stop_workspace_script", "list_terminals", "create_terminal", "kill_terminal", "capture_terminal", "send_terminal_keys", "create_schedule", "create_heartbeat", "delete_heartbeat", "list_schedules", "inspect_schedule", "pause_schedule", "resume_schedule", "delete_schedule", "update_schedule", "schedule_logs", "run_schedule_once", "list_providers", "list_models", "list_profiles", "inspect_provider", "get_agent_activity", "set_agent_mode", "list_pending_permissions", "respond_to_permission"] },
-  { key: "glitchtip", icon: "🐛", name: "Glitchtip", transport: "stdio", health: null, connect: "stdio",
-    url: "@karsten684/glitchtip-mcp-server",
-    desc: "A House Divided error tracking: the issues players hit, with the stack traces.",
-    tools: [] },
+  { key: "sentry", icon: "🐛", name: "Sentry", transport: "HTTP · on-box", health: 9740, connect: "local",
+    desc: "A House Divided client and server errors from Sentry.io (read-only): unresolved issues, one issue with its latest event, lookup by the 8 character ref on a player's error page, and issues first seen since a time.",
+    tools: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_new_since"] },
 ];
 
 /** The on-box URL of a server the fleet check and the agents page reach. */
