@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Keir weekly builder on Mondays at 14:00 UTC
+
+[Timer]
+OnCalendar=Mon *-*-* 14:00:00 UTC
+Persistent=false
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

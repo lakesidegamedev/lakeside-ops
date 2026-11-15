@@ -1,0 +1,14 @@
+[Unit]
+Description=Keir weekly builder: turn the top ranked capability gaps into one pull request
+After=network-online.target keir-operator.service
+
+[Service]
+Type=oneshot
+# Needs the project checkouts (worktrees), gh and the external agent launcher, so no home or system protection.
+Environment=HOME=/root KEIR_OPERATOR_STATE_DIR=/var/lib/keir-operator KEIR_APP_DIR=/opt/keir/current
+ExecStart=/opt/keir/current/deploy/keir-builder.sh
+# One worker for at most two hours; the launcher also refuses when memory or slots are short.
+TimeoutStartSec=130min
+MemoryMax=2G
+CPUQuota=100%
+Nice=10
