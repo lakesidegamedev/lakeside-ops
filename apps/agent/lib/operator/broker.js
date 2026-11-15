@@ -16,6 +16,8 @@ const trustLimits = require("./limits"), trustlog = require("./trustlog"), chang
 // A post asking the player who they are (ticket 1829: "If you share your character name here").
 const ASKS_IDENTITY = /\bwhich (?:character|account)\b[^.!\n]{0,40}\?|\b(?:share|tell me|send|give me|let me know|post|confirm|what(?:'|’)?s|what is|which is)\b[^.?!\n]{0,40}\b(?:(?:your|the) )?(?:character(?:'s|’s)? name|character|in-?game name|username|user name|account(?: name)?|ign)\b/i;
 const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|asks the player who they are|states a fact about the player's account|says the account is not linked or has no character|calls behaviour a bug, fault or defect|tells the player to change a setting|page still shows the old figure|contradicts the checked answer/i;
+// Refusals that are about pacing, where the post budget tells the model when and whether a retry can succeed.
+const BUDGET_REFUSAL = /this task posted in ticket|Keir has posted \d+ times in ticket|already got this update|another Keir task updated ticket|your last message to the player is still the newest|already has this waiting state|waiting on the owner's decision|told this is live/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
 const DEVELOPER_QUIET_WAITS = [360, 720, 1440];
 const { createDelegation, childTools } = require("./delegation");
@@ -880,6 +882,45 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   // The newest thing a human said in this ticket, across every task on it.
   const humanAt = (ticketNo) => Math.max(0, ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo).map((j) => Math.max(j.observedPlayerAt || 0, j.lastPlayerAt || 0)));
+  // Keir 10 (post path): a holding line is not an answer. One test for the finish rule, the refusal flag and the post budget.
+  const holdingPost = (text) => isStall(text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(text || "").trim()) || /^i haven(?:'|’)?t got a confirmed answer for you yet/i.test(String(text || "").trim()) || sentences(String(text || "")).length <= 1 && /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(text || "").trim());
+  // True when the player's latest message already has a real answer posted (any task on the ticket). With no player message on
+  // record, only this job's own earlier real post counts. An extra refused post after that owes the player nothing.
+  const playerAnswered = (ticketNo, job) => {
+    const h = humanAt(ticketNo);
+    return (d.ticketPosts?.[ticketNo] || []).some((p) => !isCardPost(p) && !holdingPost(p.text) && (h > 0 ? p.at >= h : Boolean(job && p.jobId === job.id)));
+  };
+  // Keir 10: what the post rules will allow on this ticket right now, so the model plans instead of retrying blindly.
+  // There is no hard 24 hour count in code: the live limits are the monologue cap (three posts since the player wrote) and
+  // ten minutes between long posts from one task. Both are reported here, plus whether the player is owed an answer.
+  function postBudget(job) {
+    const ticketNo = ticketOf(job);
+    if (!ticketNo) return null;
+    const human = humanAt(ticketNo), posts = (d.ticketPosts?.[ticketNo] || []).filter((p) => !isCardPost(p));
+    const last = posts.at(-1), mine = posts.filter((p) => p.jobId === job.id).at(-1), run = d.monologue?.[ticketNo];
+    const owed = !playerAnswered(ticketNo, job) && (human > 0 || Boolean(job.replyRefusedPending));
+    const sinceHuman = run && run.humanAt === human ? run.count : 0;
+    const capped = sinceHuman >= MONOLOGUE_CAP && now() - run.at < 10 * 60000;
+    const longWait = !owed && mine && !(human > mine.at) ? Math.max(0, 10 * 60000 - (now() - mine.at)) : 0;
+    return {
+      ticket: ticketNo,
+      posts24h: posts.filter((p) => now() - p.at < 24 * 3600000).length,
+      postsLeftBeforePause: Math.max(0, MONOLOGUE_CAP - sinceHuman),
+      pausedForSec: owed || !capped ? 0 : Math.ceil((10 * 60000 - (now() - run.at)) / 1000),
+      longPostInSec: Math.ceil(longWait / 1000),
+      replyOwed: owed,
+      correctionAllowed: owed || !capped,
+      lastPost: last ? { ageSec: Math.max(0, Math.round((now() - last.at) / 1000)), text: String(last.text || "").slice(0, 300) } : null,
+    };
+  }
+  function budgetLine(b) {
+    if (!b) return "";
+    const bits = [b.replyOwed ? "the player is owed an answer, so one corrected post goes out now" : `${b.postsLeftBeforePause} post${b.postsLeftBeforePause === 1 ? "" : "s"} left before a ten minute pause`];
+    if (b.pausedForSec) bits.push(`paused for ${b.pausedForSec}s`);
+    if (b.longPostInSec) bits.push(`a long post is allowed in ${b.longPostInSec}s (a short line is fine now)`);
+    if (b.lastPost) bits.push(`last post ${b.lastPost.ageSec}s ago: "${b.lastPost.text.slice(0, 160)}"`);
+    return `Post budget: ${bits.join("; ")}. Do not retry the same text.`;
+  }
   // Keir 9: any human in the ticket channel (player, owner, developer, moderator) after a time, from the
   // channel record. Staff addressing Keir are news the same as the player, so the update-spam rule and the
   // finish rule no longer contradict each other (8.4 deadlock).
@@ -988,8 +1029,11 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // Keir 9.0.2 (ticket 1829): while the player is owed an answer (the unanswered-player rule has refused a finish for
     // their latest message, or an answer to it was refused), pacing never holds the answer back. On 1829 the cause was found,
     // the first draft was refused by the screen, the rewrite was held by both pacing rules, and the player got "no confirmed answer".
+    // Keir 10 (ticket 1812): an armed replyRefusedPending means a corrected answer is owed, so pacing lets one through. Once the
+    // player's latest message has a real answer, nothing is owed and a refused extra post unlocks nothing.
     const owedNow = (() => { const h = humanAt(ticketNo), rec = d.unansweredFinishes?.[ticketNo];
-      return h > 0 && ((rec && rec.humanAt === h && rec.refused > 0 && !rec.limitationPostedAt) || Object.values(d.jobs).some((j) => ticketOf(j) === ticketNo && (j.replyAttemptRefusedAt || 0) > h)); })();
+      if (playerAnswered(ticketNo, job)) return false;
+      return Boolean(job.replyRefusedPending) || h > 0 && ((rec && rec.humanAt === h && rec.refused > 0 && !rec.limitationPostedAt) || Object.values(d.jobs).some((j) => ticketOf(j) === ticketNo && (j.replyAttemptRefusedAt || 0) > h)); })();
     if (!answeringStaff && !owedNow && mine && now() - mine.at < 10 * 60000 && !question && !playerSpokeAfter(mine.at) && sentences(message).length >= 3)
       throw new Error(`Not posted: this task posted in ticket ${ticketNo} ${Math.max(1, Math.round((now() - mine.at) / 60000))} min ago. A short line is fine; anything longer waits ten minutes unless the player writes. If the last post was wrong, say so in one short sentence; the detail goes on the status card note.`);
     // The same question again (1592 asked one question four times in 31
@@ -999,7 +1043,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (isCorrection(message) && sentences(message).length > 2)
       throw new Error("Not posted: a correction is one or two sentences, what was wrong and what is right. The explanation goes on the status card note, not in the channel.");
     const run = d.monologue?.[ticketNo];
-    if (!answeringStaff && run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
+    if (!answeringStaff && !owedNow && run && run.humanAt === humanAt(ticketNo) && run.count >= MONOLOGUE_CAP && now() - run.at < 10 * 60000 && !question)
       throw new Error(`Not posted: Keir has posted ${run.count} times in ticket ${ticketNo} since the player last wrote. Wait ten minutes before another substantive update unless the player writes or you need to ask them something. Do not claim the answer was delivered by editing a status card.`);
     // A developer asking Keir in the ticket gets one answer, from their own task.
     // The automatic ticket task must not answer it over them (ticket 1510).
@@ -1021,7 +1065,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (said) throw new Error(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
     }
     guardStall(job, ticketNo, message, posts);
-    const other = answeringStaff ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !isCardPost(p) && !playerSpokeAfter(p.at)).at(-1);
+    const other = answeringStaff || owedNow ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !isCardPost(p) && !playerSpokeAfter(p.at)).at(-1);
     if (other) throw new Error(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
     // Ticket 1773 (2026-11-05): a developer's ping started a second task that restated the ticket task's
     // answer 15 seconds later (similarity 0.5). Paraphrased repeats measure 0.41 to 0.79 and unrelated
@@ -1744,7 +1788,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // player is owed an answer, even before anything was read (the unanswered-player rule at finish keys on it).
       if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update")) { job.replyAttemptRefusedAt = now(); try { ledger.save(); } catch {} }
       if (e?.code === "TICKET_POST_TOO_LONG" && e.draft && job.kind === "ticket") { job.lastTooLongDraft = String(e.draft).slice(0, 4000); job.lastTooLongDraftAt = now(); try { ledger.save(); } catch {} }
-      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(e.code === "KILL_SWITCH")) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
+      if (job.kind === "ticket" && job.ticket && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input?.tool === "support_public_update") && !/authority is inactive|moderation ticket|no authenticated reply channel|ticket channel is absent|channel no longer exists/i.test(String(e.message)) && !PACING_REFUSAL.test(String(e.message)) && !(e.code === "KILL_SWITCH") && !playerAnswered(job.ticket, job)) { job.replyRefusedPending = true; try { ledger.save(); } catch {} }
+      // Keir 10: every refusal of a post carries the budget, so the retry is planned and not blind.
+      if (job.kind === "ticket" && job.ticket && BUDGET_REFUSAL.test(String(e?.message)) && !/Post budget:/.test(String(e.message)) && ["channel_reply", "progress_update", "support_action"].includes(name)) {
+        try { e.message = `${e.message} ${budgetLine(postBudget(job))}`.trim(); } catch {}
+      }
       throw e;
     }
     if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
@@ -3944,7 +3992,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
-      if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error("Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish.");
+      // Keir 10 (ticket 1812): a real answer posted since the player last wrote (by this or another task) settles it, so the
+      // flag clears instead of holding the finish behind a refused extra post.
+      if (job.replyRefusedPending && job.kind === "ticket" && job.ticket && playerAnswered(job.ticket, job)) { delete job.replyRefusedPending; ledger.save(); }
+      if (["done", "waiting"].includes(state) && job.replyRefusedPending && job.kind === "ticket" && job.ticket && !job.codingParent) throw new Error(`Not finished: your last answer to the player was refused and nothing has been posted since, so they have no answer. Fix what the refusal named (at most five short sentences, only figures you read or calculated) and post it, then finish. ${budgetLine(postBudget(job))}`);
       // Keir 9 (replay 2026-11-12, audit finding 3): models found the answer and then finished waiting with nothing
       // posted. The obligation is per ticket and persists across tasks: while the reporter has had no real answer since
       // they last wrote (a holding line is not one), finishing done or waiting is refused twice. The third attempt
@@ -3961,7 +4012,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // a refused first answer, then a wait for the player behind the introduction alone).
         // Keir 9.0.4 (ticket 1829): one test for "is this post a holding line", used for the owed check and for the limitation
         // line. A real answer anywhere since the player last wrote means they are not owed one, whatever was posted after it.
-        const holdingText = (text) => isStall(text) || /^hi,? i(?:'|’)?m keir\b/i.test(String(text || "").trim()) || /^i haven(?:'|’)?t got a confirmed answer for you yet/i.test(String(text || "").trim()) || sentences(String(text || "")).length <= 1 && /^(?:i(?:'|’)?m|i am|we(?:'|’)?re|still) (?:looking|checking|digging|investigating|reading)\b|\b(?:will|i(?:'|’)?ll) (?:tell|update|let) you\b/i.test(String(text || "").trim());
+        const holdingText = holdingPost;
         const holdingOnly = last && holdingText(last.text);
         // Keir 9.0.3 (live ticket, 2026-11-13): a real answer that ends "I will update you here once it is live" is not a
         // holding line; only a one-sentence post counts by that wording. The limitation line followed a real answer by a minute.
@@ -4328,7 +4379,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { postBudget, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),
