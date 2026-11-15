@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Reset Watch every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnActiveSec=30s
+OnUnitInactiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=Reset Watch collector: one read-only snapshot of the live AHD world for the ops dashboard /reset-watch page
+After=network-online.target
+
+[Service]
+Type=oneshot
+# HEAL_MONGODB_URI_PROD is the read path to the live game (the dashboard's own
+# MONGODB_URI is the ops tools store, not the game).
+EnvironmentFile=/root/projects/LSGD-ops-dash/.env
+Environment=HOME=/root
+Environment=RESET_WATCH_DIR=/var/lib/lakeside-ops-dashboard/reset-watch
+Environment=AUTODEPLOY_DIR=/var/lib/autodeploy
+WorkingDirectory=/opt/lakeside-ops-web/current
+ExecStart=/root/.hermes/node/bin/node /opt/lakeside-ops-web/current/scripts/reset-watch-collect.js
+TimeoutStartSec=180
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+MemoryMax=512M
+Slice=lakeside.slice
