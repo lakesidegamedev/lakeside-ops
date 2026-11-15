@@ -412,3 +412,42 @@ test("voice acceptance acknowledges before provider work and idempotent resend d
  const again=app.authenticatedPost("What happened in the game today?","instant-voice","main",{voice:true,mode:"new"});
  assert.equal(again.duplicate,true);assert.equal(app.view(0).messages.filter(m=>m.role==="keir"&&m.jobId===result.jobId).length,1);
 });
+
+test("cancelling a finished voice parent stops its descendants and suppresses late replies", () => {
+  const { ledger, app } = setup();
+  const { jobId } = app.post("Read the current game events", "voice-cancel", "main", { voice: true });
+  const root = ledger.data.jobs[jobId]; root.state = "done";
+  const child = ledger.createJob("voice-child", { kind: "command", state: "running", codingParent: jobId });
+  const grandchild = ledger.createJob("voice-grandchild", { kind: "command", state: "queued", museParent: child.id });
+  const unrelated = ledger.createJob("other-work", { kind: "command", state: "running" });
+  const before = app.view().messages.length;
+  assert.equal(app.cancel(jobId).state, "done");
+  assert.equal(child.state, "cancelled"); assert.equal(grandchild.state, "cancelled");
+  assert.equal(unrelated.state, "running");
+  app.deliver(`channel-reply:${child.id}:late`, { content: "Late answer" }, child);
+  assert.equal(app.view().messages.length, before);
+  app.cancel(jobId);
+  assert.equal(root.state, "done");
+});
+
+test("cancellation suppresses a completed child's reply queued before its root was stopped", () => {
+  const { ledger, app } = setup();
+  const { jobId } = app.post("Read today's events", "voice-late", "main", { voice: true });
+  const child = ledger.createJob("finished-child", { kind: "command", state: "done", codingParent: jobId });
+  const before = app.view().messages.length;
+  app.cancel(jobId);
+  app.deliver(`channel-reply:${child.id}:queued`, { content: "Late answer" }, child);
+  assert.equal(app.view().messages.length, before);
+});
+
+test("cancelling an already completed family fences an undelivered answer", () => {
+  const { ledger, app } = setup();
+  const { jobId } = app.post("Read today's events", "finished-voice-late", "main", { voice: true });
+  const root = ledger.data.jobs[jobId]; root.state = "done";
+  const child = ledger.createJob("finished-voice-child", { kind: "command", state: "done", codingParent: jobId });
+  const before = app.view().messages.length;
+  app.cancel(jobId);
+  app.deliver(`channel-reply:${child.id}:queued`, { content: "Late answer" }, child);
+  assert.equal(app.view().messages.length, before);
+  assert.equal(root.state, "done"); assert.equal(child.state, "done");
+});
