@@ -78,20 +78,50 @@ const PLAYBOOKS = {
   ],
 };
 
+// Keir 10 lanes (ticketlanes.js). The lane, once routed, picks the playbook; the
+// older kind-from-tags path stays for jobs that were never routed.
+Object.assign(PLAYBOOKS, {
+  // The question lane ends when every question is answered; no card, no owner decision.
+  question: (f) => [
+    step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers", f.reads >= 2),
+    step("answer", "Answer every question the player asked, directly in the channel (no progress card), after their last message", f.answeredSincePlayer),
+    step("spin_out", "If a real defect or an unrelated new problem turned up, spin it out: raise the bug or open a separate ticket with open_ticket; do not widen this one", true, false),
+  ],
+  // An outage is one incident: read the live turn state, attach, tell. No reporter records.
+  outage: (f) => [
+    step("read_live", "Read the live turn state (turndiag lock_status, engine recent_turns) before saying anything about cause", f.reads >= 1),
+    step("attach", "Attach it to the open incident or raise it once as one outage; never open a second report for the same outage", f.merged || f.raised || f.pr || f.answeredCard),
+    step("tell_player", "Tell the player what is known and when they will hear next, after their last message", f.merged || f.answeredSincePlayer),
+  ],
+  people: (f) => [
+    step("check_record", "Read the support record and the account facts the case turns on; never decide a ban or an appeal yourself", f.reads >= 1),
+    step("route", "Send what needs staff to staff (support_action or raise_to_developers); do what the broker allows and nothing more", f.raised || f.answeredCard || f.heal, false),
+    step("answer", "Tell the player the outcome or the next step in plain words, after their last message", f.answeredSincePlayer),
+  ],
+  idea: (f) => [
+    step("explain", "Explain how the rule works now, from knowledge or code", f.reads >= 1),
+    step("record", "Record the idea for the developers (open_suggestion) when it is a real proposal", f.suggestion || f.raised, false),
+    step("answer", "Reply to the player, after their last message", f.answeredSincePlayer),
+  ],
+});
+// Lane -> the playbook key it follows.
+const LANE_PLAYBOOK = { question: "question", bug: "bug_report", data_repair: "data_repair", outage: "outage", people: "people", idea: "idea", advice: "gameplay_advice" };
+
 function playbookFor(job, d) {
   if (job.kind !== "ticket" || !job.ticket || job.codingParent || job.role === "player") return null;
-  const kind = kindOf(job, d);
+  const kind = (job.lane && !job.laneDefaulted && LANE_PLAYBOOK[job.lane]) || kindOf(job, d);
   if (!kind) return null;
   const steps = PLAYBOOKS[kind](facts(job, d));
   const next = steps.find((s) => s.required && !s.done) || null;
-  return { kind, steps, next: next ? next.id : null, complete: !next };
+  return { kind, lane: job.lane || null, steps, next: next ? next.id : null, complete: !next };
 }
 
 // For the activation context: compact, ordered, with the next step named.
 function contextFor(job, d) {
   const p = playbookFor(job, d);
   if (!p) return undefined;
-  return { kind: p.kind, steps: p.steps.map((s) => `${s.done ? "[x]" : "[ ]"} ${s.label}${s.required ? "" : " (if it applies)"}`), next: p.next ? p.steps.find((s) => s.id === p.next).label : "All required steps are done: finish when the player has what they need.",
+  const lanes = require("./ticketlanes");
+  return { kind: p.kind, lane: p.lane || undefined, exit: lanes.LANES[p.lane]?.exit, steps: p.steps.map((s) => `${s.done ? "[x]" : "[ ]"} ${s.label}${s.required ? "" : " (if it applies)"}`), next: p.next ? p.steps.find((s) => s.id === p.next).label : "All required steps are done: finish when the player has what they need.",
     instruction: "Work the ticket in this order. Steps are checked from what the broker recorded, not from your summary." };
 }
 
@@ -104,4 +134,4 @@ function finishRefusal(job, d, state) {
   return `Not finished: this ${p.kind.replace(/_/g, " ")} still needs: ${s.label}. Do that step, then finish. If the ticket genuinely cannot get there (the player left, staff took it over), finish waiting or blocked and say why.`;
 }
 
-module.exports = { playbookFor, contextFor, finishRefusal, kindOf, PLAYBOOKS };
+module.exports = { playbookFor, contextFor, finishRefusal, kindOf, PLAYBOOKS, LANE_PLAYBOOK, facts };
