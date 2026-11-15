@@ -180,3 +180,10 @@ test("top failures feed the weekly builder plan", () => {
   const plan = require("../lib/operator/builderplan").planBuilder({ capabilityGaps: { "raw:x": { hits: 5, tasks: 3, title: "Gap", weighted: 5 } } }, { failures: top });
   assert.match(plan.prompt, /tool\/schema_rejected/);
 });
+
+test("a correction posted to a player is a reasoning failure", () => {
+  const { classifyAudit } = require("../lib/operator/failures");
+  const f = classifyAudit("correction_posted", { job: "j1", ticket: 9 });
+  assert.equal(f.class, "reasoning");
+  assert.equal(f.kind, "correction_posted");
+});

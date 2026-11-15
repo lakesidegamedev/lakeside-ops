@@ -96,6 +96,7 @@ function classifyAudit(kind, d = {}) {
       if (!kk) return null;
       return { ...base, class: kk === "answer_wrong_player_reported" ? "reasoning" : "player", kind: kk, detail: `${d.kind} (${d.severity || "?"})` };
     }
+    case "correction_posted": return { ...base, class: "reasoning", kind: "correction_posted", detail: "correction posted to player" };
     case "retracted_claim": case "trust_retraction": return { ...base, class: "reasoning", kind: "retracted_fixed_claim", detail: String(d.text || d.reason || "retracted fixed claim").slice(0, 200) };
     default: return null;
   }

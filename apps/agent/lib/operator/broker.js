@@ -1607,6 +1607,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     if (String(message || "").trim() && !card) { job.lastAskAt = now(); delete job.replyRefusedPending; }
     if (!card && /\blive on the main server\b|\b(?:is|are) (?:now )?live\b/i.test(String(message || ""))) { const live = (d.liveSaid ||= {}); live[ticketNo] = now(); for (const n of Object.keys(live)) if (now() - live[n] > 7 * 86400000) delete live[n]; }
+    // Keir 10: a correction means an earlier post was wrong; the failure tracker groups these.
+    if (!card && isCorrection(message)) ledger.audit("correction_posted", { job: job.id, ticket: ticketNo, lane: job.lane || null });
     const posts = (d.ticketPosts ||= {});
     posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 24 * 3600000), { at: now(), jobId: job.id, kind, text: message.slice(0, 600) }].slice(-40);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
