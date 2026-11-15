@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Every distinct problem raised to the developers gets its own board item. If the board returns an item that already holds a different problem, Keir retries once with a distinguishing title and otherwise records nothing and says why. Only an explicit appendTo joins an existing item.
+- A public issue no longer needs the reporter looked up or linked, so an unlinked reporter's bug can be filed and shipped. The issue still refuses the player's character name, username and channel name.
+- One owner message per ticket: a second owner choice on a ticket that already has one waiting joins the first message (all open questions listed, recommended option first) instead of sending another. Each question stays its own decision, so each answer maps back to its own question. When the first is answered the next one takes over the message. The 12 hour reminder is unchanged.
 - Before its first run on a ticket, Keir gathers the reads that ticket type almost always needs (wiki and code for questions, the reporter and their recent clicks for bugs, turn status for outages, Ask health before a strategy redirect) and starts from them. Lessons from the nightly review now show for the ticket's lane.
 - A tool result marked stale at the top level no longer crashes the call.
 

@@ -198,14 +198,15 @@ test("an issue retries its missing developer card without filing a duplicate", a
   assert.equal(f.gh.filter((a) => a[0] === "-X" && a[1] === "POST" && a[2] === "repos/lakesidegamedev/AHDGame/issues").length, 1);
 });
 
-test("public publication fails closed when reporter lookup fails", async () => {
+test("public publication no longer needs the reporter looked up, and still refuses the names it does know (Keir 10, ticket 1829)", async () => {
   const f = fixture();
   f.job.reporterCharacter = { id: null, name: null };
   const { title, kind, ...issue } = good;
-  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue }), /verified reporter/);
+  await assert.rejects(f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue: { ...issue, actual: "fixtureuser saw zero output" }, force: true }), /fixtureuser/);
   assert.ok(!f.gh.some((a) => a[0] === "-X"));
+  const r = await f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, force: true });
+  assert.equal(r.issue, 501);
 });
-
 
 test("issue closure fails closed on unreadable files and unrelated fix references", async () => {
   const pr = { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix" }, body: "Refs #501", files: ["src/lib/turn/settle.ts"] };
@@ -295,4 +296,28 @@ test("close_issue: if the issue's comments cannot be read nothing is posted and 
   assert.equal(closePosts(f), 0);
   assert.equal(Object.keys(f.job.effects).length, 0, "no receipt started, so the task is not held");
   assert.equal(f.job.state, "running");
+});
+
+test("1829: an unlinked reporter does not block the public issue, and the ticket then has an issue to ship against", async () => {
+  const f = fixture();
+  f.mcp.call = async (server, toolName, args) => {
+    f.calls.push([server, toolName, args]);
+    if (toolName === "support_get") return { number: 9, reporter: {}, title: "Slideshow skips to the end" };
+    if (toolName === "kanban_list") return { items: [] };
+    if (toolName === "kanban_add") return { id: 78 };
+    return { ok: true };
+  };
+  const { title, kind, ...issue } = good;
+  const r = await f.broker.tool(f.job, "raise_to_developers", { title, detail, kind, issue, force: true });
+  assert.equal(r.issue, 501);
+  const post = f.gh.find((a) => a[0] === "-X" && a[1] === "POST" && a[2] === "repos/lakesidegamedev/AHDGame/issues");
+  assert.ok(post, "the public issue was created");
+  // publish_patch looks for exactly this: an open issue recorded against the ticket.
+  assert.equal(f.ledger.data.keirIssues[501].ticket, 9);
+  assert.ok(f.job.issues.includes(501));
+  // Joining an existing issue works the same way for an unlinked reporter.
+  const g = fixture();
+  g.mcp.call = f.mcp.call;
+  const joined = await g.broker.tool(g.job, "raise_to_developers", { title, detail, kind, issue, issueNumber: 480 }).catch((e) => e);
+  assert.ok(!/verified reporter identity/.test(String(joined.message || "")), String(joined.message || ""));
 });

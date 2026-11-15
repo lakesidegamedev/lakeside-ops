@@ -1970,7 +1970,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // refund, a design or balance ruling) also opens a decision DM, so it
       // shows on the hub as waiting on him instead of sitting on the kanban.
       const askOwner = (id, t, why) => {
-        const decision = openDecision(ledger, config, { jobId: job.id, decisionKey: `kanban:${id || t}`, options: input.options, question: `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${t}. ${why}`.slice(0, 900) });
+        const decision = openDecision(ledger, config, { jobId: job.id, ticket: ticketOf(job) || null, decisionKey: `kanban:${id || t}`, options: input.options, question: `${ticketOf(job) ? `Ticket ${ticketOf(job)}: ` : ""}${t}. ${why}`.slice(0, 900) });
         // Owner policy 2026-11-06: an unanswered owner decision holds. It never expires, is re-asked every 12 hours,
         // and nothing on the ticket is decided or resolved meanwhile (decisions.js tick, resolve guard).
         Object.assign(decision, { ownerHold: true, changeClass: changeClass || null, requiresOwner: ownerRequired, ticket: ticketOf(job) || null });
@@ -1996,6 +1996,21 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         ledger.audit("raised_to_developers", { job: job.id, ticket: n || null, item: id, title, appended: Boolean(input.appendTo) });
         ledger.save();
       };
+      // Keir 10 (ticket 1812): one card was returned for five unrelated titles, which tangled the owner's decision history.
+      // A new item that comes back with the id of a card Keir already raised under a different title is a reused card, not a new
+      // item. Retry once with a distinguishing title; if the board still hands back the old id, refuse instead of recording a lie.
+      // Only an explicit appendTo (handled before this) joins an existing item.
+      const takenIds = () => new Map(Object.values(d.jobs).flatMap((j) => (j.raisedToDevelopers || []).filter((x) => x.id).map((x) => [x.id, x.title])));
+      async function addDistinctCard(args) {
+        let card = await mcp.call("ops-knowledge", "kanban_add", args, true, signal);
+        const clash = (c) => { const had = takenIds().get(c?.id); return had !== undefined && similarity(had, title) <= 0.6; };
+        if (clash(card)) {
+          ledger.audit("kanban_card_reused", { job: job.id, ticket: n || null, item: card.id, title: title.slice(0, 120) });
+          card = await mcp.call("ops-knowledge", "kanban_add", { ...args, title: `${args.title} [separate item ${Date.now().toString(36).slice(-4)}]`.slice(0, 300) }, true, signal);
+          if (clash(card)) throw new Error(`The board returned item ${card.id}, which already holds a different problem ("${String(takenIds().get(card.id)).slice(0, 80)}"). Nothing was recorded. Each problem gets its own item: if this is the same problem, call raise_to_developers again with appendTo ${card.id}; otherwise retry in a minute.`);
+        }
+        return card;
+      }
       // Keir 4.2: a bug or enhancement is a public AHDGame issue in the house
       // shape, linked from the developers' queue. Questions stay queue-only.
       const gh = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], isKeirWrite(args) ? asKeir({ timeout: 60000, signal }) : { timeout: 60000, signal }) || "null");
@@ -2029,7 +2044,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!id) {
           const open = await mcp.call("ops-knowledge", "kanban_list", { product: "a-house-divided", limit: 200 }, false, signal);
           const rows = Array.isArray(open) ? open : open?.items || [];
-          id = rows.find((x) => [`${GITHUB_OWNER}/AHDGame#${number}`, `Egg3901/AHDGame#${number}`].includes(x.github) || canonicalGithubUrl(x.github_url) === canonicalGithubUrl(url))?.id;
+          id = rows.find((x) => [`${GITHUB_OWNER}/AHDGame#${number}`, `Egg3901/AHDGame#${number}`].includes(x.github) || (x.github_url && url && canonicalGithubUrl(x.github_url) === canonicalGithubUrl(url)))?.id;
         }
         if (!id) {
           const card = await mcp.call("ops-knowledge", "kanban_add", { product: "a-house-divided", title: issueTitle || title, detail: `${detail}\n\nRaised by Keir${n ? ` from ticket ${n}` : ""}.`, kind: input.kind === "enhancement" ? "feature" : "bug", lane: "next", actor: "keir", github: `${GITHUB_OWNER}/AHDGame#${number}` }, true, signal);
@@ -2045,9 +2060,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const target = await gh([`repos/${GITHUB_OWNER}/AHDGame/issues/${number}`]);
         if (!target || target.pull_request || target.state !== "open") throw new Error(`#${number} is not an open AHDGame issue`);
         const reporter = await reporterOf(job, signal);
-        if (job.ticket && !reporter?.name) throw new Error("public issue publication needs a verified reporter identity");
+        // Keir 10 (ticket 1829): a public issue never names the reporter, so an unlinked reporter does not block filing it.
         const note = noDashes(issues.render({ kind: input.kind === "enhancement" ? "enhancement" : "bug", fields: { summary: `Another report of this. ${String(input.issue?.summary || "").trim()}`.trim(), expected: input.issue?.expected || "", actual: input.issue?.actual || "", steps: input.issue?.steps, where: input.issue?.where, impact: input.issue?.impact || "Same as above.", notes: input.issue?.notes } }));
-        const bad = issues.leak(note, [reporter?.name, job.source?.author]);
+        const bad = issues.leak(note, [reporter?.name, job.source?.author, ticketUsername(n)].filter(Boolean));
         if (bad) throw new Error(`AHDGame is public: the comment mentions "${bad}". Remove it and add it again.`);
         await effect(job, `issue-comment:${number}:${hash(note)}`, () => gh(["-X", "POST", `repos/${GITHUB_OWNER}/AHDGame/issues/${number}/comments`, "-f", `body=${note}`]));
         recordIssue(number, target.html_url, true); job.issueEvidenceAdded = true; ledger.save();
@@ -2058,8 +2073,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!input.issue) throw new Error("a bug or enhancement also files a public GitHub issue: add issue (summary, steps, expected, actual, where, impact)");
         if (title.length < 8 || detail.length < 40) throw new Error("give a short title and the evidence: what happens, where in the code or data, and the question for the developers");
         const reporter = await reporterOf(job, signal);
-        if (job.ticket && !reporter?.name) throw new Error("public issue publication needs a verified reporter identity");
-        const built = issues.build({ ...input.issue, title, kind: input.kind }, [reporter?.name, job.source?.author], { origin: job.kind === "finding" ? "watch" : "report" });
+        // Keir 10 (ticket 1829): a public issue never names the reporter, so an unlinked reporter does not block filing it.
+        const built = issues.build({ ...input.issue, title, kind: input.kind }, [reporter?.name, job.source?.author, ticketUsername(n)].filter(Boolean), { origin: job.kind === "finding" ? "watch" : "report" });
         built.title = noDashes(built.title); built.body = noDashes(built.body);
         // Keir 5.1: a finding whose root cause already has an open issue joins
         // it. Three findings of one line of credit fault filed #4140, #4141 and
@@ -2111,7 +2126,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           const candidates = items.map((k) => ({ id: k.id, title: k.title, score: similarity(`${k.title} ${String(k.detail || "").slice(0, 600)}`, `${title} ${detail.slice(0, 600)}`) })).filter((k) => k.score >= 0.06).sort((a, b) => b.score - a.score).slice(0, 3);
           if (candidates.length) return { raised: false, candidates: candidates.map(({ id, title }) => ({ id, title })), instruction: "These open capability requests may be the same gap. If one is, call raise_to_developers again with appendTo set to its id and your evidence as detail. If none is, call again with force: true." };
         }
-        const r = await mcp.call("ops-knowledge", "kanban_add", { product: "lakeside-mcp", title, detail: `${detail}\n\nRaised by Keir${n ? ` from ticket ${n}` : ""}.`, kind: "capability", lane: "next", actor: "keir" }, true, signal);
+        const r = await addDistinctCard({ product: "lakeside-mcp", title, detail: `${detail}\n\nRaised by Keir${n ? ` from ticket ${n}` : ""}.`, kind: "capability", lane: "next", actor: "keir" });
         record(r?.id || null);
         return { raised: true, id: r?.id || null, instruction: "Filed on the MCP capability board (product lakeside-mcp, kind capability). Filing is not a fix: work around it with the tools you have, note the card id on the ticket record, and keep the ticket moving. Do not wait on the card." };
       }
@@ -2133,12 +2148,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // item: it lands in "now", assigned to Keir, and the filing task keeps
       // working it instead of waiting for someone to accept it.
       const selfOwned = (input.kind || "question") === "question" && input.needsHuman !== true;
-      const r = await mcp.call("ops-knowledge", "kanban_add", { product: "a-house-divided", title: `${title}${label}`, detail: `${detail}\n\nRaised by Keir${n ? ` from ticket ${n}` : ""}.`, kind: input.kind === "bug" ? "bug" : input.kind === "enhancement" ? "feature" : "task", lane: selfOwned ? "now" : "next", actor: "keir", ...(selfOwned ? { assigned_to: "keir", start: true, summary: `Keir is working this${n ? ` for ticket ${n}` : ""}.` } : {}), ...(filedIssue ? { github: `${GITHUB_OWNER}/AHDGame#${filedIssue.number}` } : {}) }, true, signal);
+      const r = await addDistinctCard({ product: "a-house-divided", title: `${title}${label}`, detail: `${detail}\n\nRaised by Keir${n ? ` from ticket ${n}` : ""}.`, kind: input.kind === "bug" ? "bug" : input.kind === "enhancement" ? "feature" : "task", lane: selfOwned ? "now" : "next", actor: "keir", ...(selfOwned ? { assigned_to: "keir", start: true, summary: `Keir is working this${n ? ` for ticket ${n}` : ""}.` } : {}), ...(filedIssue ? { github: `${GITHUB_OWNER}/AHDGame#${filedIssue.number}` } : {}) });
       record(r?.id || null);
       if (selfOwned && r?.id) { const rec = job.raisedToDevelopers.find((x) => x.id === r.id); if (rec) { rec.selfOwned = true; ledger.save(); } }
       if (input.kind === "decision") {
         const asked = askOwner(r?.id || null, title, String(input.question).trim());
-        return { raised: true, id: r?.id || null, decision: asked, instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome (one public notice is allowed). Until the owner answers, status_card and other support writes are refused, so do not call them; finish waiting. Keep the ticket open: the answer wakes this task, then act on it." };
+        return { raised: true, id: r?.id || null, decision: asked, ...(d.decisions[asked]?.digestOf ? { digested: true, digestNote: "The owner already has a DM open for this ticket; this question was added to it, so they see every open question in one message. Do not open more decisions for the same ticket." } : {}), instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome (one public notice is allowed). Until the owner answers, status_card and other support writes are refused, so do not call them; finish waiting. Keep the ticket open: the answer wakes this task, then act on it." };
       }
       const worker = await startWorker(r?.id || null, filedIssue?.number || null);
       if (worker) return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), ...worker };
