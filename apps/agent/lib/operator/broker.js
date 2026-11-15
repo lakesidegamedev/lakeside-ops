@@ -265,7 +265,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
 const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings", "trace_bonds"]);
-const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket"];
+const QUICK_TOOLS = ["ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -1762,6 +1762,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     return job.reporterCharacter;
   }
+  // Keir 10 (W3): ask, player_trail, resolve_reporter, turn_status, request_log.
+  const w3 = require("./w3tools").createW3Tools({ config, mcp, staff: (job) => job.role === "owner" || developerTask(job), now, log: (m) => config.log?.(m) });
   // Keir 2.0: the numbers and text of everything read this activation are the
   // evidence a public post may quote (see guardNumbers and secondLook).
   const NO_EVIDENCE = new Set(["channel_reply", "progress_update", "checkpoint", "finish", "handoff", "task_progress", "ticket_record", "remember"]);
@@ -1905,7 +1907,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "recent_changes") return capabilities.recentChanges({ days: input.days, query: input.query, path: input.path });
     if (name === "view_page") {
       if (job.role === "player") throw new Error("players cannot render pages through Keir");
-      const r = await capabilities.viewPage(input.url);
+      const r = await require("./pageview").render(input);
       return { ...r, image: r.image };
     }
     if (name === "watch_turn") {
@@ -2527,10 +2529,21 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Keir 9.0.2 (ticket 1829, 2026-11-13): tickets now carry the reporter's linked game username without a character
       // profile link. Resolve the account and its characters from the username (read-only) instead of reporting "not linked",
       // which made Keir ask a linked player for their character name.
+      // Keir 10 (W3): an unlinked reporter falls back to the narrow resolver (character link, game
+      // username, linked Discord account, repeated visits) instead of "not linked" or raw reads.
+      const viaResolver = async (why) => {
+        const r = await w3.resolveIdentity(job, signal);
+        if (!r.matched || inspectedTicket !== job.ticket) throw new Error(why);
+        const account = { linked: true, discordLinked: Boolean(r.account?.discordLinked) };
+        const characters = r.current.map((c) => ({ name: c.name, sequentialId: c.id, countryId: c.country, homeState: c.state, currentOffice: c.office }));
+        job.reporterInspection = { at: now(), ticket: inspectedTicket, account, characters }; ledger.save();
+        return { environment: "prod", ticket: inspectedTicket, checkedAt: now(), account, characters, retiredCharacters: r.retired, matchedBy: r.via, ...w3presented(r) };
+      };
+      const w3presented = (r) => { const out = require("./resolvereporter").createResolver({ mcp, now }).present(r); return { instruction: out.instruction }; };
       if (!ticket.reporter?.profileUrl && ticket.reporter?.username) {
         const username = String(ticket.reporter.username);
         const users = await mcp.call("heal-ops", "heal_query", {env:"prod", collection:"users", filter:{username}, projection:{_id:1, username:1, discordId:1, discordLinkedAt:1}, limit:2}, false, signal);
-        if (users.docs?.length !== 1 || users.docs[0].username !== username) throw new Error("the ticket's linked game username did not match exactly one account");
+        if (users.docs?.length !== 1 || users.docs[0].username !== username) return viaResolver("the ticket's linked game username did not match exactly one account");
         const userId = String(users.docs[0]._id);
         // Keir 9.0.4 (owner): whether the account has a Discord link, and since when. The Discord id itself is never returned.
         const discordLinked = Boolean(users.docs[0].discordId), discordLinkedAt = discordLinked && users.docs[0].discordLinkedAt ? String(users.docs[0].discordLinkedAt).slice(0, 10) : null;
@@ -2547,7 +2560,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         return {environment:"prod", ticket:inspectedTicket, checkedAt:now(), account, characters,
           instruction: characters.length ? "The reporter's linked account and its characters, from the live game. Never ask the player who they are or for their character name." : "The reporter's account is linked but has no current character. Never ask the player who they are; ask only for what you cannot read, if anything."};
       }
-      let profile; try { profile = new URL(ticket.reporter?.profileUrl); } catch { throw new Error("ticket has no linked character profile"); }
+      let profile; try { profile = new URL(ticket.reporter?.profileUrl); } catch { return viaResolver("ticket has no linked character profile"); }
       if (!/^https:$/.test(profile.protocol) || !["www.ahousedividedgame.com", "ahousedividedgame.com"].includes(profile.hostname) || !/^\/character\/[1-9]\d*$/.test(profile.pathname)) throw new Error("ticket character profile is not canonical");
       const characterId = Number(profile.pathname.split("/").at(-1));
       if (!Number.isSafeInteger(characterId)) throw new Error("invalid linked character identity");
@@ -2596,6 +2609,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const url = r?.url || r?.liveUrl || `https://ops.lakesidegames.net/reports/${slug}`;
       return { published: true, slug, public: wantsPublic, url, instruction: "Give the requester the URL in one line with the headline finding." };
     }
+    if (w3.has(name)) { w3.refreshAskHealth(); return w3.call(job, name, input, signal); }
     if (name === "sentry") {
       if (!developerTask(job) && !developerTicket(job) && job.kind !== "finding") throw new Error("Sentry reads are for developer-directed tasks and Keir's own findings");
       const token = process.env.SENTRY_API_TOKEN, base = (process.env.SENTRY_API_URL || "https://sentry.io").replace(/\/$/, ""), org = process.env.SENTRY_ORG;
@@ -2653,7 +2667,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       throw new Error("action must be issues, issue, note or resolve");
     }
     if (name === "github") {
-      const readOnly = ["review", "status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue"].includes(input.action);
+      const readOnly = ["review", "status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue", "pr_diff"].includes(input.action);
       // A ticket can span the game and the desktop client (1514 does); an
       // explicit repository wins over the task's default.
       if (input.repository && !["AHDGame", "AHDClient"].includes(input.repository)) throw new Error("repository must be AHDGame or AHDClient");
@@ -2663,6 +2677,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // The owner's own button approval of this exact merge (Keir 8.2): the owner's GitHub review is submitted for him.
       let ownerConsent = null;
       const apiKeir = async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], asKeir({ timeout: 60000 })) || "null");
+      if (require("./githubextras").ACTIONS.includes(input.action)) {
+        const staffSide = developerTask(job) || ownerDirected(job) || job.prMention || (job.kind === "ticket" && job.role === "support");
+        const mine = (n, pr) => ownerDirected(job) || developerTask(job) || (job.pullRequests || []).some((x) => Number(x?.number ?? x) === n) || /^keir\//.test(String(pr?.head?.ref || ""));
+        return require("./githubextras").run(input.action, { job, input, repo, api, post: (args) => exec("/usr/bin/gh", ["api", ...args], asKeir({ timeout: 60000 })).then((t) => { try { return JSON.parse(t || "null"); } catch { return null; } }), allowed: input.action === "pr_comment" ? (developerTask(job) || ownerDirected(job)) : input.action === "pr_diff" ? job.role !== "player" : Boolean(staffSide) && job.role !== "player",
+          opened: mine, leak: (t) => require("./issues").leak(t, []) || publicPatchLeak(`+${t.replace(/\n/g, "\n+")}`), redactSecrets, noDashes, effect, hash, audit: (k, v) => ledger.audit(k, v) });
+      }
       // A PR review asked for by @mention reads that one PR and posts one review on it.
       if (job.prMention) {
         if (!prMention.PR_MENTION_GITHUB.includes(input.action)) throw new Error("A PR review task only reads the pull request and posts one review on it");
@@ -3801,6 +3821,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (input.args.argv.some((x) => x.includes(path.join(config.stateDir, "workspaces")))) throw new Error("mutable workspace files cannot be executed on the host; publish a frozen patch instead");
       } else if (input.kind === "mcp_write") {
         if (!input.args?.server || !input.args.tool || typeof input.args.args !== "object") throw new Error("invalid MCP write request");
+      } else if (input.kind === "turn_lock_reset") {
+        return w3.turnLockReset(job, input, signal, (spec) => toolInner(job, "request_heal", spec, signal));
       } else throw new Error("unknown privileged action kind");
       return request(job, input.kind, input.args, input.reason);
     }
@@ -4394,7 +4416,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { postBudget, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),
