@@ -1764,7 +1764,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     if (!NO_EVIDENCE.has(name) && result != null) {
       // Images carry base64 digits, not evidence; leave them out.
-      let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v); } catch {}
+      let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v) ?? ""; } catch {}
       job.evidence = [...(job.evidence || []), ...knowledge.numbersIn(text).map((n) => n.value)].slice(-8000);
       job.evidenceText = (String(job.evidenceText || "") + `\n[${name}] ` + text.slice(0, 6000)).slice(-20000);
     }
