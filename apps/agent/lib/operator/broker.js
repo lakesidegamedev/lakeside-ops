@@ -1512,6 +1512,29 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (d.channels[job.channelId]?.claimedBy) throw new Error("staff own this ticket");
     return job;
   }
+  // Keir 10.1.3 (owner, 2026-11-17, ticket 1836): a returning player gets no opener (owner rule 2026-11-01), so the
+  // first thing they saw was the answer, about three minutes after opening, and the owner read it as no response.
+  // On a bug ticket's first activation, before preflight, code posts the in-place progress card: one card, not a
+  // chat line, so it is not padding. It never counts as Keir's answer (lastPublishedAt is untouched), and the
+  // model's own status_card replaces its item.
+  async function instantCard(job) {
+    const n = ticketOf(job);
+    if (!n || job.kind !== "ticket" || job.codingParent || job.internalProbe) return { skipped: "not a ticket task" };
+    if (d.statusCards?.[n]?.messageId) return { skipped: "card exists" };
+    if (Object.values(d.jobs).some((j) => ticketOf(j) === n && (j.lastPublishedAt || j.progressMessageId || j.channelReplyQueued))) return { skipped: "already spoke" };
+    const ch = d.channels?.[job.channelId] || {};
+    if (ch.claimedBy) return { skipped: "staff claimed" };
+    if (ch.category !== "bug" && job.lane !== "bug") return { skipped: "not a bug ticket" };
+    let name = "Your report";
+    try {
+      const t = await mcp.call("support", "support_get", { kind: "ticket", number: n }, false, AbortSignal.timeout(5000));
+      const title = String(t?.title || "").replace(/[*_`~|<>@#]/g, "").trim().slice(0, 80);
+      if (title.length >= 4 && !TECHNICAL.test(title) && !JARGON.test(title)) name = title;
+    } catch { /* the generic name is fine */ }
+    const r = await upsertCard(job, n, { items: [{ name, stage: "found" }], status: "Looking into this now." });
+    ledger.audit("instant_card_posted", { job: job.id, ticket: n });
+    return { posted: true, ...r };
+  }
   async function adminStatusCard(ticketNo, { items, status }) {
     const job = cardOwnership(Number(ticketNo));
     const checked = cardItemsAllowed(Number(ticketNo), items);
@@ -4595,7 +4618,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

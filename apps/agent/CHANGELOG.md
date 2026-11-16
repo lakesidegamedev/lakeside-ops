@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.3 (2026-11-17)
+
+- A bug ticket shows its progress card ("Investigating, looking into this now") within seconds of Keir picking it up, before Keir starts working it. A returning player gets no introduction, so on ticket 1836 the first thing anyone saw was the answer, almost three minutes in. The card updates in place and is not counted as Keir's answer.
+
 ## 10.1.2 (2026-11-16)
 
 - Failure tracking reads the message inside an MCP tool error before grouping it. Every tool error had been folded into one group, so the code index outage was reported to Sentry under an unrelated "parties is not available for country maps" title.
