@@ -90,6 +90,7 @@ function turnTrouble(live) {
 function route(job, d = {}, live = null) {
   const tag = job.tags?.kind, cat = d.channels?.[job.channelId || job.replyChannel]?.category, text = textOf(job);
   const out = (lane, reason) => ({ lane, reason, signals: { tag: tag || null, category: cat || null, turnText: TURN_TEXT.test(text), live: live ? (live.error ? "unavailable" : turnTrouble(live) ? "trouble" : "healthy") : "not checked" } });
+  if (job.keirIncident) return out("outage", "an incident Keir's own monitor opened");
   const advice = require("./advicerouting");
   if (advice.bugFollowup(job)) return out("bug", "a broken-screen follow-up on an advice ticket");
   if (advice.requiresRedirect(job, d)) return out("advice", "strategy or investment advice belongs in Ask");

@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.0.3 (2026-11-16)
+
+- An incident opened from Keir's own monitor is now Keir's to work: it gets a task, routes as an outage, posts a plain status and closes when turns run cleanly. Incidents staff open still belong to staff (ticket 1831 had nobody working it).
+- The monitor holds a turn failure while turns are paused or maintenance is on, instead of proposing an incident during planned work, and describes failures in plain words instead of a JSON stamp.
+
 ## 10.0.2 (2026-11-15)
 
 - A promotion to main that Keir starts by hand ships bug and display fixes without asking for a sign-off, the same as its coding worker (owner, 2026-11-15). Economy and turn-engine changes, and rule or balance changes, still ask once.

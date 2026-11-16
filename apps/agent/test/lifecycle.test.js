@@ -116,3 +116,19 @@ test("full ticket lifecycle replay", () => {
   coordinator.close(workId, { kind: "resolved", receiptId: "live-302" });
   assert.deepEqual(published, ["preparing", "testing", "releasing", "verifying", "live"]);
 });
+
+test("Keir 10.0.3: an incident Keir's own monitor opened gets a Keir task; a staff incident does not (ticket 1831)", () => {
+  const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
+  const { createLedger } = require("../lib/operator/store");
+  const lifecycle = require("../lib/operator/lifecycle");
+  const ledger = createLedger(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "keir-inc-")), "ledger.json"));
+  const config = { botId: "bot", taskLifetimeMs: 3600000 };
+  const rows = [{ author: { id: "bot" }, embeds: [{}], timestamp: new Date(0).toISOString() }];
+  ledger.data.keirIncidents = { 1831: { title: "Turn 6 failed", summary: "Turn 6 failed to finish." } };
+  const own = lifecycle.adoptFromIntake(ledger, { id: "c1", name: "ticket-incident-keir-1831" }, rows, { category: "incident", number: 1831, config, now: 1 });
+  assert.ok(own && own.keirIncident, "Keir owns its own incident");
+  assert.match(own.source.content, /Keir owns it/);
+  const staffs = lifecycle.adoptFromIntake(ledger, { id: "c2", name: "ticket-incident-mod-1832" }, rows, { category: "incident", number: 1832, config, now: 1 });
+  assert.equal(staffs, null, "a staff incident stays with staff");
+  assert.equal(require("../lib/operator/ticketlanes").route(own, ledger.data, null).lane, "outage");
+});
