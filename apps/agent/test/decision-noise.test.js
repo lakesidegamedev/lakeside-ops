@@ -28,7 +28,7 @@ test("an unbound operational proposal cannot appear as an executable approval", 
 test("obsolete synthetic cards are withdrawn and removed without changing their holds", async () => {
  const ledger = fixture({ ownerDecisionPending: true });
  ledger.data.decisions.old = { id: "old", jobId: "j", actionId: "handback:1658", question: "Hand it back?", state: "pending", selfRecovery: { kind: "handback", ticket: 1658 }, sent: { owner: { channelId: "dm", messageId: "m", content: "old" } } };
- const deleted = [], decisions = createDecisions({ ledger, config: { ownerId: "owner", staffIds: [] }, discord: async (method, route) => { if (method === "DELETE") deleted.push(route); } });
+ const deleted = [], decisions = createDecisions({ ledger, config: { ownerId: "owner", staffIds: [] }, discord: async (method, route) => { if (method === "DELETE" || method === "PATCH") deleted.push(route); } });
  assert.throws(() => decisions.applyAuthenticatedApp(ledger.data.decisions.old, "approve", "owner"), /obsolete|synthetic/i);
  await decisions.tick();
  assert.equal(ledger.data.decisions.old.state, "withdrawn");

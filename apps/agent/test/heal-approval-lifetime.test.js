@@ -22,9 +22,11 @@ function fixture(t) {
     if (name.endsWith("_plan")) return { token: { id: `fresh-${++plans}`, expiresAt: new Date(clock + 9 * 60000).toISOString() }, plan: { affected: changed === "count" ? 2 : 1, summary: changed === "digest" ? "Changed fixture plan" : "One fixture" }, guards: { ok: true } };
     return { ok: true };
   } };
-  const discord = async (method, route) => {
+  const discord = async (method, route, body) => {
     const id = route.split("/").pop();
     if (method === "DELETE") { messages[id].deleted = true; return {}; }
+    // Keir 10.1.1: a copy nobody answered is edited to its outcome; count it as retired like a delete.
+    if (method === "PATCH" && /No longer needed/.test(body?.content || "")) { messages[id].deleted = true; messages[id].edited = body.content; return {}; }
     return messages[id];
   };
   const broker = createBroker({ ledger, config, mcp, discord, sandbox: {}, now: () => clock });
