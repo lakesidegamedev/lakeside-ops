@@ -3121,3 +3121,18 @@ test("Keir 9: a ticket on the ticket route falls back to the main route when the
  current = m; await agent.run(m, new AbortController().signal);
  assert.equal(attempts.at(-1), "agy");
 });
+
+// Keir 10.0.4 (ticket 1833, 2026-11-16): the model finished "done" 39 times without checkpointing
+// finalAnswerDelivered, so the ticket re-woke every 15 minutes and never entered its closing grace.
+test("a finished ticket where Keir spoke last enters the closing grace without a checkpoint", async () => {
+  const f = fixture(), j = runningAs(f, "ticket:1833", { role: "support", kind: "ticket", ticket: 1833, channelId: "777777777777777777" });
+  j.observedPlayerAt = 100; j.lastPublishedAt = 200;
+  await f.broker.tool(j, "finish", { state: "done", summary: "Answered: expected before the first turn." });
+  assert.equal(j.state, "waiting");
+  assert.equal(j.resolutionReadyAt, 200);
+  // A player message after Keir's last post is still owed an answer.
+  const k = runningAs(f, "ticket:1834", { role: "support", kind: "ticket", ticket: 1834, channelId: "777777777777777778" });
+  k.observedPlayerAt = 300; k.lastPublishedAt = 200;
+  await f.broker.tool(k, "finish", { state: "done", summary: "Done." });
+  assert.equal(k.resolutionReadyAt, undefined);
+});
