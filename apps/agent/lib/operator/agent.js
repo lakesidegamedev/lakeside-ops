@@ -388,6 +388,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // activations that repeat every minute never reach its round threshold.
     job.activationAt = [...(job.activationAt || []), job.startedAt].slice(-12);
     delete job.appSteering;
+    // Keir 10.1.3: a bug ticket shows its progress card within seconds, before the ~20s preflight and the model run.
+    if (job.kind === "ticket" && job.activationCount === 1 && broker.instantCard) {
+      try { await Promise.race([broker.instantCard(job), new Promise((r) => setTimeout(r, 10000))]); }
+      catch (e) { ledger.audit("instant_card_failed", { job: job.id, error: String(e.message).slice(0, 200) }); }
+    }
     const preflightAt = Date.now();
     // Keir 6.1.1: where preflight time goes, so a slow step shows in usage.jsonl.
     const preflightParts = {}; let preflightMark = preflightAt;
