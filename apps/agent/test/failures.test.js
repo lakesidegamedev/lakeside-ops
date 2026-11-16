@@ -187,3 +187,15 @@ test("a correction posted to a player is a reasoning failure", () => {
   assert.equal(f.class, "reasoning");
   assert.equal(f.kind, "correction_posted");
 });
+
+// 2026-11-16: every MCP tool error normalized to the same string, so a dead code index was grouped (and sent to
+// Sentry) under an unrelated "parties is not available for country maps" title.
+test("different MCP tool errors get different fingerprints; the same one repeats", () => {
+  const { fingerprint } = require("../lib/operator/failures");
+  const err = (t) => ({ class: "tool", kind: "refused_other", tool: "read_tool", detail: `tool/refused_other (read_tool): {"content":[{"type":"text","text":"${t}"}],"isError":true}` });
+  const a = fingerprint(err("parties is not available for country maps"));
+  const b = fingerprint(err("Error: code index unavailable or empty"));
+  assert.notEqual(a, b);
+  assert.equal(a, fingerprint(err("parties is not available for country maps")));
+  assert.equal(fingerprint(err("ticket 1834 has no linked character")), fingerprint(err("ticket 1835 has no linked character")));
+});
