@@ -441,6 +441,11 @@ tickers.every("developerwatch", 60000, async () => {
   try { await developerWatch.tick(); } catch (e) { log(`developerwatch: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
 });
+// Keir 10.1: model-free watchdog over open tickets (moderation, unowned, spinning, waiting, silent).
+const ticketWatch = require("./lib/operator/ticketwatch").createTicketWatch({ ledger, mcp, config, log });
+if (env.KEIR_TICKET_WATCH !== "0") tickers.every("ticketwatch", 5 * 60000, async () => {
+  try { await ticketWatch.tick(); } catch (e) { log(`ticketwatch: ${e.message}`); }
+});
 // Keir 3.0: six lanes, one per admission slot (two conversation, one owner,
 // two investigation, one coding), so replies and owner corrections never
 // wait behind a long fix and the total stays inside the service budget.
@@ -1116,6 +1121,9 @@ function housekeeping() {
     if (terminal.includes(j.state) && now - (j.updatedAt || j.at || 0) > keep) { archived.push(JSON.stringify(j)); delete d.jobs[id]; }
   }
   if (archived.length) fs.appendFileSync(path.join(config.stateDir, "jobs-archive.jsonl"), archived.join("\n") + "\n", { mode: 0o600 });
+  // Keir 10.1: their actions and decisions follow them a week later.
+  const orphans = require("./lib/operator/orphans").sweepOrphans(d, now);
+  if (orphans.length) { fs.appendFileSync(path.join(config.stateDir, "records-archive.jsonl"), orphans.map((r) => JSON.stringify(r)).join("\n") + "\n", { mode: 0o600 }); ledger.audit("orphans_archived", { count: orphans.length }); }
   // Keir 6.1.1: finished tasks kept their per-activation scratch (evidence text
   // and numbers, read keys) for up to a week, about a fifth of a 10 MB ledger
   // that every save rewrites. A new activation resets all of it, so drop it an
@@ -1136,7 +1144,7 @@ function housekeeping() {
     const last = Math.max(0, ...(Array.isArray(rows) ? rows : []).map((r) => r.observedAt || Date.parse(r.at) || 0));
     if (now - last > 7 * 86400000) { delete d.channelContext[channel]; compacted++; }
   }
-  if (freed || archived.length || compacted) { ledger.audit("housekeeping", { freed, archived: archived.length, compacted }); ledger.save(); log(`housekeeping: removed ${freed} paths, archived ${archived.length} tasks, compacted ${compacted}`); }
+  if (freed || archived.length || compacted || orphans.length) { ledger.audit("housekeeping", { freed, archived: archived.length, compacted, orphans: orphans.length }); ledger.save(); log(`housekeeping: removed ${freed} paths, archived ${archived.length} tasks, compacted ${compacted}`); }
 }
 setTimeout(() => { try { housekeeping(); } catch (e) { log(`housekeeping: ${e.message}`); } }, 60000);
 setInterval(() => { try { housekeeping(); } catch (e) { log(`housekeeping: ${e.message}`); } }, 3600000);

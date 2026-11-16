@@ -237,8 +237,12 @@ test("telling a player the developers have it needs something that reached them;
   const add = calls.find((c) => c[1] === "kanban_add");
   assert.equal(add[0], "ops-knowledge"); assert.match(add[2].title, /\(ticket 1522\)$/);
   f.tick(11 * 60000);
-  assert.equal((await say(f, "The developers already have this gap to review.")).published, true);
+  // Keir 10.1 (ticket 1834): a self-assigned question card reaches no person, so it is not a receipt.
+  await assert.rejects(say(f, "The developers already have this gap to review."), /raise_to_developers/);
   assert.equal((await f.broker.tool(f.job, "raise_to_developers", { title: "Governor blend pays low-utilization stakes near nameplate", detail: "Same evidence as before, repeated by mistake in this activation of the task." })).duplicate, true);
+  f.mcp.call = async (server, tool, args) => { calls.push([server, tool, args]); return tool === "kanban_add" ? { id: 778 } : { ok: true, delivery: { posted: true } }; };
+  await f.broker.tool(f.job, "raise_to_developers", { title: "Plant revenue split needs a developer to read the blend code", detail: "The nameplate baseline blend pays stakes unevenly; a developer has to read the revenue code and say whether the blend is intended.", needsHuman: true, force: true });
+  assert.equal((await say(f, "The developers already have this gap to review.")).published, true);
 });
 
 test("raise_to_developers offers a matching open item first, appends to it on request, and never doubles the ticket label", async () => {
