@@ -2303,7 +2303,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       const worker = await startWorker(r?.id || null, filedIssue?.number || null);
       if (worker) return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), ...worker };
-      return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), instruction: (input.kind || "question") === "question" ? "Filed on your own board as your work item (lane now, assigned to you). Nobody else will pick it up: keep working it yourself now. Read the game records you need with the heal-ops read tools (heal_query, heal_count), keep the player updated, and add findings with raise_to_developers appendTo. The card closes with your task. Do not wait on it and do not claim filing fixed the problem." : "Filed for the developers. Filing is not a fix. Filing does not repair stored data. If the fault is in a record, now call request_heal with its collection, exact filter and value; the owner approves it before anything changes. Verify the reported problem is actually resolved before closing; optional feature proposals may remain on the developer queue." };
+      return { raised: true, id: r?.id || null, ...(filedIssue ? { issue: filedIssue.number, url: filedIssue.url } : {}), instruction: (input.kind || "question") === "question" ? "Filed on your own board as your work item (lane now, assigned to you). Nobody else will pick it up: keep working it yourself now. Read the game records you need with the heal-ops read tools (heal_query, heal_count), keep the player updated, and add findings with raise_to_developers appendTo. The card closes with your task. Do not wait on it and do not claim filing fixed the problem. No human sees this card: do not tell the player the developers have it. If the answer needs an account action you cannot do (relink a login, lift a block, unban, VPN access, recovery), call raise_to_developers again with needsHuman true." : "Filed for the developers. Filing is not a fix. Filing does not repair stored data. If the fault is in a record, now call request_heal with its collection, exact filter and value; the owner approves it before anything changes. Verify the reported problem is actually resolved before closing; optional feature proposals may remain on the developer queue." };
       } finally { releaseIssue(); }
     }
     if (name === "merge_related") {
@@ -4321,6 +4321,16 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       if (["done", "dismissed"].includes(state) && job.kind === "ticket" && !job.resolved && !job.channelClosed) {
         // The model can finish a turn, but unresolved tickets stay owned.
+        // Keir 10.0.4 (ticket 1833, 2026-11-16): a finished ticket where Keir spoke last is answered,
+        // even when the model never checkpointed finalAnswerDelivered. Without this the task woke every
+        // 15 minutes for 12 hours (39 activations, two repeat posts) and never entered the closing grace.
+        const ms = (v) => (typeof v === "number" ? v : Date.parse(v || "") || 0);
+        const posted = ms(job.lastPublishedAt);
+        const heard = Math.max(ms(job.observedPlayerAt), ms(job.lastPlayerAt));
+        if (!job.resolutionReadyAt && posted && posted >= heard && !(job.inbox || []).length && !pendingHandoffs(job).length) {
+          job.resolutionReadyAt = posted;
+          ledger.audit("ticket_answer_inferred", { job: job.id, ticket: job.ticket, at: posted });
+        }
         job.state = "waiting"; job.wakeAt = now() + (job.resolutionReadyAt ? 3600000 : 15 * 60000);
       } else if (state === "done" && pendingHandoffs(job).length && !job.resolved && !job.channelClosed) {
         // Filing a blocking question is not an accepted or completed handoff.

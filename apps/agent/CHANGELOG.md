@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.0.4 (2026-11-16)
+
+- A ticket Keir has answered, with no newer player message, now enters its closing window even when the model forgets to mark the answer as delivered. Ticket 1833 was re-checked every 15 minutes for 12 hours (39 runs, two repeat posts) instead of closing.
+- Account actions (moving a login to a new Discord, lifting a registration block, unbans, VPN access, recovery) must be raised so a person sees them. Ticket 1834's recovery was filed as Keir's own to-do, which alerts nobody, while the player was told the developers had it.
+
 ## 10.0.3 (2026-11-16)
 
 - An incident opened from Keir's own monitor is now Keir's to work: it gets a task, routes as an outage, posts a plain status and closes when turns run cleanly. Incidents staff open still belong to staff (ticket 1831 had nobody working it).
