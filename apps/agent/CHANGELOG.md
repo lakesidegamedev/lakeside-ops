@@ -5,6 +5,13 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.0 (2026-11-16)
+
+- A ticket watchdog checks open tickets every five minutes without using the model and tells the owner once per problem: a new moderation ticket (also sent to the support delegate, and again if still open after four hours), a ticket nobody is on for an hour, Keir checking a ticket repeatedly with nothing new, a player waiting over two hours, and an answered ticket still open six hours later. `KEIR_TICKET_WATCH=0` turns it off.
+- An account action Keir cannot do (relinking a login, lifting a signup block, unbans, VPN access, recovery) is always handed to a person and DMs the owner, even when the model files it as its own to-do.
+- Telling a player the developers or staff have something, or will check or reply, now needs a handoff that reached a person. Keir's own self-assigned card no longer counts, and the future tense no longer gets past the check.
+- Actions and decisions left behind by archived tasks are archived a week later instead of piling up in the ledger. Approved actions are archived as orphaned and never run.
+
 ## 10.0.4 (2026-11-16)
 
 - A ticket Keir has answered, with no newer player message, now enters its closing window even when the model forgets to mark the answer as delivered. Ticket 1833 was re-checked every 15 minutes for 12 hours (39 runs, two repeat posts) instead of closing.

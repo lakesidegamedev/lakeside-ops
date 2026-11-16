@@ -114,6 +114,8 @@ const RAW_READ_CLOSED = /^(users?|accounts?|sessions?|auth.*|.*tokens?|.*secrets
 // tickets kept probing users, adminLogs, actionAuditLog and discord_messages
 // instead of asking for the account state or escalating it (18 refusals
 // across six tasks, 2026-10-25).
+// Keir 10.1: account actions Keir cannot perform itself; a handoff about one always needs a person.
+const ACCOUNT_ACTION = /\b(?:re-?link|unlink|relinking|unban|ban appeal|lift (?:the |a |their )?(?:ban|block)|registration block|signup block|sign-?up block|device block|blocked from (?:registering|signing)|vpn (?:access|exception|whitelist|allowlist)|account recovery|recover (?:the |their |an |his |her )?(?:old )?account|merge (?:the |their )?accounts|transfer (?:the |their )?account|move (?:the |their )?(?:old )?account|change (?:the |their )?(?:login|email|discord))\b/i;
 const RAW_READ_CLOSED_NOTE = "it holds account, sign-in, contact or audit data. On a ticket, read the reporter's character with reporter_state; when the task needs the account record itself, file the exact read with raise_to_developers, kind question and needsHuman true";
 // Anchored where a bare substring would hit game fields: "ip" ends ownership,
 // membership and leadership; "address" is too broad to match anywhere.
@@ -412,7 +414,10 @@ const CLAIMS = [
   // Keir 4.1.7: "the developers have it" needs something that reached them
   // (ticket 1540 said it with nothing filed).
   { kind: "investigating", re: replyPolicy.INVESTIGATOR },
-  { kind: "escalated", re: /\b(?:the )?(?:developers?|devs?|dev team)(?: already)? (?:have|has|are (?:looking at|reviewing|aware of)|got) (?:it|this|that|the)\b|\b(?:it'?s|this is|that is|it is) (?:now )?with the (?:developers?|devs?)\b|\b(?:passed|raised|flagged|sent|reported|put) (?:it |this |that )?(?:on |up )?(?:to|with) the (?:developers?|devs?|dev team)\b|\b(?:developers?|devs?)\b[^.!?]*\b(?:it'?s|it is|that'?s) with them\b/i },
+  { kind: "escalated", re: /\b(?:the )?(?:developers?|devs?|dev team)(?: already)? (?:have|has|are (?:looking at|reviewing|aware of)|got) (?:it|this|that|the)\b|\b(?:it'?s|this is|that is|it is) (?:now )?with the (?:developers?|devs?)\b|\b(?:passed|raised|flagged|sent|reported|put) (?:it |this |that )?(?:on |up )?(?:to|with) the (?:developers?|devs?|dev team)\b|\b(?:developers?|devs?)\b[^.!?]*\b(?:it'?s|it is|that'?s) with them\b|\b(?:passed|raised|flagged|sent|reported|forwarded|handed|given|escalated)\b[^.!?]{0,80}\b(?:to|with) (?:the |our )?(?:developers?|devs?|dev team|staff|moderators?|mods)\b/i },
+  // Keir 10.1 (ticket 1834): "the developers will check" and "when the developers reply" promise a person is on it.
+  // The future tense does not excuse it: it needs the same proof as "the developers have it".
+  { kind: "escalated", always: true, re: /\b(?:the )?(?:developers?|devs?|dev team|staff|moderators?|mods)\b[^.!?]{0,40}\bwill (?:reply|respond|get back|check|look|review|contact|reach out|update)\b|\bwhen (?:the )?(?:developers?|devs?|staff|moderators?|mods) (?:reply|respond|get back|answer)\b/i },
   { kind: "written", re: /\b(?:fix|correction|patch) (?:is|has been|was) (?:now )?(?:written|ready|built|prepared|done)\b|\bhave (?:a|the) (?:fix|correction) (?:ready|written)\b|\b(?:is|are) (?:now )?in testing\b|\bgoing through (?:its |the )?(?:checks|tests)\b|\bpassed (?:its|the|all its) (?:tests|checks)\b/i },
 ];
 // "Should be gone" is the hedge that carried 1763's claims; only these mark a real future step.
@@ -442,7 +447,7 @@ function outcomeClaims(text) {
       // to the end of the claim count.
       const m = c.hedged ? c.re.exec(sentence) : null;
       const upTo = m ? sentence.slice(0, m.index + m[0].length) : sentence;
-      out.push({ kind: c.kind, future: (c.hedged ? STRICT_FUTURE : FUTURE).test(upTo), sentence: sentence.trim().slice(0, 160) });
+      out.push({ kind: c.kind, future: c.always ? false : (c.hedged ? STRICT_FUTURE : FUTURE).test(upTo), sentence: sentence.trim().slice(0, 160) });
     }
     }
   }
@@ -652,7 +657,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       // Keir 8.4 (owner, 2026-11-06): "handed to the developers" needs a real queue item, pull request or
       // decision; "handed to an investigator" needs a real investigation job. Nobody-assigned handoffs
       // were posted on 1766 and 1773.
-      escalated: { done: jobs.some((j) => (j.raisedToDevelopers || []).some((r) => r.id) || (j.pullRequests || []).length || j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
+      // Keir 10.1 (ticket 1834): Keir's own self-assigned card reaches nobody, so it is not proof.
+      escalated: { done: jobs.some((j) => (j.raisedToDevelopers || []).some((r) => r.id && !r.selfOwned) || (j.pullRequests || []).length || j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
       investigating: { done: jobs.some((j) => (j.investigations || []).some((id) => d.jobs[id])) },
     };
   }
@@ -2293,10 +2299,19 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // not a queue for the owner. A question Keir files is Keir's own work
       // item: it lands in "now", assigned to Keir, and the filing task keeps
       // working it instead of waiting for someone to accept it.
-      const selfOwned = (input.kind || "question") === "question" && input.needsHuman !== true;
+      // Keir 10.1 (ticket 1834, 2026-11-16): an account action Keir cannot perform is never its own to-do,
+      // whatever the model set. The handoff DMs the owner once so a person actually sees it.
+      const needsHuman = input.needsHuman === true || ((input.kind || "question") === "question" && ACCOUNT_ACTION.test(`${title} ${detail}`));
+      const selfOwned = (input.kind || "question") === "question" && !needsHuman;
       const r = await addDistinctCard({ product: "a-house-divided", title: `${title}${label}`, detail: `${detail}\n\nRaised by Keir${n ? ` from ticket ${n}` : ""}.`, kind: input.kind === "bug" ? "bug" : input.kind === "enhancement" ? "feature" : "task", lane: selfOwned ? "now" : "next", actor: "keir", ...(selfOwned ? { assigned_to: "keir", start: true, summary: `Keir is working this${n ? ` for ticket ${n}` : ""}.` } : {}), ...(filedIssue ? { github: `${GITHUB_OWNER}/AHDGame#${filedIssue.number}` } : {}) });
       record(r?.id || null);
       if (selfOwned && r?.id) { const rec = job.raisedToDevelopers.find((x) => x.id === r.id); if (rec) { rec.selfOwned = true; ledger.save(); } }
+      if (!selfOwned && (input.kind || "question") === "question" && r?.id) {
+        const rec = job.raisedToDevelopers.find((x) => x.id === r.id);
+        if (rec) { rec.needsHuman = true; rec.notifiedAt = now(); }
+        ledger.notify(`handoff:${r.id}`, "owner", `${n ? `Ticket ${n} needs a person: ` : "Needs a person: "}${title}\n\n${detail.slice(0, 900)}`);
+        ledger.save();
+      }
       if (input.kind === "decision") {
         const asked = askOwner(r?.id || null, title, String(input.question).trim());
         return { raised: true, id: r?.id || null, decision: asked, ...(d.decisions[asked]?.digestOf ? { digested: true, digestNote: "The owner already has a DM open for this ticket; this question was added to it, so they see every open question in one message. Do not open more decisions for the same ticket." } : {}), instruction: "Filed, and the owner has it as a decision DM. Tell the player the decision is with the developers, without promising the outcome (one public notice is allowed). Until the owner answers, status_card and other support writes are refused, so do not call them; finish waiting. Keep the ticket open: the answer wakes this task, then act on it." };
