@@ -163,6 +163,8 @@ function createSurge({ ledger, mcp, discord, config, now = () => Date.now(), ask
     const n = Number(r?.ticketNumber);
     if (!n) throw new Error(`incident not created: ${JSON.stringify(r).slice(0, 200)}`);
     p.state = "opened"; p.incident = n; p.openedBy = by; p.openedAt = now();
+    // Keir 10.0.3 (ticket 1831): an incident from Keir's own monitor has no player tickets to merge, so nobody owned it.
+    if (p.source === "watch") { (ledger.data.keirIncidents ||= {})[n] = { title: p.title, summary: p.summary || "", fingerprint: p.fingerprint || null, at: now() }; }
     for (const j of tickets) {
       if (TERMINAL.includes(j.state) || j.mergedInto) continue;
       try { await mergeJob(j, n, { requireIncident: true, reason: `part of incident #${n}: ${p.title}` }); }

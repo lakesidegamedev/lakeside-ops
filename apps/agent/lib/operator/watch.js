@@ -213,12 +213,31 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
   }
 
   // Severe findings go to staff as an incident proposal, once each.
+  // Keir 10.0.3 (ticket 1831): turn findings during planned work (turns paused, maintenance on) are expected, not incidents.
+  async function plannedWork() {
+    const [lock, cfg] = await Promise.allSettled([mcp.call("turndiag", "lock_status", {}, false),
+      mcp.call("heal-ops", "heal_query", { env: "prod", collection: "gameConfig", filter: { _id: "default" }, projection: { maintenanceMode: 1 }, limit: 1 }, false)]);
+    const l = lock.status === "fulfilled" ? lock.value : null, m = cfg.status === "fulfilled" ? cfg.value?.docs?.[0]?.maintenanceMode : null;
+    if (l?.paused) return `turns are paused${l.pauseReason ? ` (${l.pauseReason})` : ""}`;
+    if (m && m !== "off") return `maintenance is ${m}`;
+    return null;
+  }
+  // Plain words for staff: a finding's evidence is often a JSON stamp.
+  function plainEvidence(f) {
+    try { const e = JSON.parse(f.evidence); if (e && e.kind === "turn-failed") return `Turn ${e.turn} failed to finish.`; } catch {}
+    return String(f.evidence || "").slice(0, 400);
+  }
   async function escalate() {
     if (!propose || config.mode === "report") return;
+    let planned;
     for (const f of Object.values(state().findings)) {
       if (!f.severe || f.proposed || f.state !== "raised") continue;
+      if (/^turn:/.test(f.fp)) {
+        if (planned === undefined) { try { planned = await plannedWork(); } catch { planned = null; } }
+        if (planned) { if (!f.heldFor) { f.heldFor = planned; ledger.audit("watch_proposal_held", { fp: f.fp, reason: planned }); } continue; }
+      }
       try {
-        const proposal = await propose({ title: f.title.slice(0, 180), summary: `Keir found this itself, before any player report. ${f.evidence.slice(0, 400)}`, severe: true, source: "watch", fingerprint: f.fp });
+        const proposal = await propose({ title: f.title.slice(0, 180), summary: `Keir's monitor found this before any player report. ${plainEvidence(f)}`, severe: true, source: "watch", fingerprint: f.fp });
         if (proposal?.messageId && !proposal.postError) f.proposed = now();
       }
       catch (e) { log(`watch propose: ${e.message}`); }

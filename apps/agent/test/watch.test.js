@@ -295,3 +295,20 @@ test("a breach the check reports as a tool error is still a finding, not a faile
   await broken.w.tick({ turnProcessed: true });
   assert.ok(broken.l.data.audit.some((a) => a.kind === "watch_sensor_failed" && a.sensor === "invariants"), "a real failure is still a failure");
 });
+
+test("Keir 10.0.3: a turn failure during planned work is held, not proposed; afterwards it is proposed in plain words (ticket 1831)", async () => {
+  const h = harness();
+  let paused = true; const proposals = [];
+  const w = createWatch({ ledger: h.l, now: () => 9e9,
+    mcp: { call: async (_s, tool) => tool === "lock_status" ? { paused, pauseReason: paused ? "world reset" : null } : tool === "heal_query" ? { docs: [{ maintenanceMode: "off" }] } : {} },
+    propose: async (p) => { proposals.push(p); return { messageId: "staff1" }; } });
+  w.observe({ fp: "turn:6:failed", sensor: "turns", title: "Turn 6 failed", hard: true, severe: true, evidence: JSON.stringify({ turn: 6, kind: "turn-failed" }) });
+  await w.tick();
+  assert.equal(proposals.length, 0);
+  assert.match(h.l.data.watch.findings["turn:6:failed"].heldFor || "", /paused/);
+  paused = false;
+  await w.tick();
+  assert.equal(proposals.length, 1);
+  assert.match(proposals[0].summary, /Turn 6 failed to finish\./);
+  assert.doesNotMatch(proposals[0].summary, /\{"turn"/);
+});

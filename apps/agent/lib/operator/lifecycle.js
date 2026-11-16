@@ -227,7 +227,7 @@ async function sweepClosedChannel(job, ctx) {
 async function adoptOpenChannel(ch, ctx) {
   const { ledger, config } = ctx, d = ledger.data;
   const n = ctx.ticketNumber(ch.name);
-  if (!n || (["moderation", "incident"].includes(d.channels[ch.id]?.category) && !d.channels[ch.id]?.ownerDirectedAt) || d.channels[ch.id]?.claimedBy) return;
+  if (!n || (["moderation", "incident"].includes(d.channels[ch.id]?.category) && !d.channels[ch.id]?.ownerDirectedAt && !d.keirIncidents?.[n]) || d.channels[ch.id]?.claimedBy) return;
   const known = d.jobs[d.seen[`ticket:${n}`]];
   if (known?.channelClosed && known.channelId !== ch.id) {
     try { await ctx.adoptReopened(n, ch); } catch (e) { ctx.log(`reopened ticket ${n}: ${e.message}`); }
@@ -253,12 +253,18 @@ async function adoptOpenChannel(ch, ctx) {
 // intake card gets a support job. `staff` is the adopted claim, if any.
 function adoptFromIntake(ledger, ch, rows, { staff, category, number, config, now }) {
   const d = ledger.data;
-  if (staff || d.channels[ch.id]?.claimedBy || category === "moderation" || category === "incident" || d.seen[`ticket:${number}`]) return null;
+  // Keir 10.0.3: an incident Keir's own monitor opened is Keir's to work; other incidents stay with staff.
+  const keirIncident = category === "incident" && Boolean(d.keirIncidents?.[number]);
+  if (staff || d.channels[ch.id]?.claimedBy || category === "moderation" || (category === "incident" && !keirIncident) || d.seen[`ticket:${number}`]) return null;
   const card = rows.find((m) => m.author.id === config.botId && m.embeds?.length);
   if (!card) return null;
+  const inc = keirIncident ? d.keirIncidents[number] : null;
   const job = ledger.createJob(`ticket:${number}`, { kind: "ticket", role: "support", ticket: number, channelId: ch.id,
-    source: { channelId: ch.id, channelName: ch.name, content: "New ticket intake; read support_get and ticket_history before acting.", at: card.timestamp }, deadline: now + config.taskLifetimeMs });
-  job.summary = "New ticket needs investigation.";
+    ...(inc ? { keirIncident: true } : {}),
+    source: { channelId: ch.id, channelName: ch.name, content: inc
+      ? `Keir's own monitor opened this incident and Keir owns it: ${inc.title}. ${inc.summary || ""} Read turn_status and the latest turn failure, post one plain status in this channel (what failed, whether turns are moving, what happens next), merge player reports about the same problem into it, and close it once turns run cleanly again.`
+      : "New ticket intake; read support_get and ticket_history before acting.", at: card.timestamp }, deadline: now + config.taskLifetimeMs });
+  job.summary = inc ? "Keir-opened incident: own it until turns run cleanly." : "New ticket needs investigation.";
   return job;
 }
 

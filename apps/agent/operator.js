@@ -610,7 +610,7 @@ async function scan() {
         const first = await discord("GET", `/channels/${ch.id}/messages?after=0&limit=10`);
         const category = ticketCategory(first, config.botId) || "unknown";
         ledger.data.channels[ch.id] = { ...ledger.data.channels[ch.id], category };
-        if (category === "moderation" || category === "incident") stopModerationTicket(ch.id, ticketNumber(ch.name), category);
+        if (category === "moderation" || (category === "incident" && !ledger.data.keirIncidents?.[ticketNumber(ch.name)])) stopModerationTicket(ch.id, ticketNumber(ch.name), category);
         ledger.save();
       } catch (e) { log(`categorize ${ch.name}: ${e.message}`); }
     }
