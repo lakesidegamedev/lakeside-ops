@@ -26,9 +26,22 @@ function migrate(db) {
     CREATE TABLE IF NOT EXISTS failure_alerts (key TEXT PRIMARY KEY, type TEXT, at INTEGER NOT NULL, card_id INTEGER, reported_at INTEGER);`);
 }
 
+// An MCP tool error arrives as its JSON envelope; the message is the text inside it. Without unwrapping, the
+// quoted-string rule below blanked the whole message, so every tool error folded into one group (2026-11-16: a
+// dead code index was reported under an unrelated "parties is not available" title).
+function unwrapToolError(msg) {
+  const s = String(msg ?? "");
+  const i = s.indexOf("{");
+  if (i < 0) return s;
+  try {
+    const j = JSON.parse(s.slice(i));
+    const text = (j?.content || []).filter((c) => c?.type === "text").map((c) => c.text).join(" ");
+    return text ? `${s.slice(0, i)}${text}` : s;
+  } catch { return s; }
+}
 // Strip what changes between occurrences of the same problem.
 function normalize(msg) {
-  return String(msg ?? "")
+  return unwrapToolError(msg)
     .replace(/"[^"]*"|'[^']*'|`[^`]*`/g, "?")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "#")
     .replace(/\bticket[-\s#]*\d+\b/gi, "ticket #")

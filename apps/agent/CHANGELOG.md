@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.2 (2026-11-16)
+
+- Failure tracking reads the message inside an MCP tool error before grouping it. Every tool error had been folded into one group, so the code index outage was reported to Sentry under an unrelated "parties is not available for country maps" title.
+
 ## 10.1.1 (2026-11-16)
 
 - An approval DM is only deleted when the person it was sent to answers it. If someone else answers, or it is withdrawn, expires or is replaced, the DM is edited to say how it ended instead of disappearing (owner, 2026-11-16: ticket 1832's question vanished from the owner's DMs after Ariane handled it).
