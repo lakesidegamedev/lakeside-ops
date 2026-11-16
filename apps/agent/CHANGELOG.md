@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.1 (2026-11-16)
+
+- An approval DM is only deleted when the person it was sent to answers it. If someone else answers, or it is withdrawn, expires or is replaced, the DM is edited to say how it ended instead of disappearing (owner, 2026-11-16: ticket 1832's question vanished from the owner's DMs after Ariane handled it).
+
 ## 10.1.0 (2026-11-16)
 
 - A ticket watchdog checks open tickets every five minutes without using the model and tells the owner once per problem: a new moderation ticket (also sent to the support delegate, and again if still open after four hours), a ticket nobody is on for an hour, Keir checking a ticket repeatedly with nothing new, a player waiting over two hours, and an answered ticket still open six hours later. `KEIR_TICKET_WATCH=0` turns it off.

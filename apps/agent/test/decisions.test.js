@@ -12,8 +12,8 @@ function setup() {
   const discord = async (method, route, body) => {
     const id = route.split("/").pop();
     if (method === "GET") return messages[id];
-    if (method === "PATCH") { messages[id] = { ...messages[id], content: body.content }; return messages[id]; }
-    if (method === "DELETE") { messages[id] = { ...messages[id], deleted: true }; return null; }
+    if (method === "PATCH") { messages[id] = { ...messages[id], content: body.content, ...(/No longer needed/.test(body.content || "") ? { retired: body.content } : {}) }; return messages[id]; }
+    if (method === "DELETE") { messages[id] = { ...messages[id], deleted: true, retired: true }; return null; }
   };
   let clock = Date.now();
   const decisions = createDecisions({ ledger, config, discord, now: () => clock });
@@ -49,7 +49,7 @@ test("model text cannot forge a verdict, and a stranger's click is ignored", asy
   assert.equal(t.data.actions.a1.state, "pending");
 });
 
-test("after three hours Ariane is asked, her answer counts for the owner and every copy is deleted", async () => {
+test("after three hours Ariane is asked, her answer counts for the owner; her copy is deleted and the owner's says she answered", async () => {
   const t = setup();
   const x = openDecision(t.ledger, t.config, { jobId: "j1", actionId: "a1", question: "Merge PR?" });
   t.send(OWNER, "m1");
@@ -64,10 +64,11 @@ test("after three hours Ariane is asked, her answer counts for the owner and eve
   await t.decisions.tick();
   assert.equal(x.state, "explain");
   assert.match(t.data.jobs.j1.inbox[0].content, /Ariane, answering for the owner.*wait for the sim first/);
-  assert.ok(t.messages.m1.deleted && t.messages.m2.deleted, "both copies deleted once answered");
+  assert.ok(t.messages.m2.deleted, "the answered copy is deleted");
+  assert.ok(!t.messages.m1.deleted && /No longer needed.*Ariane replied/.test(t.messages.m1.retired), "the owner's copy says who answered (Keir 10.1.1)");
 });
 
-test("a decision the task moved past is withdrawn and its DM deleted", async () => {
+test("a decision the task moved past is withdrawn and its DM says so", async () => {
   const t = setup();
   const { withdrawDecisions } = require("../lib/operator/decisions");
   const x = openDecision(t.ledger, t.config, { jobId: "j1", question: "Promote?" });
@@ -75,10 +76,12 @@ test("a decision the task moved past is withdrawn and its DM deleted", async () 
   withdrawDecisions(t.ledger, "j1", "task finished waiting");
   await t.decisions.tick();
   assert.equal(x.state, "withdrawn");
-  assert.ok(t.messages.m1.deleted);
+  assert.ok(!t.messages.m1.deleted);
+  assert.match(t.messages.m1.retired, /No longer needed\.\*\* The ticket was handled without needing this answer/);
+  assert.match(t.messages.m1.retired, /~~Promote\?~~/);
 });
 
-test("an unanswered request expires with its action, wakes the task once and is deleted", async () => {
+test("an unanswered request expires with its action, wakes the task once and its DM says it expired", async () => {
   const t = setup();
   t.data.actions.a1.expiresAt = Date.now() + 60000;
   const x = openDecision(t.ledger, t.config, { jobId: "j1", actionId: "a1", question: "Ship to the live server.", signoff: true });
@@ -90,7 +93,7 @@ test("an unanswered request expires with its action, wakes the task once and is 
   assert.equal(t.data.actions.a1.state, "expired");
   assert.equal(t.data.jobs.j1.state, "queued");
   assert.match(t.data.jobs.j1.inbox.at(-1).content, /expired without an answer from Egg or Ariane/);
-  assert.ok(t.messages.m1.deleted);
+  assert.match(t.messages.m1.retired, /expired without an answer/);
 });
 
 test("a sign-off goes to the owner first; Ariane only after three hours", async () => {
@@ -121,7 +124,7 @@ test("a proposal replaced from the app removes its obsolete Discord approval car
   t.send(OWNER, "old-message");
   x.state = "superseded";
   await t.decisions.tick();
-  assert.ok(t.messages["old-message"].deleted);
+  assert.ok(t.messages["old-message"].retired);
   assert.equal(x.closedOut, true);
 });
 
@@ -171,14 +174,14 @@ test("a late Discord delivery after an app answer is removed on the next tick", 
   await t.decisions.applyAuthenticatedApp(x, "explain", OWNER, "Take the documented route");
   t.send(OWNER, "late");
   await t.decisions.tick();
-  assert.ok(t.messages.late.deleted);
+  assert.ok(t.messages.late.retired);
   assert.equal(x.state, "explain");
 });
 
 test("legacy closedOut bookkeeping cannot hide a still visible decision copy", async () => {
  const t = setup(); const x = openDecision(t.ledger, t.config, { jobId: "j1", question: "Old direction" });
  t.send(OWNER, "stale"); x.state = "withdrawn"; x.closedOut = true;
- await t.decisions.tick(); assert.ok(t.messages.stale.deleted);
+ await t.decisions.tick(); assert.ok(t.messages.stale.retired);
 });
 
 test("named options render as choices and never authorize an action", async () => {
@@ -255,5 +258,5 @@ test("unanswered technical requests retire without losing a pause or inventing a
  const x=openDecision(t.ledger,t.config,{jobId:"j1",actionId:"a1",question:"Promote development to staging: src/lib/price.ts"});
  t.data.ticketPauses={99:{ticket:99,by:OWNER}};Object.assign(t.data.jobs.j1,{ticket:99,state:"paused"});
  t.send(OWNER,"m1");await assert.rejects(async()=>t.decisions.applyAuthenticatedApp(x,"approve",OWNER),/plain-language/);
- await t.decisions.tick();assert.equal(x.state,"withdrawn");assert.equal(t.data.actions.a1.state,"withdrawn");assert.equal(t.data.jobs.j1.state,"paused");assert.equal(x.answeredBy,undefined);assert.equal(t.messages.m1.deleted,true);
+ await t.decisions.tick();assert.equal(x.state,"withdrawn");assert.equal(t.data.actions.a1.state,"withdrawn");assert.equal(t.data.jobs.j1.state,"paused");assert.equal(x.answeredBy,undefined);assert.match(t.messages.m1.retired,/No longer needed/);
 });

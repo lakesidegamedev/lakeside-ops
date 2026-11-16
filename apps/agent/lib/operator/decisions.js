@@ -5,9 +5,9 @@
 //
 // Keir 4.0 (owner, 2026-10-14): nothing ships to the live server without a
 // sign-off. It goes to the owner first and to Ariane only after three hours
-// unanswered; whoever answers first, every copy is then deleted. Every copy of
-// any request is deleted once it is answered, expires or is no longer needed,
-// so the DMs only ever hold live questions. Unanswered requests expire with their action (24
+// unanswered. The copy its recipient answered is deleted; every other copy is
+// edited to say how it ended (Keir 10.1.1, owner 2026-11-16), so a request
+// never silently disappears from a DM. Unanswered requests expire with their action (24
 // hours for most) or after two days when they carry no action.
 //
 // The buttons are handled by adhd-bot, which holds the Discord connection: it
@@ -235,8 +235,16 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     for (const entry of Object.values(d.outbox || {})) if (entry.decision === x.id && !entry.deliveredAt) {
       entry.deliveredAt = now(); entry.skipped = `decision ${x.state}`;
     }
-    await Promise.all(Object.values(x.sent || {}).filter((s) => s.messageId && !s.deleted).map((s) => discord("DELETE", `/channels/${s.channelId}/messages/${s.messageId}`).then(() => { s.deleted = true; }).catch(error => { if (error.status === 404) s.deleted = true; })));
-    x.closedOut = Object.values(x.sent || {}).every(s => !s.messageId || s.deleted); ledger.save();
+    // Keir 10.1.1 (owner, 2026-11-16): a copy is deleted only when its own recipient answered it. Any other ending
+    // (someone else answered, withdrawn, expired, replaced) edits the DM to say how it ended, so an approval never
+    // silently vanishes. Ticket 1832's question was deleted from the owner's DMs after Ariane handled it.
+    await Promise.all(Object.entries(x.sent || {}).filter(([, s]) => s.messageId && !s.deleted && !s.edited).map(([recipient, s]) => {
+      const own = x.answeredBy && x.answeredBy === recipient;
+      const req = own ? discord("DELETE", `/channels/${s.channelId}/messages/${s.messageId}`)
+        : discord("PATCH", `/channels/${s.channelId}/messages/${s.messageId}`, { content: outcomeNote(x, d, config), components: [], allowed_mentions: { parse: [] } });
+      return req.then(() => { if (own) s.deleted = true; else s.edited = now(); }).catch(error => { if (error.status === 404) s.deleted = true; });
+    }));
+    x.closedOut = Object.values(x.sent || {}).every(s => !s.messageId || s.deleted || s.edited); ledger.save();
   }
 
   async function check(x) {
@@ -284,7 +292,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
 
   async function tick() {
     // A decision the task moved past (or whose action resolved) stops asking.
-    const obsolete = Object.values(d.decisions || {}).filter(x => ["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain", "selected"].includes(x.state) && (!x.closedOut || Object.values(x.sent || {}).some(s => s.messageId && !s.deleted)));
+    const obsolete = Object.values(d.decisions || {}).filter(x => ["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain", "selected"].includes(x.state) && (!x.closedOut || Object.values(x.sent || {}).some(s => s.messageId && !s.deleted && !s.edited)));
     // Bound legacy cleanup and rotate failures so old copies cannot monopolize
     // the operator loop or starve newer decisions.
     for (const x of obsolete.sort((a, b) => (a.cleanupAttemptAt || 0) - (b.cleanupAttemptAt || 0)).slice(0, 6)) { x.cleanupAttemptAt = now(); await closeOut(x); }
@@ -377,6 +385,23 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
   } };
 }
 
+// How a decision ended, for the DM it replaces. Plain words for the owner; no ids or internals.
+function outcomeNote(x, d, config) {
+  const who = (id) => (id === config.ownerId ? "Egg" : (config.staffIds || []).includes(id) ? "Ariane" : "someone else");
+  const answer = x.selectedOption ? `chose "${x.selectedOption.label}"` : x.state === "approve" ? "approved it" : x.state === "reject" ? "rejected it" : "replied";
+  const reason = String(x.withdrawnReason || "");
+  const why = x.answeredBy ? `${who(x.answeredBy)} ${answer}.`
+    : x.state === "expired" ? "It expired without an answer."
+    : x.state === "superseded" ? "A newer question replaced it."
+    : /staff owns/.test(reason) ? "Staff took over the ticket."
+    : /task finished/.test(reason) ? "The ticket was handled without needing this answer."
+    : "It was cancelled.";
+  const job = d.jobs?.[x.jobId];
+  const tn = x.ticket || job?.ticket;
+  const last = job?.summary ? ` Last note: ${clean(job.summary).slice(0, 240)}` : "";
+  return `**No longer needed.** ${why}${last}\n\n~~${clean(x.question).slice(0, 300)}~~${tn ? `\n(Ticket ${tn})` : ""}`.replace(/[\u2013\u2014]/g, ",");
+}
+
 /** A task that finishes in any state but blocked no longer needs its open question. */
 function withdrawDecisions(ledger, jobId, reason) {
   for (const x of Object.values(ledger.data.decisions || {})) {
@@ -384,4 +409,4 @@ function withdrawDecisions(ledger, jobId, reason) {
   }
 }
 
-module.exports = { digestSiblings, REPING_MS, normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
+module.exports = { outcomeNote, digestSiblings, REPING_MS, normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
