@@ -433,7 +433,8 @@ if (failures) tickers.every("failures", 15 * 60000, async () => {
 }, { immediateMs: 120000 });
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
 // Keir 10.1.9: the closing rule. Resolves answered tickets on confirmation or six quiet hours (KEIR_AUTOCLOSE=0 turns it off).
-const autoCloser = require("./lib/operator/autoclose").createAutoCloser({ ledger, broker, config: { ...config, autoCloseEnabled: env.KEIR_AUTOCLOSE !== "0" }, log, killSwitch, held: ticketHeld });
+const autoCloser = require("./lib/operator/autoclose").createAutoCloser({ ledger, broker, config: { ...config, autoCloseEnabled: env.KEIR_AUTOCLOSE !== "0" }, log, killSwitch, held: ticketHeld,
+  cardDone: async (id) => { const c = await mcp.call("ops-knowledge", "kanban_get", { id }, false); return Number(c?.id) === Number(id) && c.lane === "done"; } });
 tickers.every("autoclose", 10 * 60000, async () => { const r = await autoCloser.tick(); if (r.closed?.length) log(`autoclose: closed ${r.closed.map((c) => `${c.ticket}(${c.rule})`).join(", ")}`); }, { immediateMs: 5 * 60000 });
 const guardianStatus = () => { try { return JSON.parse(require("node:fs").readFileSync(env.KEIR_GUARDIAN_STATUS_FILE || "/var/lib/keir-guardian/status.json", "utf8")); } catch { return null; } };
 const trustReporter = require("./lib/operator/trustreport").createTrustReporter({ ledger, config, log, killSwitch, mcp, readGuardian: guardianStatus });
