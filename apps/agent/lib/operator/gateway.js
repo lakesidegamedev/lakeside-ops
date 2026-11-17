@@ -172,6 +172,11 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     if (!historical && nTicket && d.channels[channel.id]?.keirStopped && role === "player") {
       d.seen[`discord:${message.id}`] = "ticket-stopped"; ledger.save(); return;
     }
+    // Keir 10.1.14 (ticket 1842): the owner answered in the ticket channel after a decision was raised. That is the answer,
+    // whether or not the message is phrased as a direction to Keir.
+    if (!historical && !summonTask && nTicket && actor === config.ownerId) {
+      try { const answered = require("./standdown").applyOwnerChannelAnswer(d, { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now() }); if (answered.length) { ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save(); } } catch {}
+    }
     if (!historical && explicit && nTicket && authority.granter(config, actor) && authority.isDirection(s.content)) {
       delete d.channels[channel.id]?.keirStopped;
       // Keir 5.7.1: the owner telling Keir to work a ticket marks it owner

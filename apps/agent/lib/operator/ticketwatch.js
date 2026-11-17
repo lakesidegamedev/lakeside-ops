@@ -14,6 +14,8 @@
 const HOUR = 3600000;
 const LIMITS = { unownedMs: HOUR, waitingMs: 2 * HOUR, silentMs: 6 * HOUR, askedMs: 26 * HOUR, moderationRemindMs: 4 * HOUR, spinRuns: 5 };
 const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
+const { SUPPORT_CLOSED, endedReason, closeTicketJobs } = require("./ticketstate");
+const { QUIET_MS } = require("./autoclose");
 const ms = (v) => (typeof v === "number" ? v : Date.parse(v || "") || 0);
 const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 
@@ -40,7 +42,10 @@ function assess(d, ticket, now, limits = LIMITS) {
   const pendingDecision = job.ownerDecisionPending || Object.values(d.decisions || {}).some((x) => x.jobId === job.id && x.state === "pending");
   const since = Math.max(posted, heard);
   const runs = (job.activationAt || []).filter((at) => ms(at) > since).length;
-  if (runs >= limits.spinRuns) out.push({ kind: "spinning", key: `spinning:${n}:${since}`, runs });
+  // Keir 10.1.13: an answered ticket waiting out the auto-closer's quiet clock is not spinning (1842); the silent
+  // check below owns it if it is still open long after.
+  const answered = posted > 0 && posted >= heard;
+  if (runs >= limits.spinRuns && !(answered && now - posted < limits.silentMs + QUIET_MS)) out.push({ kind: "spinning", key: `spinning:${n}:${since}`, runs });
   if (heard > posted && now - heard >= limits.waitingMs) out.push({ kind: "waiting", key: `waiting:${n}:${heard}`, hours: Math.floor((now - heard) / HOUR) });
   else if (since && !pendingDecision && now - since >= (job.resolutionReadyAt ? limits.silentMs : limits.askedMs)) out.push({ kind: "silent", key: `silent:${n}:${since}`, hours: Math.floor((now - since) / HOUR) });
   return out;
@@ -80,6 +85,22 @@ function createTicketWatch({ ledger, mcp, config, now = () => Date.now(), log = 
         fresh.push({ t, f });
       }
     }
+    // Keir 10.1.13 (owner): never alert about a ticket that is already over. The list can lag, so each alerted
+    // ticket's real record is read; a resolved or closed one (or a channel deleted outside Keir) stops its jobs instead.
+    const ended = new Map();
+    for (const { t } of fresh) {
+      if (ended.has(t.number)) continue;
+      let why = endedReason(d, t.number);
+      if (!why) {
+        const g = await detail(t.number);
+        const status = String(g?.status || "");
+        if (SUPPORT_CLOSED.has(status) || g?.resolution) why = `support status ${status || "resolved"}`;
+        else if (g?.conversation?.channelClosed || g?.conversation?.channelDeleted || g?.conversation?.status === "closed") why = "channel closed";
+      }
+      ended.set(t.number, why || null);
+      if (why) { closeTicketJobs(ledger, t.number, why, { channelGone: true, skipRunning: true }); ledger.audit("ticket_watch_skipped_ended", { ticket: t.number, why }); }
+    }
+    for (let i = fresh.length - 1; i >= 0; i--) if (ended.get(fresh[i].t.number)) fresh.splice(i, 1);
     // Forget tickets that closed, so a reopened ticket alerts again.
     const live = new Set(open.map((t) => String(t.number)));
     for (const k of Object.keys(state.alerted)) if (!live.has(k.split(":")[1])) delete state.alerted[k];

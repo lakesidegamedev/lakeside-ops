@@ -10,6 +10,7 @@
 // or paused, or the player's last message is unanswered.
 const HOUR = 3600000, MIN = 60000;
 const QUIET_MS = 6 * HOUR;
+const standdown = require("./standdown");
 const BUG_LANES = new Set(["bug", "data_repair", "outage"]);
 
 // A confirmation is a thanks or a "that worked" with no new question and no "still broken".
@@ -51,6 +52,9 @@ function decideClose(t, now, cfg = {}) {
   const silent = t.firstAnswerAfterHumanAt ? Math.max(humanAt, t.firstAnswerAfterHumanAt) : Math.max(humanAt, t.lastReplyAt || 0, answeredAt);
   if (now - silent < quiet) return none(`quiet for ${Math.round((now - silent) / MIN)} min, needs ${Math.round(quiet / MIN)}`);
   if (t.liveAt && now - t.liveAt >= quiet && now - humanAt >= quiet) return { action: "close", rule: "b", reason: "the fix is live and the player has been quiet for 6 hours" };
+  // Keir 10.1.14 (ticket 1838): "your question is answered" over a still-open "still being looked into". An answer that
+  // is not the last word cannot be closed on while the latest staff or bot post promises a follow-up that never came.
+  if (t.promisedFollowUp) return none("a follow-up was promised and has not come");
   if (t.answeredAt && !t.fixPending && !(BUG_LANES.has(t.lane) && !t.liveAt)) return { action: "close", rule: "c", reason: "the question was answered and the player has been quiet for 6 hours" };
   return none("a fix is still in progress");
 }
@@ -116,7 +120,7 @@ function createAutoCloser({ ledger, broker, config, now = () => Date.now(), log 
     // Bot and staff posts from any path (StarmerBot, support_public_update) answer the player, not only Keir's own jobs.
     const answers = rows.filter(isAnswer);
     const lastAnswerAt = Math.max(0, ...answers.map((m) => ts(m.timestamp)));
-    const base = { ...s, lastReplyAt: Math.max(s.lastReplyAt, lastAnswerAt) };
+    const base = { ...s, lastReplyAt: Math.max(s.lastReplyAt, lastAnswerAt), promisedFollowUp: standdown.outstandingPromise(rows, isAnswer) };
     const last = human.at(-1);
     if (!last) return base;
     const at = ts(last.timestamp);
