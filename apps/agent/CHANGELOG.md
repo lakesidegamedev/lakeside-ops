@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.13 (2026-11-17)
+
+- Keir no longer reports or talks about tickets that are already over. Before any owner alert (stuck-ticket watch, "needs a person", the sweeper) the ticket's real status is read, and resolved, closed or merged tickets are skipped. A ticket channel deleted outside Keir counts as resolved: every Keir job on it stops. Once a ticket is resolved, by Keir, staff or the support service, nothing more is posted to the player, so the "still working on it" line after tickets 1842 and 1836 closed cannot happen again. An answered ticket waiting out the closer's quiet hours is no longer flagged as "checked many times and not closed".
+
 ## 10.1.12 (2026-11-17)
 
 - A ticket with two changes is only called live when the release proof covers every one of its pull requests. On ticket 1842 one merged change made the whole ticket look live, so a live notice went out for a change still on its way and was corrected three minutes later.

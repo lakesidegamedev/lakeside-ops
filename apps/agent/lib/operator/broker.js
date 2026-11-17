@@ -539,6 +539,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     active(job);
     const old = job.effects[key];
     if (old?.state === "done") return old.result;
+    // Keir 10.1.13: nothing is said to a player on a ticket that is over (1842 got "still working on it" a minute after it closed).
+    if (settle?.kind === "reply" && settle.ticket) { const why = require("./ticketstate").endedReason(d, settle.ticket, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: settle.ticket, why }); throw new Error(`Ticket ${settle.ticket} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
     // A merge receipt is settled from GitHub by effectrecovery.js; asking the
     // owner to inspect it pinged them about a race that fixes itself (ticket 1619).
     if (old && old.state !== "rejected") throw new Error(require("./effectrecovery").MERGE_KEY.test(key)
@@ -823,6 +825,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
+    { const why = require("./ticketstate").endedReason(d, ticketNo, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: ticketNo, why }); throw new Error(`Ticket ${ticketNo} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
     notePageSymptom(ticketNo, message);
     await pageGate(job, ticketNo, message);
     guardTicketNumbers(job, ticketNo, message);
@@ -2381,7 +2384,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!selfOwned && (input.kind || "question") === "question" && r?.id) {
         const rec = job.raisedToDevelopers.find((x) => x.id === r.id);
         if (rec) { rec.needsHuman = true; rec.notifiedAt = now(); }
-        ledger.notify(`handoff:${r.id}`, "owner", `${n ? `Ticket ${n} needs a person: ` : "Needs a person: "}${title}\n\n${detail.slice(0, 900)}`);
+        if (!(n && require("./ticketstate").endedReason(d, n, job))) ledger.notify(`handoff:${r.id}`, "owner", `${n ? `Ticket ${n} needs a person: ` : "Needs a person: "}${title}\n\n${detail.slice(0, 900)}`);
         ledger.save();
       }
       if (input.kind === "decision") {
@@ -3967,6 +3970,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_resolve") {
         if (result?.ok !== true) throw new Error("support resolution was not confirmed; no success recorded");
         job.resolutionSubmitted = true; job.resolutionSubmittedAt ||= now();
+        require("./ticketstate").closeTicketJobs(ledger, job.ticket, "resolved", { except: job });
         if (result.receipt?.receiptId) job.resolutionReceiptId = result.receipt.receiptId;
         if (result.receipt?.receiptId) {
           require("./ticketoutcomes").observeTicket(d, job, { number: job.ticket, status: result.status || "resolved",
@@ -4306,6 +4310,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Only once something on the ticket has been read: an ordinary wait before any investigation is the wait
       // rules' business (the full suite on CI, 2026-11-13: five wait and handoff tests broke without this).
       if (["done", "waiting"].includes(state) && job.kind === "ticket" && job.ticket && !job.codingParent && !developerTask(job) && !developerTicket(job) && !ownerDirected(job)
+          && !require("./ticketstate").endedReason(d, ticketOf(job), job)
           && Object.values(d.jobs).some((j) => ticketOf(j) === ticketOf(job) && (j.lastGameReadAt || j.lastCodeReadAt || j.replyAttemptRefusedAt))
           && process.env.KEIR_UNANSWERED_GUARD !== "0") {
         const tn = ticketOf(job), last = (d.ticketPosts?.[tn] || []).filter((p) => !isCardPost(p)).at(-1), human = humanAt(tn);

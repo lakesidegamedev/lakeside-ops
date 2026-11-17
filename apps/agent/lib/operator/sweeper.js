@@ -35,7 +35,7 @@ const CLOSED = new Set(["done", "cancelled", "dismissed"]);
 // through ticketoutcomes (the 15 minute reconcile) and through an optional supportClosed(root) hook.
 const SUPPORT_CLOSED = new Set(["resolved", "closed", "merged"]);
 function supportRecordClosed(d, n, root, hook) {
-  for (const o of Object.values(d.ticketOutcomes || {})) if (Number(o.ticket) === Number(n) && !o.superseded && (SUPPORT_CLOSED.has(String(o.status)) || o.mergedInto)) return true;
+  if (require("./ticketstate").endedReason(d, n, root)) return true;
   try { return Boolean(hook?.(root)); } catch { return false; }
 }
 

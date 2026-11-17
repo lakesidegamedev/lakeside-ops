@@ -681,6 +681,17 @@ async function scan() {
     lifecycle.applyEffects(ledger, effects);
     if (closed) for (const slot of Object.values(active)) if (slot?.job.id === job.id) slot.controller.abort();
   }
+  // Keir 10.1.13: an ended ticket (channel deleted outside Keir, support record closed or resolved, resolution
+  // submitted) stops every job on it, so nothing posts or alerts afterwards. A job mid-turn finishes that turn;
+  // the post guard keeps it silent and its next wake ends it.
+  try {
+    const ts = require("./lib/operator/ticketstate"), d = ledger.data;
+    for (const n of new Set(Object.values(d.jobs).filter((j) => j.kind === "ticket" && j.ticket).map((j) => Number(j.ticket)))) {
+      const why = ts.endedReason(d, n);
+      if (!why) continue;
+      if (ts.closeTicketJobs(ledger, n, why, { channelGone: true, skipRunning: true })) ledger.save();
+    }
+  } catch (e) { log(`ended tickets: ${e.message}`); }
   // Performance sensors must not delay intake or the next support scan.
   if (!performanceReconciliation) {
     performanceReconciliation = require("./lib/operator/ticketoutcomes").reconcileTickets({ ledger,
