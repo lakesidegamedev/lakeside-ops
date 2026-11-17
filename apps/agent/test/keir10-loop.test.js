@@ -186,7 +186,8 @@ test("bug lane: the first activation is full, then a wake is compact and under 3
   t.diagnostic(`bug wake: brief ${f.seen.brief.length} + context ${f.seen.prompt.length} = ${total}`);
   assert.ok(total < 35000, `a wake is ${total} characters`);
   const ctx = JSON.parse(f.seen.prompt);
-  assert.ok(Object.keys(ctx)[0] === "whatChanged", "the delta leads the prompt");
+  // Keir 10.3: the durable case file and the shift log lead every ticket activation, then the delta.
+  assert.ok(Object.keys(ctx).find((k) => !["ticketCaseFile", "shiftLog"].includes(k)) === "whatChanged", "the delta leads the prompt after the continuity keys");
   assert.equal(ctx.whatChanged.newMessages, 1);
   assert.equal(ctx.orientation, undefined, "no orientation discovery on a wake");
   assert.equal(ctx.readyReads, undefined);
