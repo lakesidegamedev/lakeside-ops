@@ -105,6 +105,7 @@ function route(job, d = {}, live = null) {
   if (tag === "moderation" || ["moderation", "investigation", "account", "appeal"].includes(cat)) return out("people", "moderation or account matter");
   if (tag !== "data_repair" && PEOPLE_TEXT.test(text) && !["bug_report"].includes(tag)) return out("people", "the ticket is about an account, ban or conduct matter");
   if (tag === "data_repair") return out("data_repair", "someone asks for live data to be corrected");
+  if (tag !== "bug_report" && require("./pricereport").isSuspectNumberReport(text)) return out("bug", "a cost or value question with a figure: a possibly wrong number, read the live value first");
   if (tag !== "bug_report" && HOWTO_TEXT.test(text) && !SYMPTOM_TEXT.test(text)) return out("question", "a how-to or where-is question that reports nothing broken");
   if (tag === "bug_report" || cat === "bug") return out("bug", cat === "bug" && tag !== "bug_report" ? "bug channel" : "intake tagged it a bug");
   if (["design_feedback", "feature_request"].includes(tag)) return out("idea", "an idea or design argument");

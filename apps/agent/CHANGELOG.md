@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Wrong-looking prices (ticket 1841, same family as 1837). "Why does 1 depot cost 22 million dollars" is now treated as a report of a number that may be wrong, not a rules question: the fast lane no longer answers it and the ticket goes to the investigating lane. An explanation or defence of a price ("is the build price for ...", "priced off ...", "X, Y and Z move it up or down") is refused until a live read exists and backs it, and is always refused when the read shows the price is about twice the company's cash or more; Keir then says it looks wrong, that it is checking it as a possible bug, and raises it to the developers with the figures. The composition check now also catches that phrasing.
+
 ## 10.1.4 (2026-11-17)
 
 - Ticket honesty (ticket 1837). A reply that explains what a number is made of ("the total adds X and fees") must now match something Keir read on the ticket, or it is held back and then labelled unconfirmed. A "not confirmed" line is refused when the player was already answered and nothing new was read, and the code-written "no confirmed answer" line is skipped when the player already has a reply. A bug, data or outage task can no longer finish with a summary that names a read it has not done ("next activation", "next investigator to read"); it is refused twice and told to do the read. The owner DM for an unanswered ticket now lists what was checked, the evidence, what the player was told, and the specific blocker.

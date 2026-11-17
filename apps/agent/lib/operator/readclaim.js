@@ -16,6 +16,14 @@ const MEASURE = new RegExp(`\\b(?:${MEASURE_SUBJECT})(?:\\s+[\\w%'’.-]+){0,2}?
 // Keir 10.2 (ticket 1837): "the $3.7B adds market share and fees" explains what a number is made of. That is a cause, and it went
 // out after one code lookup that never mentioned market share. A composition clause is checked against the reads like a "shows" one.
 const COMPOSE = new RegExp(`(?:\\b(?:${MEASURE_SUBJECT})|\\b\\d[\\d,.]*\\s?(?:[kmbKMB]n?|million|billion|thousand)\\b)(?:\\s+[\\w%'’.$-]+){0,2}?\\s+(?:adds?|includes?|made up of|consists? of|is made of|on top of|comes? from|is the sum of)\\b([^]*)$`, "i");
+// Keir 10.2.1 (ticket 1841): "$22.2M is the build price for what one depot can move a day ... priced off what that output is worth ...
+// Your market share, borrowing rates, CEO skill and tech move it up or down" went out 2 seconds after the intro with no read at all.
+// A price explained as made of, priced off, or moved by named things is a composition claim and needs a read that names them.
+const PRICE_COMPOSE = [
+  /\b(?:is|was)\s+(?:the|a)\s+(?:build\s+|total\s+|base\s+)?(?:price|cost)\s+(?:for|of)\b([^]*)$/i,
+  /\bpric(?:ed|es)\s+(?:off|by|from)\b([^]*)$/i,
+  /^([^]*?)\b(?:move|moves|raise|raises|lower|lowers|push|pushes|drive|drives)\s+(?:it|the (?:price|cost))\s+up(?:\s+or\s+down)?\b/i,
+];
 const NOT_A_CLAIM_GAP = /\b(?:to|should|must|need|needs|needed|if|whether|so that)\b/i; // "asked for the tile to show X" is a request, not a finding
 
 // A clause that denies, hedges or restates the player is not a claim of a fact read.
@@ -67,7 +75,9 @@ function readClaims(message) {
       const clause = clauses[i];
       let m = CLAIM.exec(clause);
       if (!m) { const k = MEASURE.exec(clause); if (k) { m = [k[0], "", k[1]]; m.index = k.index; } }
-      if (!m) { const k = COMPOSE.exec(clause); if (!k) continue; m = [k[0], "", k[1]]; m.index = k.index; }
+      if (!m) { const k = COMPOSE.exec(clause); if (k) { m = [k[0], "", k[1]]; m.index = k.index; } }
+      if (!m) for (const re of PRICE_COMPOSE) { const k = re.exec(clause); if (k) { m = [k[0], "", k[1]]; m.index = k.index; break; } }
+      if (!m) continue;
       const object = String(m[2] || "").trim();
       const claimText = clause.slice(m.index);
       if (NOT_A_CLAIM_GAP.test(m[1] || "") || NEGATED.test(clause) || HEDGED.test(clause) || (i > 0 && HEDGED.test(clauses[i - 1])) || RESTATES_PLAYER.test(sentence) || FUTURE.test(claimText) || CONDITIONAL.test(clause) || (i > 0 && CONDITIONAL.test(clauses[i - 1]))) continue;

@@ -49,6 +49,9 @@ function plan(job, config = {}, tags = job.tags || {}) {
   if (!messages.length) return { skip: "no new player message" };
   if (attachmentsIn(messages)) return { skip: "attachment" };
   const question = messages.map((m) => String(m.content).trim()).join("\n").slice(0, 2000);
+  // Keir 10.2.1 (ticket 1841): a cost or value question with a figure in it is a report of a number that looks wrong. Ask's
+  // explanation of how prices work would defend it; the agent reads the live value first.
+  if (require("./pricereport").isSuspectNumberReport(question)) return { skip: "suspected wrong number" };
   if (job.fastLane?.answers && PUSHBACK.test(question)) return { skip: "pushback" };
   return { kind: answer ? "answer" : "redirect", question };
 }
