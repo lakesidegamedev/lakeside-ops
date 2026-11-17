@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.12 (2026-11-17)
+
+- A ticket with two changes is only called live when the release proof covers every one of its pull requests. On ticket 1842 one merged change made the whole ticket look live, so a live notice went out for a change still on its way and was corrected three minutes later.
+
 ## 10.1.11 (2026-11-17)
 
 - The ticket closer now actually closes. A player's thanks counts as a confirmation even when Keir acknowledged it afterwards. The six quiet hours run from the player's last message or the first answer after it, so later Keir posts and card edits no longer restart them. Replies posted by the bot or staff through any path count as answered, so a ticket is not stuck waiting on "the player wrote after the last reply". Developer handoffs are released when the fix is verified live, the linked GitHub issue is closed, or the kanban card is done, so a shipped fix no longer blocks closing forever.

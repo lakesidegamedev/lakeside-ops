@@ -650,11 +650,11 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       written: { done: written },
       development: { done: merged || release.some((r) => r.development) },
       staging: { done: release.some((r) => r.staging) },
-      main: { done: release.some((r) => r.main) },
+      main: { done: release.some((r) => r.main) && require("./livecoverage").mainCovered(jobs) },
       // "Live, confirmed in game" (review 2026-10-19: 1602's card said it for a
       // change that never moved the player's mine): a turn processed after
       // the fix, then a game read after that turn.
-      verified: { done: release.some((r) => r.main) && jobs.some((j) => (j.turnChecks || []).some((at) => (j.lastGameReadAt || 0) > at)) },
+      verified: { done: release.some((r) => r.main) && require("./livecoverage").mainCovered(jobs) && jobs.some((j) => (j.turnChecks || []).some((at) => (j.lastGameReadAt || 0) > at)) },
       // Keir 8.4 (owner, 2026-11-06): "handed to the developers" needs a real queue item, pull request or
       // decision; "handed to an investigator" needs a real investigation job. Nobody-assigned handoffs
       // were posted on 1766 and 1773.
