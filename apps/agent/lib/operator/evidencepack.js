@@ -32,17 +32,22 @@ function plan(lane, ctx) {
   const reporter = { id: "reporter", needs: "tool:resolve_reporter", run: (c) => c.tool("resolve_reporter", {}) };
   const trail = { id: "player_trail", needs: "tool:player_trail", run: (c) => c.tool("player_trail", {}) };
   const turn = { id: "turn_status", needs: "tool:turn_status", run: (c) => c.tool("turn_status", {}) };
+  // Keir 10.4 (ticket 1852): who else is already on this. Only a result with something in it is kept.
+  const team = { id: "team_activity", needs: "tool:team_activity", run: async (c) => {
+    const r = await c.tool("team_activity", { topic: keywords(q, 5).join(" ") });
+    return r && r.report && /^\d\. .*:$/m.test(r.report) ? { covered: r.covered === true, report: r.report, instruction: r.instruction } : null;
+  } };
   const ask = { id: "ask_health", needs: "tool:ask", run: (c) => c.tool("ask", { action: "health" }) };
   // Keir 10 (replay 2026-11-15): an outage never found the open incident it belonged to; look for it up front.
   const similar = { id: "similar_reports", needs: "tool:similar_reports", run: (c) => c.tool("similar_reports", { text: q.slice(0, 300) }) };
   return ({
-    question: [wiki, code, ask],
-    idea: [wiki, code],
+    question: [wiki, code, ask, team],
+    idea: [wiki, code, team],
     advice: [ask, wiki],
-    bug: [reporter, trail, code, similar],
-    data_repair: [reporter],
-    outage: [turn, similar],
-    people: [reporter],
+    bug: [reporter, trail, code, similar, team],
+    data_repair: [reporter, team],
+    outage: [turn, similar, team],
+    people: [reporter, team],
   })[lane] || [];
 }
 
@@ -66,7 +71,7 @@ async function build({ lane, question, servers = [], tools = [], read, tool, tim
   const items = [];
   results.forEach((r, i) => {
     const s = runnable[i];
-    if (r.status === "fulfilled") items.push({ id: s.id, result: clip(r.value, per) });
+    if (r.status === "fulfilled") { if (r.value != null) items.push({ id: s.id, result: clip(r.value, per) }); }
     else missing.push({ id: s.id, reason: String(r.reason?.message || r.reason).slice(0, 200) });
   });
   return { lane, items, missing, ms: now() - started };

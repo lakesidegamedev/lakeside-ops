@@ -291,7 +291,7 @@ function mapSnapshotScopeCheck(args) {
 // Without them a finding filed "please run this query" handoffs that nobody
 // claimed overnight (MNM wind-up, unpaid income tax, 2026-10-16).
 // Keir's own tools and github actions that models keep sending through read_tool with a guessed server.
-const NATIVE_NOT_READ = new Set(["turn_status", "sector_builds", "reporter_state", "check_draft", "player_trail", "resolve_reporter", "request_log", "past_ticket", "similar_reports", "ticket_history", "recent_changes", "source_history", "recall", "ask", "view_page", "view_attachment"]);
+const NATIVE_NOT_READ = new Set(["turn_status", "sector_builds", "team_activity", "reporter_state", "check_draft", "player_trail", "resolve_reporter", "request_log", "past_ticket", "similar_reports", "ticket_history", "recent_changes", "source_history", "recall", "ask", "view_page", "view_attachment"]);
 const GITHUB_ACTION_NAMES = new Set(["deployed", "where", "status", "ci_failures", "ci_runs", "issues", "history", "watch", "review", "pr_diff"]);
 // A refusal that names the way out. The bare "read tool is outside support scope" was repeated up to 13 times per
 // ticket because nothing in it told the model which call to make instead.
@@ -883,6 +883,23 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       ? "Not posted: the player's page still shows the old figure after the fix and a turn on it, so it is not fixed. The player has been told the change is out and you are checking why. Find the cause; do not say it is fixed until the figure changes."
       : "Not posted: the player's own page could not be re-read to confirm the fix, so it cannot be called fixed. Say the change is released and ask them to check after the next turn.");
   }
+  // Keir 10.4 (ticket 1852): never tell the player "no fix needed" or post a correction while staff, a card, a worker or a PR
+  // is already on the issue. Reads team_activity (cached 60 s); a failed read lets the post through. Refused at most three
+  // times per ticket, so a post is never stuck on it.
+  async function teamCoverGate(job, ticketNo, message, opts = {}, kindOverride = null) {
+    if (opts.system || opts.collect || job.kind !== "ticket" || job.role === "player" || !ticketNo) return;
+    const teamCover = require("./teamcover"), kind = kindOverride || teamCover.conclusionOf(message);
+    if (!kind) return;
+    const refused = (d.teamCoverRefusals ||= {});
+    if ((refused[ticketNo] || 0) >= 3) return;
+    job.teamActivityAt = now();
+    const activity = await w3.teamActivity(job, { ticket: ticketNo }).catch((e) => { ledger.audit("team_activity_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); return null; });
+    const why = teamCover.refusal(kind, activity);
+    if (!why) return;
+    refused[ticketNo] = (refused[ticketNo] || 0) + 1; ledger.save();
+    ledger.audit("team_cover_refused", { job: job.id, ticket: ticketNo, conclusion: kind, attempt: refused[ticketNo], staffSaidFixing: Boolean(activity.staffSaidFixing) });
+    throw new Error(`${why}\n${activity.report}`);
+  }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
     { const why = require("./ticketstate").endedReason(d, ticketNo, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: ticketNo, why }); throw new Error(`Ticket ${ticketNo} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
@@ -901,6 +918,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         throw new Error("Not posted: this asks the player who they are, but their game account is linked to this ticket. Look it up with reporter_state (it returns the linked account and its characters) and never ask a linked player for their character name, username or account. Ask only for what you cannot read.");
       }
     }
+    await teamCoverGate(job, ticketNo, message, opts);
     guardTicketPostRules(job, ticketNo, message, opts);
     // Keir 9 (feature B): a draft that contradicts the checked answer already given on the same fault is refused
     // once, with both texts; the next post goes out whether it aligns or explains why this case differs.
@@ -2059,7 +2077,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return job.reporterCharacter;
   }
   // Keir 10 (W3): ask, player_trail, resolve_reporter, turn_status, request_log.
-  const w3 = require("./w3tools").createW3Tools({ config, mcp, ...(config.w3Fetch ? { fetcher: config.w3Fetch } : {}), staff: (job) => job.role === "owner" || developerTask(job), now, log: (m) => config.log?.(m) });
+  const w3 = require("./w3tools").createW3Tools({ config, mcp, ...(config.w3Fetch ? { fetcher: config.w3Fetch } : {}), staff: (job) => job.role === "owner" || developerTask(job), now, log: (m) => config.log?.(m), discord, exec, ledger, isModerator: (id) => conversation?.isModerator?.(id) || false });
   // Keir 2.0: the numbers and text of everything read this activation are the
   // evidence a public post may quote (see guardNumbers and secondLook).
   const NO_EVIDENCE = new Set(["check_draft", "channel_reply", "progress_update", "checkpoint", "finish", "handoff", "task_progress", "ticket_record", "remember"]);
@@ -2963,7 +2981,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const url = r?.url || r?.liveUrl || `https://ops.lakesidegames.net/reports/${slug}`;
       return { published: true, slug, public: wantsPublic, url, instruction: "Give the requester the URL in one line with the headline finding." };
     }
-    if (w3.has(name)) { w3.refreshAskHealth(); return w3.call(job, name, input, signal); }
+    if (w3.has(name)) { w3.refreshAskHealth(); if (name === "team_activity") job.teamActivityAt = now(); return w3.call(job, name, input, signal); }
     if (name === "sentry") {
       if (!developerTask(job) && !developerTicket(job) && job.kind !== "finding") throw new Error("Sentry reads are for developer-directed tasks and Keir's own findings");
       const token = process.env.SENTRY_API_TOKEN, base = (process.env.SENTRY_API_URL || "https://sentry.io").replace(/\/$/, ""), org = process.env.SENTRY_ORG;
@@ -3770,6 +3788,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const claim = outcomeClaims(text).find((c) => c.kind === "money" ? !(c.future ? ev.money.agreed : ev.money.done) : !c.future && !ev[c.kind].done);
         if (claim) throw new Error(`Not posted: "${claim.sentence}" states an outcome Keir has no receipt for. ${NEED[claim.kind]}`);
       }
+      if (items.some((i) => i.stage === "answered")) await teamCoverGate(job, ticketNo, "answered, no fix needed", {}, "no_fix");
       const r = await upsertCard(job, ticketNo, { items, status });
       job.lastPublishedAt = now(); ledger.save();
       return { [r.posted ? "posted" : "updated"]: true, bumped: r.bumped, fixes: items.length };
