@@ -231,3 +231,19 @@ test("Keir 10: a bare acknowledgement after a real answer owes no reply (replay 
   f.advance(1);
   await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
 });
+
+test("Keir 10.2 (ticket 1837): one reply per player message until findings, no 'not confirmed' line after an answer", async () => {
+  const f = setup();
+  f.job.lastCodeReadAt = 1; f.job.codeLookups = 1; f.job.observedPlayerAt = f.now();
+  f.advance(1);
+  await f.broker.tool(f.job, "channel_reply", { message: "Your cash is far below that total, so leave the Open button alone." });
+  f.advance(1);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "I haven't confirmed why one clinic shows that total yet, so I won't guess." }), /One reply per player message/);
+});
+
+test("Keir 10.2 (ticket 1837): a bug task cannot finish naming a read it has not done", async () => {
+  const f = setup();
+  f.job.lane = "bug"; f.job.lastRunStartedAt = f.now();
+  for (let i = 0; i < 2; i++) await assert.rejects(f.broker.tool(f.job, "finish", { state: "blocked", summary: "Blocked on reading the build dialog footer in the next activation." }), /names work you have not done/);
+  assert.equal(f.job.namedWorkRefusals.n, 2);
+});

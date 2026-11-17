@@ -13,6 +13,9 @@ const CLAIM = new RegExp(`\\b(?:${SOURCE})\\b((?:\\s+[\\w%'’.-]+){0,3}?)\\s+(?
 // "The 100% was the share of output you put up for sale": a figure said to be a measure of something.
 const MEASURE_SUBJECT = "gauge|meter|indicator|counter|metric|tile|figure|number|value|percentage|percent|label|badge|chip|bar|line|total|count|reading|\\d[\\d,.]*\\s?%";
 const MEASURE = new RegExp(`\\b(?:${MEASURE_SUBJECT})(?:\\s+[\\w%'’.-]+){0,2}?\\s+(?:is|was|means|meant|represents|represented|measures|measured|equals|stands for)\\s+(?:(?:really|actually|simply|just|only|in fact)\\s+)?((?:the\\s+)?(?:share|amount|number|count|total|percentage|fraction|proportion|measure|sum|ratio|rate|portion)\\s+of\\b[^]*|how\\s+(?:much|many)\\b[^]*|an?\\s+(?:count|measure|total|share|ratio|percentage)\\b[^]*)$`, "i");
+// Keir 10.2 (ticket 1837): "the $3.7B adds market share and fees" explains what a number is made of. That is a cause, and it went
+// out after one code lookup that never mentioned market share. A composition clause is checked against the reads like a "shows" one.
+const COMPOSE = new RegExp(`(?:\\b(?:${MEASURE_SUBJECT})|\\b\\d[\\d,.]*\\s?(?:[kmbKMB]n?|million|billion|thousand)\\b)(?:\\s+[\\w%'’.$-]+){0,2}?\\s+(?:adds?|includes?|made up of|consists? of|is made of|on top of|comes? from|is the sum of)\\b([^]*)$`, "i");
 const NOT_A_CLAIM_GAP = /\b(?:to|should|must|need|needs|needed|if|whether|so that)\b/i; // "asked for the tile to show X" is a request, not a finding
 
 // A clause that denies, hedges or restates the player is not a claim of a fact read.
@@ -63,7 +66,8 @@ function readClaims(message) {
     for (let i = 0; i < clauses.length; i++) {
       const clause = clauses[i];
       let m = CLAIM.exec(clause);
-      if (!m) { const k = MEASURE.exec(clause); if (!k) continue; m = [k[0], "", k[1]]; m.index = k.index; }
+      if (!m) { const k = MEASURE.exec(clause); if (k) { m = [k[0], "", k[1]]; m.index = k.index; } }
+      if (!m) { const k = COMPOSE.exec(clause); if (!k) continue; m = [k[0], "", k[1]]; m.index = k.index; }
       const object = String(m[2] || "").trim();
       const claimText = clause.slice(m.index);
       if (NOT_A_CLAIM_GAP.test(m[1] || "") || NEGATED.test(clause) || HEDGED.test(clause) || (i > 0 && HEDGED.test(clauses[i - 1])) || RESTATES_PLAYER.test(sentence) || FUTURE.test(claimText) || CONDITIONAL.test(clause) || (i > 0 && CONDITIONAL.test(clauses[i - 1]))) continue;
