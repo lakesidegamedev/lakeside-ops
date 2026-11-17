@@ -13,6 +13,8 @@
 // - Sector P&L (`corporateSectors.plantsPnl`) is on a per real DAY basis in the
 //   host currency. One turn is one real hour (TURNS_PER_DAY = 24), so per-turn
 //   profit is plantsPnl.profit / 24, and `exchangeRates.rate` is local per anchor.
+//   A foreign-owned site is stored in its host's era currency (FRF, ITL), not the
+//   live euro; see siteRate.
 // - Return on a new plant uses `capacityBookAnchor` (the paid build cost of the
 //   capacity), the same definition the engine uses for its own growth finance
 //   (build price per unit over profit per operating unit per turn). It does NOT
@@ -149,15 +151,71 @@ function level(...levels) {
 
 // ── 1. Sectors ───────────────────────────────────────────────────────────────
 
+// Site money is stored in the sector's HOST currency, and the engine resolves
+// that code in AHDGame's `resolveSectorHostCurrencyCode`: a domestic sector uses
+// the owner's stamped `liquidCurrencyCode`, a cross-border one goes through
+// `COUNTRY_CURRENCY_MAP`, which is era-blind (France is "FRF", Italy "ITL" even
+// in a euro world). Those era codes have no live `exchangeRates` row, so the
+// engine reads them back at the authored rate. Dividing by the host country's
+// live row instead (EUR 0.958) overstates a foreign-owned French site 4.4x and
+// an Italian one 870x. Mirrored from AHDGame src/lib/constants/currencies.ts.
+const COUNTRY_CURRENCY_MAP = {
+  US: "USD", UK: "GBP", JP: "JPY", DE: "EUR", IE: "IEP", BR: "BRL", CN: "CNY", NG: "NGN",
+  HU: "HUF", PL: "PLZ", RO: "ROL", YU: "YUD", BG: "BGL", BLR: "SUR", UKR: "SUR", CS: "CSK",
+  BAL: "SUR", RU: "SUR", FR: "FRF", IT: "ITL", ES: "ESP", SE: "SEK", TR: "TRL", GR: "GRD",
+  AT: "ATS", FI: "FIM", DD: "DDM", SCO: "GBP", WAL: "GBP", CA: "CAD", QC: "CAD", AB: "CAD",
+  RTX: "USD", NEN: "USD", RCA: "USD",
+};
+
+// Authored rates (local per anchor) for the era codes in the map above that have
+// no live row, as AHDGame's `eraRateForCurrency(code, preset)` returns them.
+// Source: src/lib/constants/currenciesTables.ts at origin/development 40117e63e4:
+//   2027-default = INITIAL_RATES_2027 (lines 543-583), which falls back to
+//     INITIAL_RATES (lines 289-341) for FR 4.2, IT 833, ES 67, GR 37, AT 13.4,
+//     FI 3.9; IE 0.92, TR 32.806, PL 3.9812, RO 4.5984, BG BGN_PER_EUR * 0.92.
+//   1979-default = INITIAL_RATES_1979 (lines 494-533); used for any other preset.
+const ERA_RATES = {
+  "2027-default": { FRF: 4.2, ITL: 833, ESP: 67, GRD: 37, ATS: 13.4, FIM: 3.9, BGL: 1.7993636, IEP: 0.92, PLZ: 3.9812, ROL: 4.5984, TRL: 32.806 },
+  "1979-default": { FRF: 4.2, ITL: 833, ESP: 67, GRD: 37, ATS: 13.4, FIM: 3.9, BGL: 9.6, IEP: 0.47, PLZ: 32.3, ROL: 18, TRL: 34.5 },
+};
+
+function eraRate(code, preset) {
+  const table = ERA_RATES[preset] || ERA_RATES["1979-default"];
+  const rate = table[code];
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+// Host currency of a sector, the way the engine resolves it.
+function sectorHostCurrency(sector, corp) {
+  const host = sector.countryId ?? (corp && corp.countryId);
+  const domestic = sector.countryId == null || sector.countryId === (corp && corp.countryId);
+  const stamped = corp && corp.liquidCurrencyCode;
+  if (domestic && stamped != null && String(stamped).trim() !== "") return String(stamped);
+  return (host && COUNTRY_CURRENCY_MAP[host]) || null;
+}
+
+// Local per anchor for a site: live row for the host currency first, then the
+// authored era rate, then the host country's live row (unmapped hosts), then 1.
+function siteRate(sector, corp, { fxByCurrency, fxByCountry, preset }) {
+  const code = sectorHostCurrency(sector, corp);
+  if (code) {
+    const live = num(fxByCurrency && fxByCurrency.get(code));
+    if (live > 0) return live;
+    const era = eraRate(code, preset);
+    if (era) return era;
+  }
+  return num(fxByCountry && fxByCountry.get(sector.countryId)) || 1;
+}
+
 // One row per operating site (owner corp x state x lane), turn-matched.
-function siteRows({ sectors, corpById, fxByCountry, primeByCountry = new Map(), turn }) {
+function siteRows({ sectors, corpById, fxByCountry, fxByCurrency = new Map(), preset = null, primeByCountry = new Map(), turn }) {
   const rows = [];
   for (const s of sectors) {
     const corp = corpById.get(String(s.corporationId));
     if (!corp || corp.isPrimaryNationalCorporation) continue;
     const pnl = s.plantsPnl || {};
     const fresh = pnl.turn != null && turn != null && pnl.turn >= turn - 1;
-    const rate = num(fxByCountry.get(s.countryId)) || 1;
+    const rate = siteRate(s, corp, { fxByCurrency, fxByCountry, preset });
     const revenueDay = fresh ? num(pnl.revenue) : null;
     const profitDay = fresh ? num(pnl.profit) : (num(s.capitalStock) > 0 ? 0 : null);
     const profitTurnAnchor = profitDay == null ? null : profitDay / TURNS_PER_DAY / rate;
@@ -725,9 +783,9 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   const since = world.startedAt ? { createdAt: { $gte: world.startedAt } } : {};
 
   const [fx, banks, corps, sectors, histTurnDoc, npps, parties, elections, candidates, officials, formations, turnLogs, lastLog, gameConfig] = await Promise.all([
-    db.collection("exchangeRates").find({}, { projection: { countryId: 1, rate: 1 } }).toArray(),
+    db.collection("exchangeRates").find({}, { projection: { countryId: 1, currencyCode: 1, rate: 1 } }).toArray(),
     db.collection("centralBanks").find({}, { projection: { countryId: 1, primeRate: 1 } }).toArray(),
-    db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
+    db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, liquidCurrencyCode: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
     db.collection("corporateSectors").find({}, { projection: { corporationId: 1, countryId: 1, sectorType: 1, industryModel: 1, mediaDiscriminator: 1, "plantsPnl.profit": 1, "plantsPnl.revenue": 1, "plantsPnl.turn": 1, capacityBookAnchor: 1, constructionInProgressAnchor: 1, capitalStock: 1, operatingCapacityUnits: 1, plantCount: 1, soldFraction: 1, capitalUtilization: 1 } }).toArray(),
     db.collection("corporationHistory").find({ turn: { $lte: turn ?? 0 }, ...since }, { projection: { turn: 1 } }).sort({ turn: -1 }).limit(1).next(),
     db.collection("npps").find({ retiredAt: null }, { projection: { countryId: 1, party: 1, retiredAt: 1 } }).toArray(),
@@ -752,6 +810,7 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
     .find({ electionId: { $in: electionIds } }, { projection: { electionId: 1, finalized: 1, totalVotes: 1, candidateParties: 1, turnSnapshots: { $slice: -1 } } }).toArray();
 
   const fxByCountry = new Map(fx.map((r) => [r.countryId || r._id, r.rate]));
+  const fxByCurrency = new Map(fx.filter((r) => r.currencyCode).map((r) => [r.currencyCode, r.rate]));
   const primeByCountry = new Map(banks.map((b) => [b.countryId || b._id, num(b.primeRate)]));
   const corpById = new Map(corps.map((c) => [String(c._id), c]));
   const histByCorp = new Map(corpHist.map((h) => [String(h.corporationId), h]));
@@ -763,7 +822,7 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   }
   const electionById = new Map(elections.map((e) => [String(e._id), e]));
 
-  const rows = siteRows({ sectors, corpById, fxByCountry, primeByCountry, turn });
+  const rows = siteRows({ sectors, corpById, fxByCountry, fxByCurrency, preset: gs.preset || null, primeByCountry, turn });
   const sectorsOut = sectorMetrics(rows);
   const countriesOut = countryBalance(rows, sectorsOut);
   const firstTurn = history.length ? history[0].turn : turn;
@@ -928,7 +987,7 @@ function readLatest(dir) {
 module.exports = {
   TURNS_PER_DAY, TURNS_PER_YEAR, ENGINE_MAX_PAYBACK_TURNS, THRESHOLDS: T, LANES,
   quantile, median, effectiveParties, laneOf,
-  siteRows, sectorMetrics, sectorVerdict, countryBalance, legalFormBalance, legalFormLabel,
+  siteRows, sectorHostCurrency, siteRate, eraRate, ERA_RATES, COUNTRY_CURRENCY_MAP, sectorMetrics, sectorVerdict, countryBalance, legalFormBalance, legalFormLabel,
   candidateFields, raceMargins, competitiveness, dominance,
   turnRecord, turnMetrics, phaseDurations, buildMetrics, groupReleases,
   collect, verdicts, historyRecord, appendHistory, loadHistory, writeLatest, readLatest, historyPath,

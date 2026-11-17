@@ -237,3 +237,82 @@ test("line chart renders legend, end labels, data table and escapes names", () =
   assert.ok(!html.includes("A <x>"));
   assert.match(lineChart([{ name: "x", points: [] }], { empty: "None yet" }), /None yet/);
 });
+
+// A foreign-owned site in France or Italy is stored in the host's era currency
+// (FRF 4.2, ITL 833 per anchor), which has no live row. The live row for those
+// countries is EUR 0.9577, and dividing by it inflated sites 4.4x and 870x.
+const EUR = 0.9577;
+const liveFx = {
+  fxByCountry: new Map([["US", 1], ["FR", EUR], ["IT", EUR], ["DE", EUR]]),
+  fxByCurrency: new Map([["USD", 1], ["EUR", EUR]]),
+  preset: "2027-default",
+};
+const usCorp = { _id: "us", ceoType: "character", countryId: "US", liquidCurrencyCode: "USD" };
+
+function italySite(profitPerTurnAnchor, bookAnchor) {
+  // Stored the way the engine writes it: daily local = anchor per turn x 24 x host rate.
+  return { corporationId: "us", countryId: "IT", sectorType: "agriculture", plantsPnl: { revenue: 1778.55 * 24 * 833, profit: profitPerTurnAnchor * 24 * 833, turn: 24 }, capacityBookAnchor: bookAnchor, capitalStock: 1, plantCount: 1 };
+}
+
+test("sectorHostCurrency mirrors the engine: domestic uses the stamped code, cross-border the era-blind map", () => {
+  const frCorp = { countryId: "FR", liquidCurrencyCode: "EUR" };
+  assert.equal(rw.sectorHostCurrency({ countryId: "FR" }, frCorp), "EUR", "domestic stays on the stamped euro");
+  assert.equal(rw.sectorHostCurrency({ countryId: "FR" }, usCorp), "FRF");
+  assert.equal(rw.sectorHostCurrency({ countryId: "IT" }, usCorp), "ITL");
+  assert.equal(rw.sectorHostCurrency({ countryId: "DE" }, usCorp), "EUR");
+  assert.equal(rw.sectorHostCurrency({ countryId: "UK" }, usCorp), "GBP");
+  assert.equal(rw.sectorHostCurrency({}, usCorp), "USD", "no explicit host means the owner's own country");
+});
+
+// What Reset Watch reported before: local daily profit over the host country's live euro row.
+function liveEuroReturnPct(site) {
+  return (100 * (site.plantsPnl.profit / 24 / EUR) * 48) / (site.capacityBookAnchor / site.capitalStock);
+}
+
+test("an Italian site owned from the US reads back at the lira rate, not the euro", () => {
+  const corpById = corpMap([usCorp]);
+  // Engine receipt: 1,778.55 anchor revenue a turn, 770 profit. Build book chosen
+  // so the true return is about 3.1% a year.
+  const site = italySite(770, 1192258);
+  const row = rw.siteRows({ sectors: [site], corpById, ...liveFx, turn: 24 })[0];
+  assert.ok(Math.abs(row.revenueTurnAnchor - 1778.55) < 1e-6, "matches the settlement receipt");
+  assert.ok(Math.abs(row.returnPct - 3.1) < 0.01, `got ${row.returnPct}`);
+  const before = liveEuroReturnPct(site);
+  assert.ok(before > 2000, "the live-euro divisor reproduces the reported inflation");
+  assert.ok(Math.abs(before / row.returnPct - 833 / EUR) < 1e-6);
+});
+
+test("a French site owned from the US drops 4.4x against the live-euro divisor", () => {
+  const corpById = corpMap([usCorp]);
+  const site = { corporationId: "us", countryId: "FR", sectorType: "energy", plantsPnl: { revenue: 5222355, profit: 1000000, turn: 24 }, capacityBookAnchor: 4000000, capitalStock: 1, plantCount: 1 };
+  const fixed = rw.siteRows({ sectors: [site], corpById, ...liveFx, turn: 24 })[0];
+  const ratio = liveEuroReturnPct(site) / fixed.returnPct;
+  assert.ok(Math.abs(ratio - 4.2 / EUR) < 1e-9);
+  assert.ok(Math.abs(ratio - 4.386) < 0.001);
+});
+
+test("domestic and live-row hosts keep the live rate", () => {
+  const frCorp = { _id: "fr", ceoType: "character", countryId: "FR", liquidCurrencyCode: "EUR" };
+  const domestic = { corporationId: "fr", countryId: "FR", sectorType: "retail", plantsPnl: { revenue: 24 * EUR * 100, profit: 24 * EUR * 10, turn: 24 }, capacityBookAnchor: 1000, capitalStock: 1 };
+  const german = { corporationId: "us", countryId: "DE", sectorType: "retail", plantsPnl: { revenue: 24 * EUR * 100, profit: 24 * EUR * 10, turn: 24 }, capacityBookAnchor: 1000, capitalStock: 1 };
+  const rows = rw.siteRows({ sectors: [domestic, german], corpById: corpMap([frCorp, usCorp]), ...liveFx, turn: 24 });
+  assert.ok(Math.abs(rows[0].revenueTurnAnchor - 100) < 1e-9, "domestic French site divides by the euro row");
+  assert.ok(Math.abs(rows[1].revenueTurnAnchor - 100) < 1e-9, "German host divides by the euro row");
+});
+
+test("a live row for an era code beats the authored rate", () => {
+  const sector = { countryId: "IT" };
+  const fx = { fxByCurrency: new Map([["ITL", 900]]), fxByCountry: new Map(), preset: "2027-default" };
+  assert.equal(rw.siteRate(sector, usCorp, fx), 900);
+});
+
+test("every era code the engine map can produce has an authored rate in both tables", () => {
+  const eraCodes = ["FRF", "ITL", "ESP", "GRD", "ATS", "FIM", "BGL", "IEP", "PLZ", "ROL", "TRL"];
+  for (const table of Object.values(rw.ERA_RATES)) {
+    for (const code of eraCodes) assert.ok(table[code] > 0, code);
+  }
+  assert.equal(rw.eraRate("FRF", "2027-default"), 4.2);
+  assert.equal(rw.eraRate("ITL", "2027-default"), 833);
+  assert.equal(rw.eraRate("FRF", "unknown-preset"), 4.2, "unknown presets use the 1979 table");
+  assert.equal(rw.eraRate("USD", "2027-default"), null);
+});

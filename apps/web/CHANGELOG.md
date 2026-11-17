@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Reset Watch no longer inflates foreign-owned sites in France and Italy.** A site owned from another country is stored in its host's pre-euro currency (franc, lira), not the live euro, so dividing by the euro rate overstated French sites 4.4x and the Italian site 870x (Italy read 2,659% a year, really about 3%). The site rate now resolves the way the game engine does: live row for the host currency, then the authored rate for codes with no live row. This also moves the lane medians and the France and Italy country balance, which had absorbed the inflated sites.
 - **Sentry replaces GlitchTip.** New read-only Sentry MCP on 127.0.0.1:9740 (`sentry_issues`, `sentry_issue`, `sentry_event_lookup` for the 8 character ref on player error pages, `sentry_new_since`), unit `lakeside-sentry-mcp.service`. The dashboard error tile, daily report, issue triage and the new-issue Discord poller read Sentry (`SENTRY_AUTH_TOKEN`, org `lakeside-games`); the dead GlitchTip code and catalogue entry are gone.
 - **Ticket replies read like chat.** A reply-mode `support_public_update` (and a resolution notice) longer than one chat line is now posted as up to four short Discord messages, about 1.2 s apart, instead of one wall of text. Same rules as Keir's own splitter: paragraphs, then sentence ends; lists keep their lead-in; code fences stay whole. The receipt keeps one update with the full text; the delivery record lists every part, and a retry resends only the parts that did not land. Card mode is unchanged.
 
