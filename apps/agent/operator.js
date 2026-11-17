@@ -167,6 +167,8 @@ const mcp = createMcp(env.KEIR_MCP_CONFIG || "/root/.claude.json", readAgentToke
 const reopenedTickets = createReopenedTickets({ ledger, config, supportOwner, readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false), readChannel: async (id) => { try { return await discord("GET", `/channels/${id}`); } catch (e) { if (e.status === 404) return null; throw e; } } });
 const sandbox = createSandbox(path.join(config.stateDir, "workspaces"));
 const mods = require("./lib/operator/modroster").createModRoster({ config, discord, log });
+// Keir 10.2: Great / Helpful / Not helpful / Report on the newest answer (KEIR_ANSWER_FEEDBACK=0 turns the row off).
+const answerFeedback = require("./lib/operator/feedback").createFeedback({ ledger, config, discord, isModerator: (id) => mods.ensure(id), release: releaseId, enabled: env.KEIR_ANSWER_FEEDBACK !== "0", log: (m) => console.log(`[keir] ${m}`) });
 const conversation = createConversation({ ledger, config, mods });
 const appComputer = require("./lib/operator/appcomputer").createAppComputer({ ledger, config, sandbox });
 // The owner's private Keir app: one more owner channel, delivered to its own thread.
@@ -431,6 +433,7 @@ if (failures) tickers.every("failures", 15 * 60000, async () => {
   if (st.retentionDay !== day) { st.retentionDay = day; const ret = require("./lib/operator/retention"); ret.run({ stateDir: config.stateDir, protect: ret.protectedIds({ db: events.db, jobs: ledger.data.jobs }), apply: env.KEIR_RETENTION === "apply", log }); ledger.save(); }
   if (env.KEIR_FAILURE_DM === "1" && st.dmDay !== day) { st.dmDay = day; ledger.notify(`failures-digest:${day}`, "owner", failures.digest()); ledger.save(); }
 }, { immediateMs: 120000 });
+tickers.every("answerfeedback", 10 * 60000, async () => { await answerFeedback.sweep(); }, { immediateMs: 3 * 60000 });
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
 // Keir 10.1.9: the closing rule. Resolves answered tickets on confirmation or six quiet hours (KEIR_AUTOCLOSE=0 turns it off).
 const autoCloser = require("./lib/operator/autoclose").createAutoCloser({ ledger, broker, config: { ...config, autoCloseEnabled: env.KEIR_AUTOCLOSE !== "0" }, log, killSwitch, held: ticketHeld,
@@ -494,6 +497,7 @@ function digest() {
     `Tickets opened: ${d.intake.filter((x) => x.at > since).length}. PRs opened: ${prs.length}${prs.length ? "\n" + prs.map((u) => "- " + u).join("\n") : ""}`,
     done.length ? `Finished:\n${done.slice(-8).map(line).join("\n")}` : "",
     open.length ? `Still open (${open.length}):\n${open.slice(0, 8).map((j) => line(j) + ` [${j.state}]`).join("\n")}` : "Nothing open.",
+    answerFeedback.digestLine(since),
     alerts.length ? `Logged, not sent (${alerts.length}): ${[...new Set(alerts.map((a) => a.key.split(":")[0]))].join(", ")}` : ""].filter(Boolean);
   d.digestDate = today;
   ledger.notify(`digest:${today}`, "owner", parts.join("\n\n"));
@@ -562,6 +566,7 @@ async function flushOutbox() {
       // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
       const text = clean.replace(/[\u2013\u2014]/g, ",");
       const chunks = channelJob && !entry.files?.length && !entry.components ? splitReply(text).flatMap((c) => chunkMessage(c)) : chunkMessage(text);
+      const lastRow = entry.components || answerFeedback.components(key, entry, channelJob);
       for (let i = entry.deliveredChunks || 0; i < chunks.length; i++) {
         if (channelJob && i > 0) await new Promise((r) => setTimeout(r, replyGapMs));
         if (ledger.data.control?.stopped && !entry.controlResponse) continue outboxEntries;
@@ -570,11 +575,12 @@ async function flushOutbox() {
         // Answers thread under the request that asked for them.
         const reference = channelJob && i === 0 && !key.startsWith("ack:") && snowflake(channelJob.source?.messageId) ? { message_reference: { message_id: channelJob.source.messageId, fail_if_not_exists: false } } : {};
         const sent = await discord("POST", `/channels/${dmId}/messages`, { content: chunks[i], allowed_mentions: { parse: [] }, nonce: `${entry.id}-${i}`, enforce_nonce: true, ...reference,
-          ...(entry.components && i === chunks.length - 1 ? { components: entry.components } : {}),
+          ...(lastRow && i === chunks.length - 1 ? { components: lastRow } : {}),
           ...(files.length ? { attachments: files.map((f, id) => ({ id, filename: f.name })) } : {}) }, files);
         if (entry.decision && i === chunks.length - 1) { entry.sentContent = chunks[i]; decisions.delivered(entry, dmId, sent.id); }
         if (channelJob) conversation.record({ id: dmId }, { ...sent, content: chunks[i], author: { id: config.botId, bot: true, username: "Keir" }, timestamp: sent.timestamp || new Date().toISOString() });
         entry.messageIds ||= []; entry.messageIds.push(sent.id); entry.deliveredChunks = i + 1; ledger.save();
+        if (!entry.components && lastRow && i === chunks.length - 1) await answerFeedback.delivered(dmId, sent.id, channelJob);
       }
       entry.deliveredAt = Date.now(); ledger.save();
       events.append("delivery", { taskId: channelJob ? taskIdOf(channelJob, ledger.data.jobs) : null, attemptId: channelJob?.id || null, ticket: channelJob?.ticket || null,
@@ -840,6 +846,16 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (!authorized(req)) return reply(401, { error: "unauthorized" });
+  if (req.url === "/v5/feedback" && req.method === "POST") {
+    let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 2000) return reply(413, { error: "too large" }); }
+    try { return reply(200, await answerFeedback.record(JSON.parse(raw || "{}"))); }
+    catch (e) { return reply(e.status || 502, { ok: false, error: String(e.message).slice(0, 200) }); }
+  }
+  if (req.url?.split("?")[0] === "/v5/feedback/summary" && req.method === "GET") {
+    const days = Number(new URL(req.url, "http://localhost").searchParams.get("days") || 30);
+    if (!Number.isFinite(days) || days <= 0 || days > 365) return reply(400, { error: "days must be between 0 and 365" });
+    return reply(200, answerFeedback.summary({ days }));
+  }
   if (req.url.startsWith("/failures") && req.method === "GET" && failures) {
     const q = new URL(req.url, "http://x").searchParams, m = /^(\d+)([hdm])$/.exec(q.get("since") || "24h");
     const since = m ? Number(m[1]) * { h: 3600000, d: 86400000, m: 60000 }[m[2]] : 86400000;

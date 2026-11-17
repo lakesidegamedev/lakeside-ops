@@ -13,7 +13,7 @@ async function deliver(decision) {
     require:()=>({suppressOutbox:()=>false}),renderDecision:render,isAppJob:()=>false,
     ensureDm:async()=>"dm",ownerText:s=>s,redactSecrets:s=>s,chunkMessage:s=>[s],
     discord:async(_method,_route,body)=>{sent.push(body);return{id:"message"};},
-    decisions:{delivered(e){decision.sentContent=e.sentContent;}},events:{append(){}},log:e=>errors.push(e)};
+    decisions:{delivered(e){decision.sentContent=e.sentContent;}},answerFeedback:{components:()=>null,delivered:async()=>{}},events:{append(){}},log:e=>errors.push(e)};
   vm.runInNewContext(source.slice(start,end)+"\nthis.flush=flushOutbox;",context);
   await context.flush(); assert.deepEqual(errors,[]);return{entry,sent};
 }
