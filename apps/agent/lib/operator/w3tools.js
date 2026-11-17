@@ -19,6 +19,7 @@ const { createAskTool } = require("./asktool");
 const { createPlayerTrail } = require("./playertrail");
 const { createResolver } = require("./resolvereporter");
 const { createRequestLog } = require("./requestlog");
+const { createSectorBuilds } = require("./sectorbuilds");
 const { turnStatus, lockResetPlan } = require("./turnstatus");
 const advice = require("./advicerouting");
 
@@ -31,6 +32,7 @@ const TOOL_DEFS = [
   ["resolve_reporter", "Find the game account behind this ticket's reporter when the ticket carries no character link: current and retired characters (name, id, country, office), and how the match was made (character link, game username, linked Discord account, repeated page visits). No emails, sessions or Discord ids. Use it instead of asking the player who they are, and instead of reading users or sessions.", schema({})],
   ["turn_status", "The turn engine in plain fields: state (idle, processing, late, paused, stuck), current turn, last turn finished at, expected next turn, minutes overdue, who holds the lock and its heartbeat age, and the last failure phase. Call it first for any 'turn is stuck or late' report. For a stuck lock use request_action kind turn_lock_reset.", schema({})],
   ["request_log", "The ticket reporter's recent API requests (last 24 hours at most): method, path, status, grouped, with failures first. Reporter only. Shows rate limits and failed calls; it has no durations and misses page loads, so an empty result proves nothing.", schema({ hours: { type: "integer", minimum: 1, maximum: 24 } })],
+  ["sector_builds", "What a corporation is building and how it is financed, site by site: build queue, construction financing status, pending property transition, for-sale flag and plant start turn. Pass corporation (name, sequentialId or id), optionally state (stateId, e.g. NY) and sectorType. Use it for 'my expansion or construction did not finish' reports instead of a raw corporateSectors read; trace_sector covers stakes, capacity and margins, this covers the build side. Public game records only.", schema({ corporation: str, state: str, sectorType: str }, ["corporation"])],
 ];
 const NAMES = new Set(TOOL_DEFS.map((t) => t[0]));
 const TICKET_ONLY = new Set(["player_trail", "resolve_reporter", "request_log"]);
@@ -41,6 +43,7 @@ function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, s
   const ask = createAskTool({ config, fetcher, resolveIdentity, staff, now });
   const trail = createPlayerTrail({ env, fetcher, resolveIdentity, now });
   const requestLog = createRequestLog({ mcp, resolveIdentity, now });
+  const sectorBuilds = createSectorBuilds({ mcp });
   const status = () => turnStatus((server, tool, args) => mcp.call(server, tool, args || {}, false), { now });
 
   // Fire and forget: keep advicerouting's view of Ask fresh without blocking any activation.
@@ -66,6 +69,7 @@ function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, s
     if (name === "resolve_reporter") return resolver.present(await resolveIdentity(job, signal));
     if (name === "turn_status") return status();
     if (name === "request_log") return requestLog.call(job, input, signal);
+    if (name === "sector_builds") return sectorBuilds.call(job, input, signal);
     throw new Error(`unknown tool ${name}`);
   }
 

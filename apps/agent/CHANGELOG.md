@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Refused reads now say what to do. Of 51 "read tool is outside support scope" refusals in three days, 41 were Keir's own tools (turn_status, via a guessed turndiag server) or github actions (deployed, where) sent through read_tool, up to 13 times on one ticket. read_tool turn_status now runs turn_status, and every scope refusal names the right call or the tools the server does offer.
+- sector_builds: a corporation's sites with build queue, construction financing status, pending property transition and for-sale flag. Construction tickets were falling back to raw corporateSectors reads because trace_sector does not carry the build side. The raw-read hints for corporateSectors and gameState name the typed reads. raw_read is unchanged.
+- MCP reads that cannot connect are retried with backoff (1.5, 4 and 10 seconds) instead of once, and the error names the cause and server. A reboot at 15:14Z left every MCP refusing connections for 11 minutes while Keir was already up, which produced the day's 64 "fetch failed" tool errors.
+- Throwaway Claude homes (claude-home-*) are removed when the run ends, and at startup the operator removes ones older than a day that no live process uses. 5275 had piled up in the state directory.
+- The Ops widget line retries an empty or repeated answer up to three times in the same attempt instead of waiting ten minutes, and the failure log carries a fixed class (provider:error_max_turns, rejected, repeated, provider:timeout) instead of only a counter.
+
 ## 10.2.1 (2026-11-17)
 
 - Player replies posted by the support service now carry the same feedback row as Keir's own answers, on the last message of the reply. A click on one is recorded exactly like any other: Keir adopts the message when Discord shows it is the game bot's message with these buttons, and takes the ticket from the channel name.

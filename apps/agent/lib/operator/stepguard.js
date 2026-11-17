@@ -6,7 +6,7 @@
 const crypto = require("node:crypto");
 
 // Reads only. A write or finish that failed can pass once state changes.
-const READS = new Set(["read_tool", "read_tools", "reporter_state", "past_ticket", "similar_reports", "ticket_history", "recall", "view_page", "view_attachment", "source_history", "recent_changes", "resolve_reporter", "turn_status", "player_trail", "request_log", "ask"]);
+const READS = new Set(["read_tool", "read_tools", "reporter_state", "past_ticket", "similar_reports", "ticket_history", "recall", "view_page", "view_attachment", "source_history", "recent_changes", "resolve_reporter", "turn_status", "player_trail", "request_log", "sector_builds", "ask"]);
 const UNREACHABLE = /aborted due to timeout|timed out|ETIMEDOUT|socket connection was closed/i;
 const key = (name, input) => crypto.createHash("sha256").update(JSON.stringify([name, input ?? null])).digest("hex");
 const target = (name, input) => name === "read_tool" && input?.server && input?.tool ? `${input.server}/${input.tool}` : null;

@@ -39,8 +39,8 @@ async function invokeClaudeProcess({ spawnImpl, prompt, tools, url, maxTurns, ti
   const cwd = hybrid ? worktree : path.join(stateDir, "claude-cwd"); if (!hybrid) fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
   // The broker supplies policy and grants. Host memories, plugins and user
   // instructions must not silently become an activation's task context.
-  const home = fs.mkdtempSync(path.join(stateDir, "claude-home-"));
-  fs.mkdirSync(path.join(home, ".claude"), { mode: 0o700 });
+  const home = require("./claude-home").makeHome(stateDir);
+  const removeHome = () => require("./claude-home").removeHome(home);
   const credentials = require("./host").credential(".claude/.credentials.json");
   if (fs.existsSync(credentials)) fs.symlinkSync(credentials, path.join(home, ".claude/.credentials.json"));
     const args = ["-p", "--system-prompt", brief, "--model", model, "--effort", effort,
@@ -72,7 +72,9 @@ async function invokeClaudeProcess({ spawnImpl, prompt, tools, url, maxTurns, ti
         catch { reject(new Error(`model request failed: claude exited ${code} ${redactSecrets(err).slice(-600)}`)); }
       });
       child.stdin.end(prompt);
-    });
+    // Whichever way the run ends (answer, timeout, kill, spawn failure) its process tree is gone and the throwaway
+    // home has nothing left to serve.
+    }).finally(removeHome);
   }
 
 module.exports = { invokeClaude };

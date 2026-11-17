@@ -1077,6 +1077,9 @@ async function tick() {
   finally { ticking = false; }
 }
 ledger.recover();
+// Throwaway Claude homes from runs that ended without cleanup (5275 by 2026-11-17): remove the ones older than a day that
+// no live process uses. Deferred so a large backlog does not delay startup, and never allowed to stop it.
+setTimeout(() => { try { const r = require("./lib/operator/cli-runtime")("claude-home").sweepStaleHomes({ stateDir: config.stateDir, log }); if (r.skipped) log(`claude homes sweep skipped: ${r.skipped}`); } catch (e) { log(`claude homes sweep failed: ${e.message}`); } }, 20000).unref();
 server.listen(positive("KEIR_OPERATOR_PORT", 9765), "127.0.0.1", () => { log("Keir operator started"); tick(); });
 // Every app request re-checks the caller's own ops session; nothing here trusts a header.
 // Keir as the owner's personal agent: threads, activity, ideas, watches, memory.
