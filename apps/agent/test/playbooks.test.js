@@ -45,3 +45,14 @@ test("the activation context lists the steps and names the next one", () => {
   assert.match(ctx.steps[0], /^\[ \] Check the rule/);
   assert.match(ctx.next, /Check the rule/);
 });
+
+test("the no-effect rule is in both prompts and in the bug and mechanics playbooks", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const rule = /says a research, upgrade, purchase or action had no effect, treat it as a likely bug first/;
+  for (const f of ["KEIR.md", "KEIR-CORE.md"]) assert.match(fs.readFileSync(path.join(__dirname, "..", f), "utf8"), rule, f);
+  for (const kind of ["bug_report", "mechanics_question"]) {
+    const j = ticket({ tags: { kind } });
+    const labels = require("../lib/operator/playbooks").PLAYBOOKS[kind](require("../lib/operator/playbooks").facts(j, { jobs: { t1: j } })).map((s) => s.label).join("\n");
+    assert.match(labels, /had no effect, check the state itself makes sense for the world/, kind);
+  }
+});

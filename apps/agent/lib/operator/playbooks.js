@@ -42,7 +42,7 @@ function kindOf(job, d) {
 const PLAYBOOKS = {
   bug_report: (f) => [
     step("read_reporter", "Read the reporter's live records (character, corporation, sector) before saying anything about cause", f.reporter && f.reads >= 1),
-    step("find_cause", "Find the cause from live data and the deployed code (at least three investigative reads)", f.reads >= 3),
+    step("find_cause", "Find the cause from live data and the deployed code (at least three investigative reads). If the player says something had no effect, check the state itself makes sense for the world before calling it a game rule", f.reads >= 3),
     step("route", "Route it: attach to or file the GitHub issue (raise_to_developers), merge into an open incident, open a fix, or mark the card answered when nothing is broken", f.raised || f.merged || f.pr || f.answeredCard),
     step("tell_player", "Tell the player the cause in plain words and where the fix stands, after their last message", f.answeredSincePlayer),
   ],
@@ -57,7 +57,7 @@ const PLAYBOOKS = {
     step("route_if_bug", "Retain any separately verified broken screen, wrong figures or missing transaction as bug work", true, false),
   ],
   mechanics_question: (f) => [
-    step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers", f.reads >= 2),
+    step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers. If the player says something had no effect, check the state itself makes sense for the world (a 2027 company owning 1940s tech) before calling it a game rule", f.reads >= 2),
     step("answer", "Answer directly in the channel (no progress card), after their last message", f.answeredSincePlayer),
     step("route_if_bug", "If it turned out to be a bug, raise it", true, false),
   ],
@@ -83,7 +83,7 @@ const PLAYBOOKS = {
 Object.assign(PLAYBOOKS, {
   // The question lane ends when every question is answered; no card, no owner decision.
   question: (f) => [
-    step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers", f.reads >= 2),
+    step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers. If the player says something had no effect, check the state itself makes sense for the world (a 2027 company owning 1940s tech) before calling it a game rule", f.reads >= 2),
     step("answer", "Answer every question the player asked, directly in the channel (no progress card), after their last message", f.answeredSincePlayer),
     step("spin_out", "If a real defect or an unrelated new problem turned up, spin it out: raise the bug or open a separate ticket with open_ticket; do not widen this one", true, false),
   ],
