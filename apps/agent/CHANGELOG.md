@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.5 (2026-11-17)
+
 - Wrong-looking prices (ticket 1841, same family as 1837). "Why does 1 depot cost 22 million dollars" is now treated as a report of a number that may be wrong, not a rules question: the fast lane no longer answers it and the ticket goes to the investigating lane. An explanation or defence of a price ("is the build price for ...", "priced off ...", "X, Y and Z move it up or down") is refused until a live read exists and backs it, and is always refused when the read shows the price is about twice the company's cash or more; Keir then says it looks wrong, that it is checking it as a possible bug, and raises it to the developers with the figures. The composition check now also catches that phrasing.
 
 ## 10.1.4 (2026-11-17)
