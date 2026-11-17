@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- The shift log lists game releases before Keir's own; the per-section budget was dropping the game line behind three Keir releases.
+
 ## 10.3.0 (2026-11-17)
 
 - team_activity: a read that shows Keir what the rest of the team is already doing about a ticket. It gathers staff, owner, junior developer and moderator messages in the ticket channel since Keir's last post, kanban cards in now, next and blocked that name the ticket or match the topic, running agent workers (claude-* and keir-worker-* units, with a one-line goal from the brief or the ledger) and open PRs on AHDGame and lakeside-ops that match, in about 2,500 characters. Each source degrades to "unavailable" on its own, and results are cached for 60 seconds. On ticket 1852 the owner wrote "I'm fixing" and a card and a fix worker existed, yet Keir kept posting "Answered, no fix needed" and corrections because none of that was visible to it.

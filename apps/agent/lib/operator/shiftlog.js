@@ -60,17 +60,18 @@ function sourcesFor({ ledger, mcp, api, releasesFile, repo = "lakesidegamedev/AH
       return [...own, ...cards];
     },
     releases: async () => {
+      // Game first: the per-section budget would otherwise drop it behind Keir's own releases.
       const lines = [];
       const day = now() - 24 * 3600000;
-      try {
-        const rows = require("node:fs").readFileSync(releasesFile, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((r) => r && r.at >= day);
-        for (const r of rows.slice(-3)) lines.push(`Keir ${r.version || String(r.sha || "").slice(0, 7)} (${clip(r.reason || r.kind, 50)})`);
-      } catch { lines.push("Keir releases unavailable"); }
       try {
         const commits = await api([`repos/${repo}/commits?sha=main&per_page=10&since=${encodeURIComponent(new Date(day).toISOString())}`]);
         const list = Array.isArray(commits) ? commits : [];
         lines.push(`game main: ${list.length} commit${list.length === 1 ? "" : "s"} in 24h${list.length ? `, latest "${clip(String(list[0]?.commit?.message || "").split("\n")[0], 70)}"` : ""}`);
       } catch { lines.push("game main unavailable"); }
+      try {
+        const rows = require("node:fs").readFileSync(releasesFile, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((r) => r && r.at >= day);
+        for (const r of rows.slice(-2)) lines.push(`Keir ${r.version || String(r.sha || "").slice(0, 7)} (${clip(r.reason || r.kind, 50)})`);
+      } catch { lines.push("Keir releases unavailable"); }
       return lines;
     },
     turn: async () => {
