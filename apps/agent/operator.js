@@ -168,7 +168,7 @@ const reopenedTickets = createReopenedTickets({ ledger, config, supportOwner, re
 const sandbox = createSandbox(path.join(config.stateDir, "workspaces"));
 const mods = require("./lib/operator/modroster").createModRoster({ config, discord, log });
 // Keir 10.2: Great / Helpful / Not helpful / Report on the newest answer (KEIR_ANSWER_FEEDBACK=0 turns the row off).
-const answerFeedback = require("./lib/operator/feedback").createFeedback({ ledger, config, discord, isModerator: (id) => mods.ensure(id), release: releaseId, enabled: env.KEIR_ANSWER_FEEDBACK !== "0", log: (m) => console.log(`[keir] ${m}`) });
+const answerFeedback = require("./lib/operator/feedback").createFeedback({ ledger, config, discord, isModerator: (id) => mods.ensure(id), release: releaseId, enabled: env.KEIR_ANSWER_FEEDBACK !== "0", wake: () => drain(), log: (m) => console.log(`[keir] ${m}`) });
 const conversation = createConversation({ ledger, config, mods });
 const appComputer = require("./lib/operator/appcomputer").createAppComputer({ ledger, config, sandbox });
 // The owner's private Keir app: one more owner channel, delivered to its own thread.

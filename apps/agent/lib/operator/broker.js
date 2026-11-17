@@ -1307,6 +1307,18 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         const caseClash = require("./ticketcase").contradiction(d, ticketNo, message, { now: now() });
         if (caseClash) { ledger.audit("case_contradiction_refused", { job: job.id, ticket: ticketNo, claim: caseClash.claimId }); refuse(require("./ticketcase").contradictionRefusal(caseClash)); }
       }
+      // Keir 10.4 (ticket 1852): answer what the player asked before anything else. A post that redirects ("the real blocker is")
+      // or concludes ("working as intended") without touching an open asked item is refused, at most twice per ticket so it never sticks.
+      // Staff-directed tasks answer staff, not the player's open items. check_draft (collect) reports it without spending the budget.
+      if (!answeringStaff) {
+        const tcase = require("./ticketcase");
+        const deflect = tcase.deflectionBudgetLeft(d, ticketNo) ? tcase.deflection(d, ticketNo, message) : null;
+        if (deflect) {
+          if (!opts.collect) { tcase.noteDeflectionRefusal(d, ticketNo); ledger.save(); }
+          ledger.audit("asked_deflection_refused", { job: job.id, ticket: ticketNo, phrase: deflect.phrase, collect: Boolean(opts.collect) || undefined });
+          refuse(tcase.deflectionRefusal(deflect));
+        }
+      }
     }
     const other = answeringStaff || owedNow ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !isCardPost(p) && !playerSpokeAfter(p.at)).at(-1);
     if (other) refuse(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
