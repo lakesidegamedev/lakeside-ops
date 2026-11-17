@@ -537,6 +537,8 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // Keir 10: lessons the nightly review filed for this lane (lane names differ slightly in lanelessons.js).
     if (job.lane && broker.notebook) { try { const l = require("./lanelessons").lessonsFor(broker.notebook, ({ people: "account", data_repair: "bug", advice: "question" })[job.lane] || job.lane, 4); if (l.length) context.laneLessons = l; } catch {} }
     if (ticketCompact) context.caseFile = caseFileMod.caseFile(ledger, job, { broker });
+    // Keir 10.3: the durable case file (what the player was told, corrected claims, promises, staff statements) and the shift log lead the activation.
+    Object.assign(context, await require("./continuity").prepare({ ledger, job, config }));
     // Keir 7: a ticket that only asks how the game works is answered by Ask
     // Keir before any model runs. Anything else, or an answer Ask's own checks
     // doubt, continues below with the fast lane's draft as a starting point.
@@ -672,6 +674,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       job.activeSkills = skillBrief.names; ledger.save();
       if (skillBrief.errors.length) ledger.audit("skills_unavailable", { job: job.id, lane: skillLane, errors: skillBrief.errors });
       if (job.codingContract && !quick && !job.investigation && job.role !== "player") context.codingPreparation = await require("./coding-context").prepareCodingContext(job, input => broker.tool(job,"evidence_batch",input,signal));
+      require("./continuity").promote(context);
       const common = { spawnImpl, stateDir: config.stateDir, model, effort: chosen.effort, brief: (leanCtx && !digestOnly ? leanCtx.brief : briefText) + skillText + OTHER_NOTE + ownerBrief, prompt: JSON.stringify(context), tools: session.tools, url, completionUrl, maxTurns: maxRounds, timeoutMs: budget, signal };
       // Keir 4.0 phase 4 canary: lanes listed in KEIR_RUST_RUNNER_LANES (quick,
       // worker, probe) run their activation through the Rust runner, which

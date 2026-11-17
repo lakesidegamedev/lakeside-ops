@@ -1301,6 +1301,12 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (clash) { ledger.audit("contradiction_refused", { job: job.id, ticket: ticketNo, pred: clash.pred }); refuse(claimcheck.contradictionRefusal(clash)); }
       const locked = claimcheck.unlockConflict(message, job.evidenceText);
       if (locked) { ledger.audit("unlock_claim_refused", { job: job.id, ticket: ticketNo, noun: locked.noun }); refuse(claimcheck.unlockRefusal(locked)); }
+      // Keir 10.3: the durable case file keeps every claim made to the player (ticketPosts only keeps a day), so a reversal
+      // of a standing claim is refused unless the post starts "Correction:" (ticket 1852: "reachable", then "not reachable").
+      if (!clash) {
+        const caseClash = require("./ticketcase").contradiction(d, ticketNo, message, { now: now() });
+        if (caseClash) { ledger.audit("case_contradiction_refused", { job: job.id, ticket: ticketNo, claim: caseClash.claimId }); refuse(require("./ticketcase").contradictionRefusal(caseClash)); }
+      }
     }
     const other = answeringStaff || owedNow ? null : posts.filter((p) => p.jobId !== job.id && now() - p.at < 3 * 60000 && !isCardPost(p) && !playerSpokeAfter(p.at)).at(-1);
     if (other) refuse(`Not posted: another Keir task updated ticket ${ticketNo} ${Math.round((now() - other.at) / 1000)}s ago: "${other.text.slice(0, 300)}". Do not repeat or contradict it. If you have something materially new, wait a few minutes and post one message that builds on it, or record it with checkpoint for the ticket task.`);
@@ -1798,6 +1804,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
   function recordTicketPost(job, ticketNo, message, kind = "reply") {
     const card = kind === "status_card";
     try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); } catch {}
+    try { require("./ticketcase").recordPost(d, job, message, { now: now(), card }); } catch {} // Keir 10.3: durable case file
     if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };

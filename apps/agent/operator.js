@@ -391,6 +391,10 @@ tickers.every("codingworkers", 60000, async () => {
   try { await codingWorkersInst.tick(); } catch (e) { log(`codingworkers: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
 }, { immediateMs: 30000 });
+// Keir 10.3 shift log: a model-free world summary refreshed every 10 minutes, injected into every ticket activation (lib/operator/shiftlog.js).
+const shiftLog = require("./lib/operator/shiftlog").createShiftLog({ ledger, mcp, api: ciApi, log });
+require("./lib/operator/continuity").setShiftLog(shiftLog);
+tickers.every("shiftlog", 10 * 60000, () => shiftLog.refresh(), { immediateMs: 20000, maxMs: 60000 });
 tickers.every("devmerges", 5 * 60000, async () => {
   try { await devMerges.tick(); } catch (e) { log(`devmerges: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
