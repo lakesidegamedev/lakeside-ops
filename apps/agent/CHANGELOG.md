@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.4.0 (2026-11-18)
+
 - Keir answers what the player asked. The case file now opens with "Player asked": the ticket text and each later message that states a problem or asks something, open items first, marked answered when a post covers its subject. A post that redirects ("the real blocker is") or concludes ("working as intended") without touching an open item is refused, at most twice per ticket. Ticket 1852: the player said Sector Tech does nothing at the 30% cap, Keir answered about research points, and the player voted it down as not what they asked.
 - A player thumbs down or report on a ticket answer now goes into the ticket case file (their reason, the answer's first sentence, the asks it touched reopened) and wakes the ticket once an hour with the instruction to answer the missed ask. Owner, staff and moderator votes stay record-only.
 
