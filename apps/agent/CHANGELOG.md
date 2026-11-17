@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.8 (2026-11-17)
+
+- A bare @mention in an active channel is answered in the context of the messages since Keir's last post (up to 30 minutes back, evidence only, never inherited as instructions) instead of "Yes, still here". With nothing recent it still answers "Are you there?".
+- Status card item names are stripped of trailing stage labels ("X: Live on the main server"), so a model that copies the public receipt line back as a name no longer doubles the label or defeats the already-announced check that stops a second "now live" notice.
+
 ## 10.1.7 (2026-11-17)
 
 - Quick rules-lane answers go through the same claim checks as every other ticket reply (unread claims, bug labels, account facts, settings, prices, contradictions, composition). Only the rule-lookup check still defers to Ask, which is the rule lookup. The lane no longer records its own answer as evidence; only the sources Ask cited count. A refused quick answer goes to the investigating lane.

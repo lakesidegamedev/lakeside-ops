@@ -33,6 +33,23 @@ const stageIndex = (id) => (id === "confirmed" || id === "answered" ? STAGES.len
 const stageOf = (id) => (id === "confirmed" ? CONFIRMED : id === "answered" ? ANSWERED : STAGES[stageIndex(id)]);
 const labelOf = (id) => stageOf(id)?.label || id;
 
+// Keir 10.1.8 (ticket 1836): the public receipt reads "<name>: <stage label>", and the model copied that line back
+// as an item name, so the name carried the label and the receipt then added it again ("X: Live on the main server:
+// Live on the main server"). The renamed item also missed the already-told check and re-sent a live notice.
+// A name is the player-facing fix only: any trailing ": <stage label>" suffixes are stripped.
+const LABELS = [...STAGES.map((s) => s.label), CONFIRMED.label, ANSWERED.label, "Live, confirmed in game", "Answered, no fix needed"];
+function cleanName(name) {
+  let out = String(name || "").trim();
+  for (let again = true; again;) {
+    again = false;
+    for (const label of LABELS) {
+      const m = out.match(new RegExp(`\\s*[:\\-]\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.?$`, "i"));
+      if (m && m.index > 0) { out = out.slice(0, m.index).trim(); again = true; }
+    }
+  }
+  return out;
+}
+
 // evidence: broker ticketEvidence() shape ({ development: { done }, ... }).
 function stageAllowed(stage, evidence = {}) {
   const s = stageIndex(stage) < 0 ? null : stageOf(stage);
@@ -104,4 +121,4 @@ function waitNote(info = {}) {
   return `${what} ${info.queued ? "are queued" : info.running ? "are running" : "have not finished"}.`;
 }
 
-module.exports = { STAGES, stageIndex, labelOf, stageAllowed, regression, stageFromEvidence, itemLine, rowState, render, waitNote };
+module.exports = { cleanName, STAGES, stageIndex, labelOf, stageAllowed, regression, stageFromEvidence, itemLine, rowState, render, waitNote };
