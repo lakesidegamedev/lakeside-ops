@@ -78,3 +78,23 @@ test("card mode is unchanged: one card edit, no channel messages", async () => {
   assert.equal(edits, 1);
   assert.equal(posts, 0);
 });
+
+test("a reply carries the feedback row on its last message only", async () => {
+  const ticket = { _id: "t", ticketNumber: 9, discordChannelId: "c1", publicUpdates: [] };
+  const sent = [];
+  const postChannel = async (_c, content, opts) => { sent.push(opts); return { posted: true, id: `m${sent.length}`, channel: "c1" }; };
+  await maybePostTicketChannelUpdate(fakeDb(ticket), { ...base, postChannel });
+  assert.ok(sent.length >= 2);
+  sent.slice(0, -1).forEach((o) => assert.equal(o.components, undefined));
+  const ids = sent.at(-1).components[0].components.map((c) => c.custom_id);
+  assert.deepEqual(ids, ["keir_fb:great", "keir_fb:up", "keir_fb:down", "keir_fb:report"]);
+});
+
+test("HTML entities are decoded and mentions removed before posting", async () => {
+  const ticket = { _id: "t", ticketNumber: 9, discordChannelId: "c1", publicUpdates: [] };
+  let content = "";
+  const postChannel = async (_c, c) => { content = c; return { posted: true, id: "m1", channel: "c1" }; };
+  await maybePostTicketChannelUpdate(fakeDb(ticket), { ...base, message: "The state&#39;s total &amp; the country&#x27;s &quot;share&quot; <@&1470571508689535188> @everyone", postChannel });
+  assert.equal(content, `The state's total & the country's "share" everyone`);
+  assert.equal(ticket.publicUpdates[0].message, content);
+});

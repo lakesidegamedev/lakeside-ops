@@ -67,6 +67,23 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     return "player";
   }
 
+  /**
+   * Player replies posted by the support service carry the same row but never pass through
+   * Keir's delivery, so they are not in the ledger. Adopt one when Discord itself shows it is
+   * the game bot's message with our buttons; the ticket comes from the channel's own name.
+   */
+  async function adoptSupportReply(channelId, messageId) {
+    if (!/^\d{15,22}$/.test(String(channelId || ""))) return null;
+    let msg, channel;
+    try { msg = await discord("GET", `/channels/${channelId}/messages/${messageId}`); channel = await discord("GET", `/channels/${channelId}`); }
+    catch { return null; }
+    const ids = (msg?.components || []).flatMap((r) => (r.components || []).map((c) => c.custom_id));
+    if (msg?.author?.id !== config.botId || !ids.some((id) => String(id).startsWith(PREFIX))) return null;
+    const ticket = Number(/-(\d+)$/.exec(String(channel?.name || ""))?.[1]) || null;
+    const f = state();
+    return (f.messages[messageId] = { channelId, job: null, ticket, kind: "support-reply", role: "support", lane: null, runner: null, model: null, effort: null, release, at: now() });
+  }
+
   /** Record one vote, read back from Discord by its interaction token. */
   async function record({ token } = {}) {
     if (typeof token !== "string" || !/^[A-Za-z0-9_.-]{20,600}$/.test(token)) throw Object.assign(new Error("bad token"), { status: 400 });
@@ -77,7 +94,8 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     const messageId = meta.interacted_message_id || meta.triggering_interaction_metadata?.interacted_message_id;
     const parsed = parseRecorded(reply.content);
     if (!userId || !messageId || !parsed) throw Object.assign(new Error("not a feedback interaction"), { status: 409 });
-    const f = state(), answer = f.messages[messageId];
+    const f = state();
+    const answer = f.messages[messageId] || await adoptSupportReply(reply.channel_id, messageId);
     if (!answer) throw Object.assign(new Error("not a Keir answer with feedback"), { status: 404 });
     const key = `${messageId}:${userId}`, previous = f.votes[key]?.vote || null;
     const vote = { messageId, userId, voter: await voterRole(userId), vote: parsed.vote, reason: parsed.reason, at: now(),
