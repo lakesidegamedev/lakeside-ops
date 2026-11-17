@@ -4,20 +4,25 @@ const { createFeedback, parseRecorded } = require("../lib/operator/feedback");
 
 const BOT = "1479984768194969663", OWNER = "333052320252297216", GUILD = "1465445442987888743";
 const TOKEN = "test-interaction-token-xxxxxxxxxxxx";
-function fixture({ replies = {}, member = { roles: [] }, enabled = true } = {}) {
+function fixture({ replies = {}, member = { roles: [] }, enabled = true, channels = {}, jobs = {} } = {}) {
   let t = 1_800_000_000_000;
-  const ledger = { data: {}, saves: 0, audits: [], save() { this.saves++; }, audit(k, v) { this.audits.push([k, v]); } };
+  const ledger = { data: { jobs }, saves: 0, audits: [], save() { this.saves++; }, audit(k, v) { this.audits.push([k, v]); } };
   const calls = [];
   const discord = async (method, url, body) => {
     calls.push({ method, url, body });
     if (method === "GET" && url.startsWith("/webhooks/")) { const r = replies[url.split("/")[3]]; if (!r) throw new Error("404 Unknown Webhook"); return r; }
     if (method === "GET" && url.startsWith("/guilds/")) return member;
+    const list = /^\/channels\/(\d+)\/messages\?/.exec(url);
+    if (method === "GET" && list) return (channels[list[1]] || []).map((m) => ({ ...m }));
+    const edit = /^\/channels\/(\d+)\/messages\/(\d+)$/.exec(url);
+    if (method === "PATCH" && edit) { const m = (channels[edit[1]] || []).find((x) => x.id === edit[2]); if (m) m.components = []; }
     return {};
   };
   const config = { botId: BOT, ownerId: OWNER, guildId: GUILD, staffIds: ["565289871799746593"], modRoleIds: ["900000000000000001"] };
   const isModerator = async (id) => ((await discord("GET", `/guilds/${GUILD}/members/${id}`)).roles || []).includes("900000000000000001");
   const fb = createFeedback({ ledger, config, discord, isModerator, now: () => t, release: "10.2.0", enabled });
-  return { fb, ledger, calls, advance: (ms) => { t += ms; }, at: () => t };
+  const patches = () => calls.filter((c) => c.method === "PATCH");
+  return { fb, ledger, calls, patches, advance: (ms) => { t += ms; }, at: () => t };
 }
 const job = { id: "j1", ticket: 1845, kind: "ticket", role: "support", provider: { lane: "support", runner: "muse", model: "muse-spark", effort: "high" } };
 const reply = (content, user, messageId, modal = false) => ({ author: { id: BOT }, content, flags: 64,
@@ -37,21 +42,21 @@ test("only channel answers get the row, never acks, DMs or decision buttons", ()
 });
 
 test("a newer answer in the same channel takes the row off the older one", async () => {
-  const { fb, calls } = fixture();
+  const { fb, patches } = fixture();
   await fb.delivered("100000000000000001", "200000000000000001", job);
   await fb.delivered("100000000000000002", "200000000000000009", job);
-  assert.equal(calls.length, 0);
+  assert.equal(patches().length, 0);
   await fb.delivered("100000000000000001", "200000000000000002", job);
-  assert.deepEqual(calls, [{ method: "PATCH", url: "/channels/100000000000000001/messages/200000000000000001", body: { components: [] } }]);
+  assert.deepEqual(patches(), [{ method: "PATCH", url: "/channels/100000000000000001/messages/200000000000000001", body: { components: [] } }]);
 });
 
 test("rows expire after a day", async () => {
-  const { fb, calls, advance } = fixture();
+  const { fb, patches, advance } = fixture();
   await fb.delivered("100000000000000001", "200000000000000001", job);
-  advance(23 * 3600000); await fb.sweep(); assert.equal(calls.length, 0);
+  advance(23 * 3600000); await fb.sweep(); assert.equal(patches().length, 0);
   advance(2 * 3600000); await fb.sweep();
-  assert.equal(calls[0].method, "PATCH"); assert.equal(calls.length, 1);
-  await fb.sweep(); assert.equal(calls.length, 1);
+  assert.equal(patches().length, 1);
+  await fb.sweep(); assert.equal(patches().length, 1);
 });
 
 test("the vote, voter and message come from Discord's record, and a changed vote replaces the old one", async () => {
@@ -156,4 +161,59 @@ test("a message without our buttons or not from the bot is not adopted", async (
   };
   const fb = createFeedback({ ledger, config: { botId: BOT, ownerId: OWNER, staffIds: [] }, discord, release: "x" });
   await assert.rejects(fb.record({ token: TOKEN }), /not a Keir answer/);
+});
+
+// One row per channel, on the newest message, whichever writer posted it.
+const CH = "100000000000000001";
+const withRow = (id, at) => ({ id, author: { id: BOT }, timestamp: new Date(at).toISOString(), components: require("../lib/operator/feedback").row() });
+const plain = (id, at) => ({ id, author: { id: BOT }, timestamp: new Date(at).toISOString(), components: [] });
+const holders = (list) => list.filter((m) => m.components.length).map((m) => m.id);
+
+test("a Keir answer strips rows left by support-service replies, which are not in the ledger", async () => {
+  const channels = { [CH]: [plain("300000000000000009", 1_800_000_000_000), withRow("300000000000000003", 1), withRow("300000000000000002", 1), withRow("300000000000000001", 1)] };
+  const { fb } = fixture({ channels });
+  channels[CH].unshift(withRow("300000000000000010", 1_800_000_000_000));
+  await fb.delivered(CH, "300000000000000010", job);
+  assert.deepEqual(holders(channels[CH]), ["300000000000000010"]);
+});
+
+test("three support-service replies in a row leave one row, on the last", async () => {
+  const channels = { [CH]: [] };
+  const { fb } = fixture({ channels });
+  // The support service posts each reply's last part with the row, then Keir's rule runs from Discord's state.
+  for (const id of ["300000000000000001", "300000000000000002", "300000000000000003"]) {
+    channels[CH].unshift(withRow(id, 1_800_000_000_000), plain("5" + id.slice(1), 1_800_000_000_000));
+    await fb.reconcile(CH, { keepId: id });
+  }
+  assert.deepEqual(holders(channels[CH]), ["300000000000000003"]);
+});
+
+test("the sweep strips a support-service row after a day and de-duplicates open ticket channels", async () => {
+  const old = 1_800_000_000_000 - 30 * 3600000;
+  const channels = { [CH]: [withRow("300000000000000003", old), withRow("300000000000000002", old)] };
+  const jobs = { j1: { kind: "ticket", state: "waiting", ticket: 9, replyChannel: CH } };
+  const { fb } = fixture({ channels, jobs });
+  await fb.sweep();
+  assert.deepEqual(holders(channels[CH]), []);
+});
+
+test("the sweep keeps a fresh newest row, strips older ones, skips ended tickets and rescans only after a pause", async () => {
+  const fresh = 1_800_000_000_000 - 3600000;
+  const channels = { [CH]: [withRow("300000000000000003", fresh), withRow("300000000000000002", fresh)], "100000000000000002": [withRow("300000000000000005", 1)] };
+  const jobs = { j1: { kind: "ticket", state: "waiting", ticket: 9, replyChannel: CH }, j2: { kind: "ticket", state: "done", ticket: 8, replyChannel: "100000000000000002" } };
+  const { fb, calls, advance } = fixture({ channels, jobs });
+  await fb.sweep();
+  assert.deepEqual(holders(channels[CH]), ["300000000000000003"]);
+  assert.deepEqual(holders(channels["100000000000000002"]), ["300000000000000005"]);
+  const gets = () => calls.filter((c) => c.method === "GET").length;
+  const before = gets(); await fb.sweep(); assert.equal(gets(), before);
+  advance(31 * 60000); await fb.sweep(); assert.ok(gets() > before);
+});
+
+test("staleHolders only counts our rows and never touches other components", () => {
+  const { staleHolders } = require("../lib/operator/feedback");
+  const other = { id: "5", author: { id: BOT }, components: [{ components: [{ custom_id: "decision:yes" }] }] };
+  assert.deepEqual(staleHolders([other, withRow("4", 1), withRow("3", 1)]), ["3"]);
+  assert.deepEqual(staleHolders([withRow("4", 1), withRow("3", 1)], { keepId: "3" }), ["4"]);
+  assert.deepEqual(staleHolders("nope"), []);
 });

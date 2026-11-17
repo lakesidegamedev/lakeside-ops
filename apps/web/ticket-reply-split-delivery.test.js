@@ -98,3 +98,26 @@ test("HTML entities are decoded and mentions removed before posting", async () =
   assert.equal(content, `The state's total & the country's "share" everyone`);
   assert.equal(ticket.publicUpdates[0].message, content);
 });
+
+test("after a reply lands, the feedback row is stripped from everything but its last part", async () => {
+  const ticket = { _id: "t", ticketNumber: 9, discordChannelId: "c1", publicUpdates: [] };
+  const sent = [], stripCalls = [];
+  const postChannel = async () => { sent.push(1); return { posted: true, id: `m${sent.length}`, channel: "c1" }; };
+  const stripRows = async (channel, keep) => { stripCalls.push([channel, keep]); };
+  await maybePostTicketChannelUpdate(fakeDb(ticket), { ...base, postChannel, stripRows });
+  assert.deepEqual(stripCalls, [["c1", `m${sent.length}`]]);
+});
+
+test("stripOthers keeps the newest row holder and removes the rest", async () => {
+  const { stripOthers, row } = require("./feedback-row");
+  const msgs = [{ id: "30", components: row() }, { id: "29", components: [] }, { id: "20", components: row() }, { id: "10", components: row() }, { id: "9", components: [{ type: 1, components: [{ custom_id: "decision:yes" }] }] }];
+  const patched = [];
+  const fetchImpl = async (url, opts = {}) => {
+    if (opts.method === "PATCH") { patched.push(url.split("/").pop()); return { ok: true }; }
+    return { ok: true, json: async () => msgs };
+  };
+  const r = await stripOthers("100000000000000001", "30", { token: "t", fetchImpl });
+  assert.deepEqual(patched, ["20", "10"]);
+  assert.deepEqual(r.stripped, ["20", "10"]);
+  assert.deepEqual((await stripOthers("100000000000000001", "30", { token: "", fetchImpl })).stripped, []);
+});

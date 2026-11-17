@@ -542,6 +542,7 @@ async function maybePostTicketChannelUpdate(db, {
   editCard = editTicketIntakeCard,
   deliveryMode = "card",
   partGapMs = replySplit.GAP_MS,
+  stripRows = feedbackRow.stripOthers,
 } = {}) {
   if (!Number.isInteger(Number(ticketNumber))) return { skipped: "no ticket number" };
   if (!String(key || "").trim()) return { skipped: "no update key" };
@@ -624,6 +625,12 @@ async function maybePostTicketChannelUpdate(db, {
         onPart: (parts) => tickets.updateOne({ _id: ticket._id, "publicUpdates.key": updateKey }, { $set: { "publicUpdates.$.delivery.parts": parts } }),
       })
     : { skipped: "no ticket channel" };
+  // The feedback row lives on the newest message in a channel only: take it off older replies
+  // (and Keir's answers) now that this reply's last part carries it.
+  if (result && result.posted && Array.isArray(result.parts) && result.parts.length) {
+    const lastId = result.parts[result.parts.length - 1].id;
+    if (lastId) await Promise.resolve(stripRows(result.channel || ticket.discordChannelId, lastId)).catch(() => {});
+  }
   const delivery = playerUpdateDelivery(result, new Date(), attempts);
   const set = {
     "publicUpdates.$.delivery": delivery,

@@ -3,6 +3,13 @@
 // row: Great, Helpful, Not helpful, Report. When a newer answer lands in the same
 // channel, or a day passes, the row is removed, so threads stay clean.
 //
+// The rule is "one row per channel, on the newest message", and it holds for both
+// writers: Keir's own delivery and replies posted by the support service (which Keir
+// never sees). The ledger alone cannot know about the support service's rows, so the
+// rule is enforced from Discord's own state: after any row-carrying message lands, the
+// channel's recent messages are listed and every other row is removed (see
+// staleHolders). The web service does the same after its post (apps/web/feedback-row.js).
+//
 // The game bot owns the Discord connection, so clicks reach it, not us. It answers
 // the clicker privately and then pokes us with only the interaction token. We read
 // that private answer back from Discord: who clicked, which message, and the vote
@@ -17,6 +24,8 @@ const VOTE_OF = { "⭐": "great", "👍": "up", "👎": "down", "🚩": "report"
 const ANSWER_KEY = /^(channel-reply|finish|error-reply):/;
 const SHOW_MS = 24 * 3600000;
 const RETAIN_MS = 180 * 86400000;
+const SCAN_MS = 30 * 60000;
+const SCAN_PER_SWEEP = 15;
 
 function row() {
   return [{ type: 1, components: [
@@ -25,6 +34,30 @@ function row() {
     { type: 2, style: 2, emoji: { name: "👎" }, custom_id: `${PREFIX}down` },
     { type: 2, style: 2, label: "Report a problem", custom_id: `${PREFIX}report` },
   ] }];
+}
+
+const snowflakeDesc = (a, b) => { const x = BigInt(a.id), y = BigInt(b.id); return x < y ? 1 : x > y ? -1 : 0; };
+
+/** True when a Discord message carries one of our feedback rows. */
+function holdsRow(m, botId = null) {
+  if (!m || !/^\d+$/.test(String(m.id || ""))) return false;
+  if (botId && m.author?.id !== botId) return false;
+  return (m.components || []).some((r) => (r.components || []).some((c) => String(c.custom_id || "").startsWith(PREFIX)));
+}
+
+/**
+ * Which messages should lose their row. Keeper = keepId, else the newest holder. Every other
+ * holder goes. With expireBefore (ms) and no keepId, a keeper older than that goes too.
+ */
+function staleHolders(messages, { keepId = null, botId = null, expireBefore = null } = {}) {
+  const held = (Array.isArray(messages) ? messages : []).filter((m) => holdsRow(m, botId)).sort(snowflakeDesc);
+  const keep = keepId ? String(keepId) : held[0]?.id || null;
+  const out = held.filter((m) => m.id !== keep).map((m) => m.id);
+  if (!keepId && expireBefore != null && held[0]) {
+    const at = Date.parse(held[0].timestamp || "");
+    if (Number.isFinite(at) && at < expireBefore) out.push(held[0].id);
+  }
+  return out;
 }
 
 function parseRecorded(content) {
@@ -44,8 +77,22 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
   }
 
   async function strip(channelId, messageId) {
-    try { await discord("PATCH", `/channels/${channelId}/messages/${messageId}`, { components: [] }); }
-    catch (e) { log(`feedback: could not remove the row from ${messageId}: ${e.message}`); }
+    try { await discord("PATCH", `/channels/${channelId}/messages/${messageId}`, { components: [] }); return true; }
+    catch (e) { log(`feedback: could not remove the row from ${messageId}: ${e.message}`); return false; }
+  }
+
+  /**
+   * Make the channel obey one-row-newest-only from Discord's own state, which also covers
+   * support-service replies that are not in the ledger. Returns the message ids stripped.
+   */
+  async function reconcile(channelId, { keepId = null, expire = false } = {}) {
+    if (!/^\d{15,22}$/.test(String(channelId || ""))) return [];
+    let list;
+    try { list = await discord("GET", `/channels/${channelId}/messages?limit=100`); }
+    catch (e) { log(`feedback: could not list ${channelId}: ${e.message}`); return []; }
+    const done = [];
+    for (const id of staleHolders(list, { keepId, botId: config.botId, expireBefore: expire ? now() - SHOW_MS : null })) if (await strip(channelId, id)) done.push(id);
+    return done;
   }
 
   /** Remember what produced the answer and move the row off the previous one. */
@@ -57,6 +104,7 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     f.latest[channelId] = { messageId, at };
     ledger.save();
     if (prev && prev.messageId !== messageId) await strip(channelId, prev.messageId);
+    await reconcile(channelId, { keepId: messageId });
   }
 
   async function voterRole(userId) {
@@ -106,10 +154,21 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     return { ok: true, vote: vote.vote, voter: vote.voter, changed: Boolean(previous && previous !== vote.vote) };
   }
 
-  /** Remove day-old rows and forget old records. */
+  /**
+   * Remove day-old rows and forget old records. Also re-checks the channels of open tickets
+   * (a few per pass, each at most every SCAN_MS) because the support service posts rows that
+   * only Discord knows about: those expire and de-duplicate here too.
+   */
   async function sweep() {
     const f = state(), at = now();
     for (const [channelId, l] of Object.entries(f.latest)) if (at - l.at > SHOW_MS) { delete f.latest[channelId]; ledger.save(); await strip(channelId, l.messageId); }
+    f.scanned ||= {};
+    const open = new Set(Object.values(ledger.data.jobs || {})
+      .filter((j) => j && j.kind === "ticket" && !["done", "dismissed", "cancelled"].includes(j.state))
+      .map((j) => j.replyChannel || j.channelId).filter((c) => /^\d{15,22}$/.test(String(c || ""))));
+    const due = [...open].filter((c) => at - (f.scanned[c] || 0) >= SCAN_MS).sort((a, b) => (f.scanned[a] || 0) - (f.scanned[b] || 0)).slice(0, SCAN_PER_SWEEP);
+    for (const channelId of due) { f.scanned[channelId] = at; ledger.save(); await reconcile(channelId, { expire: true }); }
+    for (const [c, t] of Object.entries(f.scanned)) if (at - t > RETAIN_MS) delete f.scanned[c];
     let pruned = false;
     for (const [id, m] of Object.entries(f.messages)) if (at - m.at > RETAIN_MS) { delete f.messages[id]; pruned = true; }
     for (const [k, v] of Object.entries(f.votes)) if (at - v.at > RETAIN_MS) { delete f.votes[k]; pruned = true; }
@@ -146,7 +205,7 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     return [`Answer feedback: ${n("great")} ⭐, ${n("up")} 👍, ${n("down")} 👎, ${n("report")} 🚩.`, ...reports].join("\n");
   }
 
-  return { components, delivered, record, sweep, summary, digestLine };
+  return { components, delivered, reconcile, record, sweep, summary, digestLine };
 }
 
-module.exports = { createFeedback, row, parseRecorded, PREFIX, ANSWER_KEY };
+module.exports = { createFeedback, row, parseRecorded, holdsRow, staleHolders, PREFIX, ANSWER_KEY, SHOW_MS };
