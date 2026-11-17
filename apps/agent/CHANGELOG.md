@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.2.3 (2026-11-17)
+
 - The feedback row is back to one per channel, on the newest message. 10.2.1 put the row on every player reply posted by the support service, and those replies never went through Keir's delivery, so nothing removed older rows and every message in a ticket channel kept one. Now both writers enforce the rule from Discord's own state: after a support reply lands (and after any Keir answer), the channel's recent messages are listed and every other row is removed. Keir's 10-minute sweep also re-checks open ticket channels (a few per pass, each at most every 30 minutes) and removes a row after 24 hours even when the support service posted it. `bin/keir-feedback-strip.js` is a one-shot cleanup for rows already out there: dry run by default, `--apply` to strip.
 - Keir treats "no effect" reports as a likely bug first. When a player says a research, upgrade, purchase or action did nothing, Keir checks that the state makes sense for the world (a 2027 company owning 1940s tech) before explaining it as a game rule. Added to the evidence rules and to the bug report and mechanics question checklists.
 
