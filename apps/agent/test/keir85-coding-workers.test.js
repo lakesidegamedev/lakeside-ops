@@ -251,6 +251,8 @@ test("economy paths or a gated class on the worker PR go to the owner instead of
     await s.cw.tick(); await s.cw.tick();
     assert.equal(r.state, "needs_owner", files[0]); assert.equal((w.merges || []).length, 0);
     assert.match(job.inbox.at(-1).content, /Do not tell the player/);
+    assert.match(job.inbox.at(-1).content, /action merge and number 7/, "the ticket task is told to open the Approve button");
+    assert.equal(Object.keys(s.ledgerData.outbox).filter((k) => /coding-worker/.test(k)).length, 0, "no text DM sends the owner to approve elsewhere");
   }
   const w = world({ prFiles: ["src/lib/foo.ts"] }); w.prs[7].title = "fix: rebalance the thing";
   const s = build(w), job = ticketJob(); s.ledgerData.jobs.job1 = job;

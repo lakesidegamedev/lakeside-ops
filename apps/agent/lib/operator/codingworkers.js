@@ -178,7 +178,10 @@ function createCodingWorkers({
     const text = state === "needs_owner"
       ? `Coding worker ${run.id} (ticket ${run.ticket}) produced PR #${run.pr}, which needs the owner before it can ship: ${why}. Nothing was merged.`
       : `Coding worker ${run.id} (ticket ${run.ticket}) needs a person: ${why}. Nothing further will be merged for it.`;
-    tellTicket(run, `${text} Do not tell the player a fix is coming or live.`, { alert: true });
+    // Keir 10.2 (owner, 2026-11-17): a PR that needs the owner is never a text alert telling him to go approve it elsewhere.
+    // The ticket task is woken to call github merge, which puts the Approve / Decline button in his DMs.
+    const needsButton = state === "needs_owner" && run.pr;
+    tellTicket(run, needsButton ? `${text} Call the github tool with action merge and number ${run.pr} now (add an explanation once it asks): the owner gets an Approve or Decline button. Do not tell the player a fix is coming or live.` : `${text} Do not tell the player a fix is coming or live.`, { alert: !needsButton });
     return card(run, text, "progress");
   }
 

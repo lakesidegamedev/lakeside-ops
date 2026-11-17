@@ -106,14 +106,17 @@ test("logic and equity paths cannot use the small-change authority carry", () =>
   for (const file of ["src/lib/equities/pool.ts", "src/lib/unknown/module.ts", "src/app/api/actions/route.ts"]) assert.equal(authority.hugeCode([file]).huge, true, file);
 });
 
-test("a finding prepares a manual repair artifact without an unusable approval button", async () => {
+test("a finding's prepared repair is an Approve / Decline decision and cannot run before the owner approves", async () => {
   const f = fixture();
   const out = await f.broker.tool(f.job, "request_heal", repair);
-  assert.equal(out.state, "prepared");
-  assert.equal(Object.keys(f.ledger.data.decisions || {}).length, 0);
+  assert.equal(out.state, "pending");
+  const decisions = Object.values(f.ledger.data.decisions || {});
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].type, "approval");
+  assert.equal(decisions[0].actionId, out.action);
   const dm = Object.values(f.ledger.data.outbox)[0];
   assert.equal(dm.destination, "owner");
-  assert.match(dm.content, /cannot apply/);
-  assert.doesNotMatch(dm.content, /test-token/);
+  assert.ok(dm.components, "the owner DM carries the Approve and Decline buttons");
+  assert.doesNotMatch(dm.content, /test-token|heal-ops/);
   await assert.rejects(f.broker.tool(f.job, "execute_action", { action: out.action }), /never post.*execute/);
 });

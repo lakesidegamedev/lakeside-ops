@@ -1920,11 +1920,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         return { action: a.id, state: a.state, instruction: "The owner's own request authorizes this. Call execute_action now." };
       }
       // Keir 5.0: a finding prepares a heal; only the owner applies it.
+      // Keir 10.2 (owner, 2026-11-17): the owner never applies it by hand elsewhere. The prepared repair is an
+      // Approve / Decline question; Approve runs the exact plan through execute_action under a fresh plan and token.
       if (job.kind === "finding" && !ownPrMerge) {
-        a.state = "prepared";
-        ledger.notify(`prepared-heal:${a.id}`, "owner", `Prepared repair from Keir monitoring. ${String(reason).slice(0, 700)}\n\nThis finding cannot apply it. Review and apply through heal-ops, or direct a developer task to re-plan and apply it. No game data changed.\n\nExact specification:\n\`\`\`json\n${JSON.stringify(args.spec, null, 2)}\n\`\`\``);
-        ledger.audit("requested", { action: a.id, job: job.id, digest, prepared: true }); ledger.save();
-        return { action: a.id, state: a.state, instruction: "The repair specification was sent to the owner for manual application with a fresh plan. This artifact is not executable or awaiting approval. Nothing changed; continue the draft fix or finish with the handoff." };
+        a.state = "pending"; a.expiresAt = now() + 24 * 3600000;
+        const spec = JSON.stringify(args.spec?.description || args.spec?.title || "a prepared repair").slice(1, -1);
+        openDecision(ledger, config, { jobId: job.id, actionId: a.id, question: `Keir monitoring prepared a repair: ${String(reason).slice(0, 500)} (${spec.slice(0, 160)}). Approve to apply it now with a fresh plan and checks, or Decline to leave game data as it is.`, signoff: true });
+        ledger.audit("requested", { action: a.id, job: job.id, digest, prepared: true, decision: true }); ledger.save();
+        return { action: a.id, state: a.state, instruction: "The repair is with the owner as an Approve / Decline button. Nothing changed. Finish waiting; on Approve you are woken, then call execute_action with this action id." };
       }
       const label = { heal: "Heal", host_command: "Host command", mcp_write: "Write" }[kind] || kind;
       // A ticket's repair is the owner's call, never the reporter's: it goes to
@@ -2190,7 +2193,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!config.roleSnapshot || !["watchkeeper", "engineering"].includes(require("./roles").roleOf(job, ledger.data.jobs))) throw new Error("Operator role state is restricted to observer and engineering tasks");
       return config.roleSnapshot();
     }
-    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)) throw new Error("finding tasks never post in Discord or execute privileged actions");
+    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)
+      && !(name === "execute_action" && (() => { const x = ledger.data.actions?.[input.action]; return x && x.jobId === job.id && x.kind === "heal" && x.state === "approved" && x.approvedBy === config.ownerId; })())) throw new Error("finding tasks never post in Discord or execute privileged actions");
     if (job.prMention && !prMention.PR_MENTION_TOOLS.includes(name)) throw new Error("A PR review task only reads the pull request and the code, and posts one review comment on it");
     if (job.codingParent && !childTools(job).includes(name)) throw new Error(job.investigation ? "Investigators only read: code in the snapshot, live game state, history and past tickets. The worker handles fixes, publication and communication." : "Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.");
     if (name === "recent_changes") return capabilities.recentChanges({ days: input.days, query: input.query, path: input.path });
@@ -2424,6 +2428,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         record(r?.id || null);
         return { raised: true, id: r?.id || null, instruction: "Filed on the MCP capability board (product lakeside-mcp, kind capability). Filing is not a fix: work around it with the tools you have, note the card id on the ticket record, and keep the ticket moving. Do not wait on the card." };
       }
+      // Keir 10.2 (owner, 2026-11-17): GitHub housekeeping is Keir's own job, never a card or a "needs a person" DM.
+      { const kind = require("./prhousekeeping").housekeepingRequest(`${title} ${detail}`); if (kind && !["bug", "enhancement"].includes(input.kind)) throw new Error(require("./prhousekeeping").INSTRUCTION(kind)); }
       if (title.length < 8 || detail.length < 40) throw new Error("give a short title and the evidence: what happens, where in the code or data, and the question for the developers");
       if (DECISION_WORDS.test(`${title} ${detail}`) && input.kind !== "decision" && input.kind !== "bug")
         throw new Error("This asks for an owner decision (compensation, refund, approval or a ruling). Call again with kind: \"decision\" and a concise question plus options: two to six named choices with the outcome of each in its detail. Preference selection is not execution approval.");
@@ -3037,7 +3043,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         return { posted: true, number, head, url: posted?.html_url || pr.html_url };
       }
       const ownPrAction = input.action === "close";
-      if (input.action === "close_issue" && (job.role === "player" || !["ticket", "command"].includes(job.kind))) throw new Error("close_issue needs a staff-side ticket or developer task");
+      // Keir 10.2 (owner, 2026-11-17): closing a fixed issue is Keir's own housekeeping from every lane (engineering,
+      // watch, finding, ticket, coding). The live-fix check below is the guard, not the lane. Players never get it.
+      if (input.action === "close_issue" && job.role === "player") throw new Error("close_issue needs a staff-side task");
       // Ticket and developer tasks ship their own fixes (owner rule: agents merge
       // and promote when the gate is green). Failures never merge; only a
       // proven identical staging qualification can bypass duplicate pending checks.
@@ -3061,8 +3069,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // staff-side task: a ticket inherited from another operator has no PRs of
       // its own yet still has to know whether the fix is live (2026-10-13: four
       // tickets stalled on "PR inaccessible"). Players never get it.
-      const readAllowed = job.role !== "player" && (developerTask(job) || developerTicket(job) || job.pullRequests?.length || ["ticket", "command", "finding"].includes(job.kind));
-      if (ownPrAction ? !(developerTask(job) || job.pullRequests?.length) : readOnly ? !readAllowed : !(hasStandingAuthority || askForAuthority)) throw new Error(readOnly || ownPrAction ? "PR tools need a developer task or a task that opened PRs" : "merging and promotion run only on the owner's own request");
+      const readAllowed = job.role !== "player" && (developerTask(job) || developerTicket(job) || job.pullRequests?.length || ["ticket", "command", "finding"].includes(job.kind) || input.action === "close_issue");
+      // Keir 10.2: closing a superseded bot PR is housekeeping open to every staff-side lane; the checks live in the close branch.
+      if (ownPrAction ? job.role === "player" : readOnly ? !readAllowed : !(hasStandingAuthority || askForAuthority)) throw new Error(readOnly || ownPrAction ? "PR tools need a developer task or a task that opened PRs" : "merging and promotion run only on the owner's own request");
       // Every changed file. null means the list could not be read completely,
       // which counts as sensitive: the gate fails closed. PR files page up to
       // 3000; a compare lists at most 300 files, all on its first page.
@@ -3432,12 +3441,34 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       if (input.action === "close") {
         const pr = await api([`repos/${repo}/pulls/${Number(input.number)}`]);
-        if (!/^keir\//.test(pr.head.ref)) throw new Error("Keir only closes its own PRs (branches starting keir/)");
         if (pr.state !== "open") return { number: pr.number, state: pr.state };
-        if (input.comment) await exec("/usr/bin/gh", ["api", "-X", "POST", `repos/${repo}/issues/${pr.number}/comments`, "-f", `body=${noDashes(redactSecrets(String(input.comment))).slice(0, 2000)}`], asKeir());
+        if (pr.merged) return { number: pr.number, state: "merged" };
+        // Keir 10.2 (owner, 2026-11-17): closing a superseded bot or agent PR is Keir's own housekeeping. Never a human's PR.
+        const verdict = require("./prhousekeeping");
+        const author = String(pr.user?.login || "");
+        const ownBranch = /^keir\//.test(String(pr.head?.ref || ""));
+        if (!ownBranch && !verdict.botAuthor(pr.user, config.agentLogins)) throw new Error(`PR ${pr.number} is by ${author || "a person"}. Keir closes only its own PRs and superseded PRs from bot or agent accounts, never a person's.`);
+        const by = Number(input.supersededBy || input.fix || 0);
+        let superseding = null;
+        if (by) {
+          superseding = await api([`repos/${repo}/pulls/${by}`]);
+          if (!superseding?.merged) throw new Error(`PR ${by} is not merged, so it does not supersede PR ${pr.number}`);
+          const covered = verdict.sameIssue(pr, superseding) || await (async () => {
+            for (const b of ["development", "main"]) {
+              try { const c = await api([`repos/${repo}/compare/${encodeURIComponent(b)}...${pr.head.sha}`]); if (["behind", "identical"].includes(c.status)) return true; } catch {}
+            }
+            return false;
+          })();
+          if (!covered) throw new Error(`PR ${by} does not cover PR ${pr.number}: they link no common issue and PR ${pr.number}'s changes are not contained in development or main. Check the diff, or leave it open.`);
+        } else if (!ownBranch) throw new Error("give supersededBy: the merged PR that covers the same fix. Without one, only Keir's own keir/ PRs can be closed.");
+        const note = noDashes(redactSecrets(String(input.comment || "").trim() || verdict.closingComment(pr.number, superseding ? by : null))).slice(0, 2000);
+        const text = superseding && !new RegExp(`#${by}\\b`).test(note) ? `${note}\n\nSuperseded by #${by}.` : note;
+        await commentOnce(job, `close-pr-comment:${pr.number}`, api, `repos/${repo}/issues/${pr.number}`, `<!-- keir:closed-pr:${pr.number} -->`,
+          (marker) => apiKeir(["-X", "POST", `repos/${repo}/issues/${pr.number}/comments`, "-f", `body=${text}\n\n${marker}`]));
         await effect(job, `close-pr:${pr.number}`, () => apiKeir(["-X", "PATCH", `repos/${repo}/pulls/${pr.number}`, "-f", "state=closed"]));
-        try { await exec("/usr/bin/gh", ["api", "-X", "DELETE", `repos/${repo}/git/refs/heads/${pr.head.ref}`]); } catch {}
-        return { number: pr.number, closed: true };
+        if (ownBranch) { try { await exec("/usr/bin/gh", ["api", "-X", "DELETE", `repos/${repo}/git/refs/heads/${pr.head.ref}`]); } catch {} }
+        ledger.audit("pr_closed_superseded", { job: job.id, pr: pr.number, by: by || null, author });
+        return { number: pr.number, closed: true, ...(superseding ? { supersededBy: by } : {}), branchDeleted: ownBranch };
       }
       // Keir 4.2: close the issues a fix PR references (Refs/Fixes #N in its
       // body, or Keir's own issues for the ticket that opened it) once the fix
@@ -4322,6 +4353,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       ledger.save(); return { saved: true };
     }
     if (name === "finish") {
+      if (input.needsOwner) { const hk = require("./prhousekeeping").housekeepingRequest(input.summary); if (hk) throw new Error(require("./prhousekeeping").INSTRUCTION(hk)); }
       if (input.needsOwner && !job.ownerMuseBlocker && !d.channels?.[job.channelId]?.claimedBy && !appQuestions?.list(job.appThread||"main").some(q=>q.jobId===job.id&&q.state==="pending") && !Object.values(d.decisions||{}).some(x=>x.jobId===job.id&&x.state==="pending")) throw new Error("Prepare a readable owner request first: use github merge/promote with explanation for an action, or present_choices/raise_to_developers with named policy options. A technical finish summary is not an approval request.");
       if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a completion summary. Call tools through their interface and preserve the last verified conclusion.");
       if (job.ownerMuseBlocker) {

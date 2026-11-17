@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.16 (2026-11-17)
+
+- GitHub housekeeping is Keir's own job. close_issue now works from every lane (engineering, watch, finding, ticket, coding) whenever the fix is live; only the live check guards it. close now also closes a superseded PR from a bot or agent account (never a person's) once a merged PR covers it, with the superseding PR named in the comment; the head branch is deleted only for keir/ branches.
+- raise_to_developers and a needs-owner finish refuse requests to close an issue or PR, delete a branch or re-run a check, and point at the github tool.
+- A finding's prepared repair, and a coding worker's PR that needs the owner, now arrive as an Approve or Decline button instead of a text DM telling the owner to act elsewhere. Approve on a repair runs it through execute_action with a fresh plan and token.
+
 ## 10.1.15 (2026-11-17)
 
 - Sentry sweep. Keir no longer reports guard refusals as errors: raw reads that a typed tool covers, authority and scope refusals, "not finished" and unanswered-finish refusals, the assigned-ticket-only read, an unlinked reporter and a refused ticket open are still recorded and listed by keir-failures, but never raise a NEW or SPIKE alert. Network and interrupted-activation blips alert only as a real spike. Real loops and deadlocks built from the same refusals still alert.
