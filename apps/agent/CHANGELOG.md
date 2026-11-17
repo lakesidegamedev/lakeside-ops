@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.10 (2026-11-17)
+
+- Keir now closes tickets. An answered ticket is resolved (same resolution receipt and closing message as before, one short line to the player) when the player confirms the fix or answer worked, or when the fix is live and the player has sent nothing for 6 hours, or when a question was answered and the player has been quiet for 6 hours. Tickets with an owner closure hold, an open owner decision, an open developer handoff, a staff takeover or owner pause, or an unanswered last player message are never closed. A bug that is answered but not live is not closed by the quiet rule. Checked every 10 minutes; `KEIR_AUTOCLOSE=0` turns it off. This replaces the "awaiting auto-close" state tickets 1836, 1837, 1838, 1841 and 1842 sat in, where nothing defined how long quiet was.
+
 ## 10.1.9 (2026-11-17)
 
 - A green PR Keir opened that its task has no standing authority to merge (a public-page watch finding, an engineering task, a finding whose fix is not display-only) no longer ends as a plain-text "Needs a person" DM (PR 6680). The github merge and promote actions now ask the owner with Approve and Decline buttons, using the same plain-language explanation and reviewed-head pinning as other merge approvals; a later push invalidates the approval, Approve merges under the usual effect fencing and green-check rule, Decline leaves the PR open. Red or still-running checks never produce a button, and rule, balance and economy changes still go through the owner's own approval.

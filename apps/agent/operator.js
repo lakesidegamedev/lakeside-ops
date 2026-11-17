@@ -406,16 +406,18 @@ tickers.every("ciwatch", 60000, async () => {
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
 });
 // Keir 8.4: stuck-ticket sweeper and the daily trust report.
-const sweeper = require("./lib/operator/sweeper").createSweeper({ ledger, config: { sweeperEnabled: env.KEIR_SWEEPER !== "0" }, log, killSwitch, wake: () => drain(),
-  investigate: (root, o) => (codingWorkersInst ? codingWorkersInst.queueInvestigation({ job: root, reason: o.reason }) : { skipped: true, permanent: true, reason: "coding workers are not running" }),
-  held: (job) => {
+const ticketHeld = (job) => {
     if (config.supportDeferred(job)) return "the ticket supervisor owns it";
     const hold = admissionHold(rootJob(job, ledger.data.jobs), { now: Date.now(), claimedBy: (id) => ledger.data.channels[id]?.claimedBy });
     if (["staff-owned", "staff-active", "closure-grace"].includes(hold)) return hold;
     if (require("./lib/operator/supporttakeover").held(ledger.data, job)) return "taken over by staff";
     if (require("./lib/operator/ticketpause").pauseFor(ledger.data, job)) return "paused by the owner";
     return null;
-  } });
+};
+const sweeper = require("./lib/operator/sweeper").createSweeper({ ledger, config: { sweeperEnabled: env.KEIR_SWEEPER !== "0" }, log, killSwitch, wake: () => drain(),
+  investigate: (root, o) => (codingWorkersInst ? codingWorkersInst.queueInvestigation({ job: root, reason: o.reason }) : { skipped: true, permanent: true, reason: "coding workers are not running" }),
+  held: ticketHeld });
+
 // Keir 10: failure scan every 15 minutes (new kinds, spikes, release regressions) files one card per fingerprint; retention daily.
 const failureCard = async ({ title, detail, existingCardId, fingerprint }) => {
   if (existingCardId) { await mcp.call("ops-knowledge", "work_report", { id: existingCardId, event: "progress", actor: "keir", summary: title.slice(0, 200), idempotency_key: `failure:${fingerprint}:${Math.floor(Date.now() / 21600000)}` }, true); return existingCardId; }
@@ -430,6 +432,9 @@ if (failures) tickers.every("failures", 15 * 60000, async () => {
   if (env.KEIR_FAILURE_DM === "1" && st.dmDay !== day) { st.dmDay = day; ledger.notify(`failures-digest:${day}`, "owner", failures.digest()); ledger.save(); }
 }, { immediateMs: 120000 });
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
+// Keir 10.1.9: the closing rule. Resolves answered tickets on confirmation or six quiet hours (KEIR_AUTOCLOSE=0 turns it off).
+const autoCloser = require("./lib/operator/autoclose").createAutoCloser({ ledger, broker, config: { ...config, autoCloseEnabled: env.KEIR_AUTOCLOSE !== "0" }, log, killSwitch, held: ticketHeld });
+tickers.every("autoclose", 10 * 60000, async () => { const r = await autoCloser.tick(); if (r.closed?.length) log(`autoclose: closed ${r.closed.map((c) => `${c.ticket}(${c.rule})`).join(", ")}`); }, { immediateMs: 5 * 60000 });
 const guardianStatus = () => { try { return JSON.parse(require("node:fs").readFileSync(env.KEIR_GUARDIAN_STATUS_FILE || "/var/lib/keir-guardian/status.json", "utf8")); } catch { return null; } };
 const trustReporter = require("./lib/operator/trustreport").createTrustReporter({ ledger, config, log, killSwitch, mcp, readGuardian: guardianStatus });
 tickers.every("trustreport", 5 * 60000, async () => { await trustReporter.tick(); });
