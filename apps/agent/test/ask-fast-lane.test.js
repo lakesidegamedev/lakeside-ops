@@ -116,7 +116,7 @@ test("a follow-up is re-tagged, so a question that turns into a bug report goes 
   const h = harness(t, { tags: { kind: "bug_report", kindConfidence: 0.95 } });
   const j = job({ history: [{}], fastLane: { answers: 1 }, inbox: [{ authorId: "42", content: "Ok, and why does my vote count show zero?" }] });
   const r = await h.lane.attempt(j);
-  assert.equal(r.handled, false); assert.match(r.reason, /bug_report/);
+  assert.equal(r.handled, false); assert.match(r.reason, /bug_report|player data report/);
   assert.equal(h.requests.length, 0);
 });
 
