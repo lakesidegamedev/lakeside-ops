@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.4 (2026-11-17)
+
 - Ticket honesty (ticket 1837). A reply that explains what a number is made of ("the total adds X and fees") must now match something Keir read on the ticket, or it is held back and then labelled unconfirmed. A "not confirmed" line is refused when the player was already answered and nothing new was read, and the code-written "no confirmed answer" line is skipped when the player already has a reply. A bug, data or outage task can no longer finish with a summary that names a read it has not done ("next activation", "next investigator to read"); it is refused twice and told to do the read. The owner DM for an unanswered ticket now lists what was checked, the evidence, what the player was told, and the specific blocker.
 
 ## 10.1.3 (2026-11-17)
