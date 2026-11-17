@@ -113,3 +113,44 @@ test("the contract line parses only the bot's own wording", () => {
   assert.equal(parseRecorded("feedback recorded: 👍"), null);
   assert.equal(parseRecorded("Thanks, feedback recorded: 🎉 Party."), null);
 });
+
+test("the support service's feedback row is identical to Keir's", () => {
+  assert.deepEqual(require("../../web/feedback-row").row(), require("../lib/operator/feedback").row());
+});
+
+test("a click on a support-service reply is adopted from Discord and tied to its ticket", async () => {
+  const msg = "200000000000000007", chan = "100000000000000005", player = "400000000000000001";
+  const replies = { [TOKEN]: { ...reply("Thanks, feedback recorded: 👎 Not helpful.", player, msg), channel_id: chan } };
+  const f = fixture({ replies });
+  const base = f.fb;
+  const orig = f.calls;
+  // wrap discord by rebuilding with extra routes
+  const { createFeedback } = require("../lib/operator/feedback");
+  const ledger = f.ledger;
+  const discord = async (method, url) => {
+    if (url.startsWith("/webhooks/")) return replies[TOKEN];
+    if (url === `/channels/${chan}/messages/${msg}`) return { author: { id: BOT }, components: base.components ? require("../lib/operator/feedback").row() : [] };
+    if (url === `/channels/${chan}`) return { name: "ticket-bug-mazes-1851" };
+    return {};
+  };
+  const fb = createFeedback({ ledger, config: { botId: BOT, ownerId: OWNER, guildId: GUILD, staffIds: [] }, discord, now: () => 1_800_000_000_000, release: "10.2.1" });
+  const r = await fb.record({ token: TOKEN });
+  assert.equal(r.vote, "down");
+  const v = Object.values(ledger.data.answerFeedback.votes)[0];
+  assert.equal(v.ticket, 1851);
+  assert.equal(v.kind, "support-reply");
+  void orig;
+});
+
+test("a message without our buttons or not from the bot is not adopted", async () => {
+  const msg = "200000000000000008", chan = "100000000000000005", player = "400000000000000001";
+  const { createFeedback } = require("../lib/operator/feedback");
+  const ledger = { data: {}, save() {}, audit() {} };
+  const discord = async (m, url) => {
+    if (url.startsWith("/webhooks/")) return { ...reply("Thanks, feedback recorded: 👍 Helpful.", player, msg), channel_id: chan };
+    if (url.includes("/messages/")) return { author: { id: player }, components: [] };
+    return { name: "ticket-x-1" };
+  };
+  const fb = createFeedback({ ledger, config: { botId: BOT, ownerId: OWNER, staffIds: [] }, discord, release: "x" });
+  await assert.rejects(fb.record({ token: TOKEN }), /not a Keir answer/);
+});

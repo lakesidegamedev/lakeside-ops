@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.2.1 (2026-11-17)
+
+- Player replies posted by the support service now carry the same feedback row as Keir's own answers, on the last message of the reply. A click on one is recorded exactly like any other: Keir adopts the message when Discord shows it is the game bot's message with these buttons, and takes the ticket from the channel name.
+- Support replies no longer show HTML entities (`state&#39;s`), and a player reply never carries a role, user, @everyone or @here mention.
+
 ## 10.2.0 (2026-11-17)
 
 - Answer feedback. Keir's newest answer in a channel carries one row: ⭐ Great, 👍 Helpful, 👎 Not helpful, Report a problem. The row moves to each newer answer in the channel and disappears after a day, so threads stay clean. KEIR_ANSWER_FEEDBACK=0 turns it off.

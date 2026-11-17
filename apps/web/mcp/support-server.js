@@ -13,7 +13,7 @@ const store = require("../knowledge-store");
 const tokens = require("../agent-tokens");
 const merge = require("./support-tracker");
 const { syncTerminalTicketTracker } = require("./support-terminal");
-const { maybePostOpsFindings, maybePostOpsHealRequest, maybePostTicketResolution, maybePostTicketChannelUpdate, ticketPublicUrl } = require("../ticket-ship-notify");
+const { maybePostOpsFindings, maybePostOpsHealRequest, maybePostTicketResolution, maybePostTicketChannelUpdate, decodeHtmlEntities, ticketPublicUrl } = require("../ticket-ship-notify");
 const {
   getResolution,
   isTerminalStatus,
@@ -441,8 +441,10 @@ async function main() {
         message: z.string().min(1).max(1400),
         deliver: z.boolean().optional().default(false),
       },
-      async ({ kind, number, update_kind, message, deliver, delivery_mode }) => {
+      async ({ kind, number, update_kind, message: rawMessage, deliver, delivery_mode }) => {
         if (!auth || auth.scopes?.write !== true) return errorResult("write scope required — this token is read-only");
+        // Discord and the receipt show text literally, so an escaped "&#39;" must never be stored.
+        const message = decodeHtmlEntities(rawMessage);
         const col = Tickets;
         const key = { ticketNumber: number };
         const existing = await col.findOne(key);

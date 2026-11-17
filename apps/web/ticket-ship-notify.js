@@ -20,6 +20,7 @@ const { primaryRepoDir } = require("./src/core/paths");
 const { getResolution, isTerminalStatus, normalizeActions } = require("./ticket-receipt");
 const { PLAYER_COPY, contextRequestKey } = require("./ticket-context");
 const replySplit = require("./reply-split");
+const feedbackRow = require("./feedback-row");
 
 const AHD_REPO = process.env.AHD_REPO_DIR || primaryRepoDir();
 const OPS_CHANNEL = process.env.DISCORD_OPS_CHANNEL_NAME || "operations";
@@ -304,6 +305,27 @@ function formatContextRequestNotice({ needed } = {}) {
   ].join("\n").slice(0, 1800);
 }
 
+const NAMED_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+
+/**
+ * Discord renders text literally, so an HTML-escaped apostrophe shows as "&#39;".
+ * Decode the common entities (named and numeric) once before a player-facing post.
+ */
+function decodeHtmlEntities(text) {
+  return String(text == null ? "" : text).replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|amp|lt|gt|quot|apos|nbsp);/gi, (m, e) => {
+    if (e[0] === "#") {
+      const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+    }
+    return NAMED_ENTITIES[e.toLowerCase()];
+  });
+}
+
+/** Player replies never mention roles, users, @everyone or @here. */
+function stripMentions(text) {
+  return String(text).replace(/<@[&!]?\d+>[ \t]*/g, "").replace(/@(everyone|here)\b/gi, "$1").replace(/[ \t]+\n/g, "\n").trim();
+}
+
 function discordMentionPayload(content, mentionRoleIds) {
   const roles = Array.isArray(mentionRoleIds)
     ? mentionRoleIds.filter(Boolean).map(String).slice(0, 100)
@@ -362,7 +384,7 @@ async function postDiscordEmbed(channelIdOrName, embed, { content } = {}) {
   }
 }
 
-async function postDiscordBot(channelIdOrName, content, { mentionRoleIds, nonce } = {}) {
+async function postDiscordBot(channelIdOrName, content, { mentionRoleIds, nonce, components } = {}) {
   const token = process.env.DISCORD_BOT_TOKEN || "";
   if (!token) return { skipped: "no bot token" };
   let channelId = String(channelIdOrName || "");
@@ -377,7 +399,7 @@ async function postDiscordBot(channelIdOrName, content, { mentionRoleIds, nonce 
         Authorization: `Bot ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ...discordMentionPayload(content, mentionRoleIds), ...(nonce ? { nonce, enforce_nonce: true } : {}) }),
+      body: JSON.stringify({ ...discordMentionPayload(content, mentionRoleIds), ...(components ? { components } : {}), ...(nonce ? { nonce, enforce_nonce: true } : {}) }),
       signal: AbortSignal.timeout(10000),
     });
     if (!r.ok) {
@@ -446,7 +468,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * or a later failure keeps the record. Returns the usual post result with
  * `id` = first message and `parts` = every delivered part.
  */
-async function postReplyParts(channelId, content, { post, nonceBase, done = [], gapMs = replySplit.GAP_MS, onPart, pause = sleep } = {}) {
+async function postReplyParts(channelId, content, { post, nonceBase, done = [], gapMs = replySplit.GAP_MS, onPart, pause = sleep, components } = {}) {
   const chunks = replySplit.splitReply(content);
   const parts = done.filter((p) => p && Number.isInteger(p.index) && p.index < chunks.length).map((p) => ({ index: p.index, id: p.id || null }));
   let channel = channelId;
@@ -454,7 +476,7 @@ async function postReplyParts(channelId, content, { post, nonceBase, done = [], 
     if (parts.some((p) => p.index === i)) continue;
     if (parts.length) await pause(gapMs);
     const nonce = crypto.createHash("sha256").update(i === 0 ? nonceBase : `${nonceBase}:${i}`).digest("hex").slice(0, 24);
-    const r = await post(channelId, chunks[i], { nonce });
+    const r = await post(channelId, chunks[i], { nonce, ...(components && i === chunks.length - 1 ? { components } : {}) });
     if (!r || !r.posted) return { ...(r || { error: "Discord post failed" }), parts };
     channel = r.channel || channel;
     parts.push({ index: i, id: r.id || null });
@@ -547,7 +569,7 @@ async function maybePostTicketChannelUpdate(db, {
   }
 
   const url = receiptUrl || ticketPublicUrl(ticketNumber);
-  const safeMessage = String(message || "").trim().slice(0, 1400);
+  const safeMessage = stripMentions(decodeHtmlEntities(message)).trim().slice(0, 1400);
   if (!safeMessage) return { skipped: "empty player message" };
   const includeReceipt = ["opening", "resolution"].includes(String(kind || ""));
   const content = (url && includeReceipt ? `${safeMessage}\n\nView your support receipt: ${url}` : safeMessage).slice(0, 1900);
@@ -598,6 +620,7 @@ async function maybePostTicketChannelUpdate(db, {
         nonceBase: `${ticketNumber}:${updateKey}`,
         done: doneParts,
         gapMs: partGapMs,
+        components: feedbackRow.row(),
         onPart: (parts) => tickets.updateOne({ _id: ticket._id, "publicUpdates.key": updateKey }, { $set: { "publicUpdates.$.delivery.parts": parts } }),
       })
     : { skipped: "no ticket channel" };
@@ -1218,6 +1241,8 @@ async function pollTicketPrOpsTldrs(db, {
 
 module.exports = {
   postReplyParts,
+  decodeHtmlEntities,
+  stripMentions,
   extractTicketNumber,
   coerceTicketNumber,
   summarizeFix,
