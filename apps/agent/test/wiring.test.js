@@ -331,6 +331,40 @@ test("a fix reaching the main server sends the player one live reply", async () 
   assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 1);
 });
 
+// Ticket 1836 (2026-11-17): the model fed the public receipt line back as an item name, so the name carried the
+// stage label, missed the already-told check and re-sent a live notice for a fix announced a day earlier.
+test("a card item named with its stage label is the same fix and sends no second live notice", async () => {
+  const f = fixture();
+  f.config.guildId = "444444444444444444";
+  const discord = async (method, route) => {
+    if (method === "GET" && route.includes("/messages")) return [];
+    if (method === "GET" && route.startsWith("/channels/")) return { id: "777777777777777777", guild_id: f.config.guildId, name: "ticket-bug-someone-1629" };
+    if (method === "GET" && route.includes("/guilds/")) return [{ id: "777777777777777777", name: "ticket-bug-someone-1629" }];
+    if (method === "POST") return { id: "900000000000000001" };
+    return method === "GET" ? [] : {};
+  };
+  const updates = [];
+  const mcp = { servers: () => [], call: async (server, tool, args) => { if (tool === "support_public_update") updates.push(args); return { ok: true, delivery: { posted: true } }; } };
+  const broker = createBroker({ ledger: f.ledger, config: f.config, mcp, discord, sandbox: {}, now: () => Date.now() });
+  const t = f.ledger.createJob("ticket:1629", { kind: "ticket", role: "support", ticket: 1629, channelId: "777777777777777777", source: {}, deadline: 9e15 });
+  t.state = "running"; t.evidence = [];
+  t.releaseEvidence = { abc1234567: { development: true, staging: true, main: true } };
+  await broker.tool(t, "status_card", { items: [{ name: "Canada has no resource deposits", stage: "main" }] });
+  assert.equal(updates.filter((u) => u.update_kind === "production").length, 1);
+  await broker.tool(t, "status_card", { items: [{ name: "Canada has no resource deposits: Live on the main server: Live on the main server", stage: "main" }, { name: "Fracking", stage: "found" }] });
+  assert.equal(updates.filter((u) => u.update_kind === "production").length, 1, "no repeat live notice");
+  assert.equal(f.ledger.data.statusCards[1629].items[0].name, "Canada has no resource deposits");
+  const progress = updates.filter((u) => u.update_kind === "progress").map((u) => u.message).join("\n");
+  assert.doesNotMatch(progress, /Live on the main server: Live on the main server/);
+});
+
+test("card item names lose trailing stage labels", () => {
+  const { cleanName } = require("../lib/operator/statuscard");
+  assert.equal(cleanName("Canada has no resource deposits: Live on the main server: Live on the main server"), "Canada has no resource deposits");
+  assert.equal(cleanName("Wages: Fix written."), "Wages");
+  assert.equal(cleanName("Live on the main server"), "Live on the main server");
+});
+
 // Owner, 2026-10-19 (incident 1628): "Add enigma here" got "I can't add
 // people to this channel myself".
 test("a developer can have Keir add a player to a ticket channel; a player cannot", async () => {

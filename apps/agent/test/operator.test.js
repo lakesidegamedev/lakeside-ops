@@ -1941,12 +1941,32 @@ test("mention-only nudges never inherit another author, stale questions or actio
   for (const variant of ["other", "stale", "action"]) {
     const f = fixture(), c = createConversation(f), g = createGateway({ ...f, conversation: c });
     const q = f.msg(variant === "action" ? "Please delete the data" : "What is your background?", "666666666666666670", variant === "other" ? f.config.staffIds[0] : f.config.ownerId);
-    if (variant === "stale") q.timestamp = new Date(-600000).toISOString();
+    if (variant === "stale") q.timestamp = new Date(-3600000).toISOString();
     g.ingest(f.ch, q);
     const m = f.msg(`<@${f.config.botId}>`, "666666666666666671");m.mentions = [{ id: f.config.botId }];g.ingest(f.ch, m);
     const j = f.ledger.data.jobs[f.ledger.data.seen["discord:" + m.id]];
-    assert.equal(j.kind, "conversation");assert.equal(j.source.content, "Are you there?");assert.equal(j.source.contextMessageId, undefined);
+    assert.equal(j.kind, "conversation");assert.equal(j.source.contextMessageId, undefined);
+    // Keir 10.1.8: recent messages are context for the ping, never the request itself.
+    if (variant === "stale") assert.equal(j.source.content, "Are you there?"); else { assert.match(j.source.content, /since your last post/); assert.doesNotMatch(j.source.content, /delete the data|background/); }
   }
+});
+
+test("a bare mention after a conversation is answered in that conversation's context (ticket 1836)", () => {
+  const { createConversation } = require("../lib/operator/conversation");
+  const f = fixture(), c = createConversation(f), g = createGateway({ ...f, conversation: c });
+  const owner = f.config.ownerId;
+  const a = f.msg("Do we want the power station option to be gated by tech?", "666666666666666680", owner); g.ingest(f.ch, a);
+  const b = f.msg("I think the cost is too low for what it gives.", "666666666666666681", owner); g.ingest(f.ch, b);
+  const m = f.msg(`<@${f.config.botId}>`, "666666666666666682"); m.mentions = [{ id: f.config.botId }]; g.ingest(f.ch, m);
+  const j = f.ledger.data.jobs[f.ledger.data.seen["discord:" + m.id]];
+  assert.match(j.source.content, /since your last post/);
+  assert.deepEqual(j.source.contextSinceMessageIds, [a.id, b.id]);
+  // After Keir's own post, only newer messages count.
+  j.state = "done";
+  c.record(f.ch, { id: "666666666666666683", author: { id: f.config.botId }, content: "Gated, yes.", timestamp: new Date(1000).toISOString() });
+  const m2 = f.msg(`<@${f.config.botId}>`, "666666666666666684"); m2.mentions = [{ id: f.config.botId }]; g.ingest(f.ch, m2);
+  const j2 = f.ledger.data.jobs[f.ledger.data.seen["discord:" + m2.id]];
+  assert.equal(j2.source.content, "Are you there?");
 });
 
 test("developer-owned desktop tickets can snapshot AHDClient; unrelated automatic tickets cannot", async () => {

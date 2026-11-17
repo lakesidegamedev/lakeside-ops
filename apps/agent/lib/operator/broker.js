@@ -1427,7 +1427,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (!Array.isArray(items) || !items.length || items.length > 10) throw new Error("a status card lists 1 to 10 fixes");
     const ev = ticketEvidence(ticketNo);
     return items.map((raw) => {
-      const item = { name: String(raw?.name || "").trim().slice(0, 120), stage: String(raw?.stage || ""), blocked: raw?.blocked === true, note: String(raw?.note || "").trim().slice(0, 200) };
+      const item = { name: statusCard.cleanName(raw?.name).slice(0, 120), stage: String(raw?.stage || ""), blocked: raw?.blocked === true, note: String(raw?.note || "").trim().slice(0, 200) };
       if (!item.name) throw new Error("every fix on the card needs a short player-facing name");
       const ok = statusCard.stageAllowed(item.stage, ev);
       if (!ok.ok) throw new Error(`Not posted: ${item.name}: ${ok.reason}.`);
@@ -1517,10 +1517,10 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const card = d.statusCards?.[ticketNo]; if (!card) return false;
     // Keir 8.4: an update_kind "production" post is a claim about the deployed revision. Without the main-release receipt it is not sent.
     if (!ticketEvidence(ticketNo).main.done) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "no main release evidence" }); return false; }
-    const told = new Set([...(card.liveNotified || []), ...before.filter(live).map((i) => i.name)]);
-    const fresh = after.filter((i) => live(i) && !told.has(i.name));
+    const told = new Set([...(card.liveNotified || []), ...before.filter(live).map((i) => i.name)].map(statusCard.cleanName));
+    const fresh = after.filter((i) => live(i) && !told.has(statusCard.cleanName(i.name)));
     if (!fresh.length) return false;
-    card.liveNotified = [...told, ...fresh.map((i) => i.name)].slice(-20); ledger.save();
+    card.liveNotified = [...told, ...fresh.map((i) => statusCard.cleanName(i.name))].slice(-20); ledger.save();
     const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
