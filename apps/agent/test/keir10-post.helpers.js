@@ -19,7 +19,7 @@ function setup(over = {}) {
     call: async (...a) => { calls.push(a); return handler(...a); },
   };
   let clock = 10 * 3600000;
-  const broker = createBroker({ ledger, config, mcp, discord: ticketDiscord, sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
+  const broker = createBroker({ ledger, config, mcp, discord: over.discord || ticketDiscord, ...(over.exec ? { exec: over.exec } : {}), sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: CH, replyChannel: CH, source: { channelId: CH, channelName: "ticket-bug-fixture-123", content: "Why is my plant idle?" }, deadline: 9e15 });
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id; ledger.data.disclosed = { 123: { at: 1, posted: true } };
   job.codeLookups = 1; job.lastCodeReadAt = clock - 1000; // a code read exists, so the rule-before-code check stays out of the way
