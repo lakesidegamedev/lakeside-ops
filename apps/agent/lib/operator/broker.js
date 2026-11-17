@@ -24,6 +24,7 @@ const { createDelegation, childTools } = require("./delegation");
 const prMention = require("./prmention");
 const ruleLookup = require("./rulelookup");
 const readClaim = require("./readclaim");
+const priceReport = require("./pricereport");
 const bugClaim = require("./bugclaim");
 const claimcheck = require("./claimcheck");
 const accountClaim = require("./accountclaim");
@@ -1245,6 +1246,18 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
           ledger.audit("rule_lookup_required", { job: job.id, ticket: ticketNo, claim: claim.kind, pattern: claim.pattern, attempt: n + 1 });
           refuse(n === 0 ? ruleLookup.REFUSAL : ruleLookup.REFUSAL_UNCONFIRMED);
         }
+      }
+    }
+    // Keir 10.2.1 (ticket 1841): a player asking "why does 1 depot cost 22 million dollars" is reporting a suspect number. An
+    // explanation or defence of the price needs a live read first, and is refused outright when that read shows the price is out of
+    // proportion to the company's cash. Refused at most three times per ticket (no loops); the read-claim gate then hedges it.
+    if (!opts.system) {
+      const refusals = (d.priceReportRefusals ||= {});
+      if ((refusals[ticketNo] || 0) < 3) {
+        const playerText = ticketPlayerText(job), texts = ticketReadTexts(ticketNo, sameTicketJobs);
+        const text = priceReport.refusal(message, { playerText, reads: texts, gameRead: sameTicketJobs.some((j) => j.lastGameReadAt) || texts.length > 0,
+          backed: !readClaim.unbackedClaims(message, texts, playerText).length });
+        if (text) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("price_report_refused", { job: job.id, ticket: ticketNo, attempt: refusals[ticketNo] }); refuse(text); }
       }
     }
     // Keir 9 (replay 2026-11-13): "X already includes Y, so counting both double counts" is refused, at most twice per
