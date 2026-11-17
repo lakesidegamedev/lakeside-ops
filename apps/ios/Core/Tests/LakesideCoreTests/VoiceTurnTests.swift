@@ -14,3 +14,31 @@ final class VoiceTurnTests: XCTestCase {
         XCTAssertNil(VoiceTurn.blocker(in: tasks, jobID: "other"))
     }
 }
+
+@MainActor final class VoiceRequestTests: XCTestCase {
+    func testHangupBeforeReceiptCancelsExactlyTheAcceptedJob() {
+        var stopped: [String] = []
+        let request = VoiceRequest { stopped.append($0) }
+        request.cancel()
+        XCTAssertTrue(stopped.isEmpty)
+        request.accept("old-call")
+        request.cancel(); request.accept("other-call")
+        XCTAssertEqual(stopped, ["old-call"])
+    }
+    func testInterruptAfterReceiptDoesNotCancelTheNextCall() {
+        var stopped: [String] = []
+        let old = VoiceRequest { stopped.append($0) }
+        let next = VoiceRequest { stopped.append($0) }
+        old.accept("old-call"); next.accept("next-call")
+        old.cancel(); old.cancel()
+        XCTAssertEqual(stopped, ["old-call"])
+        XCTAssertFalse(next.cancelled)
+    }
+    func testOpeningTheTaskCanKeepTheAcceptedRequestRunning() {
+        var stopped: [String] = []
+        let request = VoiceRequest { stopped.append($0) }
+        request.accept("continuing-call")
+        XCTAssertEqual(request.jobID, "continuing-call")
+        XCTAssertTrue(stopped.isEmpty)
+    }
+}
