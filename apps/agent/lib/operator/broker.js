@@ -1244,10 +1244,6 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
       newReadSince: lastPost ? sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lastPost.at || (j.lastCodeReadAt || 0) > lastPost.at) : false });
     if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); refuse(spam); }
-    // Keir 10.1.14: nothing new from the player and no state change since the last substantive post. After the more specific rules so
-    // their refusals read first, and never while an answer is owed (a refused answer is allowed its reshaped retry).
-    if (!opts.system && !owedNow && !job.replyRefusedPending && !/\?/.test(message)) attempt(() => { const t = standdown.noNewRefusal({ last: d.lastSubstantive?.[ticketNo], humanAt: humanAt(ticketNo), fp: standdown.stateFingerprint(d, ticketNo), message, answeringStaff, now: now() });
-      if (t) { ledger.audit("no_new_post_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
     // Keir 9: a rule or a cause stated before anything in this ticket read the game code is refused once per
     // ticket, so the answer rests on the code and not on the data on screen. Never again after that (no loops).
     // The fast lane posts an Ask answer that is already grounded in the code index, so it is exempt.
@@ -1346,6 +1342,16 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       ledger.audit("handoff_claim_backed", { job: job.id, ticket: ticketNo, refs: replyPolicy.handoffRefs(sameTicketJobs, d.jobs) });
     // A status card is edited in place and a human question deserves an answer,
     // so neither holds a reply back (ticket 1602: the owner asked twice, Keir
+    // Keir 10.1.14: nothing new from the player and no state change since the last substantive post. Runs after every more
+    // specific rule so their refusals read first. Not while an answer is owed, and a human speaking in the channel, an approved
+    // action that ran, a new read or a new independent finding counts as new.
+    if (!opts.system && !owedNow && !job.replyRefusedPending && !/\?/.test(message)) {
+      const lp = d.lastSubstantive?.[ticketNo];
+      const something = lp && (humanInChannelSince(job, lp.at) || approvedActionSince(ticketNo, lp.at));
+      const newRead = lp && sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lp.at || (j.lastCodeReadAt || 0) > lp.at);
+      if (!something) attempt(() => { const t = standdown.noNewRefusal({ newRead, last: lp, humanAt: humanAt(ticketNo), fp: standdown.stateFingerprint(d, ticketNo), message, answeringStaff, now: now() });
+        if (t) { ledger.audit("no_new_post_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
+    }
     // drafted twice and stayed silent behind the coordinator's card).
   }
   // Keir 8.2 (ticket 1766, 2026-11-05): seven posts in five hours said "I haven't found what
@@ -1721,7 +1727,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     if (!card) { try { require("./ticketlearn").notePost(d, ticketNo, message, now()); } catch {} }
     // Keir 10.1.14: durable record of the last substantive post (ticketPosts is pruned after an hour of silence), with the ticket state it was made in.
-    if (!card && !/^hi,? i(?:'|’)?m keir\b/i.test(String(message || "").trim())) { const ls = (d.lastSubstantive ||= {}); ls[ticketNo] = { at: now(), fp: standdown.stateFingerprint(d, ticketNo), holding: holdingPost(message), question: /\?/.test(String(message || "")) }; for (const n of Object.keys(ls)) if (now() - ls[n].at > 14 * 86400000) delete ls[n]; }
+    if (!card && !/^hi,? i(?:'|’)?m keir\b/i.test(String(message || "").trim())) { const ls = (d.lastSubstantive ||= {}); ls[ticketNo] = { at: now(), text: String(message || "").slice(0, 800), fp: standdown.stateFingerprint(d, ticketNo), holding: holdingPost(message), question: /\?/.test(String(message || "")) }; for (const n of Object.keys(ls)) if (now() - ls[n].at > 14 * 86400000) delete ls[n]; }
     if (!card) { try { sharedAnswer.noteAnswer(d, ticketNo, message, { at: now(), jobId: job.id }); } catch {} }
     // A reply delivered on this ticket supersedes any over-long draft stored by any of its tasks.
     if (!card) for (const j of Object.values(d.jobs)) if (ticketOf(j) === ticketNo && j.lastTooLongDraft) { delete j.lastTooLongDraft; delete j.lastTooLongDraftAt; }

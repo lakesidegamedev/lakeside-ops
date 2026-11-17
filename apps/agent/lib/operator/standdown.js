@@ -17,6 +17,12 @@ function stateFingerprint(d, ticketNo) {
   for (const j of jobs) {
     for (const r of j.raisedToDevelopers || []) parts.push(`h${r.id ?? ""}:${r.releasedAt ? 1 : 0}:${r.issue != null ? d.keirIssues?.[r.issue]?.state || "?" : ""}`);
   }
+  for (const j of jobs) {
+    if ((j.pullRequests || []).length) parts.push(`p${j.id}:${j.pullRequests.length}`);
+    if (j.releaseEvidence) parts.push(`r${j.id}:${Object.keys(j.releaseEvidence).length}`);
+  }
+  for (const a of Object.values(d.actions || {})) if (jobs.some((j) => j.id === a.jobId)) parts.push(`a${a.id}:${a.state}`);
+  for (const j of Object.values(d.jobs || {})) if (j.codingParent && jobs.some((p) => p.id === j.codingParent)) parts.push(`c${j.id}:${j.state}`);
   for (const x of Object.values(d.decisions || {})) if (jobs.some((j) => j.id === x.jobId)) parts.push(`d${x.id}:${x.state}`);
   parts.sort();
   return crypto.createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 12);
@@ -25,14 +31,24 @@ function stateFingerprint(d, ticketNo) {
 const CORRECTION = /^(?:correction|to correct my (?:last|previous|earlier) message)\b/i;
 const INTRO = /^hi,? i(?:'|’)?m keir\b/i;
 
+const tokens = (t) => new Set(String(t || "").toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+function similarity(a, b) {
+  const x = tokens(a), y = tokens(b);
+  if (!x.size || !y.size) return 0;
+  let n = 0; for (const w of x) if (y.has(w)) n++;
+  return n / Math.min(x.size, y.size);
+}
 // last: d.lastSubstantive[ticket] = { at, fp }. Returns a refusal string or null.
-function noNewRefusal({ last, humanAt = 0, fp, message, answeringStaff = false, now = Date.now() }) {
+function noNewRefusal({ newRead = false, last, humanAt = 0, fp, message, answeringStaff = false, now = Date.now() }) {
   if (!last || !last.fp || answeringStaff) return null;
   const text = String(message || "").trim();
   if (!text || CORRECTION.test(text) || INTRO.test(text)) return null;
   if (humanAt > last.at) return null; // the player wrote since
   if (last.question) return null; // the last post asked the player something; a finding after it is new
   if (last.fp !== fp) return null; // something changed since
+  // Only a restatement is noise: a different finding or a different answer is new information even without a new player message.
+  if (last.text) { const sim = similarity(last.text, text); if (sim < (newRead ? 0.8 : 0.35)) return null; }
+  else if (newRead) return null;
   return `Not posted: the player has not written since your last post here (${Math.max(1, Math.round((now - last.at) / 60000))} min ago) and nothing on the ticket has changed since. A second message with no new information is noise. Keep working privately; post when the player writes or when a handoff, fix, issue or decision actually changes.`;
 }
 

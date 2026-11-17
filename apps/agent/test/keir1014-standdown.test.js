@@ -142,7 +142,7 @@ test("broker: a repeat post with nothing new is refused; a player message reopen
   const f = setup(); f.job.lastCodeReadAt = 1; f.job.lastGameReadAt = 1;
   await f.broker.tool(f.job, "channel_reply", { message: "Your revenue fell sharply between those two turns because your plants sold far less." });
   f.advance(40); f.job.lastGameReadAt = f.now() + 1; f.advance(1);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Both items are settled, and your company traded normally in the latest figures I checked." }), /has not written since|real milestone|already got this/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your revenue fell sharply between those two turns because your plants sold far less, as I checked in the latest figures." }), /has not written since|real milestone|already got this/);
   f.job.observedPlayerAt = f.now(); f.advance(1);
   await f.broker.tool(f.job, "channel_reply", { message: "Thanks. The sales drop came from the plants mothballed at turn 675, so they were idle and sold nothing." });
 });
