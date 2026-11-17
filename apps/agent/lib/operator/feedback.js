@@ -26,6 +26,8 @@ const SHOW_MS = 24 * 3600000;
 const RETAIN_MS = 180 * 86400000;
 const SCAN_MS = 30 * 60000;
 const SCAN_PER_SWEEP = 15;
+const WAKE_MS = 3600000; // one feedback wake per ticket per hour
+const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
 
 function row() {
   return [{ type: 1, components: [
@@ -67,7 +69,7 @@ function parseRecorded(content) {
   return { vote: VOTE_OF[m[1]], reason };
 }
 
-function createFeedback({ ledger, config, discord, isModerator = null, now = () => Date.now(), log = () => {}, release = null, enabled = true }) {
+function createFeedback({ ledger, config, discord, isModerator = null, now = () => Date.now(), log = () => {}, release = null, enabled = true, wake = null }) {
   const state = () => { const f = (ledger.data.answerFeedback ||= {}); f.messages ||= {}; f.latest ||= {}; f.votes ||= {}; return f; };
 
   /** Components for the last chunk of a channel answer, or null. */
@@ -132,6 +134,39 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     return (f.messages[messageId] = { channelId, job: null, ticket, kind: "support-reply", role: "support", lane: null, runner: null, model: null, effort: null, release, at: now() });
   }
 
+  /** The text of the answer a vote is about: Discord's own copy, else the ticket post nearest it. */
+  async function answerText(answer, messageId) {
+    try { const m = await discord("GET", `/channels/${answer.channelId}/messages/${messageId}`); if (typeof m?.content === "string" && m.content.trim()) return m.content; } catch { /* fall back to the ledger */ }
+    const posts = (ledger.data.ticketPosts?.[answer.ticket] || []).filter((p) => p && p.text && (p.at || 0) <= (answer.at || 0) + 120000);
+    return (posts.filter((p) => !answer.job || p.jobId === answer.job).at(-1) || posts.at(-1))?.text || "";
+  }
+
+  /**
+   * Keir 10.4: a player's thumbs down or report on a ticket answer goes into the ticket's case file (their statement, and the
+   * asked items that answer touched reopen), then wakes the ticket once an hour with the instruction to answer the one missed.
+   * Owner, staff and mod votes never get here: they are recorded only. Never throws; the vote is already saved.
+   */
+  async function playerUnhelpful(vote, answer) {
+    try {
+      const d = ledger.data, at = now();
+      const res = require("./ticketcase").playerUnhelpful(d, vote.ticket, { answerText: await answerText(answer, vote.messageId), reason: vote.reason, at });
+      ledger.save();
+      const w = ((state().wakes ||= {}));
+      if (at - (w[vote.ticket] || 0) < WAKE_MS) { ledger.audit("answer_feedback_wake_skipped", { ticket: vote.ticket, why: "rate-limited" }); return; }
+      const root = d.jobs?.[d.seen?.[`ticket:${vote.ticket}`]] || Object.values(d.jobs || {}).find((j) => j && j.kind === "ticket" && j.ticket === vote.ticket && !j.codingParent && !TERMINAL.has(j.state));
+      if (!root || TERMINAL.has(root.state) || root.channelClosed) { ledger.audit("answer_feedback_wake_skipped", { ticket: vote.ticket, why: "ticket not live" }); return; }
+      w[vote.ticket] = at;
+      const open = res?.open?.length ? ` Open items: ${res.open.slice(0, 3).map((t) => `"${t.slice(0, 120)}"`).join("; ")}.` : "";
+      (root.inbox ||= []).push({ role: "system", authorId: "answer-feedback", at: new Date(at).toISOString(), feedback: true,
+        content: `The player marked one of your answers in this ticket as ${vote.vote === "report" ? "a problem" : "not helpful"}${vote.reason ? `: "${vote.reason.replace(/\s+/g, " ").slice(0, 200)}"` : " (no reason given)"}.${res?.first ? ` That answer began: "${res.first}".` : ""} Re-read the "Player asked" items in the case file and answer the one that was missed, in the player's own words, before anything else. Do not call their report the wrong problem.${open}` });
+      if (["waiting", "blocked", "queued"].includes(root.state)) { root.state = "queued"; root.wakeAt = at; delete root.recoveryReviewRequired; }
+      root.updatedAt = at;
+      ledger.audit("answer_feedback_wake", { ticket: vote.ticket, job: root.id, vote: vote.vote, reopened: res?.reopened?.length || 0 });
+      ledger.save();
+      if (wake) wake(root);
+    } catch (e) { log(`feedback: ticket follow-up failed: ${String(e.message).slice(0, 160)}`); }
+  }
+
   /** Record one vote, read back from Discord by its interaction token. */
   async function record({ token } = {}) {
     if (typeof token !== "string" || !/^[A-Za-z0-9_.-]{20,600}$/.test(token)) throw Object.assign(new Error("bad token"), { status: 400 });
@@ -151,6 +186,7 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     f.votes[key] = vote;
     ledger.audit("answer_feedback", { message: messageId, voter: vote.voter, vote: vote.vote, previous, ticket: vote.ticket, model: vote.model });
     ledger.save();
+    if (vote.voter === "player" && (vote.vote === "down" || vote.vote === "report") && previous !== vote.vote && vote.ticket) await playerUnhelpful(vote, answer);
     return { ok: true, vote: vote.vote, voter: vote.voter, changed: Boolean(previous && previous !== vote.vote) };
   }
 
