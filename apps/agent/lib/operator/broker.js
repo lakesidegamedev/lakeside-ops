@@ -263,13 +263,14 @@ function rawReadArgs(tool, args) {
 // typed read so the next task starts there (Sentry KEIR-A/D/F/3/P/2, 2026-11-17: Keir reaches for the raw collection first).
 const TYPED_READS = {
   corporations: "trace_corp (one corporation) or corporation_rankings (the league table)",
-  corporateSectors: "trace_sector",
+  corporateSectors: "trace_sector (stakes, capacity, margins) or sector_builds (build queue, construction financing, property transition, for-sale flag)",
   ledgerEntries: "trace_ledger (a corporation's or character's ledger)",
   characters: "trace_character (any character, public fields) or reporter_state (the ticket's reporter)",
   macroCountries: "macro_history or country_fiscal",
   statePartyOrg: "map_snapshot with scope country and metric party_org",
   stateResourceCapacity: "extraction_market or map_snapshot with metric sector_specialization",
   producerEconomyAccounts: "trace_account or trace_corp",
+  gameState: "game_overview (current turn, preset) or engine_health and turn_status (turn lock and processing state)",
 };
 // Close spellings of a collection that does not exist: case, a missing or extra trailing s, or one name containing the other.
 function nearCollections(name, names, limit = 5) {
@@ -289,6 +290,18 @@ function mapSnapshotScopeCheck(args) {
 // Keir 5.6.2: findings also read raw game records (same guard as tickets).
 // Without them a finding filed "please run this query" handoffs that nobody
 // claimed overnight (MNM wind-up, unpaid income tax, 2026-10-16).
+// Keir's own tools and github actions that models keep sending through read_tool with a guessed server.
+const NATIVE_NOT_READ = new Set(["turn_status", "sector_builds", "reporter_state", "check_draft", "player_trail", "resolve_reporter", "request_log", "past_ticket", "similar_reports", "ticket_history", "recent_changes", "source_history", "recall", "ask", "view_page", "view_attachment"]);
+const GITHUB_ACTION_NAMES = new Set(["deployed", "where", "status", "ci_failures", "ci_runs", "issues", "history", "watch", "review", "pr_diff"]);
+// A refusal that names the way out. The bare "read tool is outside support scope" was repeated up to 13 times per
+// ticket because nothing in it told the model which call to make instead.
+function outsideScopeMessage(scope, server, tool) {
+  if (NATIVE_NOT_READ.has(tool)) return `read tool is outside support scope: ${tool} is one of Keir's own tools, not a ${server} read. Call ${tool} directly as a tool, not through read_tool.`;
+  if (server === "github" || GITHUB_ACTION_NAMES.has(tool)) return `read tool is outside support scope: github is not a read_tool server. If this task has the github tool, call it with action "${tool}"; otherwise this task cannot read it.`;
+  const allowed = scope[server];
+  if (!allowed) return `read tool is outside support scope: ${server} is not a readable server here. Readable servers: ${Object.keys(scope).join(", ")}.`;
+  return `read tool is outside support scope: ${tool} is not a ${server} read available to this task. Available on ${server}: ${allowed.join(", ")}.`;
+}
 const FINDING_READS = {
   "heal-ops": ["heal_list", "heal_detect", ...SUPPORT_READS["heal-ops"]],
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
@@ -367,7 +380,13 @@ function localMcpUrl(value) {
   if (url.hostname === "localhost") url.hostname = "127.0.0.1";
   return url.href;
 }
-function createMcp(configFile, readToken, { gate = null } = {}) {
+// Reads that cannot connect are retried with backoff (about 15 seconds in all, inside the 30 second request budget).
+// 2026-11-17: a host reboot left every MCP refusing connections for 11 minutes while Keir was already up, and the single
+// 1.5 second retry spent 64 tool calls on "fetch failed". The retries ride out a service restart; a longer outage is
+// reported to the model as an unreachable server, not as missing data.
+const READ_RETRY_DELAYS_MS = [1500, 4000, 10000];
+const CONNECT_CODES = ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "EHOSTUNREACH"];
+function createMcp(configFile, readToken, { gate = null, retryDelays = READ_RETRY_DELAYS_MS } = {}) {
   const listCache = new Map(), LIST_TTL_MS = 5 * 60000;
   const servers = JSON.parse(fs.readFileSync(configFile, "utf8")).mcpServers;
   async function rpc(server, method, params, write = false, signal) {
@@ -383,13 +402,19 @@ function createMcp(configFile, readToken, { gate = null } = {}) {
     // A read that failed to connect (an MCP restarting for a deploy) is retried once after a short pause. Writes are never retried,
     // and neither is a read that timed out or was cancelled: those may have reached the server.
     const res = await send().catch(async (e) => {
-      const code = e?.cause?.code || e?.code;
-      if (!write && !signal?.aborted && e?.name === "TypeError" && /fetch failed/i.test(String(e.message)) && ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_SOCKET"].includes(code)) {
-        await new Promise((r) => setTimeout(r, 1500));
-        try { return await send(); } catch (e2) { e = e2; }
+      const connectFailure = (x) => x?.name === "TypeError" && /fetch failed/i.test(String(x.message)) && CONNECT_CODES.includes(x?.cause?.code || x?.code);
+      if (!write && !signal?.aborted && connectFailure(e)) {
+        for (const delay of retryDelays) {
+          await new Promise((r) => setTimeout(r, delay));
+          if (signal?.aborted) break;
+          try { return await send(); } catch (e2) { e = e2; if (!connectFailure(e2)) break; }
+        }
       }
       const c2 = e?.cause?.code || e?.code;
       if (c2 === "ECONNREFUSED" || c2 === "ENOTFOUND") e.code = "MCP_CONNECT_REFUSED";
+      // Name the cause: a bare "fetch failed" gave the model and the failure counter nothing to go on. The words
+      // "fetch failed" stay in the message because the lifecycle recovery rules match them to retry the task.
+      if (e?.name === "TypeError" && /^fetch failed$/i.test(String(e.message)) && c2) e.message = `fetch failed (${c2} reaching the ${server} MCP server; it may be starting or restarting. An unreachable server says nothing about the data, so do not report records as missing)`;
       throw e; });
     const j = parseRpc(await res.text());
     if (!res.ok || j.error || j.result?.isError) {
@@ -2679,6 +2704,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       return listed;
     }
     if (name === "read_tool") {
+      // 2026-11-17: 33 of 51 "read tool is outside support scope" refusals were DeepSeek calling read_tool
+      // turndiag/turn_status (a Keir tool, not a turndiag one) up to 13 times in a row on one ticket, because the
+      // refusal never said where the tool lives. turn_status is read-only and already visible to this task, so run it.
+      if (input.tool === "turn_status" && job.role !== "player") return await w3.call(job, "turn_status", {}, signal);
       // read_tool is a read path for every role, owner included: write-like tools
       // (heal applies, creates, deletes, sends, merges) go through their own gated
       // tools (request_heal, github, support_action). KBX3 2026-10-28: an owner task
@@ -2722,7 +2751,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (LOOKUP_READS[input.server]?.includes(input.tool)) job.lookupReads = (job.lookupReads || 0) + 1;
       if (job.role === "player" && !(input.server === "gamestate" || (input.server === "support" && input.tool === "support_get"))) throw new Error("player conversation reads are limited to its ticket and public game state");
       if (job.role !== "owner" && !developerTask(job)) {
-        if (!readScope(job)[input.server]?.includes(input.tool)) throw new Error("read tool is outside support scope");
+        if (!readScope(job)[input.server]?.includes(input.tool)) throw new Error(outsideScopeMessage(readScope(job), input.server, input.tool));
         if (input.server === "ops-knowledge" && input.tool === "kanban_get") {
           const root = rootJob(job, d.jobs);
           const ownEngineeringCard = root?.operatorRole === "engineering" && args.id === (root.engineeringKanbanId || config.engineeringKanbanId);
@@ -4844,4 +4873,4 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { mapSnapshotScopeCheck, nearCollections, TYPED_READS, SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { outsideScopeMessage, mapSnapshotScopeCheck, nearCollections, TYPED_READS, SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };

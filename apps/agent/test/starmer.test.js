@@ -34,7 +34,7 @@ test("the widget line is generated once and then held for thirty minutes", async
   clock.t += INTERVAL_MS - 1; await starmer.tick();
   assert.equal(calls.length, 1, "no second line inside the window");
   clock.t += 2; await starmer.tick();
-  assert.equal(calls.length, 2);
+  assert.ok(calls.length >= 2, "a second generation runs once the window passes");
 });
 
 test("a provider failure keeps the last line and retries sooner", async () => {
@@ -45,7 +45,7 @@ test("a provider failure keeps the last line and retries sooner", async () => {
   clock.t += INTERVAL_MS;
   const failed = await starmer.tick();
   assert.equal(failed.text, held, "the owner keeps the last line");
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 4, "the first line plus three attempts in the failing round");
   assert.equal(failed.nextAt, clock.t + RETRY_MS);
 });
 
@@ -99,4 +99,18 @@ test("paused Keir does not spend a model call, and refresh is throttled", async 
   const paused = await starmer.tick();
   assert.equal(paused.text, held, "the last line stays visible while paused");
   assert.equal(calls.length, 1);
+});
+
+test("an empty answer is retried in the same attempt and the failure log names a class", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-starmer-")); const ledger = createLedger(path.join(dir, "ledger.json"));
+  const logs = []; let n = 0;
+  const mk = (generate) => createStarmer({ ledger, config: { ownerId: "1", stateDir: dir }, app: null, now: () => 1000, generate, log: (m) => logs.push(m) });
+  const recovered = await mk(async () => { n++; if (n < 3) { const e = new Error("starmer generation incomplete"); e.starmerClass = "provider:error_max_turns"; throw e; } return "The desk is calm and the kettle is on, which is the best sign."; }).tick();
+  assert.equal(n, 3); assert.match(recovered.text, /kettle/); assert.equal(logs.length, 0, "a recovered attempt logs no failure");
+  n = 0; const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "keir-starmer-")); const ledger2 = createLedger(path.join(dir2, "ledger.json"));
+  const timeout = createStarmer({ ledger: ledger2, config: { ownerId: "1", stateDir: dir2 }, app: null, now: () => 1000, log: (m) => logs.push(m), generate: async () => { n++; const e = new Error("x"); e.starmerClass = "provider:timeout"; throw e; } });
+  await timeout.tick();
+  assert.equal(n, 1, "a timeout is not retried in place");
+  assert.ok(logs.some((m) => /starmer line failed \(1\): provider:timeout$/.test(m)), logs.join("|"));
+  assert.ok(!logs.some((m) => /kettle|desk/.test(m)), "the line text never reaches the log");
 });

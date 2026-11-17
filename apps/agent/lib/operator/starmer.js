@@ -14,6 +14,10 @@ const { threadOf } = require("./appchannel");
 const INTERVAL_MS = 30 * 60000;
 const RETRY_MS = 10 * 60000;
 const REFRESH_FLOOR_MS = 60 * 1000;
+// 2026-11-17: the quick route often answers with reasoning only (no text, finish=stop, OpenCode steps=1), which the
+// runtime reports as error_max_turns. Three of four attempts failed that way and each waited ten minutes to retry.
+// Empty and repeated answers are retried inside the same attempt; a timeout is not (it would cost 90 seconds each).
+const ATTEMPTS = 3;
 const MAX = 240;
 const CLOSED = ["done", "dismissed", "cancelled"];
 const DEFAULT_ROUTE = "ollama:deepseek-v4.1-flash@low";
@@ -60,6 +64,11 @@ function route(spec) {
   if (colon < 0) return { runner: "ollama", model: head, effort };
   return { runner: head.slice(0, colon), model: head.slice(colon + 1), effort };
 }
+
+// A non-private reason for the failure counter: a fixed class, never the provider's text or the line itself.
+const failure = (cls, message) => Object.assign(new Error(message), { starmerClass: cls });
+const errorClass = (e) => e?.starmerClass || (e?.code ? `error:${String(e.code).replace(/[^\w-]/g, "").slice(0, 30)}` : "error");
+const RETRYABLE = (cls) => cls === "rejected" || cls === "repeated" || cls === "provider:error_max_turns" || cls === "provider:error_empty_result";
 
 function createStarmer({ ledger, config, app, now = () => Date.now(), generate, stateDir = config?.stateDir, log = () => {} }) {
   const d = ledger.data;
@@ -143,9 +152,9 @@ function createStarmer({ ledger, config, app, now = () => Date.now(), generate, 
       timeoutMs: 90000, stateDir: dir,
       job: { id: "starmer-line" }, lane: "reflection", signal: new AbortController().signal,
     });
-    if (result.is_error) throw new Error("starmer generation incomplete");
+    if (result.is_error) throw failure(result.timedOut ? "provider:timeout" : result.interrupted ? "provider:interrupted" : `provider:${String(result.subtype || "error").replace(/[^\w-]/g, "").slice(0, 40)}`, "starmer generation incomplete");
     const text = clean(result.result);
-    if (!text) throw new Error("starmer line rejected");
+    if (!text) throw failure("rejected", "starmer line rejected");
     return text;
   }
 
@@ -155,10 +164,20 @@ function createStarmer({ ledger, config, app, now = () => Date.now(), generate, 
     if (now() < (s.nextAt || 0)) return view();
     s.running = true;
     try {
-      const text = await (generate || generateLine)(facts());
-      const value = clean(text);
-      if (!value) throw new Error("starmer line rejected");
-      if (s.history.slice(-12).some((h) => String(h.text).toLowerCase() === value.toLowerCase())) throw new Error("starmer line repeated");
+      let value, lastError;
+      for (let attempt = 1; attempt <= ATTEMPTS && !value; attempt++) {
+        try {
+          const text = await (generate || generateLine)(facts());
+          const candidate = clean(text);
+          if (!candidate) throw failure("rejected", "starmer line rejected");
+          if (s.history.slice(-12).some((h) => String(h.text).toLowerCase() === candidate.toLowerCase())) throw failure("repeated", "starmer line repeated");
+          value = candidate;
+        } catch (e) {
+          lastError = e;
+          if (!RETRYABLE(errorClass(e))) break;
+        }
+      }
+      if (!value) throw lastError || failure("rejected", "starmer line rejected");
       s.text = value;
       s.at = now();
       s.nextAt = now() + INTERVAL_MS;
@@ -168,9 +187,10 @@ function createStarmer({ ledger, config, app, now = () => Date.now(), generate, 
     } catch (e) {
       s.failures = (s.failures || 0) + 1;
       s.nextAt = now() + RETRY_MS;
-      // The line's text and the provider error can contain private context;
-      // the counter is the only durable trace.
-      log(`starmer line failed (${s.failures})`);
+      // The line's text and the provider error can contain private context; the counter and a fixed class
+      // (incomplete provider result, rejected, repeated, provider:<subtype>) are the only durable trace.
+      s.lastFailure = { at: now(), class: errorClass(e) };
+      log(`starmer line failed (${s.failures}): ${errorClass(e)}`);
     } finally {
       s.running = false;
       ledger.save();
