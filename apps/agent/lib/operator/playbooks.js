@@ -23,6 +23,7 @@ function facts(job, d) {
     liveCard: card.length > 0 && card.every((i) => ["main", "confirmed", "answered"].includes(i.stage)),
     heal: Object.values(d.actions || {}).some((a) => a.jobId === job.id),
     suggestion: Boolean(job.suggestionOpened || job.suggestions?.length),
+    teamChecked: (job.teamActivityAt || 0) > 0,
     adviceRedirect: Boolean(job.adviceRedirectedAt && job.adviceRedirectedAt >= (job.lastPlayerAt || 0)),
   };
 }
@@ -39,18 +40,22 @@ function kindOf(job, d) {
   return null;
 }
 
+// Keir 10.4 (ticket 1852): look at what the team is already doing before concluding. Advisory, never blocks a finish.
+const teamStep = (f) => step("team_covered", "Check team_activity before you conclude (the broker also runs it for the activation and before any 'no fix needed' or correction post). If staff said they are fixing it, or a card, worker or PR covers it, tell the player a fix is in progress and who is on it in plain words, and stop investigating that part; never argue the rule or post 'no fix needed' or a correction against it", f.teamChecked, false);
+
 const PLAYBOOKS = {
   bug_report: (f) => [
     step("read_reporter", "Read the reporter's live records (character, corporation, sector) before saying anything about cause", f.reporter && f.reads >= 1),
     step("find_cause", "Find the cause from live data and the deployed code (at least three investigative reads). If the player says something had no effect, check the state itself makes sense for the world before calling it a game rule", f.reads >= 3),
     step("route", "Route it: attach to or file the GitHub issue (raise_to_developers), merge into an open incident, open a fix, or mark the card answered when nothing is broken", f.raised || f.merged || f.pr || f.answeredCard),
     step("tell_player", "Tell the player the cause in plain words and where the fix stands, after their last message", f.answeredSincePlayer),
+    teamStep(f),
   ],
   data_repair: (f) => [
     step("read_reporter", "Read the reporter's live records", f.reporter && f.reads >= 1),
     step("verify_loss", "Verify the loss from the ledger or history (trace_account, character history); never take the player's number on trust", f.reads >= 3),
     step("route", "Propose the repair with request_heal (the owner approves it) and raise the code bug that caused it; never promise money", f.heal || f.raised || f.merged || f.answeredCard),
-    step("tell_player", "Tell the player what was verified and that the repair is with the developers, after their last message", f.answeredSincePlayer),
+    step("tell_player", "Tell the player what was verified and that the repair is with the developers, after their last message", f.answeredSincePlayer),    teamStep(f),
   ],
   gameplay_advice: (f) => [
     step("redirect", `Send the short Ask redirect (${require("./advicerouting").URL}); do not research investments or create a progress card`, f.adviceRedirect),
@@ -60,6 +65,7 @@ const PLAYBOOKS = {
     step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers. If the player says something had no effect, check the state itself makes sense for the world (a 2027 company owning 1940s tech) before calling it a game rule", f.reads >= 2),
     step("answer", "Answer directly in the channel (no progress card), after their last message", f.answeredSincePlayer),
     step("route_if_bug", "If it turned out to be a bug, raise it", true, false),
+    teamStep(f),
   ],
   design_feedback: (f) => [
     step("explain", "Explain how the rule works now, from knowledge or code", f.reads >= 1),
@@ -86,6 +92,7 @@ Object.assign(PLAYBOOKS, {
     step("check_rule", "Check the rule in game knowledge and the code, and the player's live numbers. If the player says something had no effect, check the state itself makes sense for the world (a 2027 company owning 1940s tech) before calling it a game rule", f.reads >= 2),
     step("answer", "Answer every question the player asked, directly in the channel (no progress card), after their last message", f.answeredSincePlayer),
     step("spin_out", "If a real defect or an unrelated new problem turned up, spin it out: raise the bug or open a separate ticket with open_ticket; do not widen this one", true, false),
+    teamStep(f),
   ],
   // An outage is one incident: read the live turn state, attach, tell. No reporter records.
   outage: (f) => [

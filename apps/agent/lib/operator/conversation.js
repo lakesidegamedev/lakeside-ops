@@ -65,6 +65,6 @@ function createConversation({ ledger, config, now = () => Date.now(), mods }) {
     const row = (channels[channelId] || []).filter((r) => r.role === "assistant").at(-1);
     return row ? (Date.parse(row.at) || row.observedAt) : 0;
   }
-  return { record, snapshot, progress, lastAssistantAt, recentImages };
+  return { record, snapshot, progress, lastAssistantAt, recentImages, isModerator: (id) => Boolean(mods?.isModerator?.(id)) };
 }
 module.exports = { createConversation, isQuick, quickQuestion };

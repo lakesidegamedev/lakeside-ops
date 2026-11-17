@@ -6,6 +6,7 @@
 //   resolve_reporter the reporter's account and characters when the ticket has no link
 //   turn_status      turn, lock and schedule in plain fields (also a plain function)
 //   request_log      the reporter's recent API requests with status
+//   team_activity    what staff, kanban cards, headless workers and open PRs are already doing about a ticket or topic
 //
 // Each tool lives in its own module; this file wires them to the broker with
 // one hook (call) and one visibility check for the agent's tool list. Every
@@ -20,6 +21,7 @@ const { createPlayerTrail } = require("./playertrail");
 const { createResolver } = require("./resolvereporter");
 const { createRequestLog } = require("./requestlog");
 const { createSectorBuilds } = require("./sectorbuilds");
+const { createTeamActivity } = require("./teamactivity");
 const { turnStatus, lockResetPlan } = require("./turnstatus");
 const advice = require("./advicerouting");
 
@@ -33,17 +35,19 @@ const TOOL_DEFS = [
   ["turn_status", "The turn engine in plain fields: state (idle, processing, late, paused, stuck), current turn, last turn finished at, expected next turn, minutes overdue, who holds the lock and its heartbeat age, and the last failure phase. Call it first for any 'turn is stuck or late' report. For a stuck lock use request_action kind turn_lock_reset.", schema({})],
   ["request_log", "The ticket reporter's recent API requests (last 24 hours at most): method, path, status, grouped, with failures first. Reporter only. Shows rate limits and failed calls; it has no durations and misses page loads, so an empty result proves nothing.", schema({ hours: { type: "integer", minimum: 1, maximum: 24 } })],
   ["sector_builds", "What a corporation is building and how it is financed, site by site: build queue, construction financing status, pending property transition, for-sale flag and plant start turn. Pass corporation (name, sequentialId or id), optionally state (stateId, e.g. NY) and sectorType. Use it for 'my expansion or construction did not finish' reports instead of a raw corporateSectors read; trace_sector covers stakes, capacity and margins, this covers the build side. Public game records only.", schema({ corporation: str, state: str, sectorType: str }, ["corporation"])],
+  ["team_activity", "What the rest of the team is already doing about a ticket or topic: staff messages in the ticket channel since your last post, kanban cards (now, next, blocked) that mention the ticket or topic, running agent workers on the box, and open pull requests that match. Pass ticket (defaults to this task's ticket) and/or topic words. Call it BEFORE you post 'no fix needed', 'answered' or a correction, and whenever staff may be working on the issue. If it says staff are fixing it or a card, worker or PR covers it, tell the player a fix is in progress and who is on it in plain words; do not argue the rule or keep investigating that part. Never put its unit names, hosts, card ids or staff names in player copy.", schema({ ticket: { type: "integer", minimum: 1 }, topic: str })],
 ];
 const NAMES = new Set(TOOL_DEFS.map((t) => t[0]));
 const TICKET_ONLY = new Set(["player_trail", "resolve_reporter", "request_log"]);
 
-function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, staff = () => false, now = () => Date.now(), log = () => {} }) {
+function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, staff = () => false, now = () => Date.now(), log = () => {}, discord = null, exec = null, ledger = null, isModerator = () => false }) {
   const resolver = createResolver({ mcp, now });
   const resolveIdentity = (job, signal) => resolver.resolve(job, signal);
   const ask = createAskTool({ config, fetcher, resolveIdentity, staff, now });
   const trail = createPlayerTrail({ env, fetcher, resolveIdentity, now });
   const requestLog = createRequestLog({ mcp, resolveIdentity, now });
   const sectorBuilds = createSectorBuilds({ mcp });
+  const teamActivity = createTeamActivity({ config, discord, mcp, exec, ledger, isModerator, now });
   const status = () => turnStatus((server, tool, args) => mcp.call(server, tool, args || {}, false), { now });
 
   // Fire and forget: keep advicerouting's view of Ask fresh without blocking any activation.
@@ -70,6 +74,7 @@ function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, s
     if (name === "turn_status") return status();
     if (name === "request_log") return requestLog.call(job, input, signal);
     if (name === "sector_builds") return sectorBuilds.call(job, input, signal);
+    if (name === "team_activity") return teamActivity.call(job, input, signal);
     throw new Error(`unknown tool ${name}`);
   }
 
@@ -87,7 +92,7 @@ function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, s
     return { filed: true, ...filed };
   }
 
-  return { call, visible, has: (name) => NAMES.has(name), refreshAskHealth, resolveIdentity, turnStatus: status, turnLockReset, TOOL_DEFS };
+  return { call, visible, has: (name) => NAMES.has(name), refreshAskHealth, resolveIdentity, turnStatus: status, teamActivity: (job, input, signal) => teamActivity.call(job, input, signal), turnLockReset, TOOL_DEFS };
 }
 
 module.exports = { createW3Tools, TOOL_DEFS, NAMES, TICKET_ONLY };

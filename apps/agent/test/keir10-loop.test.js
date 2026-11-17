@@ -382,7 +382,7 @@ test("every lane defines a playbook, a round budget, tool groups and an exit tes
 test("the question lane exit has no card and no owner decision, and a spin-out step", () => {
   const job = withText("how does tax work", { lane: "question" });
   const book = playbooks.playbookFor(job, { jobs: {} });
-  assert.deepEqual(book.steps.map((s) => s.id), ["check_rule", "answer", "spin_out"]);
+  assert.deepEqual(book.steps.map((s) => s.id), ["check_rule", "answer", "spin_out", "team_covered"]);
   assert.equal(book.steps.find((s) => s.id === "spin_out").required, false);
   assert.match(lanes.LANES.question.exit, /No progress card and no owner decision/);
 });
