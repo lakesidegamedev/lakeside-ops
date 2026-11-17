@@ -1322,8 +1322,30 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   // The next needs new code reads since the last one or a running investigator; a third needs the investigator.
   const STALL = /\b(?:haven'?t|have not|has not|hasn'?t|not)\s+(?:yet\s+)?(?:found|confirmed|pinned down|traced|worked out|identified|settled|checked)\b|\bwon'?t (?:guess|name a cause|claim a cause|speculate)\b|\bstill (?:checking|tracing|investigating|looking(?: into)?|working (?:out|on)) \b|\bno confirmed cause\b|\bso I won'?t guess\b/i;
   const isStall = (text) => STALL.test(String(text || "")) && !/\?/.test(String(text || "")) && !outcomeClaims(text).length;
+  // Keir 10.2 (ticket 1837): the owner DM said only "next investigator to read build dialog pricing". An escalation says what was
+  // checked, what it showed, and the specific blocker, so the person starts from findings and not from the player's question.
+  const clipText = (t, n) => String(t || "").replace(/\s+/g, " ").slice(0, n);
+  function escalationBrief(job, ticketNo, summary) {
+    const jobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
+    return require("./escalationbrief").build({
+      ticket: ticketNo, summary,
+      playerAsked: String(ticketPlayerText(job) || "").slice(0, 300),
+      reads: (d.ticketObservations?.[ticketNo] || []).filter((o) => !SELF_READS.has(o.tool)).map((o) => ({ input: o.input, result: o.result })),
+      codeLookups: Math.max(0, ...jobs.map((j) => j.codeLookups || 0)), codeRead: jobs.some((j) => j.lastCodeReadAt),
+      posts: (d.ticketPosts?.[ticketNo] || []).filter((p) => !isCardPost(p)).map((p) => p.text),
+    });
+  }
   function guardStall(job, ticketNo, message, posts) {
     if (!isStall(message)) return;
+    // Keir 10.2 (ticket 1837): a "not confirmed" line 3 seconds after an answer contradicts it, and a second holding line 15 seconds
+    // later repeated it. Until there are findings the player gets ONE reply per message of theirs: a stall is refused when anything
+    // (not the intro, not a card) was already posted since the player last wrote and nothing new was read since that post.
+    const since = humanAt(ticketNo);
+    const lastReal = posts.filter((p) => !isCardPost(p) && !/^hi,? i(?:'|’)?m keir\b/i.test(String(p.text || "").trim()) && (since ? p.at >= since : p.jobId === job.id)).at(-1);
+    if (lastReal && !Object.values(d.jobs).some((j) => ticketOf(j) === ticketNo && Math.max(j.lastGameReadAt || 0, j.lastCodeReadAt || 0) > lastReal.at)) {
+      ledger.audit("holding_reply_refused", { job: job.id, ticket: ticketNo });
+      throw new Error(`Not posted: the player was already answered ${Math.max(1, Math.round((now() - lastReal.at) / 60000))} min ago ("${String(lastReal.text).slice(0, 140)}") and nothing new has been read since. One reply per player message until you have findings: do not post a second holding or "not confirmed" line. Do the investigation instead (read_tool ops-knowledge code_exact or code_search for the code that decides it), then post what you found. If that earlier post was wrong, start with "Correction:" and give the verified fact.`);
+    }
     const recent = posts.filter((p) => !isCardPost(p) && now() - p.at < 24 * 3600000);
     let run = 0; for (let i = recent.length - 1; i >= 0 && isStall(recent[i].text); i--) run++;
     if (!run) return;
@@ -4213,6 +4235,18 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         job.findingEvidenceAsked = true; ledger.save();
         throw new Error(`Not finished: open issue #${citedIssue} already covers this finding, but nothing from it was added there. Add this finding's new evidence (counts, users, versions, timing) with raise_to_developers issueNumber ${citedIssue}, then finish done. If it is noise, finish dismissed with the reason instead.`);
       }
+      // Keir 10.2 (ticket 1837): the task finished "blocked on reading the build dialog in the next activation" after 3 minutes, then
+      // "next investigator to read build dialog pricing", with no code read at all. A bug or data ticket whose finish names the read it
+      // has not done must do that read now. Refused twice per activation; after that the finish goes through (never a loop).
+      if (job.kind === "ticket" && job.ticket && !job.codingParent && ["bug", "data_repair", "outage"].includes(job.lane) && ["waiting", "blocked", "done"].includes(state)
+          && require("./escalationbrief").namesUnfinishedWork(input.summary)
+          && !(job.codeLookups || job.lastCodeReadAt && job.lastCodeReadAt >= (job.activationAt || job.lastRunStartedAt || 0))) {
+        const rec = job.namedWorkRefusals = job.namedWorkRefusals?.at === job.lastRunStartedAt ? job.namedWorkRefusals : { at: job.lastRunStartedAt || 0, n: 0 };
+        if (rec.n < 2) {
+          rec.n += 1; ledger.save(); ledger.audit("named_work_finish_refused", { job: job.id, ticket: job.ticket, attempt: rec.n });
+          throw new Error(`Not finished: your summary names work you have not done ("${clipText(input.summary, 160)}"). Do it now in this task, it is yours and not the next activation's or the owner's: read_tool ops-knowledge code_search (claimType mechanic, source dev) or code_exact for the symbol, then code_read the file that decides it, then post what the code shows. Escalate only with what you read and the specific thing that stopped you.`);
+        }
+      }
       // Waiting on the player needs a post they can answer. Models finished
       // "asked the player" after the question was refused, or never posted
       // one (replay 2026-10-19), leaving the player with nothing to answer.
@@ -4268,9 +4302,16 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             // Third attempt: the code answers for the task so the player is never left with silence.
             let escalated = false;
             try {
-              const r = await tool(job, "raise_to_developers", { kind: "question", title: `Ticket ${tn}: no confirmed answer for the player`, detail: `Ticket ${tn} reached the end of its task without an answer the player can use. Last summary: ${String(input.summary || "none").slice(0, 400)}. Please look at what the player asked and reply.`, needsHuman: true, force: true }, signal);
+              const r = await tool(job, "raise_to_developers", { kind: "question", title: `Ticket ${tn}: no confirmed answer for the player`, detail: escalationBrief(job, tn, input.summary), needsHuman: true, force: true }, signal);
               escalated = r?.raised === true;
             } catch { escalated = false; }
+            // Keir 10.2: the player already has a reply since they last wrote (ticket 1837 got three in 20 seconds), so the code adds no fourth.
+            const alreadyReplied = (d.ticketPosts?.[tn] || []).some((p) => !isCardPost(p) && !/^hi,? i(?:'|’)?m keir\b/i.test(String(p.text || "").trim()) && p.at >= human);
+            rec.escalated = escalated;
+            if (alreadyReplied) { rec.limitationPostedAt = now(); ledger.audit("unanswered_limitation_skipped", { job: job.id, ticket: tn, escalated }); ledger.save(); }
+          }
+          if (!rec.limitationPostedAt) {
+            let escalated = rec.escalated === true;
             const message = escalated
               ? "I haven't got a confirmed answer for you yet. I've passed it to the developers and will reply here when I do."
               : "I haven't got a confirmed answer for you yet. I'm still working on it and will reply here when I do.";
