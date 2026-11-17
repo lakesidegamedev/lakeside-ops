@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.9 (2026-11-17)
+
+- A green PR Keir opened that its task has no standing authority to merge (a public-page watch finding, an engineering task, a finding whose fix is not display-only) no longer ends as a plain-text "Needs a person" DM (PR 6680). The github merge and promote actions now ask the owner with Approve and Decline buttons, using the same plain-language explanation and reviewed-head pinning as other merge approvals; a later push invalidates the approval, Approve merges under the usual effect fencing and green-check rule, Decline leaves the PR open. Red or still-running checks never produce a button, and rule, balance and economy changes still go through the owner's own approval.
+- raise_to_developers refuses a merge, ship or deploy request about a PR Keir opened and points the task at the github merge action, so such a request can no longer go out as plain text.
+
 ## 10.1.8 (2026-11-17)
 
 - A bare @mention in an active channel is answered in the context of the messages since Keir's last post (up to 30 minutes back, evidence only, never inherited as instructions) instead of "Yes, still here". With nothing recent it still answers "Are you there?".

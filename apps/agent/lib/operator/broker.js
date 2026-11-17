@@ -1806,7 +1806,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       ledger.audit("owner_muse_proposed", { job: job.id, action: action.id, decision: decision.id, digest: sealed.policy.digest }); ledger.save();
       return { action: action.id, decision: decision.id, digest: sealed.policy.digest, state: "pending", instruction: "An exact approval card is available in the app. Nothing changed. Finish waiting until an authenticated human answers; a preference choice or typed yes is not consent." };
     }
-    if (job.kind === "finding" && kind !== "heal") throw new Error("Keir own findings prepare heals and draft PRs only");
+    // Keir 10.1.9: the one exception is the owner's Approve / Decline question about a merge of the finding's own PR.
+    const ownPrMerge = kind === "github" && args?.action === "merge" && (job.pullRequests || []).some((u) => Number(/\/pull\/(\d+)\s*$/.exec(String(u))?.[1]) === Number(args.number));
+    if (job.kind === "finding" && kind !== "heal" && !ownPrMerge) throw new Error("Keir own findings prepare heals and draft PRs only");
     if (job.kind === "candidate" && !job.ticket) throw new Error("finish intake first; a candidate cannot request privileged execution");
     // 2026-10-12: six heal approvals were re-planned into the same token-shape
     // rejection. Planning again cannot fix a caller bug.
@@ -1857,7 +1859,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         return { action: a.id, state: a.state, instruction: "The owner's own request authorizes this. Call execute_action now." };
       }
       // Keir 5.0: a finding prepares a heal; only the owner applies it.
-      if (job.kind === "finding") {
+      if (job.kind === "finding" && !ownPrMerge) {
         a.state = "prepared";
         ledger.notify(`prepared-heal:${a.id}`, "owner", `Prepared repair from Keir monitoring. ${String(reason).slice(0, 700)}\n\nThis finding cannot apply it. Review and apply through heal-ops, or direct a developer task to re-plan and apply it. No game data changed.\n\nExact specification:\n\`\`\`json\n${JSON.stringify(args.spec, null, 2)}\n\`\`\``);
         ledger.audit("requested", { action: a.id, job: job.id, digest, prepared: true }); ledger.save();
@@ -2344,6 +2346,18 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (DECISION_WORDS.test(`${title} ${detail}`) && input.kind !== "decision" && input.kind !== "bug")
         throw new Error("This asks for an owner decision (compensation, refund, approval or a ruling). Call again with kind: \"decision\" and a concise question plus options: two to six named choices with the outcome of each in its detail. Preference selection is not execution approval.");
       if (input.kind === "decision" && String(input.question || "").trim().length < 15) throw new Error("a decision needs a concise question and two to six named options, each explaining its outcome");
+      // Keir 10.1.9 (owner, 2026-11-17, PR 6680): a request to merge, ship or deploy a PR Keir opened is never plain text.
+      // It goes through the github merge action, which puts Approve and Decline buttons in the owner's DMs.
+      {
+        const text = `${title} ${detail}`;
+        if (/\b(?:merge|merged|merging|ship|promote|promotion|deploy|release|ready for merge|approve|approval)\b/i.test(text)) {
+          for (const m of text.matchAll(/(?:\bPR\b|pull request|\/pull\/)\s*#?(\d{1,7})/gi)) {
+            const num = Number(m[1]);
+            const own = Object.values(d.jobs).some((j) => (j.pullRequests || []).some((u) => Number(/\/pull\/(\d+)\s*$/.exec(String(u))?.[1]) === num));
+            if (own) throw new Error(`PR ${num} is one Keir opened, and a merge or deploy request for it is never sent as plain text. Call the github tool with action merge and number ${num} (add an explanation once it asks): when its checks are green the owner gets an Approve or Decline button, and the merge runs when they approve. If the checks are not green yet, fix or wait for them first. Do not call raise_to_developers for this.`);
+          }
+        }
+      }
       const prior = (job.raisedToDevelopers || []).find((r) => similarity(r.title, title) > 0.6);
       if (prior) return { raised: true, id: prior.id, duplicate: true };
       if (!input.force && !filedIssue) {
@@ -2949,13 +2963,19 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const keirMade = Object.values(d.jobs).some((j) => (j.pullRequests || []).some((u) => canonicalGithubUrl(u) === `https://github.com/${repo}/pull/${Number(input.number)}`));
       // An owner-approval task (ownerwait.js) may ask about the one developer PR it was made for; the merge still needs his button.
       const ownerWaitPr = job.ownerWaitPr && Number(job.ownerWaitPr) === Number(input.number);
+      // Keir 10.1.9 (owner, 2026-11-17, PR 6680): a green PR Keir opened that this task has no standing authority to merge
+      // (a watch finding, an engineering task) goes to the owner as an Approve / Decline question, never as plain text.
+      const staffSide = job.role !== "player" && ["ticket", "command", "finding"].includes(job.kind);
+      const hasStandingAuthority = ownerDirected(job) || shipsOwnFix || Boolean(ownerWaitPr && input.action === "merge");
+      let askForAuthority = ["merge", "promote"].includes(input.action) && staffSide && !hasStandingAuthority
+        && (input.action === "merge" ? keirMade || Boolean(job.pullRequests?.length) : Boolean(job.pullRequests?.length));
       if (input.action === "merge" && !ownerDirected(job) && !keirMade && !ownerWaitPr) throw new Error("merge only PRs Keir opened unless the owner asked");
       // Reading where a change is, its checks or its failures is open to every
       // staff-side task: a ticket inherited from another operator has no PRs of
       // its own yet still has to know whether the fix is live (2026-10-13: four
       // tickets stalled on "PR inaccessible"). Players never get it.
       const readAllowed = job.role !== "player" && (developerTask(job) || developerTicket(job) || job.pullRequests?.length || ["ticket", "command", "finding"].includes(job.kind));
-      if (ownPrAction ? !(developerTask(job) || job.pullRequests?.length) : readOnly ? !readAllowed : !(ownerDirected(job) || shipsOwnFix || (ownerWaitPr && input.action === "merge"))) throw new Error(readOnly || ownPrAction ? "PR tools need a developer task or a task that opened PRs" : "merging and promotion run only on the owner's own request");
+      if (ownPrAction ? !(developerTask(job) || job.pullRequests?.length) : readOnly ? !readAllowed : !(hasStandingAuthority || askForAuthority)) throw new Error(readOnly || ownPrAction ? "PR tools need a developer task or a task that opened PRs" : "merging and promotion run only on the owner's own request");
       // Every changed file. null means the list could not be read completely,
       // which counts as sensitive: the gate fails closed. PR files page up to
       // 3000; a compare lists at most 300 files, all on its first page.
@@ -3057,7 +3077,19 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               if (!Array.isArray(prs) || !prs.some((pr) => ownFindingPr(pr.number))) throw new Error("finding promotion carries unrelated changes; leave promotion to developers");
             }
           }
-          if (findingShip && (blast.classify(files).cls !== "copy" || !blast.displayOnlyDiff(input.action === "merge" ? await prFiles(Number(input.number), true) : await rangeFiles(to, from, true)).allowed)) throw new Error("Keir's own findings ship only display-only changes (pages, components, styles, text). This one is not: leave the PR as a draft for the developers, raise it with raise_to_developers, and finish.");
+          if (findingShip && (blast.classify(files).cls !== "copy" || !blast.displayOnlyDiff(input.action === "merge" ? await prFiles(Number(input.number), true) : await rangeFiles(to, from, true)).allowed)) {
+            // Not display-only: Keir may not ship it on its own, but it can ask the owner with buttons (never plain text).
+            if (input.action !== "merge" || !keirMade) throw new Error("Keir's own findings ship only display-only changes (pages, components, styles, text). This one is not: leave the PR as a draft for the developers, raise it with raise_to_developers, and finish.");
+            askForAuthority = true;
+          }
+          // Red or still-running checks never get an approval button: the owner is asked only about a PR that is ready to merge.
+          if (askForAuthority && input.action === "merge") {
+            const prNow = await api([`repos/${repo}/pulls/${Number(input.number)}`]);
+            if (prNow.merged) return { number: prNow.number, merged: true, already: true, sha: prNow.merge_commit_sha };
+            if (prNow.state !== "open") throw new Error(`PR ${prNow.number} is ${prNow.state}`);
+            const g = await gate(prNow);
+            if (!g.ready) return { number: prNow.number, merged: false, url: prNow.html_url, ...g, approvalRequired: false, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix. The owner is only asked about a PR whose checks are green." : "Checks are not all green yet: finish waiting with a wakeup of about 10 minutes and call merge again. The owner is only asked once they are green." };
+          }
           // A task that judges its own change economy-affecting (prices, money,
           // budgets, procurement, balance) gates it even when no path matches.
           const sensitive = files ? ((input.economy === true || klass.gated) && !files.some(isHugePath) ? files.map((f) => `${f} (${klass.gated ? `${klass.cls} change` : "declared economy change"})`) : files.filter(isHugePath)) : null;
@@ -3071,7 +3103,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           // Keir 10.0.2 (owner, 2026-11-15): a hand promotion of non-sensitive changes ships without a sign-off, like the coding
           // worker path. Economy and turn-engine files still ask (sensitive above); a rule or balance change on this task still asks.
           const shipSignoff = input.action === "promote" && to === "main" && Array.isArray(sensitive) && !sensitive.length && files.length > 0 && job.requiresOwner === true;
-          if (!scopedOwner && (!sensitive || sensitive.length || shipSignoff)) {
+          if (!scopedOwner && (!sensitive || sensitive.length || shipSignoff || askForAuthority)) {
             const list = sensitive ? sensitive.slice(0, 6).join(", ") + (sensitive.length > 6 ? ` and ${sensitive.length - 6} more` : "") : "file list unavailable";
             const what = input.action === "merge" ? `PR ${Number(input.number)} changes` : `Promoting ${from} to ${to} carries changes to`;
             const shipWhat = `Ship to the live server${job.ticket ? ` for ticket ${job.ticket}` : ""}.`;
@@ -3191,8 +3223,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               // No file list means the blast radius is unverified, not that it is economy code;
               // say so, or the owner hears "touches the economy" about a badge fix (KBX4 2026-11-02).
               const unverified = !sensitive;
-              const summary = shipSignoff ? `${shipWhat}${carries}` : unverified ? `${what.replace(/ changes$| carries changes to$/, "")}: GitHub did not list its changed files, so Keir cannot confirm it stays out of the economy and turn engine.${carries} Head ${head.slice(0, 10)}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}`;
-              const asked = await requestGithubApproval({ ...args, summary }, shipSignoff ? "ship to the live server" : unverified ? "merge or promotion with an unverified file list" : "economy merge or promotion");
+              const summary = askForAuthority && Array.isArray(sensitive) && !sensitive.length ? `${what.replace(/ changes$| carries changes to$/, "")}: Keir found and fixed this itself and every check passed, but Keir has no standing permission to merge it without your yes.${carries} Head ${head.slice(0, 10)}` : shipSignoff ? `${shipWhat}${carries}` : unverified ? `${what.replace(/ changes$| carries changes to$/, "")}: GitHub did not list its changed files, so Keir cannot confirm it stays out of the economy and turn engine.${carries} Head ${head.slice(0, 10)}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}`;
+              const asked = await requestGithubApproval({ ...args, summary }, askForAuthority && Array.isArray(sensitive) && !sensitive.length ? "merge of a green PR Keir opened without standing authority" : shipSignoff ? "ship to the live server" : unverified ? "merge or promotion with an unverified file list" : "economy merge or promotion");
               return asked.needsExplanation ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
             }
             if (consent.approvedBy === config.ownerId && !consent.approvedOnBehalfBy && consent.args?.action === "merge") ownerConsent = consent;
@@ -3415,7 +3447,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (pr.state !== "open") throw new Error(`PR ${number} is ${pr.state}`);
         if (expectBase && pr.base.ref !== expectBase) throw new Error(`PR ${number} targets ${pr.base.ref}, expected ${expectBase}`);
         if (pr.mergeable === null) { await new Promise((r) => setTimeout(r, 3000)); pr = await api([`repos/${repo}/pulls/${number}`]); }
-        if (findingShip) {
+        if (findingShip && !askForAuthority) {
           const verdict = blast.displayOnlyDiff(await prFiles(number, true));
           if (input.action === "promote") {
             const commits = await api([`repos/${repo}/pulls/${number}/commits?per_page=100`]);

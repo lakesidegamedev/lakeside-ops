@@ -121,7 +121,10 @@ test("a finding task cannot apply a heal or ship a non-display fix", async () =>
   const b = createBroker({ ledger: l, config, mcp: { servers: () => [], list: async () => [], call: async () => ({}) }, discord: async () => [], sandbox: {}, now: () => 5000, exec });
   const job = l.createJob("finding:test", { kind: "finding", role: "support", repository: "AHDGame", finding: "x", deadline: 9e15, source: {}, pullRequests: ["https://github.com/Egg3901/AHDGame/pull/10", "https://github.com/Egg3901/AHDGame/pull/11"] });
   job.state = "running";
-  await assert.rejects(b.tool(job, "github", { action: "merge", number: 10 }), /only display-only changes/);
+  // Keir 10.1.9: a non-display fix is never shipped by the finding itself; it goes to the owner as an Approve / Decline question.
+  const asked = await b.tool(job, "github", { action: "merge", number: 10 });
+  assert.equal(asked.needsExplanation, true);
+  assert.equal(asked.merged, undefined);
   const ok = await b.tool(job, "github", { action: "merge", number: 11 }).catch((e) => e);
   assert.doesNotMatch(String(ok?.message || ""), /only display-only/, "a display-only fix may ship");
   await assert.rejects(b.tool(job, "request_action", { kind: "mcp_write", args: { server: "x", tool: "y", args: {} }, reason: "r" }), /prepare heals and draft PRs/);
