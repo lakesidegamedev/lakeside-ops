@@ -20,6 +20,8 @@ const BLOCKING_ISSUES = new Set(["refused_with_live_evidence", "truncated", "nar
 // goes to the agent.
 const PUSHBACK = /\b(?:wrong|incorrect|not what i|doesn.?t (?:help|answer|work)|didn.?t (?:help|answer|work)|still (?:broken|wrong|not)|bug|broken|error|missing|lost|disappeared|refund|compensat|help me fix)\b/i;
 
+// A question about something the player saw happen to their own game, not about how a rule works.
+const PLAYER_DATA = /\b(?:why\s+(?:did|does|is|are|was|were|has|have|would|do)\b[^?\n]{0,80}\b(?:drop|dropp|fall|fell|rise|rose|jump|spike|crash|collaps|chang|go(?:ne)?\s+(?:up|down)|went\s+(?:up|down)|lose|lost|gain|disappear|vanish|cost|pric|so\s+(?:much|high|low|big|small))|\b(?:my|our)\s+(?:cash|money|balance|gdp|price|prices|revenue|profit|income|sales|approval|seats?|votes?|shares?|stock|budget|company|corp|sector|plants?|factory|factories|depots?|wages?|demand)\b)/i;
 function humanMessages(job) {
   const author = job.source?.authorId;
   const fresh = (job.inbox || []).filter((m) => m && m.role !== "system" && m.role !== "assistant" && (!author || m.authorId === author) && String(m.content || "").trim());
@@ -52,6 +54,10 @@ function plan(job, config = {}, tags = job.tags || {}) {
   // Keir 10.2.1 (ticket 1841): a cost or value question with a figure in it is a report of a number that looks wrong. Ask's
   // explanation of how prices work would defend it; the agent reads the live value first.
   if (require("./pricereport").isSuspectNumberReport(question)) return { skip: "suspected wrong number" };
+  // Ask explains rules; it never reads this player's live data. A report about the player's own numbers, a change they saw,
+  // or a screenshot needs the agent to read the live value first (tickets 1838, 1841).
+  if ((job.contextImages || 0) > 0) return { skip: "screenshot" };
+  if (PLAYER_DATA.test(question) || /\d/.test(question)) return { skip: "player data report" };
   if (job.fastLane?.answers && PUSHBACK.test(question)) return { skip: "pushback" };
   return { kind: answer ? "answer" : "redirect", question };
 }
