@@ -172,12 +172,12 @@ test("finishing is never blocked: the refusal text is listed in PACING_REFUSAL",
   assert.ok(pacing.test(bc.REFUSAL({ sentence: "s" })));
 });
 
-test("the fast lane is exempt", async () => {
+test("the fast lane is held to the same check: a bug label with no read is refused (10.1.7)", async () => {
   const f = setup();
   f.job.fastLane = { escalated: false };
-  await f.broker.tool(f.job, "channel_reply", { message: BUG });
-  assert.equal(f.posts().length, 1);
-  assert.equal(f.audits("bug_claim_refused").length, 0);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: BUG }));
+  assert.equal(f.posts().length, 0);
+  assert.equal(f.audits("bug_claim_refused").length, 1);
 });
 
 test("Keir 10: a defect found by reading code is backed once it is filed and its recorded fact cites the file read (replay 2026-11-15)", async () => {
