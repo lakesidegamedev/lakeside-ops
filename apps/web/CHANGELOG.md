@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reset Watch uses funded trade receipts for sell-through, counts mothballed sites separately, and shows returns on operating and committed capital.
 - **Sentry replaces GlitchTip.** New read-only Sentry MCP on 127.0.0.1:9740 (`sentry_issues`, `sentry_issue`, `sentry_event_lookup` for the 8 character ref on player error pages, `sentry_new_since`), unit `lakeside-sentry-mcp.service`. The dashboard error tile, daily report, issue triage and the new-issue Discord poller read Sentry (`SENTRY_AUTH_TOKEN`, org `lakeside-games`); the dead GlitchTip code and catalogue entry are gone.
 - **Ticket replies read like chat.** A reply-mode `support_public_update` (and a resolution notice) longer than one chat line is now posted as up to four short Discord messages, about 1.2 s apart, instead of one wall of text. Same rules as Keir's own splitter: paragraphs, then sentence ends; lists keep their lead-in; code fences stay whole. The receipt keeps one update with the full text; the delivery record lists every part, and a retry resends only the parts that did not land. Card mode is unchanged.
 
