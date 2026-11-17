@@ -12,11 +12,10 @@
 //
 // - Sector P&L (`corporateSectors.plantsPnl`) is on a per real DAY basis in the
 //   host currency. One turn is one real hour (TURNS_PER_DAY = 24), so per-turn
-//   profit is plantsPnl.profit / 24, and `exchangeRates.rate` is local per anchor.
-// - Return on a new plant uses `capacityBookAnchor` (the paid build cost of the
-//   capacity), the same definition the engine uses for its own growth finance
-//   (build price per unit over profit per operating unit per turn). It does NOT
-//   use `capitalBookAnchor`, which is an NPV-derived valuation, not a cost.
+//   profit is plantsPnl.profit / 24. Convert to anchor using the rate for the
+//   denomination the corporation turn used to write the site.
+// - Site return divides annualized profit by paid operating capacity cost.
+//   The committed-capital view also includes paid construction in progress.
 // - A sector is viable when a new plant's yearly return beats the host
 //   country's prime rate. Below that a player is better off holding bonds, so
 //   "profitable" alone (every seeded site is) does not make a sector worth
@@ -149,51 +148,89 @@ function level(...levels) {
 
 // ── 1. Sectors ───────────────────────────────────────────────────────────────
 
+// Match AHDGame's COUNTRY_CURRENCY_MAP and INITIAL_RATES_2027 for countries
+// where a foreign-owned site's stored denomination can differ from the live
+// host quote. These are accounting rates from the running game's preset.
+const FOREIGN_SITE_FX_2027 = {
+  AT: ["ATS", 13.4],
+  BG: ["BGL", 1.95583 * 0.92],
+  ES: ["ESP", 67],
+  FI: ["FIM", 3.9],
+  FR: ["FRF", 4.2],
+  GR: ["GRD", 37],
+  IE: ["IEP", 0.92],
+  IT: ["ITL", 833],
+  PL: ["PLZ", 3.9812],
+  RO: ["ROL", 4.5984],
+  RU: ["SUR", 92.5],
+  TR: ["TRL", 32.806],
+};
+
+function siteRate(sector, corp, { fxByCountry, fxByCurrency, preset }) {
+  const host = sector.countryId ?? corp.countryId;
+  const [legacyCode, authoredRate] = preset === "2027-default"
+    ? (FOREIGN_SITE_FX_2027[host] ?? []) : [];
+  const domestic = sector.countryId == null || sector.countryId === corp.countryId;
+  const stampedCode = domestic && typeof corp.liquidCurrencyCode === "string" ? corp.liquidCurrencyCode.trim() : null;
+  const rate = num(fxByCurrency.get(stampedCode || legacyCode));
+  if (rate > 0) return rate;
+  if (authoredRate != null && (!stampedCode || stampedCode === legacyCode)) return authoredRate;
+  const hostRate = num(fxByCountry.get(host));
+  return hostRate > 0 ? hostRate : 1;
+}
+
 // One row per operating site (owner corp x state x lane), turn-matched.
-function siteRows({ sectors, corpById, fxByCountry, primeByCountry = new Map(), turn }) {
+function siteRows({ sectors, corpById, fxByCountry, fxByCurrency = new Map(), preset, primeByCountry = new Map(), turn, worldEpoch, funded = false }) {
   const rows = [];
+  const fx = { fxByCountry, fxByCurrency, preset };
   for (const s of sectors) {
     const corp = corpById.get(String(s.corporationId));
     if (!corp || corp.isPrimaryNationalCorporation) continue;
     const pnl = s.plantsPnl || {};
     const fresh = pnl.turn != null && turn != null && pnl.turn >= turn - 1;
-    const rate = num(fxByCountry.get(s.countryId)) || 1;
+    const rate = siteRate(s, corp, fx);
     const revenueDay = fresh ? num(pnl.revenue) : null;
     const profitDay = fresh ? num(pnl.profit) : (num(s.capitalStock) > 0 ? 0 : null);
     const profitTurnAnchor = profitDay == null ? null : profitDay / TURNS_PER_DAY / rate;
     const capital = num(s.capitalStock) || 0;
-    const operating = num(s.operatingCapacityUnits) || capital;
     const book = num(s.capacityBookAnchor);
-    // Engine definition: per-unit build price over per-turn profit per operating unit.
-    let paybackTurns = null;
-    let returnPct = null;
-    if (book > 0 && capital > 0 && operating > 0 && profitTurnAnchor != null) {
-      const unitPrice = book / capital;
-      const unitProfitTurn = profitTurnAnchor / operating;
-      paybackTurns = unitProfitTurn > 0 ? unitPrice / unitProfitTurn : Infinity;
-      returnPct = (100 * unitProfitTurn * TURNS_PER_YEAR) / unitPrice;
-    }
-    const prime = num(primeByCountry.get(s.countryId));
-    // Built = owns capacity. A built site with no revenue this turn is idle,
-    // and counts against its sector: a player owning it would be losing money.
+    const construction = Math.max(0, num(s.constructionInProgressAnchor) ?? 0);
     const built = capital > 0;
+    const mothballed = built && s.mothballed === true;
+    const operating = built && !mothballed;
+    const hasCostBasis = operating && book > 0 && profitTurnAnchor != null;
+    const annualProfit = hasCostBasis ? profitTurnAnchor * TURNS_PER_YEAR : null;
+    const returnPct = hasCostBasis ? (100 * annualProfit) / book : null;
+    const paybackTurns = hasCostBasis ? (profitTurnAnchor > 0 ? book / profitTurnAnchor : Infinity) : null;
+    const receipt = s.producerSettlement;
+    const currentReceipt = receipt && turn != null && receipt.turn === turn && worldEpoch != null &&
+      String(receipt.worldEpoch) === String(worldEpoch);
+    const offered = currentReceipt ? num(receipt.offeredUnits) : null;
+    const sold = currentReceipt ? num(receipt.soldUnits) : null;
     const selling = revenueDay != null && revenueDay > 0;
+    const sellThrough = funded || pnl.source === "funded" || currentReceipt
+      ? (offered > 0 && sold != null && sold >= 0 ? Math.min(1, sold / offered) : null)
+      : (selling ? num(s.soldFraction) : null);
+    const prime = num(primeByCountry.get(s.countryId));
     rows.push({
       lane: laneOf(s),
       country: s.countryId,
       corpId: String(s.corporationId),
       player: corp.ceoType === "character",
-      operating: built,
-      idle: built && !selling,
-      building: !built && (num(s.constructionInProgressAnchor) || 0) > 0,
+      operating,
+      mothballed,
+      idle: operating && !selling,
+      building: !built && construction > 0,
       margin: selling && profitDay != null ? (100 * profitDay) / revenueDay : null,
-      profitable: built ? (profitDay != null ? profitDay > 0 : false) : null,
+      profitable: operating ? profitDay > 0 : null,
       paybackTurns,
       returnPct,
+      annualProfit,
+      committedCost: hasCostBasis ? book + construction : null,
       primePct: prime,
       excessPp: returnPct != null && prime != null ? returnPct - prime : null,
       plantCost: book > 0 && num(s.plantCount) > 0 ? book / s.plantCount : null,
-      sellThrough: num(s.soldFraction),
+      sellThrough,
       utilization: num(s.capitalUtilization),
       revenueTurnAnchor: revenueDay == null ? null : revenueDay / TURNS_PER_DAY / rate,
     });
@@ -208,10 +245,10 @@ function sectorVerdict(m) {
   const ret = m.returnPct == null ? "an unknown return" : `${m.returnPct}% a year`;
   if (pr != null && pr < T.weakProfitableShare) return { level: "bad", why: `Only ${Math.round(pr * 100)}% of sites make money` };
   if (ex == null) return { level: "bad", why: "No return can be measured" };
-  if (ex < T.weakExcessPp) return { level: "bad", why: `New plants earn ${ret}, ${Math.abs(ex)} points below the local prime rate` };
+  if (ex < T.weakExcessPp) return { level: "bad", why: `Operating sites earn ${ret}, ${Math.abs(ex)} points below the local prime rate` };
   if (pr != null && pr < T.viableProfitableShare) return { level: "warn", why: `${Math.round(pr * 100)}% of sites make money` };
-  if (ex < T.viableExcessPp) return { level: "warn", why: `New plants earn ${ret}, only ${ex} points above the local prime rate` };
-  return { level: "ok", why: `New plants earn ${ret}, ${ex} points above the local prime rate` };
+  if (ex < T.viableExcessPp) return { level: "warn", why: `Operating sites earn ${ret}, only ${ex} points above the local prime rate` };
+  return { level: "ok", why: `Operating sites earn ${ret}, ${ex} points above the local prime rate` };
 }
 
 function sectorMetrics(rows) {
@@ -223,11 +260,14 @@ function sectorMetrics(rows) {
   const lanes = [];
   for (const [lane, all] of byLane) {
     const op = all.filter((r) => r.operating);
+    const capital = op.reduce((sum, r) => sum + (r.committedCost ?? 0), 0);
+    const profit = op.reduce((sum, r) => sum + (r.annualProfit ?? 0), 0);
     const m = {
       lane,
       label: LANE_LABEL[lane] || lane,
       sites: op.length,
       building: all.filter((r) => r.building).length,
+      mothballed: all.filter((r) => r.mothballed).length,
       idle: all.filter((r) => r.idle).length,
       playerSites: all.filter((r) => r.player).length,
       playerCorps: new Set(all.filter((r) => r.player).map((r) => r.corpId)).size,
@@ -235,11 +275,12 @@ function sectorMetrics(rows) {
       marginMedian: round(median(op.map((r) => r.margin))),
       paybackTurns: round(median(op.map((r) => r.paybackTurns)), 0),
       returnPct: round(median(op.map((r) => r.returnPct)), 1),
+      committedReturnPct: round(share(100 * profit, capital), 1),
       primePct: round(median(op.map((r) => r.primePct)), 2),
       excessPp: round(median(op.map((r) => r.excessPp)), 1),
       beatsSafeShare: share(op.filter((r) => r.excessPp != null && r.excessPp > 0).length, op.filter((r) => r.excessPp != null).length),
       plantCostAnchor: round(median(op.map((r) => r.plantCost)), 0),
-      sellThrough: round(median(op.filter((r) => !r.idle).map((r) => r.sellThrough)), 2),
+      sellThrough: round(median(op.map((r) => r.sellThrough)), 2),
       playerProfitableShare: share(op.filter((r) => r.player && r.profitable).length, op.filter((r) => r.player).length),
     };
     m.verdict = sectorVerdict(m);
@@ -251,6 +292,7 @@ function sectorMetrics(rows) {
   const rets = judged.map((l) => l.returnPct).filter((v) => Number.isFinite(v));
   return {
     lanes,
+    siteMetricsVersion: 2,
     viable: judged.filter((l) => l.verdict.level === "ok").length,
     weak: judged.filter((l) => l.verdict.level === "warn").length,
     failing: judged.filter((l) => l.verdict.level === "bad").length,
@@ -291,7 +333,7 @@ function countryBalance(rows, laneStats) {
       primePct: round(median(rs.map((r) => r.primePct)), 2),
       marginEdgePp: round(median(rs.map((r) => r.margin))),
       level: lvl,
-      why: lvl === "none" ? "Too few sites" : `New plants here return ${Math.abs(edge)} points a year ${edge >= 0 ? "more" : "less"} than the same sector elsewhere`,
+      why: lvl === "none" ? "Too few sites" : `Operating sites here return ${Math.abs(edge)} points a year ${edge >= 0 ? "more" : "less"} than the same sector elsewhere`,
     };
   });
   countries.sort((a, b) => Math.abs(b.edgePp ?? 0) - Math.abs(a.edgePp ?? 0));
@@ -725,10 +767,10 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   const since = world.startedAt ? { createdAt: { $gte: world.startedAt } } : {};
 
   const [fx, banks, corps, sectors, histTurnDoc, npps, parties, elections, candidates, officials, formations, turnLogs, lastLog, gameConfig] = await Promise.all([
-    db.collection("exchangeRates").find({}, { projection: { countryId: 1, rate: 1 } }).toArray(),
+    db.collection("exchangeRates").find({}, { projection: { countryId: 1, currencyCode: 1, rate: 1 } }).toArray(),
     db.collection("centralBanks").find({}, { projection: { countryId: 1, primeRate: 1 } }).toArray(),
-    db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
-    db.collection("corporateSectors").find({}, { projection: { corporationId: 1, countryId: 1, sectorType: 1, industryModel: 1, mediaDiscriminator: 1, "plantsPnl.profit": 1, "plantsPnl.revenue": 1, "plantsPnl.turn": 1, capacityBookAnchor: 1, constructionInProgressAnchor: 1, capitalStock: 1, operatingCapacityUnits: 1, plantCount: 1, soldFraction: 1, capitalUtilization: 1 } }).toArray(),
+    db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, liquidCurrencyCode: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
+    db.collection("corporateSectors").find({}, { projection: { corporationId: 1, countryId: 1, sectorType: 1, industryModel: 1, mediaDiscriminator: 1, "plantsPnl.profit": 1, "plantsPnl.revenue": 1, "plantsPnl.turn": 1, "plantsPnl.source": 1, capacityBookAnchor: 1, constructionInProgressAnchor: 1, capitalStock: 1, plantCount: 1, mothballed: 1, soldFraction: 1, capitalUtilization: 1, "producerSettlement.turn": 1, "producerSettlement.worldEpoch": 1, "producerSettlement.offeredUnits": 1, "producerSettlement.soldUnits": 1 } }).toArray(),
     db.collection("corporationHistory").find({ turn: { $lte: turn ?? 0 }, ...since }, { projection: { turn: 1 } }).sort({ turn: -1 }).limit(1).next(),
     db.collection("npps").find({ retiredAt: null }, { projection: { countryId: 1, party: 1, retiredAt: 1 } }).toArray(),
     db.collection("politicalParties").find({}, { projection: { countryId: 1, sequentialId: 1, name: 1, abbreviation: 1, color: 1, regimeStatus: 1 } }).toArray(),
@@ -742,7 +784,7 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
     // Sorted by time, not turn number: the previous world's logs (24 h TTL) carry higher turn numbers.
     db.collection("turnLogs").find(since, { projection: { turn: 1, realTime: 1, createdAt: 1, durationMs: 1, outcome: 1, success: 1, failedPhases: 1, "memory.peakRssMb": 1, "build.commit": 1 } }).sort({ createdAt: -1 }).limit(48).toArray(),
     db.collection("turnLogs").find(since, { projection: { turn: 1, phaseStatuses: 1 } }).sort({ createdAt: -1 }).limit(1).next(),
-    db.collection("gameConfig").findOne({}, { projection: { turnLengthMinutes: 1 } }),
+    db.collection("gameConfig").findOne({}, { projection: { turnLengthMinutes: 1, producerMarketLiveFromTurn: 1 } }),
   ]);
   const histTurn = histTurnDoc ? histTurnDoc.turn : null;
   const corpHist = histTurn == null ? [] : await db.collection("corporationHistory")
@@ -752,6 +794,7 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
     .find({ electionId: { $in: electionIds } }, { projection: { electionId: 1, finalized: 1, totalVotes: 1, candidateParties: 1, turnSnapshots: { $slice: -1 } } }).toArray();
 
   const fxByCountry = new Map(fx.map((r) => [r.countryId || r._id, r.rate]));
+  const fxByCurrency = new Map(fx.filter((r) => r.currencyCode).map((r) => [r.currencyCode, r.rate]));
   const primeByCountry = new Map(banks.map((b) => [b.countryId || b._id, num(b.primeRate)]));
   const corpById = new Map(corps.map((c) => [String(c._id), c]));
   const histByCorp = new Map(corpHist.map((h) => [String(h.corporationId), h]));
@@ -763,7 +806,9 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   }
   const electionById = new Map(elections.map((e) => [String(e._id), e]));
 
-  const rows = siteRows({ sectors, corpById, fxByCountry, primeByCountry, turn });
+  const liveFromTurn = gameConfig?.producerMarketLiveFromTurn;
+  const funded = Number.isSafeInteger(liveFromTurn) && turn != null && turn >= liveFromTurn;
+  const rows = siteRows({ sectors, corpById, fxByCountry, fxByCurrency, preset: gs.preset, primeByCountry, turn, worldEpoch: gs.worldEpochId || gs.resetWorldId, funded });
   const sectorsOut = sectorMetrics(rows);
   const countriesOut = countryBalance(rows, sectorsOut);
   const firstTurn = history.length ? history[0].turn : turn;
@@ -842,6 +887,7 @@ function historyRecord(s) {
   return {
     turn: s.world.turn,
     at: s.generatedAt,
+    siteMetricsVersion: s.sectors.siteMetricsVersion,
     // [profitable share, median margin, return %/yr, points over prime]
     lanes: Object.fromEntries(s.sectors.lanes.map((l) => [l.lane, [l.profitableShare == null ? null : round(l.profitableShare, 2), l.marginMedian, l.returnPct, l.excessPp]])),
     sectors: { viable: s.sectors.viable, thin: s.sectors.weak, below: s.sectors.failing, worldReturn: s.sectors.worldReturnPct },

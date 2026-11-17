@@ -59,6 +59,78 @@ test("a built site with no sales this turn is idle and counts as not profitable"
   assert.equal(lane.profitableShare, 0);
 });
 
+test("2027 site P&L uses its stored currency rather than the host's displayed rate", () => {
+  const base = { sectorType: "agriculture", capitalStock: 1, capacityBookAnchor: 4800 };
+  const site = (corporationId, countryId, rate) => ({
+    ...base, corporationId, countryId,
+    plantsPnl: { revenue: 2400 * rate, profit: 240 * rate, turn: 9 },
+  });
+  const rows = rw.siteRows({
+    sectors: [
+      site("us", "IT", 833),
+      site("us", "FR", 4.2),
+      site("it", "IT", 0.95),
+      site("us", "PL", 3.9812),
+      site("us", "IE", 0.97),
+    ],
+    corpById: corpMap([
+      { _id: "us", countryId: "US", liquidCurrencyCode: "USD" },
+      { _id: "it", countryId: "IT", liquidCurrencyCode: "EUR" },
+    ]),
+    fxByCountry: new Map([["IT", 0.95], ["FR", 0.95], ["IE", 0.95], ["PL", 4.25]]),
+    fxByCurrency: new Map([["USD", 1], ["EUR", 0.95], ["IEP", 0.97], ["PLN", 4.25]]),
+    preset: "2027-default", turn: 9,
+  });
+  assert.equal(rows.length, 5);
+  for (const row of rows) {
+    assert.ok(Math.abs(row.revenueTurnAnchor - 100) < 1e-9);
+    assert.ok(Math.abs(row.returnPct - 10) < 1e-9);
+  }
+});
+
+test("funded sell-through uses current settled offers and excludes mothballed sites", () => {
+  const base = { corporationId: "c1", countryId: "US", sectorType: "retail",
+    capitalStock: 1, capacityBookAnchor: 100, soldFraction: 1 };
+  const receipt = { worldEpoch: "epoch", turn: 9, offeredUnits: 2 };
+  const rows = rw.siteRows({
+    sectors: [
+      { ...base, plantsPnl: { revenue: 240, profit: 24, turn: 9 }, producerSettlement: { ...receipt, soldUnits: 1 } },
+      { ...base, producerSettlement: { ...receipt, soldUnits: 0 } },
+      { ...base, producerSettlement: { ...receipt, worldEpoch: "old", soldUnits: 2 } },
+      { ...base, producerSettlement: { ...receipt, turn: 8, soldUnits: 2 } },
+      { ...base, mothballed: true },
+    ],
+    corpById: corpMap([{ _id: "c1", ceoType: "npp" }]),
+    fxByCountry: new Map(), turn: 9, worldEpoch: "epoch", funded: true,
+  });
+  assert.deepEqual(rows.map((r) => r.sellThrough), [0.5, 0, null, null, null]);
+  const stats = rw.sectorMetrics(rows);
+  const lane = stats.lanes.find((l) => l.lane === "retail");
+  assert.equal(lane.sellThrough, 0.25);
+  assert.equal(lane.sites, 4);
+  assert.equal(lane.mothballed, 1);
+  assert.equal(lane.profitableShare, 0.25);
+  assert.equal(rw.countryBalance(rows, stats)[0].sites, 4);
+});
+
+test("site returns use matching profit and capacity cost, with a weighted committed-capital view", () => {
+  const base = { corporationId: "c1", countryId: "US", sectorType: "manufacturing",
+    capitalStock: 10, operatingCapacityUnits: 50, plantCount: 1 };
+  const rows = rw.siteRows({
+    sectors: [
+      { ...base, capacityBookAnchor: 200, constructionInProgressAnchor: 600,
+        plantsPnl: { revenue: 240, profit: 24, turn: 9 } },
+      { ...base, capacityBookAnchor: 200, plantsPnl: { revenue: 240, profit: 48, turn: 9 } },
+    ],
+    corpById: corpMap([{ _id: "c1", ceoType: "character" }]),
+    fxByCountry: new Map(), turn: 9,
+  });
+  assert.deepEqual(rows.map((r) => [r.returnPct, r.paybackTurns]), [[24, 200], [48, 100]]);
+  const lane = rw.sectorMetrics(rows).lanes.find((l) => l.lane === "manufacturing");
+  assert.equal(lane.returnPct, 36);
+  assert.equal(lane.committedReturnPct, 14.4);
+});
+
 test("NPPs not running excludes NPPs already standing", () => {
   const [us] = rw.candidateFields({
     elections: [{ _id: "e1", countryId: "US", status: "active" }, { _id: "e2", countryId: "US", status: "active" }],

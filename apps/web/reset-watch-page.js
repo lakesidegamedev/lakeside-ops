@@ -156,36 +156,41 @@ function verdictStrip(v) {
 function sectorsSection(s, history) {
   const sec = s.sectors;
   const th = s.thresholds;
+  const firstRevised = history.find((h) => h.siteMetricsVersion === sec.siteMetricsVersion);
+  const methodNote = firstRevised && history.some((h) => h.turn < firstRevised.turn)
+    ? `<p class="rw-muted">Site returns and profitability use the revised calculation from turn ${esc(firstRevised.turn)}.</p>` : "";
   const maxRet = Math.max(4, ...sec.lanes.map((l) => l.returnPct || 0), ...sec.lanes.map((l) => l.primePct || 0)) * 1.1;
   const rows = sec.lanes.map((l) => {
     const playerCell = l.playerCorps ? `${l.playerCorps}${l.playerProfitableShare != null ? ` <span class="rw-muted">(${pct(l.playerProfitableShare)} profitable)</span>` : ""}` : '<span class="rw-muted">0</span>';
     return `<tr>
       <td>${dot(l.verdict.level, l.verdict.why)} <span class="nm">${esc(l.label)}</span>${l.verdict.level === "ok" ? "" : `<div class="rw-why">${esc(l.verdict.why)}</div>`}</td>
       <td>${returnBar(l.returnPct, l.primePct, maxRet)}</td>
+      <td class="n">${l.committedReturnPct == null ? "-" : `${fixed(l.committedReturnPct)}%`}</td>
       <td class="n">${signed(l.excessPp)}</td>
       <td class="n">${pct(l.profitableShare)}</td>
       <td class="n">${fixed(l.marginMedian)}%</td>
       <td class="n">${years(l.paybackTurns, th.turnsPerYear)}</td>
       <td class="n">${money(l.plantCostAnchor)}</td>
       <td class="n">${pct(l.sellThrough)}</td>
-      <td class="n">${l.sites}${l.idle ? ` <span style="color:var(--amber,#f5a623)" title="Built but sold nothing this turn">(${l.idle} idle)</span>` : ""}${l.building ? ` <span class="rw-muted" title="Under construction">+${l.building}</span>` : ""}</td>
+      <td class="n">${l.sites}${l.idle ? ` <span style="color:var(--amber,#f5a623)" title="Built but sold nothing this turn">(${l.idle} idle)</span>` : ""}${l.mothballed ? ` <span class="rw-muted">+${l.mothballed} mothballed</span>` : ""}${l.building ? ` <span class="rw-muted" title="Under construction">+${l.building}</span>` : ""}</td>
       <td class="n">${playerCell}</td>
     </tr>`;
   }).join("");
   return `<section class="rw-sec" id="sectors">
   <h2>Sectors: can a player make money in every one?</h2>
-  <p class="q">A sector is worth entering when a new plant earns more per game year than it cost to build, by more than the local prime rate. Below the prime rate a player does better buying bonds. Every seeded site turning a profit is not enough on its own.</p>
+  <p class="q">Compare what operating sites earn on paid capacity with the local prime rate.</p>
   <div class="rw-key"><span><b>${sec.viable}</b> viable</span><span><b>${sec.weak}</b> thin</span><span><b>${sec.failing}</b> below the prime rate</span><span>Best <b>${esc(sec.bestLane || "-")}</b>, worst <b>${esc(sec.worstLane || "-")}</b>, ${fixed(sec.returnSpreadPp)} points apart</span><span>World median <b>${fixed(sec.worldReturnPct)}%</b> a year</span></div>
+  ${methodNote}
   ${sectorCharts(s, history)}
   <h3>Now</h3>
   <div class="rw-tw"><table class="rw-t">
-    <thead><tr><th>Sector</th><th>New plant return / yr <span class="rw-muted">(tick = prime)</span></th><th class="n">vs prime</th><th class="n">Sites in profit</th><th class="n">Margin</th><th class="n">Pays back</th><th class="n">Plant cost</th><th class="n">Sell-through</th><th class="n">Sites</th><th class="n">Player cos.</th></tr></thead>
+    <thead><tr><th>Sector</th><th>Site return / yr <span class="rw-muted">(tick = prime)</span></th><th class="n">Committed capital return / yr</th><th class="n">vs prime</th><th class="n">Sites in profit</th><th class="n">Margin</th><th class="n">Pays back</th><th class="n">Plant cost</th><th class="n">Sell-through</th><th class="n">Sites</th><th class="n">Player cos.</th></tr></thead>
     <tbody>${rows}</tbody></table></div>
   <details class="rw-how"><summary>How this is measured</summary><ul>
-    <li>Return on a new plant = per-turn profit per unit of operating capacity, times ${th.turnsPerYear} turns, over the build price per unit (paid capacity cost, <code>capacityBookAnchor</code>). Same formula the engine uses to decide whether it will finance a build; the engine finances only builds that pay back inside ${th.enginePaybackTurns} turns.</li>
-    <li>Sector profit is stored per real day (24 turns) in the host currency; it is converted per turn and to anchor at the current rate.</li>
+    <li>Site return is the median annualized profit divided by paid operating capacity cost. Committed capital return divides total annualized profit of those sites by their total paid operating capacity and construction in progress.</li>
+    <li>Sector profit is stored per real day (24 turns). The tracker uses the rate for the currency in which the profit was recorded.</li>
     <li>Viable: at least ${pct(th.viableProfitableShare)} of sites in profit and a median return ${th.viableExcessPp} points or more above the host prime rate. Thin: above the prime rate but by less. Red: below it, or under ${pct(th.weakProfitableShare)} of sites in profit.</li>
-    <li>National state corporations are left out. A built site that sold nothing this turn is "idle" and counts as not making money, with zero profit in the return. Sites under construction show as "+N" and are not judged. Sell-through is for selling sites only.</li>
+    <li>Operating sites include idle sites. Mothballed sites and sites entirely under construction are counted separately. Sell-through uses units sold divided by units offered on settled turns.</li>
   </ul></details>
 </section>`;
 }
