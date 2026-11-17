@@ -259,6 +259,32 @@ function rawReadArgs(tool, args) {
   }
   return out;
 }
+// Raw collections that a purpose-built read already covers. A raw read of one still works; the note on its result names the
+// typed read so the next task starts there (Sentry KEIR-A/D/F/3/P/2, 2026-11-17: Keir reaches for the raw collection first).
+const TYPED_READS = {
+  corporations: "trace_corp (one corporation) or corporation_rankings (the league table)",
+  corporateSectors: "trace_sector",
+  ledgerEntries: "trace_ledger (a corporation's or character's ledger)",
+  characters: "trace_character (any character, public fields) or reporter_state (the ticket's reporter)",
+  macroCountries: "macro_history or country_fiscal",
+  statePartyOrg: "map_snapshot with scope country and metric party_org",
+  stateResourceCapacity: "extraction_market or map_snapshot with metric sector_specialization",
+  producerEconomyAccounts: "trace_account or trace_corp",
+};
+// Close spellings of a collection that does not exist: case, a missing or extra trailing s, or one name containing the other.
+function nearCollections(name, names, limit = 5) {
+  const norm = (x) => String(x).toLowerCase().replace(/s$/, "");
+  const n = norm(name);
+  if (!n) return [];
+  return names.filter((c) => { const k = norm(c); return k === n || (n.length >= 5 && (k.includes(n) || n.includes(k))); }).slice(0, limit);
+}
+const MAP_WORLD_ONLY = new Set(["players", "parties", "gdp_growth", "inflation_rate", "unemployment_rate", "median_income_anchor", "poverty_rate", "cost_of_living", "wage_growth", "trade_growth", "prime_rate", "debt_to_gdp_ratio"]);
+const MAP_COUNTRY_METRICS = "population, approval, lean, economic_lean, social_lean, party_org, house, senate, governor, presidential, sector_specialization, candidate_roster";
+function mapSnapshotScopeCheck(args) {
+  if (args?.scope !== "country" || !MAP_WORLD_ONLY.has(String(args.metric))) return;
+  const extra = args.metric === "parties" ? " For which parties hold a country's regions use metric party_org; for a party list use the parties tool." : args.metric === "players" ? " For player counts by country or state use geo_aggregate." : " For a country's economy use country_fiscal or macro_history.";
+  throw new Error(`${args.metric} is a world-scope map layer, not available for country maps.${extra} Country scope metrics: ${MAP_COUNTRY_METRICS}. Or call map_snapshot with scope world.`);
+}
 // Finding reads are sensor evidence and public game sources only.
 // Keir 5.6.2: findings also read raw game records (same guard as tickets).
 // Without them a finding filed "please run this query" handoffs that nobody
@@ -352,10 +378,18 @@ function createMcp(configFile, readToken, { gate = null } = {}) {
     if (write && gate) gate(`The ${server} write ${params?.name || method}`);
     // Keir 8: a refused or unresolvable connection means the request never left
     // this box, so a write that fails this way provably wrote nothing.
-    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: write ? c.headers.Authorization : `Bearer ${readToken}` },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) }).catch((e) => {
+    const send = () => fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: write ? c.headers.Authorization : `Bearer ${readToken}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
+    // A read that failed to connect (an MCP restarting for a deploy) is retried once after a short pause. Writes are never retried,
+    // and neither is a read that timed out or was cancelled: those may have reached the server.
+    const res = await send().catch(async (e) => {
       const code = e?.cause?.code || e?.code;
-      if (code === "ECONNREFUSED" || code === "ENOTFOUND") e.code = "MCP_CONNECT_REFUSED";
+      if (!write && !signal?.aborted && e?.name === "TypeError" && /fetch failed/i.test(String(e.message)) && ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "UND_ERR_SOCKET"].includes(code)) {
+        await new Promise((r) => setTimeout(r, 1500));
+        try { return await send(); } catch (e2) { e = e2; }
+      }
+      const c2 = e?.cause?.code || e?.code;
+      if (c2 === "ECONNREFUSED" || c2 === "ENOTFOUND") e.code = "MCP_CONNECT_REFUSED";
       throw e; });
     const j = parseRpc(await res.text());
     if (!res.ok || j.error || j.result?.isError) {
@@ -2001,6 +2035,27 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
   // Keir 2.0: the numbers and text of everything read this activation are the
   // evidence a public post may quote (see guardNumbers and secondLook).
   const NO_EVIDENCE = new Set(["check_draft", "channel_reply", "progress_update", "checkpoint", "finish", "handoff", "task_progress", "ticket_record", "remember"]);
+  // Names of the game collections, kept ten minutes: lets an empty raw read say "that collection does not exist, did you mean ..." (KEIR-R read partyBudgets; the collection is partyBudget).
+  let collectionCache = null;
+  async function rawReadHint(collection, empty, signal) {
+    const parts = [];
+    if (TYPED_READS[collection]) parts.push(`A purpose-built read covers this: ${TYPED_READS[collection]}. Prefer it; it returns the shaped, public fields.`);
+    if (empty && typeof collection === "string" && collection) {
+      try {
+        if (!collectionCache || Date.now() - collectionCache.at > 600000) {
+          const r = await mcp.call("heal-ops", "heal_collections", { env: "prod" }, false, signal);
+          const names = (r?.collections || []).map((c) => c?.name).filter(Boolean);
+          if (names.length) collectionCache = { at: Date.now(), names };
+        }
+        const names = collectionCache?.names;
+        if (names?.length && !names.includes(collection)) {
+          const near = nearCollections(collection, names);
+          parts.push(`No collection is named "${collection}", so an empty result means nothing.${near.length ? ` Did you mean: ${near.join(", ")}?` : " Run heal_collections for the exact names."}`);
+        }
+      } catch {}
+    }
+    return parts.join(" ") || null;
+  }
   async function tool(job, name, input, signal) {
     require("./roles").roleGuard(job, name, input, ledger.data.jobs);
     if (signal?.aborted) throw new Error("activation aborted");
@@ -2642,6 +2697,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // heal-ops passes filters through verbatim, so {"$oid": id} is an unknown
       // operator. Match the id as text instead: ids are stored both ways.
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool) && args.filter && typeof args.filter === "object") args.filter = oidFilter(args.filter);
+      // map_snapshot accepts one metric list for two scopes; the country scope has no world-only layers, and its refusal names
+      // none of the valid ones. 43 Sentry events (KEIR-7) were Keir asking for "parties" with scope country. Say what works.
+      if (input.server === "gamestate" && input.tool === "map_snapshot") mapSnapshotScopeCheck(args);
       // Keir 7: a raw database read is a workaround for a missing purpose-built
       // read; capabilitygaps.js turns repeats into capability requests.
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool) && typeof args.collection === "string") { try { ledger.audit("raw_read", { job: job.id, ticket: job.ticket || null, collection: args.collection.slice(0, 80) }); } catch {} }
@@ -2733,14 +2791,16 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       if (signal?.aborted && input.server === "ops-knowledge" && input.tool.startsWith("knowledge_")) throw new Error("knowledge read cancelled");
       if (input.server === "heal-ops" && ["heal_query", "heal_count"].includes(input.tool)) {
+        const hint = await rawReadHint(args.collection, emptyRead(result), signal);
+        const withHint = (r) => (hint ? { ...r, collectionNote: hint } : r);
         const asIds = emptyRead(result) ? hexIdFilter(args.filter) : null;
         if (asIds) {
           const again = await mcp.call(input.server, input.tool, { ...args, filter: asIds.filter }, false, signal).catch(() => null);
           const names = asIds.fields.join(", ");
-          if (again && !emptyRead(again)) return redactRaw({ ...again, note: `Nothing matched ${names} as plain text; these rows match it as a record id.` });
-          return redactRaw({ ...result, note: `Nothing matched, including ${names} read as a record id. Check the filter against a record you know exists before saying none exist.` });
+          if (again && !emptyRead(again)) return withHint(redactRaw({ ...again, note: `Nothing matched ${names} as plain text; these rows match it as a record id.` }));
+          return withHint(redactRaw({ ...result, note: `Nothing matched, including ${names} read as a record id. Check the filter against a record you know exists before saying none exist.` }));
         }
-        return redactRaw(result);
+        return withHint(redactRaw(result));
       }
       if (job.role === "player" && input.server === "support") {
         const cardId = result.intake?.cardMessageId;
@@ -4752,4 +4812,4 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }, progress: (job) => conversation?.progress(job) || [] };
 }
 function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { mapSnapshotScopeCheck, nearCollections, TYPED_READS, SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };

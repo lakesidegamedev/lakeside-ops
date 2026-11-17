@@ -75,6 +75,16 @@ function classifyRefusal(error, tool) {
   return t("tool", "refused_other");
 }
 
+// Groups that are a guard doing its job, a handled fallback or a policy refusal. They stay recorded and queryable
+// (keir-failures.js) but never raise a NEW or SPIKE alert, so they do not reach Sentry or the kanban as errors.
+// Real loops and deadlocks built from the same refusals still alert as refusal_loop and guard_deadlock.
+const EXPECTED_KINDS = new Set(["raw_read_fallback", "refused_authority", "finish_refused_open_work", "unanswered_finish", "unanswered_finish_refused",
+  "certainty_refused", "clarification_refused", "stall_refused", "status_card_regression_refused", "ticket_quality_refused", "owner_muse_refused", "update_spam", "post_refused", "claim_without_receipt"]);
+const EXPECTED_DETAIL = /read the assigned ticket only|no concrete problem phrase|no linked character profile|did not match exactly one account/i;
+// Blips that a restart or a flaky connection produce: only a real spike (see detect) is worth an alert.
+const TRANSIENT_KINDS = new Set(["network", "interrupted", "transient_retry"]);
+const isExpected = (g) => EXPECTED_KINDS.has(g.kind) || EXPECTED_DETAIL.test(`${g.title || ""} ${g.detail || ""}`);
+
 const COMPLAINT = { slow_or_silent: "complaint_slow_or_silent", tone: "complaint_tone", wrong_or_misleading: "answer_wrong_player_reported" };
 
 // One audit entry to a failure, or null when it is not one. Pure.
@@ -264,9 +274,9 @@ function createRecorder({ db, now = () => Date.now(), release = null, lookupJob 
     refresh24h(at);
     const alerts = [];
     const sample = (g) => g.samples.slice(-3).map((s) => ({ ...s, transcript: stateDir ? transcriptPath(s.attempt, { stateDir }) : null }));
-    for (const r of db.prepare("SELECT * FROM failure_groups WHERE first_seen >= ? AND count >= 3").all(at - HOUR)) alerts.push({ type: "NEW", fingerprint: r.fingerprint, group: mapGroup(r) });
+    for (const r of db.prepare("SELECT * FROM failure_groups WHERE first_seen >= ? AND count >= 3").all(at - HOUR).filter((r) => !isExpected(r) && !TRANSIENT_KINDS.has(r.kind))) alerts.push({ type: "NEW", fingerprint: r.fingerprint, group: mapGroup(r) });
     for (const r of db.prepare("SELECT * FROM failure_groups WHERE class = 'process' AND kind = 'crash' AND last_seen >= ?").all(at - 15 * 60000)) alerts.push({ type: "NEW", fingerprint: r.fingerprint, group: mapGroup(r), crash: true });
-    for (const r of db.prepare("SELECT * FROM failure_groups WHERE count_24h >= 10").all()) {
+    for (const r of db.prepare("SELECT * FROM failure_groups WHERE count_24h >= 10").all().filter((r) => !isExpected(r))) {
       const week = db.prepare("SELECT count(*) AS n FROM failures WHERE fingerprint = ? AND at >= ?").get(r.fingerprint, at - 7 * DAY).n;
       const avg = week / 7;
       if (r.count_24h > 3 * avg) alerts.push({ type: "SPIKE", fingerprint: r.fingerprint, group: mapGroup(r), avgPerDay: Math.round(avg * 10) / 10 });
@@ -354,4 +364,4 @@ function topFromFile(file, n = 5, { since = 7 * DAY, classes = ["reasoning", "to
     } finally { db.close(); }
   } catch { return []; }
 }
-module.exports = { topFromFile, migrate, normalize, fingerprint, classifyAudit, classifyUsage, classifyRefusal, isCorrectionPost, transcriptPath, transcriptPaths, createRecorder, backfill, CLASSES };
+module.exports = { isExpected, topFromFile, migrate, normalize, fingerprint, classifyAudit, classifyUsage, classifyRefusal, isCorrectionPost, transcriptPath, transcriptPaths, createRecorder, backfill, CLASSES };
