@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.7 (2026-11-17)
+
+- Quick rules-lane answers go through the same claim checks as every other ticket reply (unread claims, bug labels, account facts, settings, prices, contradictions, composition). Only the rule-lookup check still defers to Ask, which is the rule lookup. The lane no longer records its own answer as evidence; only the sources Ask cited count. A refused quick answer goes to the investigating lane.
+
 ## 10.1.6 (2026-11-17)
 
 - The quick rules-answer lane only takes pure rules questions. A ticket with a screenshot, any number, or a question about something the player saw happen to their own game ("why did GDP drop", "why is my cash so low") goes to the investigating lane, which reads the live value before replying. The quick lane cannot read live data, so it was answering reports about real numbers with rule explanations (tickets 1838, 1841).

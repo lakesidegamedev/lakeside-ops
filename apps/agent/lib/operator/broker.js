@@ -1086,7 +1086,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   // After the second refusal the clause goes out labelled as unconfirmed, by code, rather than as a recorded fact.
   function softenUnreadClaims(job, ticketNo, message) {
-    if ((job.fastLane && !job.fastLane.escalated) || (d.readClaimRefusals?.[ticketNo] || 0) < readClaim.MAX_REFUSALS) return message;
+    if ((d.readClaimRefusals?.[ticketNo] || 0) < readClaim.MAX_REFUSALS) return message;
     const bad = readClaim.unbackedClaims(message, ticketReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), ticketPlayerText(job));
     if (!bad.length) return message;
     ledger.audit("read_claim_hedged", { job: job.id, ticket: ticketNo, clause: bad[0].clause.slice(0, 160) });
@@ -1094,7 +1094,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   // Keir 9.0.4: after two refusals, an account fact with no read in this activation goes out labelled as not checked.
   function softenAccountClaims(job, ticketNo, message) {
-    if ((job.fastLane && !job.fastLane.escalated) || (d.accountClaimRefusals?.[ticketNo] || 0) < accountClaim.MAX_REFUSALS) return message;
+    if ((d.accountClaimRefusals?.[ticketNo] || 0) < accountClaim.MAX_REFUSALS) return message;
     const claim = accountClaim.unbackedAccountClaim(message, ticketAccountReads(ticketNo, job));
     if (!claim) return message;
     ledger.audit("account_claim_labelled", { job: job.id, ticket: ticketNo, claim: claim.kind, reason: claim.reason });
@@ -1102,7 +1102,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   }
   // Same for a sentence that calls behaviour a bug or says it needs a code change with no read marking it a fault.
   function softenBugClaims(job, ticketNo, message) {
-    if ((job.fastLane && !job.fastLane.escalated) || (d.bugClaimRefusals?.[ticketNo] || 0) < bugClaim.MAX_REFUSALS) return message;
+    if ((d.bugClaimRefusals?.[ticketNo] || 0) < bugClaim.MAX_REFUSALS) return message;
     const tj = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
     const claim = bugClaim.unbackedBugClaim(message, [...ticketReadTexts(ticketNo, tj), ...filedBugBacking(ticketNo, tj)], ticketPlayerText(job));
     if (!claim) return message;
@@ -1118,7 +1118,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   const settingReadTexts = (ticketNo, jobs) => ticketReadTexts(ticketNo, jobs).filter((t) => !PLAYER_RECORD.test(String(t)));
   // Same for an instruction to change a setting that no read on the ticket names (Keir 9.0.4, ticket 1829).
   function softenSettingClaims(job, ticketNo, message) {
-    if ((job.fastLane && !job.fastLane.escalated) || (d.settingClaimRefusals?.[ticketNo] || 0) < settingClaim.MAX_REFUSALS) return message;
+    if ((d.settingClaimRefusals?.[ticketNo] || 0) < settingClaim.MAX_REFUSALS) return message;
     const bad = settingClaim.unbackedSettingClaims(message, settingReadTexts(ticketNo, Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)));
     if (!bad.length) return message;
     ledger.audit("setting_claim_hedged", { job: job.id, ticket: ticketNo, phrase: bad[0].phrase.slice(0, 160) });
@@ -1204,7 +1204,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     attempt(() => guardStall(job, ticketNo, message, posts));
     // Keir 10: a post must not contradict this ticket's earlier posts without saying "Correction:", and must not call something
     // available that a read in this activation says is locked. check_draft runs the same two checks.
-    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+    if (!opts.system) {
       const clash = claimcheck.contradiction(message, posts, { now: now() });
       if (clash) { ledger.audit("contradiction_refused", { job: job.id, ticket: ticketNo, pred: clash.pred }); refuse(claimcheck.contradictionRefusal(clash)); }
       const locked = claimcheck.unlockConflict(message, job.evidenceText);
@@ -1262,7 +1262,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     }
     // Keir 9 (replay 2026-11-13): "X already includes Y, so counting both double counts" is refused, at most twice per
     // ticket, when what this ticket read says the inclusion is only partial, or says nothing about it. Same exemptions as above.
-    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+    if (!opts.system) {
       const refusals = (d.inclusionRefusals ||= {});
       if ((refusals[ticketNo] || 0) < 2) {
         const texts = [...(ledger.data.ticketObservations?.[ticketNo] || []).map((r) => r.result), ...knowledge.ticketRecord(ledger, ticketNo).facts.filter((f) => !f.closedAt).map((f) => f.text)];
@@ -1274,7 +1274,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // words (replay tickets: "the tile reads how much you put up for sale", "your record says inputs held the run back", when
     // the reads showed neither). Refused at most twice per ticket; after that the code labels the clause unconfirmed (see
     // softenUnreadClaims) so the player still gets the answer. Never blocks finishing: the text is in PACING_REFUSAL.
-    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+    if (!opts.system) {
       const bad = readClaim.unbackedClaims(message, ticketReadTexts(ticketNo, sameTicketJobs), ticketPlayerText(job));
       const refusals = (d.readClaimRefusals ||= {});
       if (bad.length && (refusals[ticketNo] || 0) < readClaim.MAX_REFUSALS) {
@@ -1286,7 +1286,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // Keir 9 (replay 2026-11-13): "this is a bug" / "needs a code change" is a claim. A sentence that labels behaviour a defect
     // needs a read on this ticket that marks it a fault, or plain "not confirmed" wording; otherwise refused, at most twice per
     // ticket, then labelled unconfirmed by code (softenBugClaims). Never blocks finishing: the text is in PACING_REFUSAL.
-    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+    if (!opts.system) {
       const refusals = (d.bugClaimRefusals ||= {});
       if ((refusals[ticketNo] || 0) < bugClaim.MAX_REFUSALS) {
         const claim = bugClaim.unbackedBugClaim(message, [...ticketReadTexts(ticketNo, sameTicketJobs), ...filedBugBacking(ticketNo, sameTicketJobs)], ticketPlayerText(job));
@@ -1299,7 +1299,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     }
     // Keir 9.0.3 (owner, 2026-11-13): a statement about the player's account link or character ("not linked", "no Discord link",
     // "has no character") needs a read on this ticket that shows it. Whoever asked, in any task posting here. Refused once per ticket.
-    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+    if (!opts.system) {
       const refusals = (d.accountClaimRefusals ||= {});
       if ((refusals[ticketNo] || 0) < accountClaim.MAX_REFUSALS) {
         const claim = accountClaim.unbackedAccountClaim(message, ticketAccountReads(ticketNo, job));
@@ -1312,7 +1312,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     }
     // Keir 9.0.4 (ticket 1829): "turn off X in Settings" says what controls the behaviour. It needs a read on this ticket that
     // names that setting; otherwise refused, at most twice per ticket, then labelled unconfirmed by code (softenSettingClaims).
-    if (!opts.system && !(job.fastLane && !job.fastLane.escalated)) {
+    if (!opts.system) {
       const refusals = (d.settingClaimRefusals ||= {});
       if ((refusals[ticketNo] || 0) < settingClaim.MAX_REFUSALS) {
         const bad = settingClaim.unbackedSettingClaims(message, settingReadTexts(ticketNo, sameTicketJobs));

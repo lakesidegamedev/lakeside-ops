@@ -151,7 +151,9 @@ function createFastLane({ ledger, broker, config, fetcher, numbersIn, tagIntake,
       // Ask grounded these figures against its own evidence; the broker's
       // figure check accepts numbers that are in this activation's evidence.
       job.evidence = [...(job.evidence || []), ...numbersIn(message).map((n) => n.value)];
-      job.evidenceText = (String(job.evidenceText || "") + "\n[ask_keir] " + message).slice(-20000);
+      // The sources Ask cited, never the answer itself: an answer must not count as its own evidence for the claim gates.
+      const cited = (r.done.citations || []).map((c) => (typeof c === "string" ? c : c?.path || c?.source || "")).filter(Boolean);
+      if (cited.length) job.evidenceText = (String(job.evidenceText || "") + "\n[ask_sources] " + cited.join("\n")).slice(-20000);
       lane.model = r.done.modelId || null;
       lane.tokens = r.done.tokens || null;
     }

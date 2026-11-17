@@ -168,12 +168,12 @@ test("finishing is never blocked by this check", async () => {
   assert.ok(pacing.test(rc.REFUSAL({ clause: "c" })), "the refusal text is listed in PACING_REFUSAL");
 });
 
-test("the fast lane, system posts and staff answers are exempt", async () => {
+test("the fast lane is held to the same check: an unread claim is refused (10.1.7)", async () => {
   const f = setup();
   f.job.fastLane = { escalated: false };
-  await f.broker.tool(f.job, "channel_reply", { message: GUESS });
-  assert.equal(f.posts().length, 1);
-  assert.equal(f.audits("read_claim_refused").length, 0);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: GUESS }));
+  assert.equal(f.posts().length, 0);
+  assert.equal(f.audits("read_claim_refused").length, 1);
 });
 
 test("a condition or a general instruction is not a claim about a read page (CI, 2026-11-13)", () => {
