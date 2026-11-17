@@ -59,6 +59,35 @@ test("a built site with no sales this turn is idle and counts as not profitable"
   assert.equal(lane.profitableShare, 0);
 });
 
+test("2027 site P&L uses its stored currency rather than the host's displayed rate", () => {
+  const base = { sectorType: "agriculture", capitalStock: 1, capacityBookAnchor: 4800 };
+  const site = (corporationId, countryId, rate) => ({
+    ...base, corporationId, countryId,
+    plantsPnl: { revenue: 2400 * rate, profit: 240 * rate, turn: 9 },
+  });
+  const rows = rw.siteRows({
+    sectors: [
+      site("us", "IT", 833),
+      site("us", "FR", 4.2),
+      site("it", "IT", 0.95),
+      site("us", "PL", 3.9812),
+      site("us", "IE", 0.97),
+    ],
+    corpById: corpMap([
+      { _id: "us", countryId: "US", liquidCurrencyCode: "USD" },
+      { _id: "it", countryId: "IT", liquidCurrencyCode: "EUR" },
+    ]),
+    fxByCountry: new Map([["IT", 0.95], ["FR", 0.95], ["IE", 0.95], ["PL", 4.25]]),
+    fxByCurrency: new Map([["USD", 1], ["EUR", 0.95], ["IEP", 0.97], ["PLN", 4.25]]),
+    preset: "2027-default", turn: 9,
+  });
+  assert.equal(rows.length, 5);
+  for (const row of rows) {
+    assert.ok(Math.abs(row.revenueTurnAnchor - 100) < 1e-9);
+    assert.ok(Math.abs(row.returnPct - 10) < 1e-9);
+  }
+});
+
 test("funded sell-through uses current settled offers and excludes mothballed sites", () => {
   const base = { corporationId: "c1", countryId: "US", sectorType: "retail",
     capitalStock: 1, capacityBookAnchor: 100, soldFraction: 1 };

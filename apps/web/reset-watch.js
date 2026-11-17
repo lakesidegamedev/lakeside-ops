@@ -12,7 +12,8 @@
 //
 // - Sector P&L (`corporateSectors.plantsPnl`) is on a per real DAY basis in the
 //   host currency. One turn is one real hour (TURNS_PER_DAY = 24), so per-turn
-//   profit is plantsPnl.profit / 24, and `exchangeRates.rate` is local per anchor.
+//   profit is plantsPnl.profit / 24. Convert to anchor using the rate for the
+//   denomination the corporation turn used to write the site.
 // - Site return divides annualized profit by paid operating capacity cost.
 //   The committed-capital view also includes paid construction in progress.
 // - A sector is viable when a new plant's yearly return beats the host
@@ -147,15 +148,47 @@ function level(...levels) {
 
 // ── 1. Sectors ───────────────────────────────────────────────────────────────
 
+// Match AHDGame's COUNTRY_CURRENCY_MAP and INITIAL_RATES_2027 for countries
+// where a foreign-owned site's stored denomination can differ from the live
+// host quote. These are accounting rates from the running game's preset.
+const FOREIGN_SITE_FX_2027 = {
+  AT: ["ATS", 13.4],
+  BG: ["BGL", 1.95583 * 0.92],
+  ES: ["ESP", 67],
+  FI: ["FIM", 3.9],
+  FR: ["FRF", 4.2],
+  GR: ["GRD", 37],
+  IE: ["IEP", 0.92],
+  IT: ["ITL", 833],
+  PL: ["PLZ", 3.9812],
+  RO: ["ROL", 4.5984],
+  RU: ["SUR", 92.5],
+  TR: ["TRL", 32.806],
+};
+
+function siteRate(sector, corp, { fxByCountry, fxByCurrency, preset }) {
+  const host = sector.countryId ?? corp.countryId;
+  const [legacyCode, authoredRate] = preset === "2027-default"
+    ? (FOREIGN_SITE_FX_2027[host] ?? []) : [];
+  const domestic = sector.countryId == null || sector.countryId === corp.countryId;
+  const stampedCode = domestic && typeof corp.liquidCurrencyCode === "string" ? corp.liquidCurrencyCode.trim() : null;
+  const rate = num(fxByCurrency.get(stampedCode || legacyCode));
+  if (rate > 0) return rate;
+  if (authoredRate != null && (!stampedCode || stampedCode === legacyCode)) return authoredRate;
+  const hostRate = num(fxByCountry.get(host));
+  return hostRate > 0 ? hostRate : 1;
+}
+
 // One row per operating site (owner corp x state x lane), turn-matched.
-function siteRows({ sectors, corpById, fxByCountry, primeByCountry = new Map(), turn, worldEpoch, funded = false }) {
+function siteRows({ sectors, corpById, fxByCountry, fxByCurrency = new Map(), preset, primeByCountry = new Map(), turn, worldEpoch, funded = false }) {
   const rows = [];
+  const fx = { fxByCountry, fxByCurrency, preset };
   for (const s of sectors) {
     const corp = corpById.get(String(s.corporationId));
     if (!corp || corp.isPrimaryNationalCorporation) continue;
     const pnl = s.plantsPnl || {};
     const fresh = pnl.turn != null && turn != null && pnl.turn >= turn - 1;
-    const rate = num(fxByCountry.get(s.countryId)) || 1;
+    const rate = siteRate(s, corp, fx);
     const revenueDay = fresh ? num(pnl.revenue) : null;
     const profitDay = fresh ? num(pnl.profit) : (num(s.capitalStock) > 0 ? 0 : null);
     const profitTurnAnchor = profitDay == null ? null : profitDay / TURNS_PER_DAY / rate;
@@ -734,9 +767,9 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
   const since = world.startedAt ? { createdAt: { $gte: world.startedAt } } : {};
 
   const [fx, banks, corps, sectors, histTurnDoc, npps, parties, elections, candidates, officials, formations, turnLogs, lastLog, gameConfig] = await Promise.all([
-    db.collection("exchangeRates").find({}, { projection: { countryId: 1, rate: 1 } }).toArray(),
+    db.collection("exchangeRates").find({}, { projection: { countryId: 1, currencyCode: 1, rate: 1 } }).toArray(),
     db.collection("centralBanks").find({}, { projection: { countryId: 1, primeRate: 1 } }).toArray(),
-    db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
+    db.collection("corporations").find({}, { projection: { type: 1, industryModel: 1, mediaDiscriminator: 1, ceoType: 1, countryId: 1, liquidCurrencyCode: 1, legalStructure: 1, foundedAtTurn: 1, isPrimaryNationalCorporation: 1 } }).toArray(),
     db.collection("corporateSectors").find({}, { projection: { corporationId: 1, countryId: 1, sectorType: 1, industryModel: 1, mediaDiscriminator: 1, "plantsPnl.profit": 1, "plantsPnl.revenue": 1, "plantsPnl.turn": 1, "plantsPnl.source": 1, capacityBookAnchor: 1, constructionInProgressAnchor: 1, capitalStock: 1, plantCount: 1, mothballed: 1, soldFraction: 1, capitalUtilization: 1, "producerSettlement.turn": 1, "producerSettlement.worldEpoch": 1, "producerSettlement.offeredUnits": 1, "producerSettlement.soldUnits": 1 } }).toArray(),
     db.collection("corporationHistory").find({ turn: { $lte: turn ?? 0 }, ...since }, { projection: { turn: 1 } }).sort({ turn: -1 }).limit(1).next(),
     db.collection("npps").find({ retiredAt: null }, { projection: { countryId: 1, party: 1, retiredAt: 1 } }).toArray(),
@@ -761,6 +794,7 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
     .find({ electionId: { $in: electionIds } }, { projection: { electionId: 1, finalized: 1, totalVotes: 1, candidateParties: 1, turnSnapshots: { $slice: -1 } } }).toArray();
 
   const fxByCountry = new Map(fx.map((r) => [r.countryId || r._id, r.rate]));
+  const fxByCurrency = new Map(fx.filter((r) => r.currencyCode).map((r) => [r.currencyCode, r.rate]));
   const primeByCountry = new Map(banks.map((b) => [b.countryId || b._id, num(b.primeRate)]));
   const corpById = new Map(corps.map((c) => [String(c._id), c]));
   const histByCorp = new Map(corpHist.map((h) => [String(h.corporationId), h]));
@@ -774,7 +808,7 @@ async function collect(db, { autodeployDir = "/var/lib/autodeploy", history = []
 
   const liveFromTurn = gameConfig?.producerMarketLiveFromTurn;
   const funded = Number.isSafeInteger(liveFromTurn) && turn != null && turn >= liveFromTurn;
-  const rows = siteRows({ sectors, corpById, fxByCountry, primeByCountry, turn, worldEpoch: gs.worldEpochId || gs.resetWorldId, funded });
+  const rows = siteRows({ sectors, corpById, fxByCountry, fxByCurrency, preset: gs.preset, primeByCountry, turn, worldEpoch: gs.worldEpochId || gs.resetWorldId, funded });
   const sectorsOut = sectorMetrics(rows);
   const countriesOut = countryBalance(rows, sectorsOut);
   const firstTurn = history.length ? history[0].turn : turn;

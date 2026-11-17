@@ -188,7 +188,7 @@ function sectorsSection(s, history) {
     <tbody>${rows}</tbody></table></div>
   <details class="rw-how"><summary>How this is measured</summary><ul>
     <li>Site return is the median annualized profit divided by paid operating capacity cost. Committed capital return divides total annualized profit of those sites by their total paid operating capacity and construction in progress.</li>
-    <li>Sector profit is stored per real day (24 turns) in the host currency; it is converted per turn and to anchor at the current rate.</li>
+    <li>Sector profit is stored per real day (24 turns). The tracker uses the rate for the currency in which the profit was recorded.</li>
     <li>Viable: at least ${pct(th.viableProfitableShare)} of sites in profit and a median return ${th.viableExcessPp} points or more above the host prime rate. Thin: above the prime rate but by less. Red: below it, or under ${pct(th.weakProfitableShare)} of sites in profit.</li>
     <li>Operating sites include idle sites. Mothballed sites and sites entirely under construction are counted separately. Sell-through uses units sold divided by units offered on settled turns.</li>
   </ul></details>
