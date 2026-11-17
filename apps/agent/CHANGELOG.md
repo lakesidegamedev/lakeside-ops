@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.3.1 (2026-11-17)
+
 - The shift log lists game releases before Keir's own; the per-section budget was dropping the game line behind three Keir releases.
 
 ## 10.3.0 (2026-11-17)
