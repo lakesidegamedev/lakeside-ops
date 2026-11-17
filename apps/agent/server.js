@@ -56,6 +56,16 @@ const server = http.createServer(async (req, res) => {
       try { const out = await forward("POST", "/poke", { channelId, messageId }); return send(res, out.status, out.body); }
       catch { return send(res, 502, { ok: false, error: "operator is unavailable; task was not acknowledged" }); }
     }
+    // Keir 10.2: a feedback click. Only the interaction token travels; the operator
+    // reads the game bot's private reply back from Discord to learn who voted and how.
+    if (req.method === "POST" && url.pathname === "/api/summon/feedback") {
+      const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+      if (!pokeAllowed(ip)) return send(res, 429, { ok: false, error: "slow down" });
+      const { token } = await readBody(req, 2048);
+      if (typeof token !== "string" || !/^[A-Za-z0-9_.-]{20,600}$/.test(token)) return send(res, 400, { ok: false, error: "bad token" });
+      try { const out = await forward("POST", "/v5/feedback", { token }); return send(res, out.status, out.body); }
+      catch { return send(res, 502, { ok: false, error: "operator is unavailable" }); }
+    }
     return send(res, 404, { ok: false, error: "not found" });
   } catch (err) {
     log(`${req.method} ${url.pathname} failed: ${err.message}`);

@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.2.0 (2026-11-17)
+
+- Answer feedback. Keir's newest answer in a channel carries one row: ⭐ Great, 👍 Helpful, 👎 Not helpful, Report a problem. The row moves to each newer answer in the channel and disappears after a day, so threads stay clean. KEIR_ANSWER_FEEDBACK=0 turns it off.
+- The game bot handles the clicks (private thanks, a reason form for 👎 and Report) and sends only the interaction token to /api/summon/feedback. Keir reads the private reply back from Discord, so the voter, message and vote come from Discord, never from the poke. One vote per person per answer; a changed vote replaces the old one.
+- Each vote stores the model, lane, ticket, work type and release that produced the answer, and the voter group (owner, staff, mod, player). GET /v5/feedback/summary reports helpful rate by week, model, work type, release and voter group, with recent problem reports linked. The morning digest gains a feedback line with the latest reasons.
+
 ## 10.1.16 (2026-11-17)
 
 - GitHub housekeeping is Keir's own job. close_issue now works from every lane (engineering, watch, finding, ticket, coding) whenever the fix is live; only the live check guards it. close now also closes a superseded PR from a bot or agent account (never a person's) once a merged PR covers it, with the superseding PR named in the comment; the head branch is deleted only for keir/ branches.
