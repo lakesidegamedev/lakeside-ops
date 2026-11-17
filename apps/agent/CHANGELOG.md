@@ -5,6 +5,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.1.14 (2026-11-17)
+
+- Keir does not repeat itself on a ticket. A second substantive message is refused when the player has not written since Keir's last one and nothing on the ticket changed (handoff filed or released, issue closed, decision opened or answered), so the "both items are settled" message that went to ticket 1836 four times cannot recur. Status cards edited in place are unaffected.
+- "I've passed it to the developers" only goes out when a developer-visible handoff was filed for the player's current question, and the "no confirmed answer yet" line is no longer sent at all when the player's question already has a real answer (the answer record is now kept past the hour that cleared it before).
+- Holding lines say what is being checked and nothing else. A cause or account state stated as fact ("has nothing set aside for logistics", ticket 1845) is refused, and so is any claim Keir cannot make: "loads on a phone for me", "I tested it", "I loaded the page" (ticket 1843).
+- A verdict on a build price must name the largest factor above the base price from the quote breakdown (dominance surcharge, commodity toll, rate, host country, founding, expansion), as ticket 1844 left out a surcharge worth a third of the price.
+- The auto-closer no longer closes an "answered" ticket while the latest staff or bot post promises a follow-up that never came (ticket 1838).
+- An owner decision given in the ticket channel is read as the answer: the open decision is closed, the task wakes with the owner's words, and Keir never again says the ticket "needs the owner's decision" after that (ticket 1842). Decisions that gate an action still need the approval button.
+
 ## 10.1.13 (2026-11-17)
 
 - Keir no longer reports or talks about tickets that are already over. Before any owner alert (stuck-ticket watch, "needs a person", the sweeper) the ticket's real status is read, and resolved, closed or merged tickets are skipped. A ticket channel deleted outside Keir counts as resolved: every Keir job on it stops. Once a ticket is resolved, by Keir, staff or the support service, nothing more is posted to the player, so the "still working on it" line after tickets 1842 and 1836 closed cannot happen again. An answered ticket waiting out the closer's quiet hours is no longer flagged as "checked many times and not closed".

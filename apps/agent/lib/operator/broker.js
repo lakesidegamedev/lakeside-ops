@@ -29,6 +29,7 @@ const bugClaim = require("./bugclaim");
 const claimcheck = require("./claimcheck");
 const accountClaim = require("./accountclaim");
 const settingClaim = require("./settingclaim");
+const standdown = require("./standdown");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const crypto = require("node:crypto");
@@ -1134,6 +1135,17 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const attempt = (fn) => { try { fn(); } catch (e) { if (!opts.collect) throw e; opts.collect.push(String(e.message)); } };
     attempt(() => require("./advicerouting").guard(job, d, message));
     attempt(() => guardPlayerRegister(job, ticketNo, message));
+    // Keir 10.1.14 (live ledger 2026-11-17): nothing-new posts, guessed causes and capability claims in holding lines,
+    // incomplete build price verdicts, and "waiting on the owner" after the owner answered in the channel.
+    if (!opts.system) {
+      const sameJobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
+      const staffAsked = (job.role === "owner" || developerTask(job)) && Math.max(job.observedPlayerAt || 0, Date.parse(job.source?.at || "") || 0) > (job.lastPublishedAt || 0);
+      attempt(() => { const t = standdown.holdingClaimRefusal(message); if (t) { ledger.audit("holding_guess_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
+      attempt(() => { const t = standdown.capabilityClaim(message); if (t) { ledger.audit("capability_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
+      attempt(() => { const refusals = (d.priceVerdictRefusals ||= {}); if ((refusals[ticketNo] || 0) >= 3) return;
+        const t = standdown.priceVerdictRefusal(message, ticketReadTexts(ticketNo, sameJobs)); if (t) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("price_verdict_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
+      attempt(() => { if (standdown.claimsOwnerWait(message) && standdown.ownerAnsweredSince(d, ticketNo)) { ledger.audit("owner_wait_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error("Not posted: the owner already answered the open decision in this ticket's channel, so it is not waiting on them. Read their message in the channel and act on it, or say what you are doing now."); } });
+    }
     // The owner or a developer asking Keir directly in a ticket is owed the answer now. The
     // pacing rules below (another task just posted, the monologue cap, ten-minute spacing)
     // held the owner's answer back on ticket 1757 (2026-11-03) and read as Keir going silent.
@@ -1232,6 +1244,10 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
       newReadSince: lastPost ? sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lastPost.at || (j.lastCodeReadAt || 0) > lastPost.at) : false });
     if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); refuse(spam); }
+    // Keir 10.1.14: nothing new from the player and no state change since the last substantive post. After the more specific rules so
+    // their refusals read first, and never while an answer is owed (a refused answer is allowed its reshaped retry).
+    if (!opts.system && !owedNow && !job.replyRefusedPending && !/\?/.test(message)) attempt(() => { const t = standdown.noNewRefusal({ last: d.lastSubstantive?.[ticketNo], humanAt: humanAt(ticketNo), fp: standdown.stateFingerprint(d, ticketNo), message, answeringStaff, now: now() });
+      if (t) { ledger.audit("no_new_post_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
     // Keir 9: a rule or a cause stated before anything in this ticket read the game code is refused once per
     // ticket, so the answer rests on the code and not on the data on screen. Never again after that (no loops).
     // The fast lane posts an Ask answer that is already grounded in the code index, so it is exempt.
@@ -1704,6 +1720,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
     }
     if (!card) { try { require("./ticketlearn").notePost(d, ticketNo, message, now()); } catch {} }
+    // Keir 10.1.14: durable record of the last substantive post (ticketPosts is pruned after an hour of silence), with the ticket state it was made in.
+    if (!card && !/^hi,? i(?:'|’)?m keir\b/i.test(String(message || "").trim())) { const ls = (d.lastSubstantive ||= {}); ls[ticketNo] = { at: now(), fp: standdown.stateFingerprint(d, ticketNo), holding: holdingPost(message), question: /\?/.test(String(message || "")) }; for (const n of Object.keys(ls)) if (now() - ls[n].at > 14 * 86400000) delete ls[n]; }
     if (!card) { try { sharedAnswer.noteAnswer(d, ticketNo, message, { at: now(), jobId: job.id }); } catch {} }
     // A reply delivered on this ticket supersedes any over-long draft stored by any of its tasks.
     if (!card) for (const j of Object.values(d.jobs)) if (ticketOf(j) === ticketNo && j.lastTooLongDraft) { delete j.lastTooLongDraft; delete j.lastTooLongDraftAt; }
@@ -4325,7 +4343,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // Keir 9.0.3 (live ticket, 2026-11-13): a real answer that ends "I will update you here once it is live" is not a
         // holding line; only a one-sentence post counts by that wording. The limitation line followed a real answer by a minute.
         // A wait for the player's own reply has its own, stricter "nothing posted" refusal below; only a holding line is added here.
-        const realAnswered = human > 0 && (d.ticketPosts?.[tn] || []).some((p) => !isCardPost(p) && p.at >= human && !holdingText(p.text));
+        const realAnswered = human > 0 && ((d.ticketPosts?.[tn] || []).some((p) => !isCardPost(p) && p.at >= human && !holdingText(p.text)) || Boolean(d.lastSubstantive?.[tn] && d.lastSubstantive[tn].at >= human && !d.lastSubstantive[tn].holding));
         // Keir 10 (replay 2026-11-15): "Ok." after a real answer asked nothing; forcing a reply produced "Got it, glad that helped".
         const ackAfterAnswer = !realAnswered && human > 0 && ackOnly(lastHumanText(tn)) && (d.ticketPosts?.[tn] || []).some((p) => !isCardPost(p) && !holdingText(p.text));
         if (ackAfterAnswer) ledger.audit("ack_not_owed", { job: job.id, ticket: tn });
@@ -4361,10 +4379,21 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             if (alreadyReplied) { rec.limitationPostedAt = now(); ledger.audit("unanswered_limitation_skipped", { job: job.id, ticket: tn, escalated }); ledger.save(); }
           }
           if (!rec.limitationPostedAt) {
+            // Keir 10.1.14 (ticket 1836, 2026-11-17): "I've passed it to the developers" went out when nothing was filed for the open
+            // question. It needs a developer-visible raise_to_developers receipt made for the player's current message.
+            const receipt = standdown.currentQuestionReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === tn), human, { since: job.startedAt || 0 });
+            let escalated = rec.escalated === true && Boolean(receipt);
+            const message = standdown.limitationLine(escalated ? receipt : null);
+            // No new player message and no state change since the last substantive post: nothing is posted, the finish is allowed.
+            if (standdown.noNewRefusal({ last: d.lastSubstantive?.[tn], humanAt: human, fp: standdown.stateFingerprint(d, tn), message, now: now() })) {
+              rec.limitationPostedAt = now(); ledger.audit("unanswered_limitation_skipped", { job: job.id, ticket: tn, escalated, why: "nothing_new" }); ledger.save();
+            }
+          }
+          if (!rec.limitationPostedAt) {
             let escalated = rec.escalated === true;
-            const message = escalated
-              ? "I haven't got a confirmed answer for you yet. I've passed it to the developers and will reply here when I do."
-              : "I haven't got a confirmed answer for you yet. I'm still working on it and will reply here when I do.";
+            const receipt = standdown.currentQuestionReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === tn), human, { since: job.startedAt || 0 });
+            escalated = escalated && Boolean(receipt);
+            const message = standdown.limitationLine(escalated ? receipt : null);
             const args = { kind: "ticket", number: tn, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
             const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: tn, text: message });
             const dl = sent?.delivery;
