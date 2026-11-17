@@ -15,7 +15,7 @@ const { keywords } = require("./evidencepack");
 
 const CACHE_MS = 60000;
 const MAX_CHARS = 2500;
-const LANES = ["now", "next", "blocked"];
+const LANES = ["now", "next", "blocked", "inbox"];
 const REPOS = ["lakesidegamedev/AHDGame", "lakesidegamedev/lakeside-ops"];
 const UNIT_RE = /^(claude-[\w.@-]+|keir-worker-[\w.@-]+)\.service$/;
 // What a staff member says when they have taken the work themselves.
