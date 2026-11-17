@@ -114,8 +114,11 @@ test("the contract line parses only the bot's own wording", () => {
   assert.equal(parseRecorded("Thanks, feedback recorded: 🎉 Party."), null);
 });
 
-test("the support service's feedback row is identical to Keir's", () => {
-  assert.deepEqual(require("../../web/feedback-row").row(), require("../lib/operator/feedback").row());
+// The release build ships apps/agent alone, so the web copy is only present in
+// the full repository; the parity check runs there (CI) and skips in a release.
+const webRow = require("node:path").join(__dirname, "../../web/feedback-row.js");
+test("the support service's feedback row is identical to Keir's", { skip: !require("node:fs").existsSync(webRow) && "web app not in this tree" }, () => {
+  assert.deepEqual(require(webRow).row(), require("../lib/operator/feedback").row());
 });
 
 test("a click on a support-service reply is adopted from Discord and tied to its ticket", async () => {
