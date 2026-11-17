@@ -199,3 +199,26 @@ test("different MCP tool errors get different fingerprints; the same one repeats
   assert.equal(a, fingerprint(err("parties is not available for country maps")));
   assert.equal(fingerprint(err("ticket 1834 has no linked character")), fingerprint(err("ticket 1835 has no linked character")));
 });
+
+// Sentry sweep 2026-11-17: guards doing their job and one-off network blips are recorded but do not alert.
+test("expected guard refusals and transient blips never raise a NEW alert", () => {
+  const { rec, clock } = mk();
+  for (let i = 0; i < 4; i++) {
+    rec.record({ class: "tool", kind: "raw_read_fallback", tool: "raw_read", detail: "collection corporations", ticket: i + 1 });
+    rec.record({ class: "tool", kind: "refused_authority", tool: "read_tool", detail: "read tool is outside support scope", ticket: i + 1 });
+    rec.record({ class: "tool", kind: "refused_other", tool: "read_tool", detail: "read the assigned ticket only", ticket: i + 1 });
+    rec.record({ class: "tool", kind: "network", tool: "read_tool", detail: "fetch failed", ticket: i + 1 });
+    rec.record({ class: "provider", kind: "interrupted", detail: "activation interrupted", ticket: i + 1 });
+  }
+  rec.record({ class: "tool", kind: "schema_rejected", tool: "x", detail: "bad args" });
+  rec.record({ class: "tool", kind: "schema_rejected", tool: "x", detail: "bad args" });
+  rec.record({ class: "tool", kind: "schema_rejected", tool: "x", detail: "bad args" });
+  const alerts = rec.detect(clock.now());
+  assert.deepEqual(alerts.map((a) => a.group.kind), ["schema_rejected"]);
+  assert.equal(rec.groups().length, 6);
+});
+test("a real spike of network failures still alerts", () => {
+  const { rec, clock } = mk();
+  for (let i = 0; i < 12; i++) rec.record({ class: "tool", kind: "network", tool: "read_tool", detail: "fetch failed", ticket: i + 1 });
+  assert.ok(rec.detect(clock.now()).some((a) => a.type === "SPIKE" && a.group.kind === "network"));
+});

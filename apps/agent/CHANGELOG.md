@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Sentry sweep. Keir no longer reports guard refusals as errors: raw reads that a typed tool covers, authority and scope refusals, "not finished" and unanswered-finish refusals, the assigned-ticket-only read, an unlinked reporter and a refused ticket open are still recorded and listed by keir-failures, but never raise a NEW or SPIKE alert. Network and interrupted-activation blips alert only as a real spike. Real loops and deadlocks built from the same refusals still alert.
+- Reads retry once after a refused or reset connection (an MCP restarting for a deploy). Writes and timed-out reads are never retried.
+- A raw read of a collection that a typed read covers (corporations, corporate sectors, ledger entries, characters, macro countries, party organisation, resource capacity) now says which tool to use. An empty raw read of a collection that does not exist says so and names the close spellings (partyBudgets is partyBudget).
+- map_snapshot with country scope and a world-only metric (parties, players, economy rates) is refused with the metrics that do work, instead of a bare "not available for country maps".
+
 ## 10.1.14 (2026-11-17)
 
 - Keir does not repeat itself on a ticket. A second substantive message is refused when the player has not written since Keir's last one and nothing on the ticket changed (handoff filed or released, issue closed, decision opened or answered), so the "both items are settled" message that went to ticket 1836 four times cannot recur. Status cards edited in place are unaffected.
