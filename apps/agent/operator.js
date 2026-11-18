@@ -395,6 +395,9 @@ tickers.every("codingworkers", 60000, async () => {
 const shiftLog = require("./lib/operator/shiftlog").createShiftLog({ ledger, mcp, api: ciApi, log });
 require("./lib/operator/continuity").setShiftLog(shiftLog);
 tickers.every("shiftlog", 10 * 60000, () => shiftLog.refresh(), { immediateMs: 20000, maxMs: 60000 });
+// Keir review sweep (2026-11-18): what Ask and Keir flag for a human becomes internal Keir tasks, 3 per sweep and 12 per day (lib/operator/reviewsweep.js). KEIR_REVIEW_SWEEP=0 turns it off.
+const reviewSweep = require("./lib/operator/reviewsweep").createReviewSweep({ ledger, config, events, log, wake: () => drain(), held: () => Boolean(killSwitch.state()?.engaged), enabled: env.KEIR_REVIEW_SWEEP !== "0" });
+tickers.every("reviewsweep", require("./lib/operator/reviewsweep").SWEEP_MS, () => reviewSweep.sweep(), { immediateMs: 90000, maxMs: 60000 });
 tickers.every("devmerges", 5 * 60000, async () => {
   try { await devMerges.tick(); } catch (e) { log(`devmerges: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();

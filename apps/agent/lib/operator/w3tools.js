@@ -22,6 +22,7 @@ const { createResolver } = require("./resolvereporter");
 const { createRequestLog } = require("./requestlog");
 const { createSectorBuilds } = require("./sectorbuilds");
 const { createTeamActivity } = require("./teamactivity");
+const { createReviewItemTool } = require("./reviewitem");
 const { turnStatus, lockResetPlan } = require("./turnstatus");
 const advice = require("./advicerouting");
 
@@ -29,6 +30,7 @@ function schema(properties, required = []) { return { type: "object", properties
 const str = { type: "string" };
 
 const TOOL_DEFS = [
+  ["review_item", "Review sweep tasks only. Close the loop on the one review item this task was created for. action resolve: close the Ask item (kind doc_conflict with outcome fixed or dismissed, or kind answer with verdict good or bad; id and a one-line note). action lesson: ticket and text, one line about what went wrong, saved in the ticket's case file. action wake_ticket: ticket and note, puts an internal note in the live ticket task's inbox when the player is still owed an answer; never posts to the player.", schema({ action: { type: "string", enum: ["resolve", "lesson", "wake_ticket"] }, kind: { type: "string", enum: ["doc_conflict", "answer"] }, id: { type: "integer", minimum: 1 }, note: str, text: str, ticket: { type: "integer", minimum: 1 }, verdict: { type: "string", enum: ["good", "bad"] }, outcome: { type: "string", enum: ["fixed", "dismissed"] } }, ["action"])],
   ["ask", "Ask (the game's question service) from the support desk. action health: is Ask answering, and what share of its last day of answers were refusals; call it before telling a player to use Ask, and do not redirect when it says failing or down. action history: what Ask told this ticket's reporter recently and whether it answered or refused (reporter only). action query: put a question to Ask as the desk and read its answer (never posted anywhere) to check it before redirecting.", schema({ action: { type: "string", enum: ["health", "history", "query"] }, question: str, hours: { type: "integer", minimum: 1, maximum: 168 }, days: { type: "integer", minimum: 1, maximum: 30 }, limit: { type: "integer", minimum: 1, maximum: 20 }, userKeys: { type: "array", items: str, description: "staff only: Ask user keys such as discord:123" } }, ["action"])],
   ["player_trail", "The ticket reporter's recent activity in the game around a time: page views, clicks, rage clicks, errors and failed requests, from the analytics service, with replay links for developers. Reporter only. Use it to see what the player actually did before they wrote. Players may have declined analytics, so no events is not proof of inactivity. Never put replay links or event lists in a player reply.", schema({ around: { type: "string", description: "ISO time to centre on, default now" }, minutes: { type: "integer", minimum: 5, maximum: 360, description: "half-width of the window, default 30" } })],
   ["resolve_reporter", "Find the game account behind this ticket's reporter when the ticket carries no character link: current and retired characters (name, id, country, office), and how the match was made (character link, game username, linked Discord account, repeated page visits). No emails, sessions or Discord ids. Use it instead of asking the player who they are, and instead of reading users or sessions.", schema({})],
@@ -44,6 +46,7 @@ function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, s
   const resolver = createResolver({ mcp, now });
   const resolveIdentity = (job, signal) => resolver.resolve(job, signal);
   const ask = createAskTool({ config, fetcher, resolveIdentity, staff, now });
+  const reviewItem = ledger ? createReviewItemTool({ config, fetcher, ledger, now }) : null;
   const trail = createPlayerTrail({ env, fetcher, resolveIdentity, now });
   const requestLog = createRequestLog({ mcp, resolveIdentity, now });
   const sectorBuilds = createSectorBuilds({ mcp });
@@ -62,6 +65,7 @@ function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, s
   function visible(job, name) {
     if (!NAMES.has(name)) return true;
     if (job.role === "player") return false;
+    if (name === "review_item") return Boolean(job.reviewItem);
     if (TICKET_ONLY.has(name)) return Boolean(job.ticket);
     return true;
   }
@@ -69,6 +73,7 @@ function createW3Tools({ config = {}, mcp, env = process.env, fetcher = fetch, s
   async function call(job, name, input = {}, signal) {
     if (!visible(job, name)) throw new Error(`${name} is not available to this task`);
     if (name === "ask") { const out = await ask.call(job, input, signal); if (input.action === "health") advice.noteAskHealth(out, now()); return out; }
+    if (name === "review_item") { if (!reviewItem) throw new Error("review_item is unavailable"); return reviewItem.call(job, input, signal); }
     if (name === "player_trail") return trail.call(job, input, signal);
     if (name === "resolve_reporter") return resolver.present(await resolveIdentity(job, signal));
     if (name === "turn_status") return status();
@@ -101,6 +106,7 @@ module.exports = { createW3Tools, TOOL_DEFS, NAMES, TICKET_ONLY };
 function createVisible(job, name) {
   if (!NAMES.has(name)) return true;
   if (job.role === "player") return false;
+  if (name === "review_item") return Boolean(job.reviewItem);
   if (TICKET_ONLY.has(name)) return Boolean(job.ticket);
   return true;
 }

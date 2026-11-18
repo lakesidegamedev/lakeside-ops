@@ -4,10 +4,10 @@ const { createW3Tools, TOOL_DEFS, createVisible } = require("../lib/operator/w3t
 const { TOOLS } = require("../lib/operator/agent");
 
 test("the new tools are in the agent tool list with schemas", () => {
-  for (const name of ["ask", "player_trail", "resolve_reporter", "turn_status", "request_log", "sector_builds", "team_activity"]) {
+  for (const name of ["ask", "player_trail", "resolve_reporter", "turn_status", "request_log", "sector_builds", "team_activity", "review_item"]) {
     const t = TOOLS.find((x) => x.name === name); assert.ok(t, name); assert.equal(t.input_schema.type, "object");
   }
-  assert.equal(TOOL_DEFS.length, 7);
+  assert.equal(TOOL_DEFS.length, 8);
   const gh = TOOLS.find((t) => t.name === "github").input_schema.properties.action.enum;
   for (const a of ["pr_diff", "pr_comment", "rerun_check"]) assert.ok(gh.includes(a), a);
   assert.ok(TOOLS.find((t) => t.name === "request_action").input_schema.properties.kind.enum.includes("turn_lock_reset"));
