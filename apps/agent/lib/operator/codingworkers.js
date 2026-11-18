@@ -311,15 +311,13 @@ function createCodingWorkers({
     if (pr && report) { Object.assign(run, { pr, state: "checks", checksSince: now() }); note(run, `worker exited, PR #${pr}`); card(run, `Coding worker ${run.id} opened PR #${pr}. Waiting for the required checks.`); return; }
     if (pr) { Object.assign(run, { pr, state: "checks", checksSince: now() }); note(run, `worker exited without a report, PR #${pr}`); return; }
     let logTail = ""; try { logTail = tail(readFile(run.log), 2500); } catch {}
-    if (report && !pr && run.kind === "investigate") return finishInvestigation(run, report);
-    if (report && !pr) return escalate(run, `the worker finished without a PR; its report is at ${run.report} (likely an owner decision or a rule question)`);
+    if (report && !pr) return returnReport(run, report);
     if (run.attempt < 2) { run.attempt += 1; run.state = "queued"; run.retryNote = logTail || "(no log)"; note(run, "no PR and no report; one retry queued"); return; }
     return escalate(run, "the worker exited twice without a PR or a report");
   }
 
-  // An investigation that ends with findings and no PR: hand the report back to the ticket task and count it as
-  // real progress for the sweeper (a finding with a cause, or an exact statement of what is still unknown).
-  function finishInvestigation(run, report) {
+  // Send the findings to the task that owns the ticket. A report alone is not a request for human action.
+  function returnReport(run, report) {
     run.state = "reported"; run.endedAt = now();
     const verdict = /^\s*VERDICT:\s*(.+)$/im.exec(report)?.[1] || "", klass = /^\s*CLASS:\s*([\w-]+)/im.exec(report)?.[1] || "unknown";
     run.verdict = verdict.slice(0, 300); run.findingClass = klass.toLowerCase();
@@ -327,6 +325,10 @@ function createCodingWorkers({
     try { markProgress(d, run.ticket, now(), "investigation report"); } catch {}
     note(run, `reported: ${klass}`); audit("coding_worker_reported", { run: run.id, class: klass });
     const owner = ["economy-behaviour", "rule", "balance"].includes(run.findingClass);
+    if (run.kind !== "investigate") {
+      tellTicket(run, `Coding worker ${run.id} returned findings without a PR. Full report: ${run.report}\n${run.reportSummary}\n\nVerify the report and keep the next step on this task. If you can prepare the fix, do so. Ask using an exact approval or a named policy choice only when the verified next step requires it. No fix has shipped.`);
+      return card(run, `Coding worker ${run.id} returned findings for Keir to act on.`);
+    }
     tellTicket(run, `Investigation worker ${run.id} finished. Verdict: ${verdict || "(none stated)"} Class: ${klass}. Full report: ${run.report}\n${run.reportSummary}\n\nNow: tell the player the finding in plain words (the cause or exactly what was ruled out, never "still checking"), update or release your own card, ${owner ? "and put the options in the report to the owner as a decision (this is a rule or economy-behaviour matter, nothing ships on its own), " : ""}and do not claim a fix is live.`);
     return card(run, `Investigation worker ${run.id} reported (${klass}): ${verdict || "see report"}`);
   }

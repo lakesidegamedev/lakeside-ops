@@ -77,6 +77,37 @@ function codeResultHasContent(result) {
   return Boolean(v.path) && Object.keys(v).length > 1;
 }
 
+// A statement about whether a chamber exists needs a read about that
+// chamber. Election code, a missing search hit and chat about appointment
+// gameplay do not establish whether the chamber itself is configured.
+const CHAMBER = String.raw`(?:Senate|House of Lords|House of Commons|upper chamber|lower chamber)`;
+const CHAMBER_ABSENCE = new RegExp(String.raw`\b(?:has no|does not have (?:a|an|the)|doesn['’]t have (?:a|an|the)|there is no) (?:[\w'-]+ )?(${CHAMBER})\b|\b(${CHAMBER}) (?:does not exist|doesn['’]t exist|has not been (?:built|added|implemented)|is not (?:in the game|implemented))\b`, "i");
+function chamberRefusal(message, observations, since) {
+  for (const sentence of sentencesOf(message)) {
+    if (isQuestion(sentence) || statesUnconfirmed(sentence)) continue;
+    const claim = CHAMBER_ABSENCE.exec(sentence);
+    if (!claim) continue;
+    const subject = (claim[1] || claim[2]).replace(/ /g, "\s*");
+    const chamber = new RegExp(subject, "i");
+    const country = sentence.slice(0, claim.index).trimEnd().match(/\b[A-Z][a-z]+(?: [A-Z][a-z]+)*$/)?.[0];
+    const configured = new RegExp(String.raw`(?:upper|lower)Chamber["']?\s*:\s*\{[^{}]{0,380}\b(?:name|shortName)["']?\s*:\s*["']${subject}["']`, "i");
+    const sources = observations.flatMap((row) => {
+      if (row.at < since || !chamber.test(row.result)) return [];
+      if (row.tool === "read_tool") {
+        let input;
+        try { input = JSON.parse(row.input || "{}"); } catch { return []; }
+        if (input.server !== "ops-knowledge" || !/^code_(?:read|exact|search)$/.test(input.tool)) return [];
+      } else if (row.tool !== "evidence_batch" || !/"op":"(?:read|search)"/.test(row.result)) return [];
+      const text = row.result.replace(/\\/g, "");
+      if (!/\b(?:institutions|countryConfig|upperChamber|lowerChamber)\w*/i.test(text)) return [];
+      return !country || text.toLowerCase().includes(country.toLowerCase()) ? [text] : [];
+    });
+    if (country && sources.some((text) => configured.test(text))) return "Not posted: read the institution configuration again. The code has a chamber with this name. Explain whether it has seated members and whether it participates in gameplay.";
+    if (!sources.length) return "Not posted: read the institution configuration for the specific country and era before saying a chamber does not exist. Use code_search with claimType mechanic and source prod, then code_read or a main repository snapshot. Distinguish a configured chamber from seated members, voting mechanics and roadmap decisions. If it remains unclear, say what you could verify.";
+  }
+  return null;
+}
+
 // Keir 9 (replay 2026-11-13): "X already includes Y, so adding both would double count" is a rule claim whose truth
 // depends on HOW MUCH of Y is in X. Keir read the code and a trace saying the inclusion was partial ("only through
 // earnings"), then told the player it was double counting in every run. This part is pure too: the broker passes the
@@ -126,4 +157,4 @@ function inclusionRefusal(message, texts) {
   return evidence.any ? null : INCLUSION_REFUSAL(claim, evidence);
 }
 
-module.exports = { sentencesOf, RELAY, STATUS, inclusionClaim, inclusionEvidence, inclusionRefusal, PATTERNS, assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED, statesUnconfirmed, codeResultHasContent };
+module.exports = { chamberRefusal, sentencesOf, RELAY, STATUS, inclusionClaim, inclusionEvidence, inclusionRefusal, PATTERNS, assertsRule, ruleClaim, REFUSAL, REFUSAL_UNCONFIRMED, statesUnconfirmed, codeResultHasContent };

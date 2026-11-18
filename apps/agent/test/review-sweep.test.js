@@ -99,7 +99,7 @@ test("keir refusals: more than two on one ticket in 24h, from the four guard kin
 
 test("task text per kind names the tool path and forbids posting", () => {
   const doc = rs.instructionsFor({ kind: "doc_conflict", id: "4", data: conflict(4) });
-  assert.match(doc, /code_search or code_exact with source "dev"/); assert.match(doc, /review_item action resolve with kind doc_conflict, id 4/); assert.match(doc, /Never post to a player/);
+  assert.match(doc, /code_search or code_exact with source "dev"/); assert.match(doc, /review_item action resolve with kind doc_conflict/); assert.match(doc, /Never post to a player/);
   const ans = rs.instructionsFor({ kind: "answer", id: "7", data: answer(7) });
   assert.match(ans, /verdict "good"/); assert.match(ans, /Ask correction/);
   const down = rs.instructionsFor({ kind: "thumbs_down", id: "k", ticket: 1901, data: { vote: "down", reason: "wrong", ticket: 1901 } });
@@ -143,9 +143,13 @@ test("review_item: resolves only its own Ask item, with the right body", async (
   const fetcher = async (url, opts) => { calls.push({ url, body: JSON.parse(opts.body) }); return { ok: true, status: 200, json: async () => ({ ok: true, status: "fixed" }) }; };
   const tool = createReviewItemTool({ config, fetcher, ledger, now: () => T0 });
   const job = { id: "j9", reviewItem: { source: "ask", kind: "doc_conflict", id: "4", key: "ask:doc_conflict:4" } };
-  assert.deepEqual(await tool.call(job, { action: "resolve", kind: "doc_conflict", id: 4, note: "wiki wrong, card filed", outcome: "fixed" }), { resolved: true, status: "fixed" });
+  job.raisedToDevelopers = [{ id: 700 }];
+  await assert.rejects(tool.call(job, { action: "resolve", kind: "doc_conflict", id: 4, note: "wiki wrong, card filed", outcome: "fixed" }), /verified deployment/);
+  assert.equal(calls.length, 0);
+  job.reviewFixLive = { number: 42, at: T0 };
+  assert.deepEqual(await tool.call(job, { action: "resolve", kind: "doc_conflict", id: 4, note: "wiki correction verified live", outcome: "fixed" }), { resolved: true, status: "fixed" });
   assert.equal(calls[0].url, "https://ask.example/api/keir-ask/review/doc_conflict/4/resolve");
-  assert.deepEqual(calls[0].body, { note: "wiki wrong, card filed", action: "fixed" });
+  assert.deepEqual(calls[0].body, { note: "wiki correction verified live", action: "fixed" });
   await assert.rejects(tool.call(job, { action: "resolve", kind: "doc_conflict", id: 5, note: "x" }), /may only resolve/);
   await assert.rejects(tool.call({ id: "j" }, { action: "resolve" }), /only for review tasks/);
   const ans = { id: "j8", reviewItem: { source: "ask", kind: "answer", id: "7", key: "ask:answer:7" } };
@@ -206,4 +210,23 @@ test("through the real broker: a review finding resolves and learns but cannot p
   assert.equal(f.posts().length, 0, "nothing reached the player");
   root.state = "running";
   await assert.rejects(f.broker.tool(f.job, "review_item", { action: "lesson", ticket: 123, text: "not a review task at all" }), /not available to this task/);
+});
+
+test("a guide handoff from the previous release resumes even after Ask removed the item", async () => {
+  const ledger = mkLedger();
+  const task = ledger.createJob("review:ask:doc_conflict:4", {
+    kind: "finding", role: "support", repository: "AHDGame", deadline: T0 + 60_000,
+    reviewItem: { source: "ask", kind: "doc_conflict", key: "ask:doc_conflict:4" },
+    source: { content: "The doc is wrong. If the doc is wrong, record the correction with whichever write path you already have for it; or file a card." },
+  });
+  task.state = "waiting";
+  task.raisedToDevelopers = [{ id: 700, needsHuman: true }];
+  const sweep = make(ledger, fetchOf(askBody([], [])));
+  await sweep.sweep();
+  assert.equal(task.state, "queued");
+  assert.match(task.source.content, /publish_patch/);
+  assert.match(task.source.content, /approve the exact PR head/);
+  task.state = "waiting";
+  await sweep.sweep();
+  assert.equal(task.state, "waiting");
 });
