@@ -159,3 +159,30 @@ test("images in context force the full profile and the vision lane", () => {
     assert.equal(job.provider.vision, true);
   }
 });
+
+test("staff implementation commands can open a nearby screenshot after intervening text", async () => {
+  const f = setup();
+  for (let index = 0; index < 12; index++) {
+    f.conversation.record({ id: MOD }, msg(`9100000000000001${String(index).padStart(2, "0")}`, MONROE, "layout discussion"));
+  }
+  f.job.kind = "command";
+  f.job.source = { ...f.job.source, messageId: "920000000000000002", replyTo: undefined };
+
+  const realFetch = global.fetch;
+  global.fetch = async () => new Response(PNG, { status: 200, headers: { "content-type": "image/png" } });
+  try {
+    const result = await f.broker.tool(f.job, "view_attachment", { index: 0, messageId: M.shots }, SIG);
+    assert.equal(result.image.data, PNG.toString("base64"));
+    assert.deepEqual(f.job.viewedImages, [M.shots]);
+  } finally { global.fetch = realFetch; }
+});
+
+test("a failed screenshot download does not mark the image as viewed", async () => {
+  const f = setup();
+  const realFetch = global.fetch;
+  global.fetch = async () => new Response(null, { status: 403 });
+  try {
+    await assert.rejects(f.broker.tool(f.job, "view_attachment", { index: 0, messageId: M.shots }, SIG), /image download failed/);
+    assert.deepEqual(f.job.viewedImages || [], []);
+  } finally { global.fetch = realFetch; }
+});

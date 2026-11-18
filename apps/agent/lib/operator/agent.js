@@ -411,8 +411,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       } catch {}
     }
     mark("tags");
-    // Keir 8.4.2: screenshots posted in the channel just before a staff or DM question are part of it.
-    if (job.kind === "conversation" && !job.ticket && !job.codingParent && broker.recentImages) { try { job.contextImages = broker.recentImages(job).length; } catch {} }
+    let recentImages = [];
+    const staffCommand = job.kind === "command" && job.role !== "player";
+    if ((quick || staffCommand) && !job.ticket && !job.codingParent && broker.recentImages) {
+      try { recentImages = broker.recentImages(job); job.contextImages = recentImages.length; } catch {}
+    }
     // Keir 4.0 incidents: a new report that is clearly the same problem as an
     // open incident joins it before any model runs (moved ahead of routing in Keir 10,
     // so the router sees the incident candidates).
@@ -518,12 +521,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       } catch {}
       mark("readyReads");
     }
-    // Keir 8.4.2: staff and DM conversations get the images posted nearby and the support cases
-    // the talk is about, so Keir does not ask for what was already shown or opened that day.
-    if (job.kind === "conversation" && !job.ticket && !job.codingParent && !job.voiceMode && job.role !== "player") {
+    if (recentImages.length && !job.voiceMode && job.role !== "player") {
+      context.recentImages = { images: recentImages, instruction: "Open relevant screenshots with view_attachment {index, messageId} before answering or delegating. For a mockup, give the implementer the visual details you verified." };
+    }
+    if (quick && !job.ticket && !job.codingParent && !job.voiceMode && job.role !== "player") {
       try {
-        const images = broker.recentImages?.(job) || [];
-        if (images.length) context.recentImages = { images, instruction: "Screenshots posted in this channel (last messages, the message being replied to and its reply chain). Open each with view_attachment {index, messageId} BEFORE you answer or ask a question; names, accounts, times and numbers are often only in the picture." };
         const recentChat = (broker.context?.(job)?.messages || []).filter((m) => m.role !== "assistant").map((m) => m.content);
         const found = await require("./casecontext").lookup({ texts: [job.source?.content, ...requestInbox.map((m) => m?.content), ...recentChat], call: (_server, tool, args) => broker.caseRead(tool, args, signal) });
         if (found) { context.caseContext = found; job.caseContextOffered = found.cases.map((c) => c.number); }

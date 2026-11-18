@@ -47,7 +47,10 @@ function createConversation({ ledger, config, now = () => Date.now(), mods }) {
     const rows = (channels[job.source?.channelId] || []).filter((r) => r.observedAt > now() - 24 * 3600000);
     const picked = new Map();
     const add = (r) => { if (r?.images?.length && r.role !== "assistant") picked.set(r.id, r); };
-    rows.slice(-n).forEach(add);
+    const nearby = job.kind === "command" && !job.ticket && job.role !== "player"
+      ? rows.filter((row) => row.images?.length && row.role !== "assistant")
+      : rows;
+    nearby.slice(-n).forEach(add);
     let cur = rows.find((r) => r.id === job.source?.messageId);
     for (let hop = 0; cur && hop < 8; hop++) { add(cur); cur = cur.replyTo ? rows.find((r) => r.id === cur.replyTo) : null; }
     const own = (job.source?.attachments || []).map((a, index) => ({ index, name: a.name, type: a.type })).filter((a) => /^image\//.test(a.type || ""));

@@ -3220,3 +3220,18 @@ test("repeated ticket step limits narrow the retry and surface a stalled run onc
   assert.equal(job.ticketStepLimits, 1);
   assert.ok(job.wakeAt <= Date.now() + 60000);
 });
+
+test("an image reference reaches a staff implementation activation before it can delegate", async () => {
+  const f = fixture(), seen = [];
+  const job = running(f, { kind: "command", role: "owner", source: { channelId: f.ch.id, content: "Implement the layout from the mockup." } });
+  const images = [{ messageId: "666666666666666667", author: "Staff", index: 0, name: "mockup.png" }];
+  const broker = { ...f.broker, recentImages: () => images };
+  const agent = createAgent({ ledger: f.ledger, broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "done", summary: "Checked the fixture." }); return {}; }, seen) });
+  await agent.run(job, new AbortController().signal);
+
+  const prompt = JSON.parse(seen[0].prompt);
+  assert.deepEqual(prompt.recentImages.images, images);
+  assert.match(prompt.recentImages.instruction, /before answering or delegating/);
+  assert.equal(job.provider.vision, true);
+});

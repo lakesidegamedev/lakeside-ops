@@ -3948,7 +3948,6 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (earlier && !(conversation?.recentImages?.(job) || []).some((i) => i.messageId === input.messageId && i.index === Number(input.index))) throw new Error("messageId is not one of context.recentImages");
       const original = await discord("GET", `/channels/${job.source.channelId}/messages/${earlier ? input.messageId : job.source.messageId}`);
       const a = original.attachments?.[Number(input.index)];
-      (job.viewedImages ||= []).includes(original.id) || job.viewedImages.push(original.id);
       if (!a && job.ticket) {
         const image = await reportImage();
         if (image) return {image, from: "ticket report"};
@@ -3960,6 +3959,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!r.ok || !/^image\/(png|jpeg|webp|gif)$/.test(r.headers.get("content-type") || "")) throw new Error("image download failed");
       const bytes = Buffer.from(await r.arrayBuffer());
       if (bytes.length > 4 * 1024 * 1024) throw new Error("image is oversized");
+      (job.viewedImages ||= []).includes(original.id) || job.viewedImages.push(original.id);
       return { image: { type: "base64", media_type: a.content_type, data: bytes.toString("base64") } };
     }
     if (name === "open_suggestion") {
