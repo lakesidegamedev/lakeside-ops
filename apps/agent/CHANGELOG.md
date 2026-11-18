@@ -5,6 +5,16 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.4.2 (2026-11-18)
+
+### For users
+
+- Keir stays responsive when an expired task has unread mail. The task stays blocked for review.
+
+### For developers
+
+- Skip the inbox wake when the final task deadline has already elapsed. This stops a blocked-to-queued loop that recorded audit events and repeatedly rewrote the ledger. A regression test covers expired findings with unread system mail. See #459.
+
 ## 10.4.1 (2026-11-18)
 
 - Closing a ticket no longer counts an owner or staff line as an unread player reply. The close guard read every human message while the player clock (ticket_history) skips staff lines on purpose, so an owner "hello" in ticket 1845 refused every close. It now uses only the player's messages and the newest player time across the ticket's tasks.
