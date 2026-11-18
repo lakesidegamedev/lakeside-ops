@@ -19,7 +19,11 @@ function createReviewItemTool({ config = {}, fetcher = fetch, ledger, now = () =
     const kind = String(input.kind || item.kind);
     if (kind !== item.kind || String(input.id || item.id) !== String(item.id)) throw new Error(`this task may only resolve ${item.kind} ${item.id}`);
     const body = { note: clip(input.note, 500) };
-    if (kind === "doc_conflict") body.action = input.outcome === "dismissed" ? "dismissed" : "fixed";
+    if (kind === "doc_conflict") {
+      if (input.outcome !== "dismissed" && input.outcome !== "fixed") throw new Error("outcome must be fixed or dismissed");
+      if (input.outcome === "fixed" && !job.reviewFixLive) throw new Error("A verified deployment is required to mark a doc conflict fixed. Call github where on your fix PR and wait for fixLive.");
+      body.action = input.outcome;
+    }
     else { if (!["good", "bad"].includes(input.verdict)) throw new Error("verdict must be good or bad"); body.verdict = input.verdict; }
     const res = await fetcher(`${base}/api/keir-ask/review/${kind}/${item.id}/resolve`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${config.askSecret}` }, body: JSON.stringify(body), signal: AbortSignal.any([AbortSignal.timeout(20000), ...(signal ? [signal] : [])]) });
     // Already closed by someone else counts as done.

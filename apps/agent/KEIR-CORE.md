@@ -12,6 +12,8 @@ Never tell anyone a cause, number or outcome until you have checked it in this a
 
 When a player says a research, upgrade, purchase or action had no effect, treat it as a likely bug first: read their state and check it makes sense for the world (a 2027 company owning 1940s tech, a maxed stat that cannot be maxed) before you explain it as a game rule.
 
+When asked about an institution, read the current country and era configuration and the gameplay path. Distinguish whether the chamber exists, whether characters can occupy its seats, and whether it votes on bills. A comment about a feature being unbuilt or an empty search does not establish those facts or future plans.
+
 Completed investigation survives a new activation. Read context.priorInvestigation and the ticket's saved facts before describing what you know. A requirement to recheck current state does not mean you never checked it: retain the earlier finding, identify precisely what remains unknown, and reread only what may have changed. When a player says you already checked, reconcile the prior evidence and conversation before agreeing or denying it. Record verified conclusions and remaining questions with ticket_record so later activations and investigators can use them.
 
 ## Players

@@ -77,12 +77,15 @@ function keirRefusals({ ledger, events, now }) {
 
 const COMMON = "This is an internal review task. Never post to a player and never call channel_reply, progress_update or support_action; finding tasks cannot. Be brief. Finish with a one-line verdict in finish. Use review_item to close the loop.";
 
+const DOC_FIX = 'If the doc is wrong, own the correction. Use repository_snapshot on AHDGame development and shell or delegate_fix to edit and verify the guide, then publish_patch. Follow the repository contribution rules and link any existing issue. Call github merge and provide the requested explanation so the owner can approve the exact PR head. Finish waiting while checks run or approval is pending. If checks fail, inspect the result and revise the same PR. If declined, leave the correction open and stop asking. On approval, merge and carry the verified change through the normal promotion gates. Call github where on the fix PR until fixLive is true, then call review_item action resolve with kind doc_conflict and outcome "fixed". If the doc was right, use outcome "dismissed" and say why. A filing, a pending PR, or a declined approval leaves the conflict open.';
+const OLD_DOC_FIX = /If the doc is wrong, record the correction with whichever write path you already have for it;[^\n]*/;
+
 /** The task text for one item. */
 function instructionsFor(item) {
   const d = item.data;
   if (item.kind === "doc_conflict") {
     return `Review item (Ask doc conflict #${item.id}). Ask found a documentation page that disagrees with the code.\nDocs: ${d.docs}\nThe doc says: ${d.claim}\nAsk says the code does: ${d.actual}${d.evidence ? `\nAsk's evidence: ${d.evidence}` : ""}\nSeen ${d.seen} time(s).\n\n` +
-      `Decide which statement is right by reading the implemented code (read_tool ops-knowledge code_search or code_exact with source "dev") and live data where it matters. If the doc is wrong, record the correction with whichever write path you already have for it; if none of your tools can write it, raise ONE kanban card with raise_to_developers naming the page, the wrong claim, the right statement and the file as evidence. If the doc is right and Ask was wrong, say so. Then call review_item action resolve with kind doc_conflict, id ${item.id}, a one-line note, and outcome "fixed" (the doc is corrected or a card carries the fix) or "dismissed" (the doc was right).\n\n${COMMON}`;
+      `Decide which statement is right by reading the implemented code (read_tool ops-knowledge code_search or code_exact with source "dev") and live data where it matters. ${DOC_FIX}\n\n${COMMON}`;
   }
   if (item.kind === "answer") {
     return `Review item (flagged Ask answer #${item.id}, ${(d.flags || []).join(", ")}).\nQuestion: ${d.question}\nAnswer began: ${d.excerpt}\n${d.reason ? `Reason on record: ${d.reason}\n` : ""}${(d.issues || []).length ? `Validator issues: ${d.issues.join(", ")}\n` : ""}\n` +
@@ -120,10 +123,26 @@ function createReviewSweep({ ledger, config, events = null, fetcher = fetch, now
     q.askUnavailable = !ask.ok;
     q.askWhy = ask.ok ? null : ask.why;
     const all = [...ask.items, ...keir].sort((a, b) => a.at - b.at);
-    const created = [];
+    const created = [], resumed = [];
     if (enabled && !ledger.data.paused && !held()) {
+      // Older review tasks may already have filed a card and closed the Ask item.
+      // Resume their existing work even when that item is no longer in the feed.
+      for (const job of Object.values(ledger.data.jobs || {})) {
+        if (resumed.length >= PER_SWEEP) break;
+        const expiredHandoff = job.state === "blocked" && job.deadlineBlockedAt && job.deadline < at;
+        if (job.reviewItem?.kind !== "doc_conflict" || (job.state !== "waiting" && !expiredHandoff)
+            || at - job.at > SEEN_RETAIN_MS || job.pullRequests?.length || job.ownerDecisionPending || !OLD_DOC_FIX.test(job.source?.content || "")
+            || !job.raisedToDevelopers?.some((r) => r.needsHuman)) continue;
+        job.source.content = job.source.content.replace(OLD_DOC_FIX, DOC_FIX);
+        delete job.waitingFor;
+        if (job.deadline < at) job.deadline = at + DAY_MS;
+        job.state = "queued";
+        job.wakeAt = at;
+        ledger.audit("review_task_resumed", { job: job.id, item: job.reviewItem.key });
+        resumed.push(job.id);
+      }
       for (const item of all) {
-        if (created.length >= PER_SWEEP || dayCount(q) >= PER_DAY) break;
+        if (created.length + resumed.length >= PER_SWEEP || dayCount(q) >= PER_DAY) break;
         if (q.seen[item.key]) continue;
         try {
           const job = createTask(item);
@@ -140,7 +159,7 @@ function createReviewSweep({ ledger, config, events = null, fetcher = fetch, now
     q.summary = { at, ask: askOpen, keir: keirOpen.length, open: askOpen + keirOpen.length, oldestAt: Number.isFinite(oldest) ? oldest : null, askUnavailable: !ask.ok };
     for (const [k, v] of Object.entries(q.seen)) if (at - v.at > SEEN_RETAIN_MS) delete q.seen[k];
     ledger.save();
-    if (created.length) { log(`review sweep: ${created.length} task(s) from ${all.length} item(s)`); try { wake?.(); } catch { /* the drain loop also picks the task up */ } }
+    if (created.length || resumed.length) { log(`review sweep: ${created.length} new, ${resumed.length} resumed from ${all.length} open item(s)`); try { wake?.(); } catch { /* the drain loop also picks the task up */ } }
     return { items: all.length, created, summary: q.summary };
   }
 

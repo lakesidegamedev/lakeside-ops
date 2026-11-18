@@ -270,10 +270,12 @@ test("a worker that exits without a PR or report gets one retry with its log tai
   assert.match(w.launches[1].find((a) => a.includes("headless Sonnet worker")), /could not create worktree/);
   finish(w, r, false);
   await s.cw.tick(); assert.equal(r.state, "escalated"); assert.match(r.reason, /twice/);
-  // a report without a PR is an owner question, not a retry
+  // The ticket task gets the report and chooses the next step.
   const w2 = world({ branchPr: [] }), s2 = build(w2), j2 = ticketJob(); s2.ledgerData.jobs.job1 = j2;
   const r2 = (await dispatchOne(s2.cw, j2)).run; finish(w2, r2, true);
-  await s2.cw.tick(); assert.equal(r2.state, "escalated"); assert.equal(r2.attempt, 1);
+  await s2.cw.tick(); assert.equal(r2.state, "reported"); assert.equal(r2.attempt, 1);
+  assert.match(s2.ledgerData.jobs.job1.inbox.at(-1).content, /keep the next step on this task/);
+  assert.equal(Object.keys(s2.ledgerData.outbox).length, 0);
 });
 
 test("resume after a restart: a fresh module on the persisted ledger carries the run to live", async () => {

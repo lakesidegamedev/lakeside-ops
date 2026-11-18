@@ -139,3 +139,27 @@ test("orphaned actions and decisions move to the archive; anything pending or re
   assert.deepEqual(Object.keys(data.actions).sort(), ["a1", "a3", "a4", "a5"], "a pending decision keeps its action");
   assert.deepEqual(Object.keys(data.decisions), ["d2"]);
 });
+
+test("a lookup about Canada elections does not back a claim that Canada has no Senate", async () => {
+  const f = setup({ call: async (_s, tool, args) => {
+    if (tool === "code_search") return { hits: args.question === "Canadian Senate"
+      ? [{ path: "src/lib/countries/ca/institutionsFacts.ts", text: 'name: "Canada", legislature: { bicameral: false, upperChamber: { name: "Senate", seats: 105 } }' }]
+      : [{ path: "src/app/api/discord-bot/elections/route.ts", text: "Returns Canada elections when the country filter is CA." }] };
+    return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } };
+  } });
+  f.playerWrote(5);
+  const read = (question) => f.broker.tool(f.job, "read_tool", {
+    server: "ops-knowledge", tool: "code_search", args: { question, source: "prod" },
+  });
+  await read("Canada elections in the bot");
+  const message = "No, Canada has no Senate in the game yet. It has not been built, and whether it comes at all has not been decided.";
+  const draft = await f.broker.tool(f.job, "check_draft", { message });
+  assert.match(JSON.stringify(draft), /read the institution configuration/i);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message }), /read the institution configuration/i);
+  assert.equal(f.posts().length, 0);
+  await read("Canadian Senate");
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message }), /code has a chamber with this name/);
+  const answer = "Canada has a 105-seat appointed Senate. Bills are handled through the Commons.";
+  await f.broker.tool(f.job, "channel_reply", { message: answer });
+  assert.deepEqual(f.posts(), [answer]);
+});

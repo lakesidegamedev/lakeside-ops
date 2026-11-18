@@ -4,7 +4,7 @@ const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubU
 // AHDGame's custom-rules check fails any PR without a ticked "Conflict of
 // interest" section, which left promotes blocked. A promote ships commits that
 // already passed review, so it never touches a holding of its own.
-const PROMOTE_COI_SECTION = "\n\n## Conflict of interest\n\n- [x] This change does not directly affect a character, corporation, or other in-game holding of mine\n- [ ] It does, and I have disclosed it below or privately to a maintainer";
+const NO_CONFLICT_DISCLOSURE = "\n\n## Conflict of interest\n\n- [x] This change does not directly affect a character, corporation, or other in-game holding of mine\n- [ ] It does, and I have disclosed it below or privately to a maintainer";
 // Minutes between checks for a task waiting with nothing subscribed and no
 // reply owed: the first is a normal look, then it settles into a slow recheck.
 const QUIET_WAITS = [15, 30, 60, 120];
@@ -15,7 +15,7 @@ const QUIET_WAITS = [15, 30, 60, 120];
 const trustLimits = require("./limits"), trustlog = require("./trustlog"), changeClassMod = require("./changeclass");
 // A post asking the player who they are (ticket 1829: "If you share your character name here").
 const ASKS_IDENTITY = /\bwhich (?:character|account)\b[^.!\n]{0,40}\?|\b(?:share|tell me|send|give me|let me know|post|confirm|what(?:'|’)?s|what is|which is)\b[^.?!\n]{0,40}\b(?:(?:your|the) )?(?:character(?:'s|’s)? name|character|in-?game name|username|user name|account(?: name)?|ign)\b/i;
-const PACING_REFUSAL = /nothing in this ticket has read the game code|your last message to the player is still the newest|the player was already answered \d+ min ago|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|asks the player who they are|states a fact about the player's account|says the account is not linked or has no character|calls behaviour a bug, fault or defect|tells the player to change a setting|page still shows the old figure|contradicts the checked answer/i;
+const PACING_REFUSAL = /read the institution configuration|nothing in this ticket has read the game code|your last message to the player is still the newest|the player was already answered \d+ min ago|Keir has posted \d+ times in ticket|this task posted in ticket|already got this update|already has this waiting state|waiting on the owner's decision|another Keir task updated ticket|a developer's own task \([^)]*\) is handling a request|not appear in anything this ticket has read|no code lookup on this ticket has returned anything|nothing Keir read on this ticket contains that|this inclusion check asks at most twice|asks the player who they are|states a fact about the player's account|says the account is not linked or has no character|calls behaviour a bug, fault or defect|tells the player to change a setting|page still shows the old figure|contradicts the checked answer/i;
 // Refusals that are about pacing, where the post budget tells the model when and whether a retry can succeed.
 const BUDGET_REFUSAL = /this task posted in ticket|Keir has posted \d+ times in ticket|already got this update|another Keir task updated ticket|your last message to the player is still the newest|already has this waiting state|waiting on the owner's decision|told this is live/i;
 // A developer wait with only a filed bug report out: nobody owes a reply, so it backs off.
@@ -1339,6 +1339,10 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       approvedActionSince: lastPost ? approvedActionSince(ticketNo, lastPost.at) : false,
       newReadSince: lastPost ? sameTicketJobs.some((j) => (j.lastGameReadAt || 0) > lastPost.at || (j.lastCodeReadAt || 0) > lastPost.at) : false });
     if (spam) { ledger.audit("update_spam_refused", { job: job.id, ticket: ticketNo }); refuse(spam); }
+    if (!opts.system) {
+      const chamber = ruleLookup.chamberRefusal(message, d.ticketObservations?.[ticketNo] || [], job.observedPlayerAt || 0);
+      if (chamber) refuse(chamber);
+    }
     // Keir 9: a rule or a cause stated before anything in this ticket read the game code is refused once per
     // ticket, so the answer rests on the code and not on the data on screen. Never again after that (no loops).
     // The fast lane posts an Ask answer that is already grounded in the code index, so it is exempt.
@@ -2508,6 +2512,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           }
         }
       }
+      if ((input.kind || "question") === "question" && input.needsHuman === true
+          && (job.reviewItem?.kind === "doc_conflict" || changeClass === "display")) {
+        throw new Error("Keep this correction on your task. Use repository_snapshot and shell or delegate_fix to prepare a patch, then publish_patch. Use github merge to ask for exact owner approval once the PR is ready.");
+      }
       const prior = (job.raisedToDevelopers || []).find((r) => similarity(r.title, title) > 0.6);
       if (prior) return { raised: true, id: prior.id, duplicate: true };
       if (!input.force && !filedIssue) {
@@ -3119,6 +3127,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // (copy, layout, styling); everything else stays a draft PR.
       const ownFindingPr = (number) => (job.pullRequests || []).some((u) => canonicalGithubUrl(u) === `https://github.com/${repo}/pull/${Number(number)}`);
       if (job.kind === "finding" && input.action === "merge" && !ownFindingPr(input.number)) throw new Error("a finding only merges its own exact PR");
+      const docReview = job.kind === "finding" && job.reviewItem?.kind === "doc_conflict";
       const findingShip = ["merge", "promote"].includes(input.action) && job.kind === "finding" && Boolean(job.pullRequests?.length);
       const shipsOwnFix = (["merge", "promote"].includes(input.action) && job.kind === "ticket" && Boolean(job.pullRequests?.length)) || findingShip;
       const keirMade = Object.values(d.jobs).some((j) => (j.pullRequests || []).some((u) => canonicalGithubUrl(u) === `https://github.com/${repo}/pull/${Number(input.number)}`));
@@ -3130,6 +3139,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const hasStandingAuthority = ownerDirected(job) || shipsOwnFix || Boolean(ownerWaitPr && input.action === "merge");
       let askForAuthority = ["merge", "promote"].includes(input.action) && staffSide && !hasStandingAuthority
         && (input.action === "merge" ? keirMade || Boolean(job.pullRequests?.length) : Boolean(job.pullRequests?.length));
+      if (docReview && input.action === "merge") askForAuthority = true;
       if (input.action === "merge" && !ownerDirected(job) && !keirMade && !ownerWaitPr) throw new Error("merge only PRs Keir opened unless the owner asked");
       // Reading where a change is, its checks or its failures is open to every
       // staff-side task: a ticket inherited from another operator has no PRs of
@@ -3157,6 +3167,41 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       // Keir 8.4: what kind of change this merge or promotion ships (changeclass.js). Set once the file list is known.
       let shipClass = null;
+      let findingMergeApproval = null;
+      // A doc-review promotion may carry a guide's code-backed copy after the owner
+      // approved its exact feature PR. Require every squash commit in the range to
+      // be that task's approved work, and keep the ordinary promotion gates.
+      async function checkFindingCommits(commits, cap) {
+        if (!Array.isArray(commits) || !commits.length || commits.length > cap) throw new Error("finding promotion scope is unverified");
+        const approvedDocs = [];
+        for (const commit of commits) {
+          if ((commit.parents || []).length > 1) continue;
+          const prs = await api([`repos/${repo}/commits/${commit.sha}/pulls`]).catch(() => null);
+          if (!Array.isArray(prs) || !prs.some((pr) => ownFindingPr(pr.number))) throw new Error("finding promotion carries unrelated changes");
+          if (!docReview) continue;
+          const approved = prs.find((pr) => ownFindingPr(pr.number) && pr.merged_at && pr.merge_commit_sha === commit.sha
+            && Object.values(d.actions).some((a) => a.jobId === job.id && a.kind === "github" && a.state === "approved"
+              && a.approvedBy === config.ownerId && a.approvalMessage && a.args.repository === repo
+              && a.args.action === "merge" && a.args.number === pr.number && a.args.head === pr.head?.sha
+              && a.digest === hash({ kind: a.kind, args: a.args })));
+          if (!approved) throw new Error("finding promotion needs the exact approved merge for each correction it carries");
+          approvedDocs.push(approved.number);
+        }
+        if (docReview && approvedDocs.length !== 1) throw new Error("doc review promotion needs exactly one approved correction");
+        return approvedDocs[0];
+      }
+      function diffContents(files) {
+        if (!Array.isArray(files) || !files.length) return null;
+        const rows = [];
+        for (const f of files) {
+          if (typeof f.patch !== "string" || f.status !== "modified" || f.previous_filename) return null;
+          const lines = f.patch.split("\n").filter(line => /^[+-]/.test(line));
+          const added = lines.filter(line => line.startsWith("+")).length;
+          if (!lines.length || added !== f.additions || lines.length - added !== f.deletions) return null;
+          rows.push([f.filename, lines]);
+        }
+        return JSON.stringify(rows.sort((a, b) => a[0].localeCompare(b[0])));
+      }
       const ownerGuard = () => { if (shipClass) changeClassMod.assertShippable(d, { ...shipClass, now: now(), inPerson: process.env.KEIR_GATED_OWNER_IN_PERSON === "1" }); };
       // Source evidence goes to the worker, never directly into an owner card.
       async function requestGithubApproval(args, reason) {
@@ -3231,16 +3276,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           }
           if (findingShip && input.action === "promote" && files?.length) {
             const range = await api([`repos/${repo}/compare/${to}...${from}`]).catch(() => null);
-            const commits = range?.commits;
-            if (!Array.isArray(commits) || !commits.length || commits.length > 60) throw new Error("finding promotion scope is unverified; leave promotion to developers");
-            for (const commit of commits) {
-              if ((commit.parents || []).length > 1) continue;
-              const prs = await api([`repos/${repo}/commits/${commit.sha}/pulls`]).catch(() => null);
-              if (!Array.isArray(prs) || !prs.some((pr) => ownFindingPr(pr.number))) throw new Error("finding promotion carries unrelated changes; leave promotion to developers");
-            }
+            await checkFindingCommits(range?.commits, 60);
           }
-          if (findingShip && (blast.classify(files).cls !== "copy" || !blast.displayOnlyDiff(input.action === "merge" ? await prFiles(Number(input.number), true) : await rangeFiles(to, from, true)).allowed)) {
-            // Not display-only: Keir may not ship it on its own, but it can ask the owner with buttons (never plain text).
+          const approvedDocPromotion = docReview && input.action === "promote" && blast.classify(files).cls === "copy";
+          if (findingShip && !approvedDocPromotion && (blast.classify(files).cls !== "copy" || !blast.displayOnlyDiff(input.action === "merge" ? await prFiles(Number(input.number), true) : await rangeFiles(to, from, true)).allowed)) {
+            // Findings outside the automatic display path can ask to merge their own PR.
             if (input.action !== "merge" || !keirMade) throw new Error("Keir's own findings ship only display-only changes (pages, components, styles, text). This one is not: leave the PR as a draft for the developers, raise it with raise_to_developers, and finish.");
             askForAuthority = true;
           }
@@ -3282,7 +3322,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             // (ticket 1537, 2026-10-14).
             const liveAsk = (a) => !["done", "dismissed", "cancelled"].includes(d.jobs[a.jobId]?.state)
               && Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.actionId === a.id);
-            const same = (a) => a.kind === "github" && a.digest === hash({ kind: a.kind, args: a.args }) && a.args.action === args.action &&
+            const same = (a) => a.kind === "github" && a.digest === hash({ kind: a.kind, args: a.args }) && a.args.repository === args.repository && a.args.action === args.action &&
               a.args.head === head && (args.action === "merge" ? a.args.number === args.number : a.args.to === args.to);
             for (const a of Object.values(d.actions)) {
               if (!same(a) || a.state !== "approved" || a.approvedBy !== config.ownerId || !a.approvalMessage || a.approvalMessage === job.source?.messageId || a.expiresAt < now()) continue;
@@ -3390,6 +3430,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               return asked.needsExplanation ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
             }
             if (consent.approvedBy === config.ownerId && !consent.approvedOnBehalfBy && consent.args?.action === "merge") ownerConsent = consent;
+            if (askForAuthority && input.action === "merge") findingMergeApproval = consent;
             ledger.audit(shipSignoff ? "ship_signoff" : "economy_consent", { action: consent.id, job: job.id, approvalMessage: consent.approvalMessage, ...args });
           }
           // Keir 4.0 blast radius (owner, 2026-10-14, after ticket 1498): an
@@ -3611,6 +3652,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
           const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));
           out.fixLive = live;
+          if (docReview && ownFindingPr(input.number)) {
+            if (live) job.reviewFixLive = { number: Number(input.number), at: now() };
+            else if (job.reviewFixLive?.number === Number(input.number)) delete job.reviewFixLive;
+            ledger.save();
+          }
           if (closureHeld) out.issueClosureHeld = true;
           if (closed.length) out.issuesClosed = closed;
         }
@@ -3620,6 +3666,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const runs = (await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`])).check_runs || [];
         const pending = runs.filter((r) => r.status !== "completed").map((r) => r.name);
         const failed = require("./github").redChecks(runs).map((r) => `${r.name}: ${r.conclusion}`);
+        if (docReview && input.action === "merge" && !desktop) {
+          const required = require("./codingworkers").exactGreen(runs);
+          for (const check of required.pending) if (!pending.includes(check)) pending.push(check);
+          for (const check of required.failed) if (!failed.some((f) => f.startsWith(`${check}:`))) failed.push(`${check}: ${required.detail[check]}`);
+        }
         const qualification = failed.length ? { qualified: false } : await require("./qualification").promotionQualification({ api, pr, runs, repository: repo });
         return { checks: runs.length, pending, failed, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
           ...(qualification.qualified ? { qualification } : {}),
@@ -3631,19 +3682,21 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (pr.state !== "open") throw new Error(`PR ${number} is ${pr.state}`);
         if (expectBase && pr.base.ref !== expectBase) throw new Error(`PR ${number} targets ${pr.base.ref}, expected ${expectBase}`);
         if (pr.mergeable === null) { await new Promise((r) => setTimeout(r, 3000)); pr = await api([`repos/${repo}/pulls/${number}`]); }
+        if (findingMergeApproval && findingMergeApproval.args.head !== pr.head.sha) throw new Error("The PR changed after approval. Review the current head before merging.");
         if (findingShip && !askForAuthority) {
-          const verdict = blast.displayOnlyDiff(await prFiles(number, true));
+          const files = await prFiles(number, true);
+          let approvedDoc = null;
+          let displayAllowed;
           if (input.action === "promote") {
             const commits = await api([`repos/${repo}/pulls/${number}/commits?per_page=100`]);
-            if (!Array.isArray(commits) || !commits.length || commits.length >= 100) throw new Error("finding promotion scope is unverified");
-            for (const commit of commits) {
-              if ((commit.parents || []).length > 1) continue;
-              const prs = await api([`repos/${repo}/commits/${commit.sha}/pulls`]);
-              if (!Array.isArray(prs) || !prs.some((p) => ownFindingPr(p.number))) throw new Error("finding promotion carries unrelated changes");
+            approvedDoc = await checkFindingCommits(commits, 99);
+            if (approvedDoc) {
+              const diff = diffContents(files);
+              displayAllowed = Boolean(diff && diff === diffContents(await prFiles(approvedDoc, true)));
             }
           }
           const latest = await api([`repos/${repo}/pulls/${number}`]);
-          if (!verdict.allowed || latest.head?.sha !== pr.head.sha || latest.base?.sha !== pr.base.sha) throw new Error("Finding diff changed or is not display-only; inspect the current PR before shipping");
+          if (!(approvedDoc ? displayAllowed : blast.displayOnlyDiff(files).allowed) || latest.head?.sha !== pr.head.sha || latest.base?.sha !== pr.base.sha) throw new Error("Finding diff changed or is not in the approved display scope; inspect the current PR before shipping");
         }
         if (scopedConsent) {
           musePolicy.validate(d, config, job, scopedConsent, now(), true);
@@ -3716,7 +3769,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           trustLimits.recordCounter(d, "deploy", key, now()); ledger.save();
         }
         let pr = (await api([`repos/${repo}/pulls?state=open&base=${to}&head=${GITHUB_OWNER}:${from}`]))[0];
-        if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => apiKeir(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}${PROMOTE_COI_SECTION}`]));
+        if (!pr) pr = await effect(job, `promote-pr:${from}:${to}:${ahead.merge_base_commit?.sha}`, () => apiKeir(["-X", "POST", `repos/${repo}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion requested by the owner via Keir. ${ahead.ahead_by} commits.\n\n${(ahead.commits || []).slice(-30).map((c) => "- " + c.commit.message.split("\n")[0]).join("\n")}${NO_CONFLICT_DISCLOSURE}`]));
         const result = await mergeWhenGreen(pr.number, "merge", to);
         return { ...result, from, to, commits: ahead.ahead_by, nextMove: result.merged ? (to === "staging" ? "Promote to main once staging looks right." : "Check with github deployed that the main server (and the turn worker for turn code) runs the new commit, then tell the requester.") : result.nextMove };
       }
@@ -4311,6 +4364,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const refs = /\b(?:refs?|fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#\d+/i.test(body) ? "" : issues.refsLine(linked);
         if (refs) body = `${body.trimEnd()}\n\n${refs}`;
         body = body.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi, "Refs #$1");
+        if (job.reviewItem?.kind === "doc_conflict" && !/^## Conflict of interest\s*$/im.test(body)) {
+          body += NO_CONFLICT_DISCLOSURE;
+        }
       }
       // Revise the open PR for this work unless the change is a genuinely
       // separate fix. That PR may belong to another task on the same ticket
