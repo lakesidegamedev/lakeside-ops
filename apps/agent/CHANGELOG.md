@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Repeated ticket runs that run out of steps narrow the next retry, then slow down and raise one staff alert if the ticket still makes no progress.
+- Keir support can inspect the Discord bot source when investigating slash commands and can recover team activity lookups sent through the wrong tool.
+
 - A short Markdown welcome explains how Keir helps on a first support ticket, when staff step in, what details to include, and how to rate replies.
 
 ## 10.5.1 (2026-11-17)

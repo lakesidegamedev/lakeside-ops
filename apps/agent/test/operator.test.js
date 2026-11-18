@@ -3172,3 +3172,51 @@ test("a finished ticket where Keir spoke last enters the closing grace without a
   await f.broker.tool(k, "finish", { state: "done", summary: "Done." });
   assert.equal(k.resolutionReadyAt, undefined);
 });
+
+test("authorized ticket readers can snapshot the Discord bot source", async () => {
+  const f = fixture();
+  f.config.repositories["adhd-bot"] = f.dir;
+  const b = createBroker({ ...f, sandbox: {}, exec: async (_, args) => args.includes("rev-parse") ? "abcdef1234" : "" });
+  const job = running(f, { kind: "ticket", ticket: 123, role: "support", repository: "adhd-bot", repositoryRef: { branch: "main", commit: "abcdef1234" } });
+  assert.equal((await b.tool(job, "repository_snapshot", { repository: "adhd-bot" })).reused, true);
+  await assert.rejects(b.tool(job, "publish_patch", {}), /Discord bot patches require a maintainer/);
+  await assert.rejects(b.tool(job, "github", { action: "status", number: 193 }), /Discord bot snapshot is source-only/);
+  const player = f.ledger.createJob("player-bot", { kind: "ticket", ticket: 123, role: "player", source: {}, deadline: 9e15 });
+  player.state = "running";
+  await assert.rejects(b.tool(player, "repository_snapshot", { repository: "adhd-bot" }), /cannot authorize/);
+});
+
+test("a misrouted team_activity read uses the native tool and its visibility rules", async () => {
+  const f = fixture();
+  const job = running(f, { role: "support", kind: "ticket", ticket: 123 });
+  const broker = createBroker({ ...f, sandbox: {}, exec: async () => "[]" });
+  const response = await broker.tool(job, "read_tool", { server: "community", tool: "team_activity", args: { topic: "elections" } });
+  assert.equal(response.ticket, 123);
+  assert.equal(response.topic, "elections");
+  assert.equal(job.teamActivityAt, 5000);
+  const player = f.ledger.createJob("player-team", { kind: "ticket", ticket: 123, role: "player", source: {}, deadline: 9e15 });
+  player.state = "running";
+  await assert.rejects(broker.tool(player, "read_tool", { server: "community", tool: "team_activity", args: {} }), /limited to its ticket and public game state/);
+});
+
+test("repeated ticket step limits narrow the retry and surface a stalled run once", async () => {
+  const f = fixture();
+  const job = running(f, { kind: "ticket", role: "support", ticket: 123, channelReplyQueued: true, lastPublishedAt: 1000, summary: "Verified the API returns the missing race." });
+  const agent = createAgent({ ledger: f.ledger, broker: f.broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
+    spawnImpl: fakeClaude(async () => ({ is_error: true, subtype: "error_max_turns" })) });
+  for (let index = 1; index <= 4; index++) {
+    await agent.run(job, new AbortController().signal);
+    assert.equal(job.state, "waiting");
+    assert.equal(job.ticketStepLimits, index);
+    if (index < 3) assert.ok(job.wakeAt <= Date.now() + 60000);
+    else assert.ok(job.wakeAt > Date.now() + 20 * 60000);
+    if (index === 2) assert.match(job.history.at(-1).summary, /one concrete step/);
+  }
+  assert.match(job.summary, /Verified the API/);
+  assert.equal(f.ledger.data.audit.filter((row) => row.kind === "ticket_step_limit_stalled").length, 1);
+  assert.equal(f.ledger.data.alerts.filter((row) => row.key === `recovery:step-limit:${job.id}`).length, 1);
+  job.inbox = [{ role: "player", authorId: "888888888888888888", content: "It only happens in Ontario." }];
+  await agent.run(job, new AbortController().signal);
+  assert.equal(job.ticketStepLimits, 1);
+  assert.ok(job.wakeAt <= Date.now() + 60000);
+});

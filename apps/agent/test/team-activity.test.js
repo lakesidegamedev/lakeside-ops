@@ -138,11 +138,12 @@ test("broker: the answered card stage is refused while a card covers the ticket"
   assert.equal(free.audits("team_cover_refused").length, 0);
 });
 
-test("broker: team_activity is a tool for staff-side tasks and never a read_tool server", async () => {
+test("broker: a misrouted staff-side team_activity lookup returns the native result", async () => {
   const f = brokerFixture({ cards: [{ ...card, title: "Prices (ticket 123)" }] });
   const out = await f.broker.tool(f.job, "team_activity", {});
   assert.equal(out.covered, true); assert.match(out.report, /#255428/);
-  await assert.rejects(f.broker.tool(f.job, "read_tool", { server: "ops-knowledge", tool: "team_activity", args: {} }), /Call team_activity directly/);
+  const aliased = await f.broker.tool(f.job, "read_tool", { server: "ops-knowledge", tool: "team_activity", args: {} });
+  assert.deepEqual(aliased, out);
 });
 
 test("the rule is in both prompts and in the ticket playbooks", () => {
