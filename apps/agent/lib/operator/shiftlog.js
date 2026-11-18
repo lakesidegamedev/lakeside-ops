@@ -6,7 +6,7 @@
 // its own and degrades to "unavailable" on error, so one dead source never costs the rest. Nothing here throws. No player
 // names: only counts, ticket numbers, card titles, release and PR titles.
 
-const SHIFT_CHARS = 1500;
+const SHIFT_CHARS = 1600;
 const TTL_MS = 10 * 60000;
 const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
 const clip = (t, n) => String(t || "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -82,6 +82,8 @@ function sourcesFor({ ledger, mcp, api, releasesFile, repo = "lakesidegamedev/AH
       if (failed.length) bits.push(`failed phases: ${[...new Set(failed.flatMap((t) => (t.failedPhases || []).map((p) => (typeof p === "string" ? p : p?.phase || p?.name || "?"))))].slice(0, 4).join(", ") || "unnamed"} (turns ${failed.map((t) => t.turn).slice(0, 3).join(", ")})`);
       return [bits.join("; ")];
     },
+    // Model-free: read from the ledger copy the review sweep keeps (reviewsweep.js). One full line, not a list.
+    review: async () => { const line = require("./reviewsweep").shiftLine(ledger, now()); return line ? [line] : []; },
     bugs: async () => {
       const items = rowsOf(await call("support", "support_list", { kind: "ticket", status: "open", limit: 60 })).filter((t) => !t.category || t.category === "bug");
       const groups = groupTitles(items);
@@ -90,7 +92,7 @@ function sourcesFor({ ledger, mcp, api, releasesFile, repo = "lakesidegamedev/AH
   };
 }
 
-const SECTIONS = [["decisions", "Owner decisions today"], ["fixes", "Fixes in flight"], ["releases", "Shipped, last 24h"], ["turn", "Turn"], ["bugs", "Known bugs (open tickets)"]];
+const SECTIONS = [["decisions", "Owner decisions today"], ["fixes", "Fixes in flight"], ["releases", "Shipped, last 24h"], ["turn", "Turn"], ["bugs", "Known bugs (open tickets)"], ["review", "Review queue"]];
 
 // Collect every section; a failed or empty section reads "unavailable" or "none". Returns { text, at, sections }.
 async function collect(sources, { now = () => Date.now(), timeoutMs = 6000, cap = SHIFT_CHARS } = {}) {
@@ -98,11 +100,12 @@ async function collect(sources, { now = () => Date.now(), timeoutMs = 6000, cap 
     try { const lines = await withTimeout(() => sources[key](), timeoutMs); return { key, lines: (Array.isArray(lines) ? lines : []).map((l) => noDash(clip(l, 140))).filter(Boolean), ok: true }; }
     catch { return { key, lines: [], ok: false }; }
   }));
-  const per = Math.floor((cap - 200) / SECTIONS.length);
+  const per = Math.floor((cap - 200) / (SECTIONS.length - 1));
   const blocks = results.map((r, i) => {
     const title = SECTIONS[i][1];
     if (!r.ok) return `${title}: unavailable`;
     if (!r.lines.length) return `${title}: none`;
+    if (SECTIONS[i][0] === "review") return r.lines[0];
     let body = ""; for (const l of r.lines) { if ((body + l).length + 4 > per + (i === 1 || i === 4 ? 80 : 0)) break; body += `\n- ${l}`; }
     return `${title}:${body}`;
   });

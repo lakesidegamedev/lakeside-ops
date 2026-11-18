@@ -5,6 +5,16 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- Keir now works through what Ask and Keir itself flag for a human, instead of leaving it on a page nobody opens. Every 30 minutes it collects Ask's doc conflicts and blocked, salvaged or downvoted answers, player thumbs down it did not already act on, and tickets where its own guards refused more than two posts in a day. Each new item becomes one internal task, at most 3 per sweep and 12 per day, that checks the answer or doc against the code and live data, corrects or files a card, and closes the item in Ask. Nothing from these tasks is ever posted to a player.
+
+### For developers
+
+- `lib/operator/reviewsweep.js` and the `reviewsweep` ticker (30 minutes, `KEIR_REVIEW_SWEEP=0` turns it off) create `kind: "finding"` tasks carrying `reviewItem`, deduplicated by source and id in `ledger.data.reviewQueue.seen`. Ask items come from `GET /api/keir-ask/review` with the existing `KEIR_ASK_URL` and `KEIR_ASK_SECRET`; a missing route or secret counts as unavailable and is skipped. Needs the Ask release with the review feed (3.14.5) deployed first.
+- New `review_item` tool (`lib/operator/reviewitem.js`), visible only to review tasks and scoped to the task's own item: `resolve` (Ask resolve endpoint), `lesson` (one line in the ticket case file, rendered as "Lessons from review"), `wake_ticket` (internal inbox note, once an hour per ticket).
+- The shift log gains one line, "Review queue: N open (Ask X, Keir Y), oldest Zh", and its cap goes from 1500 to 1600 characters.
+
 ## 10.4.2 (2026-11-18)
 
 ### For users

@@ -307,6 +307,19 @@ function playerUnhelpful(d, ticket, { answerText = "", reason = null, at = Date.
   } catch { return null; }
 }
 
+// Keir review sweep: one line about what went wrong on this ticket, written after a thumbs down or repeated refusals. Max 3 kept.
+function addLesson(d, ticket, text, at = Date.now()) {
+  const line = clip(String(text || "").replace(/\s+/g, " ").trim(), 220);
+  if (line.length < 8) return null;
+  const c = get(d, ticket, { create: true });
+  c.lessons ||= [];
+  if (c.lessons.some((x) => x.text === line)) return c.lessons;
+  c.lessons.push({ at, text: line });
+  c.lessons = c.lessons.slice(-3);
+  c.touchedAt = at;
+  return c.lessons;
+}
+
 // Render for the top of an activation, at most `cap` characters. Oldest corrected claims collapse first.
 function render(d, ticket, { cap = CAP_CHARS } = {}) {
   const c = get(d, ticket);
@@ -314,6 +327,7 @@ function render(d, ticket, { cap = CAP_CHARS } = {}) {
   const claimLine = (x) => `- ${stamp(x.at)} ${x.status}${x.status !== "standing" && x.by ? ` (${x.status === "corrected" ? "by" : "via"} ${stamp(x.byAt)}: ${clip(x.by, 70)})` : ""}: ${clip(x.text, 120)}${x.ev ? ` [${x.ev}]` : ""}`;
   const entries = [];
   (c.asked || []).forEach((x, i) => entries.push({ section: "asked", line: `- ${stamp(x.at)} ${x.answeredAt ? "answered" : "OPEN"}: ${clip(x.text, 150)}`, open: !x.answeredAt, rank: x.answeredAt ? 50 + i : 2000 + i }));
+  (c.lessons || []).forEach((x, i) => entries.push({ section: "lessons", line: `- ${stamp(x.at)} ${clip(x.text, 220)}`, rank: 1800 + i }));
   (c.said || []).forEach((x, i) => entries.push({ section: "said", line: `- ${stamp(x.at)} ${clip(x.text, 220)}`, rank: 1500 + i }));
   c.claims.forEach((x, i) => entries.push({ section: "claims", line: claimLine(x), rank: x.status === "standing" ? 1000 + i : i }));
   c.promises.forEach((x, i) => entries.push({ section: "promises", line: `- ${stamp(x.at)} ${x.doneAt ? "done" : "open"}: ${clip(x.text, 120)}`, rank: x.doneAt ? 100 + i : 900 + i }));
@@ -324,7 +338,7 @@ function render(d, ticket, { cap = CAP_CHARS } = {}) {
   const build = (list, dropped) => {
     const by = (name) => list.filter((e) => e.section === name).sort((a, b) => (name === "asked" && a.open !== b.open ? (a.open ? -1 : 1) : a.line.localeCompare(b.line))).map((e) => e.line);
     const parts = [head];
-    for (const [name, title] of [["asked", "Player asked (answer the OPEN ones first, in the player's own words, before any other finding)"], ["said", "Player statements"], ["claims", "Claims told to the player"], ["promises", "Promises"], ["staff", "Owner and staff in the channel"], ["open", "Open questions"]]) { const l = by(name); if (l.length) parts.push(`${title}:\n${l.join("\n")}`); }
+    for (const [name, title] of [["asked", "Player asked (answer the OPEN ones first, in the player's own words, before any other finding)"], ["lessons", "Lessons from review (what went wrong earlier on this ticket)"], ["said", "Player statements"], ["claims", "Claims told to the player"], ["promises", "Promises"], ["staff", "Owner and staff in the channel"], ["open", "Open questions"]]) { const l = by(name); if (l.length) parts.push(`${title}:\n${l.join("\n")}`); }
     if (fix) parts.push(fix);
     if (dropped) parts.push(`(${dropped} older entries collapsed)`);
     return parts.join("\n");
@@ -339,4 +353,4 @@ function render(d, ticket, { cap = CAP_CHARS } = {}) {
   return out.slice(0, cap);
 }
 
-module.exports = { get, recordPost, syncActivation, contradiction, contradictionRefusal, deflection, deflectionRefusal, deflectionBudgetLeft, noteDeflectionRefusal, playerUnhelpful, addAsked, render, readClaim, sameSubject, prune, CAP_CHARS, CORRECTION };
+module.exports = { get, recordPost, syncActivation, contradiction, contradictionRefusal, deflection, deflectionRefusal, deflectionBudgetLeft, noteDeflectionRefusal, playerUnhelpful, addLesson, addAsked, render, readClaim, sameSubject, prune, CAP_CHARS, CORRECTION };
