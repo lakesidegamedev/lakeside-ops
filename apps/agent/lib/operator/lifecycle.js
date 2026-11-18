@@ -127,11 +127,16 @@ function wakeStep(j, ctx) {
   // While the support record cannot be read, the timer wake backs off with the check;
   // a message still wakes the job.
   const backedOff = j.closeReadFailures > 0 && now < (j.closeCheckAt || 0);
+  const deadlineHold = j.deadlineBlockedAt && j.deadline < now;
   if (j.state === "waiting" && ((j.wakeAt <= now && !backedOff) || (j.inbox?.length && !j.debounceWake))) { j.state = "queued"; delete j.debounceWake; }
   // A message that arrived while the task was running (a handoff, a staff
   // note) is still unread when that run settles as blocked; it must wake the
   // task rather than wait for a human.
-  else if (j.state === "blocked" && j.inbox?.length && !j.codingParent && !j.internalProbe && !j.channelClosed) { j.state = "queued"; effects.push(audit("requeued_for_inbox", { job: j.id, ticket: j.ticket || null, messages: j.inbox.length })); }
+  // An exhausted deadline would block the job again in this same pass.
+  else if (j.state === "blocked" && j.inbox?.length && !deadlineHold && !j.codingParent && !j.internalProbe && !j.channelClosed) {
+    j.state = "queued";
+    effects.push(audit("requeued_for_inbox", { job: j.id, ticket: j.ticket || null, messages: j.inbox.length }));
+  }
   // The wake cap gates every route into "queued": timers, internal mail, sweeper nudges. A human message always passes.
   if (capApplies(j)) {
     const cap = j.state === "queued" && !humanInbox(j) ? wakeCapped(j, now) : null;

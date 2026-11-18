@@ -64,6 +64,7 @@ const WAKE = [
   ["waiting while the support record is unreadable does not wake on the timer", { state: "waiting", wakeAt: NOW - 1, closeReadFailures: 2, closeCheckAt: NOW + MIN }, {}, { state: "waiting", effects: [] }],
   ["waiting wakes on the timer once the backoff has passed", { state: "waiting", wakeAt: NOW - 1, closeReadFailures: 2, closeCheckAt: NOW }, {}, { state: "queued", effects: [] }],
   ["mail still wakes a job whose support record is unreadable", { state: "waiting", wakeAt: NOW + 9 * MIN, inbox: [human], closeReadFailures: 2, closeCheckAt: NOW + MIN }, {}, { state: "queued", effects: [] }],
+  ["an exhausted finding stays blocked with unread system mail", { kind: "finding", ticket: null, state: "blocked", inbox: [{ role: "system", authorId: "developer-watch" }], deadline: NOW - MIN, deadlineExtensions: 1, deadlineBlockedAt: NOW - MIN }, {}, { state: "blocked", effects: [] }],
   ["blocked with mail queues", { state: "blocked", inbox: [human, human] }, {}, { state: "queued", effects: ["audit:requeued_for_inbox"], auditDetail: { messages: 2, ticket: 5 } }],
   ["blocked with mail on a closed channel stays", { state: "blocked", channelClosed: true, inbox: [human] }, {}, { state: "blocked", effects: [] }],
   ["blocked subworker with mail stays", { state: "blocked", codingParent: "p", updatedAt: NOW, inbox: [human] }, {}, { state: "blocked", effects: [] }],
