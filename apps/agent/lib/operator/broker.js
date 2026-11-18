@@ -3072,6 +3072,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       throw new Error("action must be issues, issue, note or resolve");
     }
     if (name === "github") {
+      if (job.repository === "adhd-bot" && !input.repository) throw new Error("The Discord bot snapshot is source-only. Use a bot maintainer for bot GitHub work, or name AHDGame explicitly to inspect its API.");
       const readOnly = ["review", "status", "where", "deployed", "ci_failures", "ci_runs", "issues", "watch", "history", "close_issue", "pr_diff"].includes(input.action);
       // A ticket can span the game and the desktop client (1514 does); an
       // explicit repository wins over the task's default.

@@ -3180,6 +3180,7 @@ test("authorized ticket readers can snapshot the Discord bot source", async () =
   const job = running(f, { kind: "ticket", ticket: 123, role: "support", repository: "adhd-bot", repositoryRef: { branch: "main", commit: "abcdef1234" } });
   assert.equal((await b.tool(job, "repository_snapshot", { repository: "adhd-bot" })).reused, true);
   await assert.rejects(b.tool(job, "publish_patch", {}), /Discord bot patches require a maintainer/);
+  await assert.rejects(b.tool(job, "github", { action: "status", number: 193 }), /Discord bot snapshot is source-only/);
   const player = f.ledger.createJob("player-bot", { kind: "ticket", ticket: 123, role: "player", source: {}, deadline: 9e15 });
   player.state = "running";
   await assert.rejects(b.tool(player, "repository_snapshot", { repository: "adhd-bot" }), /cannot authorize/);
