@@ -151,7 +151,7 @@ test("sector verdict: profitable but below the prime rate is red", () => {
   assert.equal(rw.sectorVerdict({ sites: 1, profitableShare: 1, excessPp: 4 }).level, "none");
 });
 
-test("sector payback flags returns that come back too quickly", () => {
+test("sector payback flags returns outside the target range", () => {
   const healthy = { sites: 6, profitableShare: 1, excessPp: 100, returnPct: 105 };
   const cases = [
     [19.9, "Too fast", "bad"],
@@ -159,7 +159,7 @@ test("sector payback flags returns that come back too quickly", () => {
     [29.9, "Fast", "warn"],
     [30, "On target", "ok"],
     [50, "On target", "ok"],
-    [51, "Above target", "ok"],
+    [50.1, "Slow", "warn"],
     [Infinity, "No payback", "bad"],
     [null, "No estimate", "ok"],
   ];
@@ -305,6 +305,7 @@ test("sector payback is rendered in turns and counted in history", () => {
     ["retail", 42, "42 turns · On target"],
     ["technology", 19, "19 turns · Too fast"],
     ["financial", Infinity, "No payback"],
+    ["media", 51, "51 turns · Slow"],
   ];
   s.sectors = rw.sectorMetrics(cases.flatMap(([lane, paybackTurns]) =>
     Array.from({ length: 3 }, () => ({
@@ -314,6 +315,7 @@ test("sector payback is rendered in turns and counted in history", () => {
   s.verdicts = rw.verdicts(s);
   const record = rw.historyRecord(s);
   assert.equal(record.sectors.failing, 2);
+  assert.equal(record.sectors.thin, 1);
   const { body } = makeResetWatchBody({ snapshot: s, history: [record] });
   for (const [, , label] of cases) assert.ok(body.includes(label), label);
 });
