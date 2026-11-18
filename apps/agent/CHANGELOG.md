@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.5.1 (2026-11-17)
+
 - Keir prepares guide corrections from Ask reviews, asks for approval on the exact PR head, then carries approved changes through normal release checks. A card alone cannot mark a guide fixed.
 - A coding worker report without a PR goes back to the ticket task so Keir can verify it and act on it.
 - Keir checks the institution behind a claim that a legislative chamber is absent before posting it to a player.
