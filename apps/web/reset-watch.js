@@ -244,7 +244,7 @@ function paybackVerdict(turns) {
   if (!Number.isFinite(turns)) return { level: "none", label: "No estimate" };
   if (turns < T.paybackTooFastTurns) return { level: "bad", label: "Too fast" };
   if (turns < T.paybackTargetMinTurns) return { level: "warn", label: "Fast" };
-  if (turns > T.paybackTargetMaxTurns) return { level: "none", label: "Above target" };
+  if (turns > T.paybackTargetMaxTurns) return { level: "warn", label: "Slow" };
   return { level: "ok", label: "On target" };
 }
 
@@ -264,7 +264,10 @@ function sectorVerdict(m) {
   if (pr != null && pr < T.viableProfitableShare) return { level: "warn", why: `${Math.round(pr * 100)}% of sites make money` };
   if (ex < T.viableExcessPp) return { level: "warn", why: `Operating sites earn ${ret}, only ${ex} points above the local prime rate` };
   if (payback.level === "warn") {
-    return { level: "warn", why: `Median payback is under the ${T.paybackTargetMinTurns}-turn target` };
+    const why = payback.label === "Slow"
+      ? `Median payback is over the ${T.paybackTargetMaxTurns}-turn target`
+      : `Median payback is under the ${T.paybackTargetMinTurns}-turn target`;
+    return { level: "warn", why };
   }
   return { level: "ok", why: `Operating sites earn ${ret}, ${ex} points above the local prime rate` };
 }

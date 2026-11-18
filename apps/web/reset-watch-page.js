@@ -180,7 +180,7 @@ function sectorsSection(s, history) {
   }).join("");
   return `<section class="rw-sec" id="sectors">
   <h2>Sector returns and payback</h2>
-  <p class="q">Target payback is ${th.paybackTargetMinTurns} to ${th.paybackTargetMaxTurns} turns. Under ${th.paybackTooFastTurns} turns is too fast.</p>
+  <p class="q">Target payback is ${th.paybackTargetMinTurns} to ${th.paybackTargetMaxTurns} turns. Under ${th.paybackTooFastTurns} is too fast, and over ${th.paybackTargetMaxTurns} is slow.</p>
   <div class="rw-key"><span><b>${sec.viable}</b> viable</span><span><b>${sec.weak}</b> to watch</span><span><b>${sec.failing}</b> need action</span><span>Highest return <b>${esc(sec.bestLane || "-")}</b>, lowest <b>${esc(sec.worstLane || "-")}</b>, ${fixed(sec.returnSpreadPp)} points apart</span><span>World median <b>${fixed(sec.worldReturnPct)}%</b> a year</span></div>
   ${methodNote}
   ${sectorCharts(s, history)}
@@ -191,7 +191,7 @@ function sectorsSection(s, history) {
   <details class="rw-how"><summary>How this is measured</summary><ul>
     <li>Site return is the median annualized profit divided by paid operating capacity cost. Committed capital return divides total annualized profit of those sites by their total paid operating capacity and construction in progress.</li>
     <li>Sector profit is stored per real day (24 turns). The tracker uses the rate for the currency in which the profit was recorded.</li>
-    <li>Payback uses paid operating capacity and settled profit per turn. A payback between ${th.paybackTooFastTurns} and ${th.paybackTargetMinTurns - 1} turns is fast enough to watch. Above ${th.paybackTargetMaxTurns} turns, the investment still has to pass the profitability and prime-rate checks.</li>
+    <li>Payback uses paid operating capacity and settled profit per turn. Payback from ${th.paybackTooFastTurns} to under ${th.paybackTargetMinTurns} turns is fast. Fast and slow paybacks both merit a watch.</li>
     <li>Viability requires at least ${pct(th.viableProfitableShare)} of sites in profit and a median return at least ${th.viableExcessPp} points above the host prime rate. A return below prime or fewer than ${pct(th.weakProfitableShare)} of sites in profit needs action.</li>
     <li>Operating sites include idle sites. Mothballed sites and sites entirely under construction are counted separately. Sell-through uses units sold divided by units offered on settled turns.</li>
   </ul></details>
