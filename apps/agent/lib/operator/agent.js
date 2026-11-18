@@ -778,7 +778,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       let retryDelay = 60000;
       let nextStep = "The previous activation ran out of time before finishing. Use checkpoint more often and continue from the last saved step.";
       if (ticketRetry && !result.interrupted) {
-        const progressed = job.channelReplyQueued || beforeRun !== recoveryFingerprint(job);
+        const progressed = beforeRun !== recoveryFingerprint(job);
         job.ticketStepLimits = progressed ? 0 : (job.ticketStepLimits || 0) + 1;
         if (job.ticketStepLimits >= 2) nextStep = "Continue from the saved checkpoint. Take one concrete step that will move this ticket forward, then checkpoint. Skip reads that already gave the same answer.";
         if (job.ticketStepLimits >= 3) {

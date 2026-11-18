@@ -3200,7 +3200,7 @@ test("a misrouted team_activity read uses the native tool and its visibility rul
 
 test("repeated ticket step limits narrow the retry and surface a stalled run once", async () => {
   const f = fixture();
-  const job = running(f, { kind: "ticket", role: "support", ticket: 123, summary: "Verified the API returns the missing race." });
+  const job = running(f, { kind: "ticket", role: "support", ticket: 123, channelReplyQueued: true, lastPublishedAt: 1000, summary: "Verified the API returns the missing race." });
   const agent = createAgent({ ledger: f.ledger, broker: f.broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
     spawnImpl: fakeClaude(async () => ({ is_error: true, subtype: "error_max_turns" })) });
   for (let index = 1; index <= 4; index++) {
