@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Closing a ticket no longer counts an owner or staff line as an unread player reply. The close guard read every human message while the player clock (ticket_history) skips staff lines on purpose, so an owner "hello" in ticket 1845 refused every close. It now uses only the player's messages and the newest player time across the ticket's tasks.
+
 ## 10.4.0 (2026-11-18)
 
 - Keir answers what the player asked. The case file now opens with "Player asked": the ticket text and each later message that states a problem or asks something, open items first, marked answered when a post covers its subject. A post that redirects ("the real blocker is") or concludes ("working as intended") without touching an open item is refused, at most twice per ticket. Ticket 1852: the player said Sector Tech does nothing at the 30% cap, Keir answered about research points, and the player voted it down as not what they asked.
