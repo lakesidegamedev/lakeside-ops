@@ -155,13 +155,15 @@ function verdictStrip(v) {
 
 function sectorsSection(s, history) {
   const sec = s.sectors;
-  const th = s.thresholds;
+  const th = { ...rwModel.THRESHOLDS, ...s.thresholds };
   const firstRevised = history.find((h) => h.siteMetricsVersion === sec.siteMetricsVersion);
   const methodNote = firstRevised && history.some((h) => h.turn < firstRevised.turn)
     ? `<p class="rw-muted">Site returns and profitability use the revised calculation from turn ${esc(firstRevised.turn)}.</p>` : "";
   const maxRet = Math.max(4, ...sec.lanes.map((l) => l.returnPct || 0), ...sec.lanes.map((l) => l.primePct || 0)) * 1.1;
   const rows = sec.lanes.map((l) => {
     const playerCell = l.playerCorps ? `${l.playerCorps}${l.playerProfitableShare != null ? ` <span class="rw-muted">(${pct(l.playerProfitableShare)} profitable)</span>` : ""}` : '<span class="rw-muted">0</span>';
+    const payback = l.paybackVerdict ?? rwModel.paybackVerdict(l.paybackTurns);
+    const paybackLabel = l.paybackTurns == null ? payback.label : `${l.paybackTurns} turns · ${payback.label}`;
     return `<tr>
       <td>${dot(l.verdict.level, l.verdict.why)} <span class="nm">${esc(l.label)}</span>${l.verdict.level === "ok" ? "" : `<div class="rw-why">${esc(l.verdict.why)}</div>`}</td>
       <td>${returnBar(l.returnPct, l.primePct, maxRet)}</td>
@@ -169,7 +171,7 @@ function sectorsSection(s, history) {
       <td class="n">${signed(l.excessPp)}</td>
       <td class="n">${pct(l.profitableShare)}</td>
       <td class="n">${fixed(l.marginMedian)}%</td>
-      <td class="n">${years(l.paybackTurns, th.turnsPerYear)}</td>
+      <td class="n">${dot(payback.level)} ${esc(paybackLabel)}</td>
       <td class="n">${money(l.plantCostAnchor)}</td>
       <td class="n">${pct(l.sellThrough)}</td>
       <td class="n">${l.sites}${l.idle ? ` <span style="color:var(--amber,#f5a623)" title="Built but sold nothing this turn">(${l.idle} idle)</span>` : ""}${l.mothballed ? ` <span class="rw-muted">+${l.mothballed} mothballed</span>` : ""}${l.building ? ` <span class="rw-muted" title="Under construction">+${l.building}</span>` : ""}</td>
@@ -177,9 +179,9 @@ function sectorsSection(s, history) {
     </tr>`;
   }).join("");
   return `<section class="rw-sec" id="sectors">
-  <h2>Sectors: can a player make money in every one?</h2>
-  <p class="q">Compare what operating sites earn on paid capacity with the local prime rate.</p>
-  <div class="rw-key"><span><b>${sec.viable}</b> viable</span><span><b>${sec.weak}</b> thin</span><span><b>${sec.failing}</b> below the prime rate</span><span>Best <b>${esc(sec.bestLane || "-")}</b>, worst <b>${esc(sec.worstLane || "-")}</b>, ${fixed(sec.returnSpreadPp)} points apart</span><span>World median <b>${fixed(sec.worldReturnPct)}%</b> a year</span></div>
+  <h2>Sector returns and payback</h2>
+  <p class="q">Target payback is ${th.paybackTargetMinTurns} to ${th.paybackTargetMaxTurns} turns. Under ${th.paybackTooFastTurns} turns is too fast.</p>
+  <div class="rw-key"><span><b>${sec.viable}</b> viable</span><span><b>${sec.weak}</b> to watch</span><span><b>${sec.failing}</b> need action</span><span>Highest return <b>${esc(sec.bestLane || "-")}</b>, lowest <b>${esc(sec.worstLane || "-")}</b>, ${fixed(sec.returnSpreadPp)} points apart</span><span>World median <b>${fixed(sec.worldReturnPct)}%</b> a year</span></div>
   ${methodNote}
   ${sectorCharts(s, history)}
   <h3>Now</h3>
@@ -189,7 +191,8 @@ function sectorsSection(s, history) {
   <details class="rw-how"><summary>How this is measured</summary><ul>
     <li>Site return is the median annualized profit divided by paid operating capacity cost. Committed capital return divides total annualized profit of those sites by their total paid operating capacity and construction in progress.</li>
     <li>Sector profit is stored per real day (24 turns). The tracker uses the rate for the currency in which the profit was recorded.</li>
-    <li>Viable: at least ${pct(th.viableProfitableShare)} of sites in profit and a median return ${th.viableExcessPp} points or more above the host prime rate. Thin: above the prime rate but by less. Red: below it, or under ${pct(th.weakProfitableShare)} of sites in profit.</li>
+    <li>Payback uses paid operating capacity and settled profit per turn. A payback between ${th.paybackTooFastTurns} and ${th.paybackTargetMinTurns - 1} turns is fast enough to watch. Above ${th.paybackTargetMaxTurns} turns, the investment still has to pass the profitability and prime-rate checks.</li>
+    <li>Viability requires at least ${pct(th.viableProfitableShare)} of sites in profit and a median return at least ${th.viableExcessPp} points above the host prime rate. A return below prime or fewer than ${pct(th.weakProfitableShare)} of sites in profit needs action.</li>
     <li>Operating sites include idle sites. Mothballed sites and sites entirely under construction are counted separately. Sell-through uses units sold divided by units offered on settled turns.</li>
   </ul></details>
 </section>`;
@@ -443,27 +446,17 @@ function exploitChart(history) {
 
 const STATUS = { ok: "#0ca30c", warn: "#fab219", bad: "#d03b3b" };
 
-function laneLevel(entry, th) {
-  if (!entry) return null;
-  const [prof, , , excess] = entry;
-  if (excess == null) return null;
-  if ((prof != null && prof < th.weakProfitableShare) || excess < th.weakExcessPp) return "bad";
-  if ((prof != null && prof < th.viableProfitableShare) || excess < th.viableExcessPp) return "warn";
-  return "ok";
-}
-
 function sectorCharts(s, history) {
-  const th = s.thresholds;
-  const counts = history.map((h) => {
-    const c = { ok: 0, warn: 0, bad: 0 };
-    for (const e of Object.values(h.lanes || {})) { const l = laneLevel(e, th); if (l) c[l] += 1; }
-    return [h.turn, c];
-  });
+  const counts = history.filter((h) => h.sectors).map((h) => [h.turn, {
+    ok: h.sectors.viable,
+    warn: h.sectors.thin,
+    bad: h.sectors.failing ?? h.sectors.below,
+  }]);
   const head = lineChart([
     { name: "Viable", short: "viable", color: STATUS.ok, points: counts.map(([t, c]) => [t, c.ok]) },
-    { name: "Thin", short: "thin", color: STATUS.warn, points: counts.map(([t, c]) => [t, c.warn]) },
-    { name: "Below prime", short: "below", color: STATUS.bad, points: counts.map(([t, c]) => [t, c.bad]) },
-  ], { title: "Sectors by verdict", sub: "How many of the 17 sectors are viable, thin or below the prime rate, each turn", yKind: "num", yMin: 0 });
+    { name: "Watch", short: "watch", color: STATUS.warn, points: counts.map(([t, c]) => [t, c.warn]) },
+    { name: "Needs action", short: "action", color: STATUS.bad, points: counts.map(([t, c]) => [t, c.bad]) },
+  ], { title: "Sectors by verdict", sub: "Counts by the investment checks used on each turn", yKind: "num", yMin: 0 });
   const world = lineChart([
     { name: "World median return", slot: 1, points: history.map((h) => [h.turn, h.sectors ? h.sectors.worldReturn : null]) },
   ], { title: "World median return on a new plant", sub: "Percent a year, all sectors", yKind: "pct1", yMin: 0, empty: "Starts with the next turn" });

@@ -151,6 +151,24 @@ test("sector verdict: profitable but below the prime rate is red", () => {
   assert.equal(rw.sectorVerdict({ sites: 1, profitableShare: 1, excessPp: 4 }).level, "none");
 });
 
+test("sector payback flags returns that come back too quickly", () => {
+  const healthy = { sites: 6, profitableShare: 1, excessPp: 100, returnPct: 105 };
+  const cases = [
+    [19.9, "Too fast", "bad"],
+    [20, "Fast", "warn"],
+    [29.9, "Fast", "warn"],
+    [30, "On target", "ok"],
+    [50, "On target", "ok"],
+    [51, "Above target", "ok"],
+    [Infinity, "No payback", "bad"],
+    [null, "No estimate", "ok"],
+  ];
+  for (const [paybackTurns, label, level] of cases) {
+    assert.equal(rw.paybackVerdict(paybackTurns).label, label);
+    assert.equal(rw.sectorVerdict({ ...healthy, paybackTurns }).level, level);
+  }
+});
+
 test("country edge is sector-adjusted", () => {
   // Country A only hosts a high-return sector, B only a low-return one, both
   // exactly at their sector's median: neither should show an edge.
@@ -279,6 +297,25 @@ test("page renders every section, escapes text and handles no snapshot", () => {
   assert.ok(!body.includes("x <b>"), "untrusted text is escaped");
   assert.match(body, /First results at turn 49/);
   assert.match(makeResetWatchBody({ snapshot: null }).body, /No snapshot yet/);
+});
+
+test("sector payback is rendered in turns and counted in history", () => {
+  const s = snapshotFixture();
+  const cases = [
+    ["retail", 42, "42 turns · On target"],
+    ["technology", 19, "19 turns · Too fast"],
+    ["financial", Infinity, "No payback"],
+  ];
+  s.sectors = rw.sectorMetrics(cases.flatMap(([lane, paybackTurns]) =>
+    Array.from({ length: 3 }, () => ({
+      lane, operating: true, profitable: true, paybackTurns, returnPct: 105, excessPp: 100,
+    }))
+  ));
+  s.verdicts = rw.verdicts(s);
+  const record = rw.historyRecord(s);
+  assert.equal(record.sectors.failing, 2);
+  const { body } = makeResetWatchBody({ snapshot: s, history: [record] });
+  for (const [, , label] of cases) assert.ok(body.includes(label), label);
 });
 
 test("a re-run reset with the same label is a different world", () => {
