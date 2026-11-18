@@ -347,6 +347,21 @@ test("ticket closure waits for delivered answer and refuses a new unread player 
   await assert.rejects(late.tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }), /new player reply/);
 });
 
+// Ticket 1845 (2026-11-18): the owner's own "hello" in the channel is not a player reply. ticket_history never records
+// staff lines in observedPlayerAt, so counting them here refused every close.
+test("ticket closure ignores owner and staff lines and reads the player time across the ticket's jobs", async () => {
+  const f = fixture(), j = running(f, { role: "support", ticket: 123, channelId: "777777777777777777", resolutionReadyAt: 1, lastPublishedAt: 1 });
+  j.observedPlayerAt = 0;
+  for (const author of [f.config.ownerId, f.config.staffIds[0]]) {
+    const b = createBroker({ ...f, sandbox: {}, discord: async (method, route) => route.includes("/guilds/") ? f.discord(method, route) : [f.msg("hello", "999999999999999991", author)], now: () => 4000000 + 3 * 3600000 });
+    await b.tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }).catch((e) => assert.doesNotMatch(e.message, /new player reply/));
+  }
+  const other = running(f, { role: "support", ticket: 123, channelId: "777777777777777777" });
+  other.observedPlayerAt = 5000;
+  const b2 = createBroker({ ...f, sandbox: {}, discord: async (method, route) => route.includes("/guilds/") ? f.discord(method, route) : [f.msg("Still broken", "999999999999999992", "888888888888888888")], now: () => 4000000 + 3 * 3600000 });
+  await b2.tool(j, "support_action", { tool: "support_resolve", args: { message: "Resolved." } }).catch((e) => assert.doesNotMatch(e.message, /new player reply/));
+});
+
 // Review 2026-10-19: 1610 was resolved one minute after "live" and 1611 52
 // minutes after, before either player could see the fix.
 test("ticket closure waits after a fix goes live unless the player has replied since", async () => {

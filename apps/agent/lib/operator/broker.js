@@ -4108,8 +4108,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             texts: category === "suggestion" ? [] : [args.message, args.followUp, ...(args.actions || []), lastPost?.text] });
           if (refuse) { ledger.audit("resolve_refused_policy", { job: job.id, ticket: job.ticket, category: category || null }); throw new Error(refuse); }
         }
-        const recent = rows.filter((m) => !m.author.bot).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1).at(-1);
-        if (recent && Date.parse(recent.timestamp) > (job.observedPlayerAt || job.lastPlayerAt || 0)) throw new Error("new player reply must be investigated before closure");
+        // Keir 10.4.1 (ticket 1845): only the player's own messages count, the same rule ticket_history uses for
+        // observedPlayerAt (9.0.2). An owner or staff line ("hello") is never recorded there, so it refused every close.
+        // Any ticket job may have read the player's newest message, not only this one.
+        const closeStaff = new Set([config.ownerId, ...(config.staffIds || [])].filter(Boolean));
+        const recent = rows.filter((m) => !m.author.bot && !closeStaff.has(m.author.id)).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1).at(-1);
+        if (recent && Date.parse(recent.timestamp) > Math.max(job.observedPlayerAt || 0, job.lastPlayerAt || 0, humanAt(job.ticket))) throw new Error("new player reply must be investigated before closure");
         // Keir 4.1.10 (owner, ticket 1542): a question or a call for staff
         // that nobody answered is still open, however long the silence. The
         // last human word must not be an unanswered question or ping.
