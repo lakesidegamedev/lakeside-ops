@@ -2162,7 +2162,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // Review 2026-11-01 (ticket 1742): an empty lookup asked the wrong way
     // became "nothing is signed". Empty reads are remembered so a claim that
     // something does not exist needs a second, differently shaped read.
-    if (name === "read_tool" && config.readyReads !== false && result != null && !require("./ticketquality").emptyResult(result) && !/(?:_catalog|_tools|_servers)$/.test(input.tool || "")) {
+    if (name === "read_tool" && !NATIVE_NOT_READ.has(input.tool) && config.readyReads !== false && result != null && !require("./ticketquality").emptyResult(result) && !/(?:_catalog|_tools|_servers)$/.test(input.tool || "")) {
       try { readyReads.learn(job, input.server, input.tool); } catch {}
     }
     // Keir 9 audit: a refused, failed or empty code lookup is not a code read. Only a finished call that returned a result counts.
