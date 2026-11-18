@@ -11,6 +11,8 @@ const { spawn } = require("node:child_process");
 const { createToolServer } = require("./toolserver");
 const { invokeCli } = require("./cli-runner");
 const { childTools } = require("./delegation");
+const { humanInbox } = require("./lifecycle");
+const { fingerprint: recoveryFingerprint } = require("./selfrecovery");
 const { PR_MENTION_TOOLS } = require("./prmention");
 const { roleGuard, roleOf } = require("./roles");
 
@@ -51,7 +53,7 @@ const TOOLS = [
   ["reporter_state", "Inspect the assigned ticket reporter's current live character identity, country, region and office. Automatic support uses its assigned ticket. A developer investigating a merged report should pass its original ticket number; the primary destination reporter may be a different person. No arbitrary character selection. Use before asking about server-known facts. Does not expose balances, account secrets or change data.", schema({ticket:{type:"integer",minimum:1}})],
   ["support_tools", "Discover the real support write schemas before using support_action. The broker supplies kind and number for the assigned ticket. Tracker notes require body, not note or ticket. Schema errors can be corrected immediately without involving the owner.", schema({})],
   ["support_action", "Manage the assigned ticket: acknowledge, report findings, set non-terminal status, append tracker notes, or resolve after the player has had a grace period to read the final answer. Staff-owned tickets are protected. Every message field is read by the player, so write about the game and the outcome, never how you are working: no PR, issue, CI, branch, commit, file or internal system names.", schema({ tool: { type: "string", enum: ["support_public_update", "support_set_status", "support_tracker_note", "support_resolve"] }, args: obj }, ["tool", "args"])],
-  ["repository_snapshot", "Load the live remote branch into an isolated editable snapshot with read-only node_modules. ref main = what production runs; ref development = merged work about to ship (fixes to code that only exists on development must use it). Returns the exact commit. Always newer than the code index.", schema({ repository: str, ref: { type: "string", enum: ["main", "development"] }, refresh: { type: "boolean", description: "rebuild on the branch's latest commit; discards edits in /workspace/repo" } }, ["repository"])],
+  ["repository_snapshot", "Load the live remote branch into an isolated editable snapshot with read-only node_modules. ref main = what production runs; ref development = merged work about to ship (fixes to code that only exists on development must use it). Returns the exact commit. For Discord bot slash commands, use repository adhd-bot on main; the game repo holds their API. A maintainer publishes bot patches.", schema({ repository: str, ref: { type: "string", enum: ["main", "development"] }, refresh: { type: "boolean", description: "rebuild on the branch's latest commit; discards edits in /workspace/repo" } }, ["repository"])],
   ["local_file", "Read, write or list a bounded relative path in the isolated workspace. Use this for short owner Muse local drafts; the entire UTF-8/JSON/base64 command must fit 16000 bytes. Split larger drafts. No commands execute from file content. Investigator children may only read/list.", schema({ operation: { type: "string", enum: ["read", "write", "list"] }, path: str, text: str }, ["operation", "path"])],
   ["shell", "Execute a command in this task's isolated workspace (no host files, network or credentials). Node, git, grep and the repository's node_modules/.bin are on PATH: run focused tests like `cd repo && vitest run path/to/file.test.ts`. Default 60s, up to 300s. Full-repo typecheck does not fit; CI runs it on the PR.", schema({ command: str, timeoutSeconds: { type: "integer", minimum: 10, maximum: 300 } }, ["command"])],
   ["request_heal", "Propose a repair for the owner to approve; nothing changes until they do. Use it from a ticket or finding as soon as a bounded data repair is clear, and also raise the code bug that caused it. kind adhoc: one exact set or unset on collection and filter, expectedMax 1 to 200, touchesMoney true if money moves. If the right value is unknown, propose the neutral default and say so; the owner approves or corrects it. kind ledger: a defectId from heal_list. kind compensation: credits [{corporationId, amountLocal, basis}], never an adhoc liquidCapital set. It re-plans before running and refuses a changed target. No deletes or guard overrides.", schema({kind:{type:"string",enum:["ledger","adhoc","compensation"]},credits:{type:"array",maxItems:200,items:{type:"object"}},env:{type:"string",enum:["prod","sandbox","dev"]},defectId:str,ticket:{},description:str,collection:str,filter:obj,action:{type:"object",properties:{kind:{type:"string",enum:["set","unset"]},set:obj,unset:{type:"array",items:str}},required:["kind"]},expectedMax:{type:"integer",minimum:1,maximum:200},touchesMoney:{type:"boolean"}},["kind","env"])],
@@ -375,6 +377,8 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // A ticket whose channel was closed by hand has nothing left to do; never
     // spend a model run rediscovering that (tickets 1512 and 1518 looped).
     if (job.channelClosed) { job.state = "done"; ledger.save(); return; }
+    const ticketRetry = !quick && job.kind === "ticket" && job.ticket && job.role === "support" && !job.codingParent && !job.internalProbe;
+    if (ticketRetry && humanInbox(job)) delete job.ticketStepLimits;
     if (require("./toolmarkup").hasToolMarkup(job.summary)) {
       const checkpoint = [...(job.history || [])].reverse().find(h => ["checkpoint", "finish"].includes(h.kind) && h.summary && !require("./toolmarkup").hasToolMarkup(h.summary));
       job.summary = checkpoint?.summary || "The previous summary contained tool-call markup. No valid checkpoint was retained; re-read the ticket evidence before continuing.";
@@ -467,6 +471,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     job.activationFreshRead = false;
     const freshInbox = ticketCompact && wakeNow ? requestInbox.filter((m) => !(Date.parse(m?.at) < (job.prevActivationAt || 0))) : requestInbox;
     const context = { ...(delta ? { whatChanged: (({ messages = [], ...rest }) => ({ ...rest, newMessages: messages.length, ...(Object.keys(rest).length <= 1 && !messages.length ? { nothingNew: "No new player message or result since your last run. Do not repeat earlier posts; act only if something above needs it." } : {}), instruction: "This wake is about what changed. Start from it; the case file has the rest." }))(delta) } : {}), taskId: job.id, kind: job.kind, authority: job.role, replyInChannel: Boolean(job.replyChannel), availableReadServers: broker.servers?.(job), ticket: job.ticket, ticketCategory: job.ticket ? (ledger.data.channels?.[job.channelId || job.replyChannel]?.category || null) : undefined, ticketReceipts: Object.values(job.openedTickets || {}), summary: job.summary, source: job.source,
+    if (ticketRetry && job.ticketStepLimits >= 2) {
+      context.stepLimitRecovery = "Take one concrete step from the last saved checkpoint. Skip reads that already gave the same answer, then checkpoint or finish.";
+    }
       ...(job.replyChannel === "app" ? { surface: "The owner's private Keir app on their phone, not Discord. Nobody else can read it. Talk directly and conversationally. Use present_choices for owner questions rather than A/B/C prose. Use native markdown tables and mermaid xy/pie charts for comparisons, or chart for sourced graphs. Use computer for visual work and artifact_save for durable reports. channel_reply posts into the app; progress_update is a specific short status. Other tasks run concurrently; stay focused on this task and thread." } : {}),
       ownerApp: light ? undefined : broker.appContext?.(job), sharedConversation: light ? undefined : broker.context?.(job), ticketWork: light ? undefined : broker.ticketWork?.(job), publicWorkInChannel: light ? undefined : broker.progress?.(job), lane: quick ? "quick" : "worker",
       needsAcknowledgement: Boolean(job.needsAck && !job.progressMessageId), playerUpdateOverdue: job.kind === "ticket" && !job.resolutionReadyAt && Date.now() - (job.lastPublishedAt || job.at || 0) > 2 * 3600000 ? "The player has not heard from you in over two hours. Post a one-line ticket update now (where the fix is: being built, in testing on dev, on sandbox, live on the main server), then continue." : undefined, previousActivations: ticketCompact ? undefined : (job.history || []).slice(-10), repositorySnapshot: job.repositoryRef, pullRequests: job.pullRequests, inbox: freshInbox, legacyTicketEvidence: quick || ticketCompact ? undefined : job.legacyTicket, approvedActions: quick ? [] : Object.values(ledger.data.actions).filter((a) => a.jobId === job.id && ["approved", "rejected"].includes(a.state)).map((a) => ({ id: a.id, kind: a.kind, args: a.args, state: a.state })) };
@@ -639,6 +646,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     session.maxTurns = maxRounds;
     mark("toolServer");
     let result;
+    const beforeRun = ticketRetry ? recoveryFingerprint(job) : null;
     const nudge = !quick && setTimeout(() => { if (job.progressMessageId && !job.progressAt) broker.tool(job, "progress_update", { message: "Still on it. This one needs a closer look, I'll reply here when it's done." }, signal).catch(() => {}); }, 150000);
     // An app thread must never look abandoned. While this activation runs, keep a
     // specific, changing line under the answer the owner is waiting on.
@@ -720,7 +728,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // turn, so tickets 1626 and 1627 got no reply and their players gave up.
     // An activation that never reached the model is a provider failure.
     if (job.state === "running" && emptyActivation(result, session)) throw new Error("model request failed: empty activation (no tokens, no tool call, no text) " + redactSecrets(String(result.result || "")).slice(0, 300));
-    if (job.state !== "running") return;
+    if (job.state !== "running") {
+      if (ticketRetry && job.ticketStepLimits) { delete job.ticketStepLimits; ledger.save(); }
+      return;
+    }
     // A run that spent its steps without replying or finishing is cut off,
     // whatever the runner reports. Its last text is a private checkpoint
     // ("Maximum steps reached... Tools are now disabled"), never a reply:
@@ -764,11 +775,26 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
           ledger.save(); return;
         }
       }
-      job.state = "waiting"; job.wakeAt = Date.now() + 60000;
+      let retryDelay = 60000;
+      let nextStep = "The previous activation ran out of time before finishing. Use checkpoint more often and continue from the last saved step.";
+      if (ticketRetry && !result.interrupted) {
+        const progressed = job.channelReplyQueued || beforeRun !== recoveryFingerprint(job);
+        job.ticketStepLimits = progressed ? 0 : (job.ticketStepLimits || 0) + 1;
+        if (job.ticketStepLimits >= 2) nextStep = "Continue from the saved checkpoint. Take one concrete step that will move this ticket forward, then checkpoint. Skip reads that already gave the same answer.";
+        if (job.ticketStepLimits >= 3) {
+          retryDelay = 30 * 60000;
+          if (job.ticketStepLimits === 3) {
+            ledger.audit("ticket_step_limit_stalled", { job: job.id, ticket: job.ticket, retryDelay });
+            ledger.notify(`recovery:step-limit:${job.id}`, "owner", `Ticket ${job.ticket} ran out of steps three times without progress. The checkpoint is saved and automatic retries are spaced 30 minutes apart.`);
+          }
+        }
+      }
+      job.state = "waiting"; job.wakeAt = Date.now() + retryDelay;
       job.summary ||= "Continuing investigation after bounded turn.";
-      job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "turn-limit", summary: "The previous activation ran out of time before finishing. Use checkpoint more often and continue from the last saved step." }].slice(-20);
+      job.history = [...(job.history || []), { at: new Date().toISOString(), kind: "turn-limit", summary: nextStep }].slice(-20);
       ledger.save(); return;
     }
+    if (ticketRetry && job.ticketStepLimits) { delete job.ticketStepLimits; ledger.save(); }
     // Ended with text but no finish call: deliver it where it belongs, then close the turn.
     const text = String(result.result || "").trim();
     if (!text) throw new Error("model returned no answer or accepted completion");

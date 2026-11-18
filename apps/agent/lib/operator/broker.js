@@ -2756,6 +2756,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // turndiag/turn_status (a Keir tool, not a turndiag one) up to 13 times in a row on one ticket, because the
       // refusal never said where the tool lives. turn_status is read-only and already visible to this task, so run it.
       if (input.tool === "turn_status" && job.role !== "player") return await w3.call(job, "turn_status", {}, signal);
+      if (input.tool === "team_activity" && require("./w3tools").createVisible(job, "team_activity")) {
+        return tool(job, "team_activity", input.args || {}, signal);
+      }
       // read_tool is a read path for every role, owner included: write-like tools
       // (heal applies, creates, deletes, sends, merges) go through their own gated
       // tools (request_heal, github, support_action). KBX3 2026-10-28: an owner task
@@ -4257,7 +4260,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "shell") return sandbox.run(job.id, input.command, signal, { deps: job.repository && sandbox.deps?.(job.repository), timeoutMs: Math.min(300, Math.max(10, Number(input.timeoutSeconds) || 60)) * 1000 });
     if (name === "repository_snapshot") {
       const repository = config.repositories[input.repository];
-      if (!repository || (job.role !== "owner" && input.repository !== "AHDGame" && !(input.repository === "AHDClient" && (developerTask(job) || developerTicket(job))))) throw new Error("unknown repository; registered: " + Object.keys(config.repositories).join(", "));
+      const developer = developerTask(job) || developerTicket(job);
+      const botSupport = input.repository === "adhd-bot" && job.role !== "player" && (developer || job.kind === "ticket" && Boolean(job.ticket));
+      if (!repository || (job.role !== "owner" && input.repository !== "AHDGame" && !(input.repository === "AHDClient" && developer) && !botSupport)) throw new Error("unknown repository; registered: " + Object.keys(config.repositories).join(", "));
       const branch = input.repository === "AHDGame" ? (input.ref === "development" ? "development" : "main") : "main";
       if (job.repository === input.repository && job.repositoryRef?.branch === branch && !input.refresh) {
         // A task's snapshot does not follow the branch. Say when it has moved so a
@@ -4327,6 +4332,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       return request(job, input.kind, input.args, input.reason);
     }
     if (name === "publish_patch") {
+      if (job.repository === "adhd-bot") throw new Error("Discord bot patches require a maintainer to publish from arle-bina/adhd-bot. Give them the exact patch and test results.");
       if (!job.repository) throw new Error("load a repository snapshot first");
       if (typeof input.title !== "string" || !/^(fix|feat|chore|docs|refactor|test)(\([^\n]+\))?: .{3,150}$/.test(input.title) || typeof input.body !== "string" || input.body.length > 6000) throw new Error("use a conventional commit title and bounded PR description");
       // Format changed files the way CI checks them, so formatting never turns
