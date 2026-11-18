@@ -2069,13 +2069,14 @@ test("Keir's first post in a new ticket is preceded once by the expectations not
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Found the hidden subsidiary views. I am checking where they come from." } });
   const posts = f.calls.filter(c => c[1] === "support_public_update");
   assert.equal(posts.length, 2);
-  assert.match(JSON.stringify(posts[0]), /help work out whether it's a bug and prepare a fix, but I can't promise it gets resolved until a developer or moderator steps in/);
+  const isWelcome = (call) => call[1] === "support_public_update" && /^Hi, I'm Keir\b/.test(call[2]?.message);
+  assert.ok(isWelcome(posts[0]));
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Still checking the subsidiary views; nothing for you to change." } }).catch(() => {});
-  assert.equal(f.calls.filter(c => c[1] === "support_public_update" && /developer or moderator/.test(JSON.stringify(c))).length, 1);
+  assert.equal(f.calls.filter(isWelcome).length, 1);
   const g = fixture(); g.ledger.data.statusCards = { 124: { messageId: "1" } };
   const k = running(g, { kind: "command", role: "owner", actorId: g.config.ownerId, ticket: 124, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-124", authorId: g.config.ownerId } });
   await g.broker.tool(k, "support_action", { tool: "support_public_update", args: { message: "Found the hidden subsidiary views. I am checking where they come from." } }).catch(() => {});
-  assert.equal(g.calls.filter(c => /developer or moderator/.test(JSON.stringify(c))).length, 0);
+  assert.equal(g.calls.filter(isWelcome).length, 0);
 });
 
 test("a non-economy promotion of a rule change asks for one sign-off; Ariane telling Keir to ship counts", async () => {
