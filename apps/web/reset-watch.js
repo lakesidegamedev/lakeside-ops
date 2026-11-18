@@ -16,10 +16,8 @@
 //   denomination the corporation turn used to write the site.
 // - Site return divides annualized profit by paid operating capacity cost.
 //   The committed-capital view also includes paid construction in progress.
-// - A sector is viable when a new plant's yearly return beats the host
-//   country's prime rate. Below that a player is better off holding bonds, so
-//   "profitable" alone (every seeded site is) does not make a sector worth
-//   entering.
+// - A viable sector beats the host prime rate without paying back so fast
+//   that it crowds out other investments.
 // - National state corporations are excluded from sector and balance figures.
 //   They are seeded giants no player competes on equal terms with.
 // - Country balance is sector-adjusted: each site's margin minus the median
@@ -57,6 +55,9 @@ const T = Object.freeze({
   viableProfitableShare: 0.6,
   weakProfitableShare: 0.35,
   minSitesForVerdict: 3,
+  paybackTooFastTurns: 20,
+  paybackTargetMinTurns: 30,
+  paybackTargetMaxTurns: 50,
   // balance: points of yearly plant return above the same sector elsewhere
   edgeWarnPp: 1.5,
   edgeBadPp: 3,
@@ -238,16 +239,33 @@ function siteRows({ sectors, corpById, fxByCountry, fxByCurrency = new Map(), pr
   return rows;
 }
 
+function paybackVerdict(turns) {
+  if (turns === Infinity) return { level: "bad", label: "No payback" };
+  if (!Number.isFinite(turns)) return { level: "none", label: "No estimate" };
+  if (turns < T.paybackTooFastTurns) return { level: "bad", label: "Too fast" };
+  if (turns < T.paybackTargetMinTurns) return { level: "warn", label: "Fast" };
+  if (turns > T.paybackTargetMaxTurns) return { level: "none", label: "Above target" };
+  return { level: "ok", label: "On target" };
+}
+
 function sectorVerdict(m) {
   if (m.sites < T.minSitesForVerdict) return { level: "none", why: "Too few sites to judge" };
   const pr = m.profitableShare;
   const ex = m.excessPp;
   const ret = m.returnPct == null ? "an unknown return" : `${m.returnPct}% a year`;
+  const payback = m.paybackVerdict ?? paybackVerdict(m.paybackTurns);
+  if (payback.label === "Too fast") {
+    return { level: "bad", why: `Median payback is under ${T.paybackTooFastTurns} turns` };
+  }
+  if (payback.label === "No payback") return { level: "bad", why: "The median site has no payback at current earnings" };
   if (pr != null && pr < T.weakProfitableShare) return { level: "bad", why: `Only ${Math.round(pr * 100)}% of sites make money` };
   if (ex == null) return { level: "bad", why: "No return can be measured" };
   if (ex < T.weakExcessPp) return { level: "bad", why: `Operating sites earn ${ret}, ${Math.abs(ex)} points below the local prime rate` };
   if (pr != null && pr < T.viableProfitableShare) return { level: "warn", why: `${Math.round(pr * 100)}% of sites make money` };
   if (ex < T.viableExcessPp) return { level: "warn", why: `Operating sites earn ${ret}, only ${ex} points above the local prime rate` };
+  if (payback.level === "warn") {
+    return { level: "warn", why: `Median payback is under the ${T.paybackTargetMinTurns}-turn target` };
+  }
   return { level: "ok", why: `Operating sites earn ${ret}, ${ex} points above the local prime rate` };
 }
 
@@ -262,6 +280,7 @@ function sectorMetrics(rows) {
     const op = all.filter((r) => r.operating);
     const capital = op.reduce((sum, r) => sum + (r.committedCost ?? 0), 0);
     const profit = op.reduce((sum, r) => sum + (r.annualProfit ?? 0), 0);
+    const medianPayback = median(op.map((r) => r.paybackTurns));
     const m = {
       lane,
       label: LANE_LABEL[lane] || lane,
@@ -273,7 +292,8 @@ function sectorMetrics(rows) {
       playerCorps: new Set(all.filter((r) => r.player).map((r) => r.corpId)).size,
       profitableShare: share(op.filter((r) => r.profitable).length, op.length),
       marginMedian: round(median(op.map((r) => r.margin))),
-      paybackTurns: round(median(op.map((r) => r.paybackTurns)), 0),
+      paybackTurns: round(medianPayback, 1),
+      paybackVerdict: paybackVerdict(medianPayback),
       returnPct: round(median(op.map((r) => r.returnPct)), 1),
       committedReturnPct: round(share(100 * profit, capital), 1),
       primePct: round(median(op.map((r) => r.primePct)), 2),
@@ -872,7 +892,7 @@ function verdicts(s) {
   const infraLevel = level(t.level, b.level);
   const secs = (ms) => (ms == null ? "?" : `${Math.round(ms / 1000)}s`);
   return {
-    sectors: { level: sectorLevel, headline: `${sec.viable} of ${sec.judged} sectors viable`, detail: sec.failing ? `${sec.failing} return less than the prime rate` : sec.weak ? `${sec.weak} barely beat the prime rate` : "Every sector beats the prime rate" },
+    sectors: { level: sectorLevel, headline: `${sec.viable} of ${sec.judged} sectors viable`, detail: sec.failing ? `${sec.failing} need action` : sec.weak ? `${sec.weak} to watch` : "All judged sectors pass" },
     balance: { level: balanceLevel, headline: worstCountry ? `${worstCountry.country} ${worstCountry.edgePp > 0 ? "+" : ""}${worstCountry.edgePp} pts` : worstForm ? `${worstForm.label} ${Math.round((worstForm.choiceShare || 0) * 100)}% of picks` : "No country or form stands out", detail: `${countries.length} host countries, ${s.balance.forms.playerCorps} player companies` },
     politics: { level: polLevel, headline: `${contested} of ${races} races contested`, detail: empty ? `${empty} races have no candidate yet` : "Every race has a candidate" },
     infra: { level: infraLevel, headline: `Turns p95 ${secs(t.p95Ms)}`, detail: `${t.failures} failed of the last ${t.count}; releases ${b.commitToLiveMedianMin ?? "?"} min commit to live` },
@@ -890,7 +910,7 @@ function historyRecord(s) {
     siteMetricsVersion: s.sectors.siteMetricsVersion,
     // [profitable share, median margin, return %/yr, points over prime]
     lanes: Object.fromEntries(s.sectors.lanes.map((l) => [l.lane, [l.profitableShare == null ? null : round(l.profitableShare, 2), l.marginMedian, l.returnPct, l.excessPp]])),
-    sectors: { viable: s.sectors.viable, thin: s.sectors.weak, below: s.sectors.failing, worldReturn: s.sectors.worldReturnPct },
+    sectors: { viable: s.sectors.viable, thin: s.sectors.weak, failing: s.sectors.failing, worldReturn: s.sectors.worldReturnPct },
     countries: Object.fromEntries(s.balance.countries.map((c) => [c.country, c.edgePp])),
     forms: Object.fromEntries(s.balance.forms.forms.map((f) => [f.form, [f.choiceShare == null ? null : round(f.choiceShare, 3), f.edgePp]])),
     playerCorps: s.balance.forms.playerCorps,
@@ -974,7 +994,7 @@ function readLatest(dir) {
 module.exports = {
   TURNS_PER_DAY, TURNS_PER_YEAR, ENGINE_MAX_PAYBACK_TURNS, THRESHOLDS: T, LANES,
   quantile, median, effectiveParties, laneOf,
-  siteRows, sectorMetrics, sectorVerdict, countryBalance, legalFormBalance, legalFormLabel,
+  siteRows, sectorMetrics, sectorVerdict, paybackVerdict, countryBalance, legalFormBalance, legalFormLabel,
   candidateFields, raceMargins, competitiveness, dominance,
   turnRecord, turnMetrics, phaseDurations, buildMetrics, groupReleases,
   collect, verdicts, historyRecord, appendHistory, loadHistory, writeLatest, readLatest, historyPath,
