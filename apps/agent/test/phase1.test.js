@@ -340,15 +340,22 @@ test("Keir introduces itself once per player, then answers returning players wit
     await say(f, "The fund buys only Austrian bonds because candidates are sorted by country code.");
     return posted[0];
   };
-  const DISCLOSURE = "Hi, I'm Keir, the support assistant for A House Divided. I can look into this, help work out whether it's a bug and prepare a fix, but I can't promise it gets resolved until a developer or moderator steps in.";
   const REPLY = "The fund buys only Austrian bonds because candidates are sorted by country code.";
   // Review 2026-11-01 (owner): no ticket count, no thanks; the answer leads.
-  assert.equal(await run({ uid: "888888888888888888", prior: 0 }), DISCLOSURE);
+  const welcome = await run({ uid: "888888888888888888", prior: 0 });
+  assert.match(welcome, /^Hi, I'm Keir, the AI support assistant/);
+  assert.match(welcome, /\*\*How I help\*\*.*gather evidence/);
+  assert.match(welcome, /\*\*When staff step in\*\*.*approval/);
+  assert.match(welcome, /\*\*Details that help\*\*.*screenshot or game link/);
+  assert.match(welcome, /\*\*Rate a reply\*\*.*⭐.*👍.*👎.*Report a problem/);
+  assert.deepEqual(require("../lib/operator/replysplit").splitReply(welcome), [welcome], "the welcome stays together in Discord");
   assert.equal(await run({ uid: "888888888888888888", prior: 4, introduced: true }), REPLY, "a returning player gets the answer first");
   assert.equal(await run({ uid: "888888888888888888", prior: 2, priorDisclosed: true }), REPLY);
-  assert.equal(await run({ uid: "888888888888888888", prior: 10 }), DISCLOSURE, "never introduced before: the introduction once, with no count");
+  assert.equal(await run({ uid: "888888888888888888", prior: 10 }), welcome, "never introduced before: the introduction once, with no count");
   assert.equal(await run({ uid: "888888888888888888", prior: 22, introduced: true, keirOpened: true }), "I opened this ticket from your message so it can be tracked here.", "a ticket Keir opened from chat says so (ticket 1708)");
-  assert.doesNotMatch(await run({ uid: "888888888888888888", prior: 22, keirOpened: true }), /ticket, thank you|th ticket/);
+  const opened = await run({ uid: "888888888888888888", prior: 22, keirOpened: true });
+  assert.match(opened, /\nI opened this ticket from your message[^\n]+\n- \*\*How I help/);
+  assert.doesNotMatch(opened, /ticket, thank you|th ticket/);
   const f = fixture();
   assert.equal(await run({ uid: f.config.ownerId, prior: 3 }), "The fund buys only Austrian bonds because candidates are sorted by country code.", "staff: no introduction, the reply is the first post");
   assert.match(await run({ uid: "888888888888888888", prior: 0, fail: true }), /^Hi, I'm Keir/, "lookup failure falls back to the introduction");
