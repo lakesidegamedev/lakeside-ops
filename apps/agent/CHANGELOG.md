@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 10.5.0 (2026-11-18)
+
 ### For users
 
 - Keir now works through what Ask and Keir itself flag for a human, instead of leaving it on a page nobody opens. Every 30 minutes it collects Ask's doc conflicts and blocked, salvaged or downvoted answers, player thumbs down it did not already act on, and tickets where its own guards refused more than two posts in a day. Each new item becomes one internal task, at most 3 per sweep and 12 per day, that checks the answer or doc against the code and live data, corrects or files a card, and closes the item in Ask. Nothing from these tasks is ever posted to a player.
