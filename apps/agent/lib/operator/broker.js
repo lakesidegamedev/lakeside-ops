@@ -3322,7 +3322,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             // (ticket 1537, 2026-10-14).
             const liveAsk = (a) => !["done", "dismissed", "cancelled"].includes(d.jobs[a.jobId]?.state)
               && Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.actionId === a.id);
-            const same = (a) => a.kind === "github" && a.digest === hash({ kind: a.kind, args: a.args }) && a.args.repository === args.repository && a.args.action === args.action &&
+            const same = (a) => a.kind === "github" && a.digest === hash({ kind: a.kind, args: a.args }) && (!docReview || a.args.repository === args.repository) && a.args.action === args.action &&
               a.args.head === head && (args.action === "merge" ? a.args.number === args.number : a.args.to === args.to);
             for (const a of Object.values(d.actions)) {
               if (!same(a) || a.state !== "approved" || a.approvedBy !== config.ownerId || !a.approvalMessage || a.approvalMessage === job.source?.messageId || a.expiresAt < now()) continue;
