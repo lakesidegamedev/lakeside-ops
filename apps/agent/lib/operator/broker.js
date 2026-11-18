@@ -65,7 +65,13 @@ const UNANSWERED = /\?|<@!?&?\d+>|^\s*(?:how|what|why|when|where|which|who|can|c
 const ASKS_WHICH = /\b(?:which|what)\b[^.?!]{0,50}\b(?:bank|corporation|company|corp|sector|plant|page|screen|tab|country|state|party|character|fund|account)\b[^.!]*\?|\b(?:tell|show|let) me (?:which|what|where)\b[^.?!]{0,50}\b(?:page|screen|tab|sector|company|corporation)\b|\b(?:send|share|post|paste|give)\b[^.?!]{0,40}\b(?:link|url|page)\b/i;
 const DECISION_WORDS = /\b(?:compensat\w*|refund\w*|reimburs\w*|restitution|make (?:them|the player) whole|owner (?:decision|ruling|approval)|please decide|decide whether|needs? (?:a|an) (?:owner |developer )?(?:decision|ruling))\b/i;
 const ordinal = (n) => { const v = n % 100; return `${n}${v >= 11 && v <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th"}`; };
-const DISCLOSURE = "Hi, I'm Keir, the support assistant for A House Divided. I can look into this, help work out whether it's a bug and prepare a fix, but I can't promise it gets resolved until a developer or moderator steps in.";
+const DISCLOSURE = [
+  "Hi, I'm Keir, the AI support assistant for A House Divided.",
+  "- **How I help** I can check game rules and records, investigate bugs, and prepare fixes. If my first reply misses something, tell me what to check. I can still gather evidence that helps the developers fix it faster.",
+  "- **When staff step in** Staff handle moderation and changes to account access. Some fixes need their approval before I can apply them.",
+  "- **Details that help** Tell me what happened and what you expected. A screenshot or game link helps.",
+  "- **Rate a reply** Use the buttons under my answers. Pick ⭐ or 👍 if it helped, 👎 if it missed the mark, or **Report a problem** to flag a specific issue.",
+].join("\n");
 const { playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection, ackOnly } = require("./playercopy");
 
 const SUPPORT_READS = {
@@ -767,14 +773,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (hit) { ledger.audit("second_look_refused", { job: job.id, ticket: ticketNo, idea: hit.idea }); throw new Error(`Not posted: "${hit.sentence}" brings back an idea this ticket already ruled out ("${hit.idea}"). If you have new evidence, record it as a fact first and close the ruled-out entry; otherwise drop the claim.`); }
   }
   // Keir 4.0 (owner, 2026-10-14): the first thing Keir says in a ticket sets
-  // expectations. It can look into the problem, work out whether it is a bug
-  // and prepare a fix, but it cannot promise an outcome without a developer
-  // or moderator. Posted once per ticket, before Keir's first post there;
-  // tickets Keir already spoke in are left as they are.
-  // Owner, 2026-10-14: Keir remembers people across tickets. A player hears
-  // the introduction once, on their first ticket; after that a returning
-  // player is welcomed back with the count of tickets they have filed. Staff
-  // filing a ticket get no introduction at all.
+  // expectations before its first real reply. First-time players get the
+  // welcome once. Returning players and staff go straight to the reply.
   async function openingFor(n) {
     const one = await mcp.call("heal-ops", "heal_query", { env: "prod", collection: "tickets", filter: { ticketNumber: n }, projection: { discordUserId: 1, discordDisplayName: 1, discordUsername: 1, "publicUpdates.key": 1 }, limit: 1 }, false);
     const t = one?.docs?.[0];
@@ -795,7 +795,10 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // was not filed by the player. "This is your 23rd ticket, thank you for
     // submitting it" read as shaming there, so it gets no count and no thanks.
     const keirOpened = Object.values(d.jobs).some((j) => Object.values(j.openedTickets || {}).some((r) => Number(r?.number) === n));
-    if (keirOpened) return { text: introduced ? "I opened this ticket from your message so it can be tracked here." : `${DISCLOSURE} I opened this ticket from your message so it can be tracked here.` };
+    if (keirOpened) {
+      const openedFromChat = "I opened this ticket from your message so it can be tracked here.";
+      return { text: introduced ? openedFromChat : DISCLOSURE.replace("\n", `\n${openedFromChat}\n`) };
+    }
     // Review 2026-11-01 (owner): the ticket count and thanks were padding
     // ahead of the answer ("Welcome back, Larry Fink. This is your 58th
     // ticket"). A new player hears the introduction once; a returning player

@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- A short Markdown welcome explains how Keir helps on a first support ticket, when staff step in, what details to include, and how to rate replies.
+
 ## 10.5.1 (2026-11-17)
 
 - Keir prepares guide corrections from Ask reviews, asks for approval on the exact PR head, then carries approved changes through normal release checks. A card alone cannot mark a guide fixed.
