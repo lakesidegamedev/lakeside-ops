@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 
 const { ticketClaim } = require("./ticketClaim");
 const authority = require("./authority");
@@ -60,7 +61,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     d.channels[channel.id] = { ...d.channels[channel.id], keirStopped: { by: actor, at, messageId } };
     for (const id of selected) {
       const job = d.jobs[id];
-      if (!["done", "cancelled", "dismissed"].includes(job.state)) {
+      if (!JOB_TERMINAL.includes(job.state)) {
         job.state = "cancelled"; job.updatedAt = at; job.wakeAt = 0;
         job.summary = "Stopped by staff; no further automatic work on this ticket.";
       }
@@ -150,7 +151,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     // A developer talking in a channel where Keir is working with them, or just
     // spoke, is continuing that conversation even without naming Keir.
     const developerThread = role !== "player" && channel.type !== 1 &&
-      Object.values(d.jobs).some((j) => j.channelId === channel.id && j.actorId === actor && ["command", "conversation"].includes(j.kind) && !["done", "cancelled", "dismissed"].includes(j.state));
+      Object.values(d.jobs).some((j) => j.channelId === channel.id && j.actorId === actor && ["command", "conversation"].includes(j.kind) && !JOB_TERMINAL.includes(j.state));
     const continuation = (lease?.actorId === actor && lease.until > now()) || developerThread || (role === "player" && d.participantLeases[participantKey] > now());
     const reply = message.referenced_message?.author?.id === config.botId;
     // Explicit address starts work. An unaddressed follow-up can only feed a
@@ -311,7 +312,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
         if (role !== "owner" && verb !== "status" && !developerHealDecision) {
           ledger.notify(key, actor, `${verb} requires the owner.`);
         } else if (verb === "status") {
-          const active = Object.values(d.jobs).filter((j) => (role === "owner" || j.actorId === actor) && !["done", "cancelled", "dismissed"].includes(j.state));
+          const active = Object.values(d.jobs).filter((j) => (role === "owner" || j.actorId === actor) && !JOB_TERMINAL.includes(j.state));
           let running = ""; try { running = `${selfInfo(config).sentence}\n`; } catch { /* version facts unavailable */ }
           // Keir 5.0 scorecard: problems Keir found before any player did.
           const sc = d.watch?.score, open = Object.values(d.watch?.findings || {}).filter((f) => f.state !== "resolved");
@@ -368,9 +369,9 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       if (summonTask && channel.type !== 1) d.summonedChannels[channel.id] = { actorId: actor, at: now() };
       d.conversations[channel.id] = { actorId: actor, until: now() + 20 * 60000, startedAt: now() };
       const quick = !summonTask && quickQuestion(addressedText);
-      const live = Object.values(d.jobs).find((j) => isQuick(j) === quick && j.channelId === channel.id && j.role === role && j.actorId === actor && !["done", "dismissed", "cancelled"].includes(j.state));
+      const live = Object.values(d.jobs).find((j) => isQuick(j) === quick && j.channelId === channel.id && j.role === role && j.actorId === actor && !JOB_TERMINAL.includes(j.state));
       if (!live && !explicit) {
-        const open = Object.values(d.jobs).find((j) => ["command", "conversation"].includes(j.kind) && j.channelId === channel.id && j.actorId === actor && !["done", "dismissed", "cancelled"].includes(j.state));
+        const open = Object.values(d.jobs).find((j) => ["command", "conversation"].includes(j.kind) && j.channelId === channel.id && j.actorId === actor && !JOB_TERMINAL.includes(j.state));
         if (!open) { d.seen[key] = "ambient"; ledger.save(); return; }
         d.seen[key] = open.id; (open.inbox ||= []).push(s); delete open.waitingFor;
         if (["waiting", "blocked"].includes(open.state)) open.state = "queued";

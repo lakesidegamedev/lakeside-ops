@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./lib/operator/machines");
 const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
@@ -527,7 +528,7 @@ async function flushOutbox() {
     // Resume safety: an acknowledgment, or a message for a task that already
     // finished, that is older than the resume horizon would arrive as noise.
     const staleJob = typeof entry.destination === "string" && entry.destination.startsWith("channel:") ? ledger.data.jobs[entry.destination.slice(8)] : null;
-    if (Date.now() - (entry.at || 0) > RESUME_HORIZON_MS && (key.startsWith("ack:") || (staleJob && ["done", "cancelled", "dismissed"].includes(staleJob.state)))) {
+    if (Date.now() - (entry.at || 0) > RESUME_HORIZON_MS && (key.startsWith("ack:") || (staleJob && JOB_TERMINAL.includes(staleJob.state)))) {
       entry.deliveredAt = Date.now(); entry.skipped = "stale on resume"; ledger.audit("outbox_skipped_stale", { key }); ledger.save(); continue;
     }
     try {
@@ -610,7 +611,7 @@ async function flushOutbox() {
 function stopModerationTicket(channelId, number, category = "moderation") {
   const job = ledger.data.jobs[ledger.data.seen[`ticket:${number}`]];
   for (const j of Object.values(ledger.data.jobs)) {
-    if ((j === job || (j.channelId === channelId && j.kind === "ticket")) && !["done", "cancelled", "dismissed"].includes(j.state)) {
+    if ((j === job || (j.channelId === channelId && j.kind === "ticket")) && !JOB_TERMINAL.includes(j.state)) {
       j.state = "cancelled"; j.summary = category === "incident" ? "Incident ticket: staff own it; repeat reports merge into it." : "Moderation ticket: left to the moderators.";
       ledger.audit(`${category}_ticket_skipped`, { job: j.id, ticket: number });
     }
@@ -976,14 +977,14 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { return reply(400, { error: e.message }); }
   }
   if (req.url === "/channels" && req.method === "GET") {
-    const channels = new Set(Object.values(ledger.data.jobs).filter((j) => !["done", "cancelled", "dismissed"].includes(j.state) && snowflake(j.channelId)).map((j) => j.channelId));
+    const channels = new Set(Object.values(ledger.data.jobs).filter((j) => !JOB_TERMINAL.includes(j.state) && snowflake(j.channelId)).map((j) => j.channelId));
     for (const [id, c] of Object.entries(ledger.data.conversations || {})) if (c.until > Date.now()) channels.add(id);
     for (const id of Object.keys(ledger.data.summonedChannels || {})) channels.add(id);
     return reply(200, { channels: [...channels] });
   }
   const channelMatch = /^\/channel-status\/(\d{15,22})$/.exec(req.url);
   if (channelMatch && req.method === "GET") {
-    const jobs = Object.values(ledger.data.jobs).filter((j) => j.channelId === channelMatch[1] && !["done", "cancelled", "dismissed"].includes(j.state));
+    const jobs = Object.values(ledger.data.jobs).filter((j) => j.channelId === channelMatch[1] && !JOB_TERMINAL.includes(j.state));
     const conversation = ledger.data.conversations?.[channelMatch[1]];
     const standing = ledger.data.summonedChannels?.[channelMatch[1]];
     const live = standing || conversation?.until > Date.now();
@@ -1137,7 +1138,7 @@ setInterval(() => flushOutbox().catch((e) => log(`outbox: ${e.message}`)), 1000)
 // finished tickets leave the ledger for an archive file after 7 days, other
 // finished tasks after six hours.
 function housekeeping() {
-  const d = ledger.data, now = Date.now(), terminal = ["done", "dismissed", "cancelled"];
+  const d = ledger.data, now = Date.now(), terminal = JOB_TERMINAL;
   const finished = (id) => { const j = d.jobs[id]; return !j || (terminal.includes(j.state) && now - (j.updatedAt || j.at || 0) > 3600000); };
   const ws = path.join(config.stateDir, "workspaces"), bases = path.join(config.stateDir, "base"), art = path.join(config.stateDir, "artifacts");
   let freed = 0;

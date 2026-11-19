@@ -1,9 +1,10 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Authenticated owner preferences are separate from agent-written task state.
 const crypto = require("node:crypto");
 const skills = require("./skills");
 const { models, resolveModel } = require("./appmodels");
-const CLOSED = new Set(["done", "dismissed", "cancelled"]);
+const CLOSED = new Set(JOB_TERMINAL);
 const LANES = ["conversation", "voice", "coding", "investigation", "coordination"];
 const COMMANDS = [
   ["/stop", "Stop Keir and all active work"], ["/start", "Enable new work"],

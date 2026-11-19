@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 10.1.14 stand-down fixes (live ledger review, 2026-11-17). Pure functions, no ledger writes except applyOwnerChannelAnswer.
 //   A  noNewRefusal: no substantive post when nothing new arrived from the player and nothing changed since the last one.
 //   B  limitationLine: "passed it to the developers" only with a developer-visible receipt for the open question.
@@ -187,7 +188,7 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
     delete j.ownerDecisionPending;
     (j.inbox ||= []).push({ authorId: ownerId, role: "owner", at: new Date(at).toISOString(), decision: answered[0],
       content: `The owner answered the open decision in the ticket channel: ${content.slice(0, 600)}. Treat it as the decision (direction, not execution approval). Do not tell the player it is still waiting on the owner.` });
-    if (!["done", "dismissed", "cancelled"].includes(j.state)) { j.state = "queued"; j.wakeAt = 0; }
+    if (!JOB_TERMINAL.includes(j.state)) { j.state = "queued"; j.wakeAt = 0; }
   }
   return answered;
 }

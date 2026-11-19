@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Owner-authenticated files. Upload ids are references, not authority or paths.
 const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
@@ -71,7 +72,7 @@ function createUploads({ ledger, config, now = () => Date.now() }) {
     fs.unlinkSync(file(id)); delete records()[id]; ledger.save(); return { removed: true };
   }
   function cleanup() {
-    const liveMessages = new Set(Object.values(ledger.data.jobs || {}).filter(j => !["done", "dismissed", "cancelled"].includes(j.state)).flatMap(j => (require("./appcontrols").rootOf(ledger.data, j)?.appAttachments || []).map(a => a.messageId)));
+    const liveMessages = new Set(Object.values(ledger.data.jobs || {}).filter(j => !JOB_TERMINAL.includes(j.state)).flatMap(j => (require("./appcontrols").rootOf(ledger.data, j)?.appAttachments || []).map(a => a.messageId)));
     let count = 0;
     for (const item of Object.values(records())) {
       const age = now() - item.at, keep = item.claims.length ? 7 * 86400000 : 86400000;

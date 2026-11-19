@@ -1,8 +1,9 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const crypto = require("node:crypto");
 const { rootJob } = require("./workrecord");
 const { engineeringGuard, engineeringSpec } = require("./engineering");
-const TERMINAL = ["done", "dismissed", "cancelled"];
+const TERMINAL = JOB_TERMINAL;
 const KINDS = ["operator_unavailable", "scan_stale", "ticket_stalled", "approval_delivery_failed", "game_turn_failed", "game_turn_stalled", "sensor_stale"];
 const WATCH_READS = { gamestate: ["game_overview"], turndiag: ["lock_status", "turn_anomalies", "turn_phase_timings", "phase_history"] };
 const WATCH_TOOLS = ["operator_roles", "read_servers", "read_tools", "read_tool", "calculate", "checkpoint", "finish"];

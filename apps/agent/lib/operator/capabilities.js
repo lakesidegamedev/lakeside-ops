@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 2.1 capabilities: what changed recently, seeing a game page, and waking
 // after a turn to verify a fix. Owner-picked 2026-10-13.
 const { execFile } = require("node:child_process");
@@ -84,7 +85,7 @@ async function viewPage(url, { run = exec, playwright = playwrightModule() } = {
 const MAX_TURN_WATCH_MS = 8 * 3600000;
 function createTurnWatch({ ledger, currentTurn, now = () => Date.now(), log = () => {}, onTurn = null }) {
   async function tick() {
-    const watching = Object.values(ledger.data.jobs).filter((j) => j.turnWatch && !["done", "dismissed", "cancelled"].includes(j.state));
+    const watching = Object.values(ledger.data.jobs).filter((j) => j.turnWatch && !JOB_TERMINAL.includes(j.state));
     if (!watching.length) return;
     let turn; try { turn = await currentTurn(); } catch (e) { log(`turnwatch: ${e.message}`); return; }
     for (const job of watching) {

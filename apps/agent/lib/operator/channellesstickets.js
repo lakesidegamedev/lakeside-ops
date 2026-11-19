@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // A ticket task adopted from a handoff after its channel was already gone has no
 // channel id. The sweep's Discord check (GET /channels/<id> returning 404) can
 // then never close it, so it woke every fifteen minutes for 29 hours (ticket
@@ -22,7 +23,7 @@ async function closeIfTicketClosed(job, readTicket) {
 // The live ticket task already bound to a channel, if any (the sweep must not adopt it twice).
 function liveTaskForChannel(jobs, channelId) {
   if (!channelId) return null;
-  return Object.values(jobs || {}).find((j) => j.channelId === channelId && j.kind === "ticket" && !["done", "cancelled", "dismissed"].includes(j.state)) || null;
+  return Object.values(jobs || {}).find((j) => j.channelId === channelId && j.kind === "ticket" && !JOB_TERMINAL.includes(j.state)) || null;
 }
 
 module.exports = { closeIfTicketClosed, liveTaskForChannel };

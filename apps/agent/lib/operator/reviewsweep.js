@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir review sweep. Things Ask and Keir flag for a human go into something that is actually worked, not a page or a
 // Discord ping (owner, 2026-11-18). Every 30 minutes a model-free collector gathers:
 //   Ask:  GET {KEIR_ASK_URL}/api/keir-ask/review (open doc conflicts; blocked, salvaged or downvoted answers not yet reviewed)
@@ -19,7 +20,7 @@ const REFUSAL_THRESHOLD = 2; // more than this many on one ticket
 const SEEN_RETAIN_MS = 60 * DAY_MS;
 const ASK_TIMEOUT_MS = 20000;
 const REFUSAL_KINDS = ["asked_deflection_refused", "case_contradiction_refused", "team_cover_refused", "resolve_refused_policy"];
-const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
+const TERMINAL = new Set(JOB_TERMINAL);
 const clip = (t, n) => String(t || "").replace(/\s+/g, " ").trim().slice(0, n);
 const noDash = (t) => String(t || "").replace(/[–—]/g, "-");
 

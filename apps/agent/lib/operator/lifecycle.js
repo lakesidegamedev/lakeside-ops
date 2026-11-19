@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir's job lifecycle: the scheduling rules that decide when a job runs, waits,
 // is held, ends or is adopted. operator.js drain() and scan() call these; they
 // were inline there and moved here unchanged. Pure over (data, job, context):
@@ -46,7 +47,7 @@
 //   still wakes it), resolution stall, directive. Admission adds its own holds after
 //   this (staff active, support deferred, owner pause) in admission.js / operator.js.
 
-const TERMINAL = ["done", "cancelled", "dismissed"];
+const TERMINAL = JOB_TERMINAL;
 
 // The one definition of "a human message", shared with the unread watchdog in
 // operator.js: automatic sources (including turn-watch mail) do not count.

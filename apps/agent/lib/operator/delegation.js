@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const fs = require("node:fs");
 const musePolicy = require("./ownermuse-policy");
 const path = require("node:path");
@@ -92,7 +93,7 @@ function createDelegation({ ledger, sandbox, config, now = () => Date.now() }) {
   }
   function complete(child) {
     const parent = ledger.data.jobs[child.codingParent];
-    if (!parent || child.codingReported || !["done", "blocked", "dismissed", "cancelled"].includes(child.state) || ["done", "cancelled", "dismissed"].includes(parent.state)) return;
+    if (!parent || child.codingReported || !["done", "blocked", "dismissed", "cancelled"].includes(child.state) || JOB_TERMINAL.includes(parent.state)) return;
     child.codingReported = true;
     if (child.investigation) {
       (parent.inbox ||= []).push({ content: `Investigation ${child.id} (${child.provider?.model || "investigator"}) finished ${child.state}: ${String(child.summary || "").slice(0, 4000)}. Check the key evidence yourself before acting on it or telling the player.`, at: new Date(now()).toISOString(), investigationResult: child.id });
@@ -110,7 +111,7 @@ function createDelegation({ ledger, sandbox, config, now = () => Date.now() }) {
     for (const child of Object.values(ledger.data.jobs)) {
       if (!child.codingParent) continue;
       const parent = ledger.data.jobs[child.codingParent];
-      if ((!parent || ["done", "cancelled", "dismissed"].includes(parent.state)) && ["queued", "waiting", "blocked"].includes(child.state)) {
+      if ((!parent || JOB_TERMINAL.includes(parent.state)) && ["queued", "waiting", "blocked"].includes(child.state)) {
         child.state = "cancelled"; child.wakeAt = 0; child.updatedAt = now();
         ledger.audit("delegation_cancelled", { job: child.id, parent: child.codingParent, reason: "parent-terminal-or-missing" }); ledger.save();
       }

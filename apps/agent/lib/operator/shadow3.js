@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 3.0 shadow review. The 2.x shadow inferred workflow from job-local
 // timestamps, which produced false silence (another job had posted) and
 // double flags (blocked reported as both blocked and waiting-on-owner).
@@ -15,7 +16,7 @@
 const { projectWorkRecords, integrityReport } = require("./workrecord");
 const { BUDGETS } = require("./metrics");
 
-const TERMINAL = ["done", "cancelled", "dismissed"];
+const TERMINAL = JOB_TERMINAL;
 const TECHNICAL = /```|\/root\/|\/var\/lib|src\/[\w/.-]+\.(?:ts|tsx|js)|publish_patch|repository_snapshot|mcp__|\bsha\b|[0-9a-f]{10,40}/i;
 const GENERIC_ACK = /^(?:i['’]m on it|on it|looking into it)[.!]*$/i;
 const short = (t, n = 160) => String(t || "").replace(/\s+/g, " ").slice(0, n);

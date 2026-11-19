@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const { createHash } = require("node:crypto");
 // Keir 5.0 watch (owner, 2026-10-14): "no player is ever the first to notice".
 // Cheap deterministic sensors run after each processed turn and on their own
@@ -40,7 +41,7 @@ function warningPhase(a) {
   return match ? { phase: match[1], text: match[2] } : null;
 }
 const warningFingerprint = (text) => `turn:warning:${text.toLowerCase().replace(/\d+/g, "#").slice(0, 80)}`;
-const TERMINAL = ["done", "dismissed", "cancelled"];
+const TERMINAL = JOB_TERMINAL;
 // Keir 5.1 root cause (2026-10-15 audit: one line of credit fault became five
 // findings, three public issues and two competing PRs). The same error text
 // from any sensor is one cause: a Sentry "Error: X" and a turn phase failing
@@ -177,7 +178,7 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
       : `turn:${kind}:${phase}${a.phase ? "" : `:${a.turn}`}`;
     const samePhase = (f) => f.phaseFailure?.kind === kind && f.phaseFailure.phases.includes(phase) ||
       (f.sensor === "turns" && /^turn:\d+:phase-/.test(f.fp) && f.fp.endsWith(`:${kind}:${phase}`));
-    const rank = (f) => f.jobId && d.jobs[f.jobId] ? (["done", "dismissed", "cancelled"].includes(d.jobs[f.jobId].state) ? 1 : 2) : 0;
+    const rank = (f) => f.jobId && d.jobs[f.jobId] ? (JOB_TERMINAL.includes(d.jobs[f.jobId].state) ? 1 : 2) : 0;
     const candidates = Object.values(w.findings).filter((f) => !f.correlatedWith && f.state !== "resolved" &&
       (f.fp === key || f.phaseFailure?.key === key || (samePhase(f) && (cause ? !f.phaseFailure?.cause || f.phaseFailure.cause === cause : !f.phaseFailure?.cause))))
       .sort((x, y) => rank(y) - rank(x) || x.firstSeen - y.firstSeen);

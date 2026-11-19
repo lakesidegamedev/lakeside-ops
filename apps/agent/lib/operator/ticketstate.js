@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 10.1.13 (owner, 2026-11-17): Keir DM'd about tickets that were already resolved (1838, 1842, 1836) and
 // told a player "still working on it" a minute after the ticket closed. One definition of "this ticket is over",
 // shared by every alert, every player post and every job wake:
@@ -6,7 +7,7 @@
 //   - the ticket's channel was deleted or closed outside Keir (owner rule: that means resolved);
 //   - Keir's own resolution was submitted.
 const SUPPORT_CLOSED = new Set(["resolved", "closed", "merged"]);
-const TERMINAL = new Set(["done", "cancelled", "dismissed"]);
+const TERMINAL = new Set(JOB_TERMINAL);
 
 function outcomeClosed(d, n) {
   for (const o of Object.values(d.ticketOutcomes || {})) if (Number(o.ticket) === Number(n) && !o.superseded && (SUPPORT_CLOSED.has(String(o.status)) || o.mergedInto)) return true;

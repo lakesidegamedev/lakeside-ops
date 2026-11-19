@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Owner app goals, planning and artifacts. This is partial Muse capability:
 // goals Keir plans and
 // advances on its own, a feed Keir writes, a morning brief, an approvals
@@ -9,7 +10,7 @@
 const crypto = require("node:crypto");
 const { threadOf } = require("./appchannel");
 
-const CLOSED = ["done", "dismissed", "cancelled"];
+const CLOSED = JOB_TERMINAL;
 const err = (status, message) => Object.assign(new Error(message), { status });
 const clip = (s, n) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
 const id = () => crypto.randomBytes(6).toString("hex");

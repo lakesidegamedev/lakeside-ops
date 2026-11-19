@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const SOFT_WAITS = ["developer_reply", "player_reply"];
 // Owner guidance crosses surfaces as a durable inbox delivery, never as new
 // approval authority. The original owner message and immutable action IDs stay
@@ -64,7 +65,7 @@ function createSupportDirectives({ ledger, config, mcp, discord, now = () => Dat
  function recipient(input, number, channelId) {
   if (!input.recipientTaskId) return null;
   const target = d.jobs[input.recipientTaskId];
-  if (!target || target.kind !== "command" || target.replyChannel === "app" || Number(ticketOf(target)) !== number || target.channelId !== channelId || ![config.ownerId, ...(config.staffIds || [])].includes(target.actorId) || target.source?.authorId !== target.actorId || ["done", "cancelled", "dismissed"].includes(target.state)) throw new Error("Recipient must be the existing authenticated staff command for this ticket.");
+  if (!target || target.kind !== "command" || target.replyChannel === "app" || Number(ticketOf(target)) !== number || target.channelId !== channelId || ![config.ownerId, ...(config.staffIds || [])].includes(target.actorId) || target.source?.authorId !== target.actorId || JOB_TERMINAL.includes(target.state)) throw new Error("Recipient must be the existing authenticated staff command for this ticket.");
   require("./supporttakeover").assertCanAct(d, target);
   return target;
  }

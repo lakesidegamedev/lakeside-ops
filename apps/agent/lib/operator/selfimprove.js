@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 5.7 (owner, 2026-10-16): "use Jev to automatically log and track
 // feedback and review past ticket interactions once per day to self improve".
 //
@@ -106,7 +107,7 @@ function createDailyReview({ ledger, config = {}, now = () => Date.now(), hour =
     }
     const e = easternParts(now());
     if (e.hour < hour || st.lastDay === e.day) return null;
-    if (Object.values(d.jobs).some((j) => j.selfReview && !["done", "dismissed", "cancelled"].includes(j.state))) return null;
+    if (Object.values(d.jobs).some((j) => j.selfReview && !JOB_TERMINAL.includes(j.state))) return null;
     st.lastDay = e.day;
     const until = now(), since = until - DAY_MS;
     const brief = reviewBrief(d, since, until);

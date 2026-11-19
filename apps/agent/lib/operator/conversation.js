@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const { redactSecrets } = require("../text");
 const isQuick = (job) => job.kind === "conversation";
 // Only unambiguous information requests enter the read-only lane. Actions keep
@@ -60,7 +61,7 @@ function createConversation({ ledger, config, now = () => Date.now(), mods }) {
   function progress(job) {
     // Internal summaries, approval arguments and private destinations never
     // enter this public projection, even for an owner conversation.
-    return Object.values(ledger.data.jobs).filter((j) => !isQuick(j) && j.id !== job.id && j.replyChannel === job.replyChannel && job.replyChannel && !["done", "cancelled", "dismissed"].includes(j.state))
+    return Object.values(ledger.data.jobs).filter((j) => !isQuick(j) && j.id !== job.id && j.replyChannel === job.replyChannel && job.replyChannel && !JOB_TERMINAL.includes(j.state))
       .map((j) => ({ taskId: j.id, state: j.state, ticket: j.ticket, sourceMessageId: j.source?.messageId,
         awaitingOwnerDecision: Boolean(j.ownerDecisionPending || Object.values(ledger.data.actions).some((a) => a.jobId === j.id && a.state === "pending")) })).slice(-20);
   }

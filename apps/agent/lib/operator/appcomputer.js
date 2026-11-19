@@ -1,9 +1,10 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { isAppJob } = require("./appchannel");
-const CLOSED = ["done", "cancelled", "dismissed"];
+const CLOSED = JOB_TERMINAL;
 const err = (status, message) => Object.assign(new Error(message), { status });
 const KEYS = ["Enter", "Tab", "Shift+Tab", "Escape", "Backspace", "Delete", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "Home", "End"];
 function createAppComputer({ ledger, sandbox, config, now = () => Date.now(), remote = require("./computer-client").createComputerClient({ url: config.computerUrl, token: config.computerToken }) }) {

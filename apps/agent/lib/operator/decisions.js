@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Owner decisions (owner policy 2026-10-12). A genuine decision is DMed to the
 // owner with named preference choices or exact action approval buttons. After three hours it
 // also goes to the delegate (Ariane), who may answer on the owner's behalf.
@@ -174,13 +175,13 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     if (x.options && !selected && verdict !== "explain") throw new Error("Choose a named choice; approval and rejection cannot answer this question");
     if (!x.options && !["approve", "reject", "explain"].includes(verdict)) throw new Error("Invalid decision verdict");
     if (selected && proof !== authenticated) throw new Error("Choice requires authenticated human ingress");
-    if (!job || ["done", "dismissed", "cancelled"].includes(job.state) || require("./ticketpause").pauseFor(d, job) || d.paused || job.appPaused) throw new Error("Decision task is ended or paused");
+    if (!job || JOB_TERMINAL.includes(job.state) || require("./ticketpause").pauseFor(d, job) || d.paused || job.appPaused) throw new Error("Decision task is ended or paused");
     if (x.approvalBinding && binding(action, x.binds) !== x.approvalBinding) throw new Error("Approval scope changed; request a fresh proposal");
     if (action && (action.state !== "pending" || action.expiresAt && action.expiresAt <= now())) throw new Error("Approval action changed or expired");
     const ownerMuse = musePolicy.origin(d, job).scoped || Boolean(action?.ownerMuse);
     if (ownerMuse) {
       if (proof !== authenticated || ![config.ownerId, config.ownerMuseDelegateId].filter(Boolean).includes(actor)) throw new Error("Owner Muse requires an authenticated Mason or explicitly configured Ariane decision");
-      if (d.decisions?.[x.id] !== x || x.state !== "pending" || !job || ["done", "dismissed", "cancelled"].includes(job.state) || d.paused || job.appPaused || job.deadline <= now()) throw new Error("Owner Muse decision is stale, paused or already answered");
+      if (d.decisions?.[x.id] !== x || x.state !== "pending" || !job || JOB_TERMINAL.includes(job.state) || d.paused || job.appPaused || job.deadline <= now()) throw new Error("Owner Muse decision is stale, paused or already answered");
       if (action) {
         musePolicy.validate(d, config, job, action, now());
         if (action.state !== "pending" || action.ownerMuseDecision !== x.id) throw new Error("Owner Muse action is not awaiting this decision");
@@ -217,7 +218,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
         ...(actor !== config.ownerId ? { approvedOnBehalfBy: actor } : {}) };
       if (a.approvalMessage) { d.actions[a.id] = a; x.actionId = a.id; ledger.audit("decision_bound_approval", { decision: x.id, action: a.id, pr: args.number, head: args.head }); }
     }
-    if (job && !["done", "dismissed", "cancelled"].includes(job.state)) {
+    if (job && !JOB_TERMINAL.includes(job.state)) {
       const line = selected ? `${who} chose${x.digested ? ` for "${x.question.slice(0, 160)}"` : ""}: ${selected.label}${selected.detail ? `. ${selected.detail}` : ""}. This is direction, not execution approval.` : verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
       (job.inbox ||= []).push({ authorId: actor, role: actor === config.ownerId ? "owner" : "support", content: line, at: new Date(now()).toISOString(), decision: x.id });
       if (!Object.values(d.decisions || {}).some((y) => y !== x && y.state === "pending" && y.jobId === x.jobId)) delete job.ownerDecisionPending;
@@ -281,7 +282,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     x.state = "expired"; x.expiredAt = now();
     if (action && action.state === "pending") action.state = "expired";
     const job = d.jobs[x.jobId];
-    if (job && !["done", "dismissed", "cancelled"].includes(job.state)) {
+    if (job && !JOB_TERMINAL.includes(job.state)) {
       (job.inbox ||= []).push({ authorId: "system", role: "system", content: `Your request expired without an answer from Egg or Ariane: ${x.question.slice(0, 300)}. Do not ask again for the same change; if the player asks, say the fix is waiting on a developer.`, at: new Date(now()).toISOString(), decision: x.id });
       delete job.ownerDecisionPending;
       if (["waiting", "blocked"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
@@ -319,7 +320,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       }
       const job = d.jobs[x.jobId];
       const action = x.actionId && d.actions[x.actionId];
-      if (!job || ["done", "dismissed", "cancelled"].includes(job.state) || (action && action.state !== "pending")) {
+      if (!job || JOB_TERMINAL.includes(job.state) || (action && action.state !== "pending")) {
         // The action the question was about goes with it, so a dead request
         // can never stand in for a live one.
         if (action && action.state === "pending") action.state = "withdrawn";

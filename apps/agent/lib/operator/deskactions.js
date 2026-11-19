@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Staff actions from the Discord desk. The running operator executes them so the ledger has one writer.
 // None of them resolves a ticket or posts to a player: they only move a ticket between Keir and people,
 // pause or resume it, requeue its current step once, flip the kill switch, or queue a model route for new work.
@@ -6,7 +7,7 @@
 const ticketPause = require("./ticketpause");
 
 const ACTION_ROLES = { nudge: ["junior", "dev", "owner"], release: ["junior", "dev", "owner"], pause: ["junior", "dev", "owner"], resume: ["junior", "dev", "owner"], on: ["dev", "owner"], off: ["dev", "owner"], route: ["dev", "owner"] };
-const CLOSED = new Set(["done", "cancelled", "dismissed"]);
+const CLOSED = new Set(JOB_TERMINAL);
 
 function createDeskActions({ ledger, config, supportOwner, killSwitch, now = () => Date.now() }) {
   const d = ledger.data;

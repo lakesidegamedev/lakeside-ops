@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 "use strict";
+const { JOB_TERMINAL } = require("../lib/operator/machines");
 // Shadow review of Keir's behavior since a timestamp. Read-only: it inspects
 // the operator ledger and reports anything that breaks the operating rules.
 // Usage: keir-shadow.js [minutesBack | sinceEpochMs] [--json file]   (default: 15 minutes)
@@ -40,7 +41,7 @@ for (const o of Object.values(d.outbox)) { const j = jobOf(o.destination); if (!
 for (const j of Object.values(d.jobs)) {
   const age = now - (j.at || 0), idle = now - (j.updatedAt || j.at || 0);
   const dev = [ownerId, ...staff].includes(j.actorId) && j.kind === "command";
-  if (dev && !["done", "dismissed", "cancelled"].includes(j.state) && age > 20 * 60000 && (j.updatedAt || 0) > since - 6 * 3600000) {
+  if (dev && !JOB_TERMINAL.includes(j.state) && age > 20 * 60000 && (j.updatedAt || 0) > since - 6 * 3600000) {
     const answered = Object.keys(d.outbox).some((k) => k.includes(j.id) && !k.startsWith("ack:")) || Object.keys(j.effects || {}).some((k) => k.startsWith("ticket-update:")) || Boolean(j.lastPublishedAt);
     if (!answered) flags.push(`Developer request unanswered for ${Math.round(age / 60000)}m [${j.id} ${j.state}]: ${short(j.source?.content, 100)}`);
   }
@@ -49,7 +50,7 @@ for (const j of Object.values(d.jobs)) {
   if (j.kind === "ticket" && !["done", "cancelled", "deferred"].includes(j.state) && !j.resolutionReadyAt && quiet > 2 * 3600000 && !d.channels[j.channelId]?.claimedBy)
     flags.push(`Ticket ${j.ticket}: player has heard nothing for ${Math.round(quiet / 3600000)}h: ${short(j.summary, 100)}`);
   // Anything waiting on the owner is a stall the shadow operator resolves itself.
-  if ((j.ownerDecisionPending || j.state === "blocked") && !["done", "cancelled", "dismissed"].includes(j.state))
+  if ((j.ownerDecisionPending || j.state === "blocked") && !JOB_TERMINAL.includes(j.state))
     flags.push(`Waiting on an owner decision or blocked [${j.id} ${j.kind}${j.ticket ? " #" + j.ticket : ""}]: ${short(j.summary)}`);
   for (const a of Object.values(d.actions || {})) if (a.jobId === j.id && a.state === "pending") flags.push(`Pending approval [${a.id} ${a.kind}] on task ${j.id}`);
   if (j.state === "running" && now - (j.startedAt || 0) > 20 * 60000) flags.push(`Task running ${Math.round((now - j.startedAt) / 60000)}m [${j.id}]`);

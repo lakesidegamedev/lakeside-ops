@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -16,6 +17,9 @@ function createLedger(file) {
   function trackAll() {
     for (const j of Object.values(data.jobs || {})) track(j, "job", unexpected);
     for (const a of Object.values(data.actions || {})) track(a, "action", unexpected);
+    for (const x of Object.values(data.decisions || {})) track(x, "decision", unexpected);
+    for (const r of Object.values(data.codingWorkers?.runs || {})) track(r, "codingRun", unexpected);
+    for (const f of Object.values(data.watch?.findings || {})) track(f, "finding", unexpected);
   }
   trackAll();
   function save() {
@@ -71,7 +75,7 @@ function createLedger(file) {
     // made its job read as holding an uncertain write for good.
     for (const a of Object.values(data.actions)) if (a.state === "executing" && data.jobs[a.jobId]?.effects[`action:${a.id}`]?.state === "rejected") a.state = "failed";
     // A request still pending on a finished task has nobody to act on it.
-    for (const a of Object.values(data.actions)) if (a.state === "pending" && ["done", "dismissed", "cancelled"].includes(data.jobs[a.jobId]?.state)) a.state = "withdrawn";
+    for (const a of Object.values(data.actions)) if (a.state === "pending" && JOB_TERMINAL.includes(data.jobs[a.jobId]?.state)) a.state = "withdrawn";
     for (const job of Object.values(data.jobs)) {
       if (job.state !== "running") continue;
       const uncertain = Object.values(job.effects).some((e) => e.state === "started");

@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 3.0 fast-lane admission. Conversation capacity is reserved and can
 // never be consumed by investigation or coding, so a long fix cannot
 // monopolize replies. The owner has a reserved slot too, so a correction or
@@ -32,7 +33,7 @@ const CLASSES = {
 // All class capacities fit at once, so background work cannot consume the
 // conversation reserve merely by filling the global budget.
 const MAX_TOTAL = Object.values(CLASSES).reduce((n, c) => n + c.capacity, 0);
-const TERMINAL = ["done", "cancelled", "dismissed"];
+const TERMINAL = JOB_TERMINAL;
 
 function classOf(job) {
   if (["watchkeeper", "engineering"].includes(job.operatorRole)) return job.operatorRole;

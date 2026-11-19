@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 10.1 (owner, 2026-11-16): a model-free watchdog over open tickets. Tickets 1833, 1834 and 1835 all
 // stalled because a lifecycle step depended on the model remembering a flag, and nothing noticed. These checks
 // read only stored facts and the support queue, and tell a person once per ticket and condition:
@@ -13,7 +14,7 @@
 
 const HOUR = 3600000;
 const LIMITS = { unownedMs: HOUR, waitingMs: 2 * HOUR, silentMs: 6 * HOUR, askedMs: 26 * HOUR, moderationRemindMs: 4 * HOUR, spinRuns: 5 };
-const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
+const TERMINAL = new Set(JOB_TERMINAL);
 const { SUPPORT_CLOSED, endedReason, closeTicketJobs } = require("./ticketstate");
 const { QUIET_MS } = require("./autoclose");
 const ms = (v) => (typeof v === "number" ? v : Date.parse(v || "") || 0);
