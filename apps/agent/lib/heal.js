@@ -43,6 +43,15 @@ function createHealOps({ url, token, fetchImpl = fetch }) {
 
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
+function liveBondPoolCashError(spec) {
+  if (spec.kind !== "adhoc" || spec.env !== "prod" || spec.collection !== "bondMarketPools") return null;
+  const fields = spec.action?.kind === "set"
+    ? Object.keys(spec.action.set || {})
+    : Array.isArray(spec.action?.unset) ? spec.action.unset : [];
+  if (!fields.some((field) => field === "cashLocal" || String(field).startsWith("cashLocal."))) return null;
+  return "Live bond pool cash changes require a registered repair with a funding source and ledger entries.";
+}
+
 /** Validate what the agent asked for. Returns { ok, spec } or { ok: false, error }. */
 function validateRequest(body) {
   const b = isPlainObject(body) ? body : {};
@@ -90,6 +99,8 @@ function validateRequest(body) {
     };
     if (b.touchesMoney === true) spec.touchesMoney = true;
     if (b.ticket !== undefined) spec.ticket = String(b.ticket);
+    const cashError = liveBondPoolCashError(spec);
+    if (cashError) return { ok: false, error: cashError };
     return { ok: true, spec };
   }
 
@@ -125,6 +136,8 @@ const PLAN_TOOL = { ledger: "heal_plan", adhoc: "heal_adhoc_plan", compensation:
 const APPLY_TOOL = { ledger: "heal_apply", adhoc: "heal_adhoc_apply", compensation: "heal_compensate_apply" };
 
 function planCall(spec, operator) {
+  const cashError = liveBondPoolCashError(spec);
+  if (cashError) throw new Error(cashError);
   return {
     name: PLAN_TOOL[spec.kind],
     args: { ...specFields(spec), operator },
@@ -132,6 +145,8 @@ function planCall(spec, operator) {
 }
 
 function applyCall(spec, token, operator) {
+  const cashError = liveBondPoolCashError(spec);
+  if (cashError) throw new Error(cashError);
   // heal-ops returns the minted token as {id, expiresAt, ...}; apply takes the id.
   const id = typeof token === "string" ? token : token && token.id;
   if (typeof id !== "string" || !id) throw new Error("heal-ops plan returned no usable confirm token id");
