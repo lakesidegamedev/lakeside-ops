@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Keir's task and approval statuses are now defined in one place. Every status change is checked against it; an unexpected one is logged for review and still goes ahead, so nothing that worked before is refused. Each task and approval also records when it entered its current status and what it was before.
+- An approval whose write was rejected before anything ran is marked failed on restart. Two such approvals had stayed "in flight" for over a day, which made their tasks look like they were holding an unfinished write.
+
 - Staff commands can open nearby Discord mockups after intervening text replies. Keir passes image references into the work request and counts a screenshot as viewed after a successful download.
 
 - Repeated ticket runs that run out of steps narrow the next retry, then slow down and raise one staff alert if the ticket still makes no progress.

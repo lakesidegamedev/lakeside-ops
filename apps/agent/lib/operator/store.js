@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { track } = require("./machines");
 
 // One writer owns the ledger. Corruption is fatal: authority must never reset.
 function createLedger(file) {
@@ -9,7 +10,16 @@ function createLedger(file) {
   try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }
   if (data.version !== 1) throw new Error("unsupported operator ledger version");
   let lastSaved = null;
+  // Every job and approval request has its state checked against machines.js.
+  // Records are created in several files, so save() sweeps for new ones too.
+  const unexpected = (machine, record, from, to) => audit("unexpected_transition", { machine, [machine]: record.id, from, to, ticket: record.ticket });
+  function trackAll() {
+    for (const j of Object.values(data.jobs || {})) track(j, "job", unexpected);
+    for (const a of Object.values(data.actions || {})) track(a, "action", unexpected);
+  }
+  trackAll();
   function save() {
+    trackAll();
     const serialized = JSON.stringify(data);
     // drain runs every second, including when idle. Only skip byte-identical
     // snapshots that this writer has already durably committed. Changed
@@ -47,7 +57,7 @@ function createLedger(file) {
   function createJob(key, fields) {
     if (data.seen[key]) return data.jobs[data.seen[key]];
     const job = { id: id(), state: "queued", at: Date.now(), updatedAt: Date.now(), rounds: 0, messages: [], effects: {}, ...fields };
-    data.jobs[job.id] = job;
+    data.jobs[job.id] = track(job, "job", unexpected);
     data.seen[key] = job.id;
     audit("created", { job: job.id, role: job.role, source: key });
     return job;
@@ -56,6 +66,10 @@ function createLedger(file) {
   // repeat it blindly, even if the remote write may be idempotent.
   function recover() {
     for (const a of Object.values(data.actions)) if (a.state === "executing" && data.jobs[a.jobId]?.effects[`action:${a.id}`]?.state === "done") a.state = "done";
+    // An effect rejected before anything ran leaves nothing in flight. The broker marks the action
+    // failed when it sees the rejection; one rejected afterwards (recovery.js) kept "executing" and
+    // made its job read as holding an uncertain write for good.
+    for (const a of Object.values(data.actions)) if (a.state === "executing" && data.jobs[a.jobId]?.effects[`action:${a.id}`]?.state === "rejected") a.state = "failed";
     // A request still pending on a finished task has nobody to act on it.
     for (const a of Object.values(data.actions)) if (a.state === "pending" && ["done", "dismissed", "cancelled"].includes(data.jobs[a.jobId]?.state)) a.state = "withdrawn";
     for (const job of Object.values(data.jobs)) {
