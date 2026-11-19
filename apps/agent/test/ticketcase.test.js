@@ -123,3 +123,19 @@ test("a noun negation inside a paraphrase is not a reversal, but no longer is", 
   tc.recordPost(e, job(), "Your cards are reachable from the Cards tab.", { now: T0 });
   assert.ok(tc.contradiction(e, 1852, "Your cards are no longer reachable from the Cards tab.", { now: T0 + 1 }));
 });
+
+test("a player correction stays open when Keir repeats the old explanation", () => {
+  const d = { channelContext: { C1: [] } };
+  const j = job({ channelId: "C1" });
+  const slider = "The slider is your legal borrowing limit, so a high ceiling cannot create buyers.";
+  tc.recordPost(d, j, slider, { now: T0 });
+  const correction = "You are not understanding me. There is not enough cash in the market to fund these bonds.";
+  d.channelContext.C1.push({ role: "player", at: new Date(T0 + 1000).toISOString(), content: correction });
+  tc.syncActivation(d, j, { now: T0 + 2000 });
+  assert.match(tc.render(d, j.ticket), /OPEN.*not enough cash/);
+  assert.match(tc.deflection(d, j.ticket, slider)?.asked.text || "", /not enough cash/);
+  const answer = "The bond market opened without its starting cash. That left it short of money to fund new bonds.";
+  assert.equal(tc.deflection(d, j.ticket, answer), null);
+  tc.recordPost(d, j, answer, { now: T0 + 3000 });
+  assert.match(tc.render(d, j.ticket), /answered.*not enough cash/);
+});

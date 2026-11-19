@@ -74,6 +74,7 @@ function sameSubject(a, b, ratio = 0.6, maxRatio = 0.5) {
 
 // Deterministic "this message states a problem or asks something": a question mark or a problem phrase.
 const ASK_SIGNAL = /\?|\bdoes(?:n['’]?t| not) (?:do|work|help|show|change|count|apply|update|appear|matter)\b|\b(?:does|do|did) nothing\b|\bnothing happens\b|\bcan['’]?t\b|\bcannot\b|\bunable to\b|\bbroken\b|\bwrong\b|\bnot working\b|\bwon['’]?t\b|\bstuck\b|\bwhy\b|\bno effect\b|\buseless\b|\bbug\b|\bincorrect\b|\bmissing\b/i;
+const SCOPE_CORRECTION = /\b(?:you(?:['’]re| are) (?:not understanding me|missing (?:the|my) point)|(?:that|this)(?:['’]s| is) not what i (?:asked|meant)|i(?:['’]m| am) asking about)\b/i;
 // A post that steers away from the question (redirect) or closes it without answering (conclude).
 const REDIRECT = /\b(?:real (?:blocker|issue|problem|cause)|(?:the )?actual (?:problem|issue|blocker|cause)|what matters(?: here)? is|instead|rather than|the bigger (?:issue|problem))\b/i;
 const CONCLUDE = /\b(?:no fix (?:is )?(?:needed|required|necessary)|nothing to fix|working as (?:intended|designed)|by design|the game(?:'|’)?s (?:own )?rule)\b/i;
@@ -104,13 +105,16 @@ function get(d, ticket, { create = false } = {}) {
 // Record what the player asked. Returns true when a new item was added. Thin or signal-free text is not an ask.
 function addAsked(c, text, at) {
   const full = String(text || "").replace(/\s+/g, " ").trim().slice(0, 600);
-  if (full.length < 12 || !ASK_SIGNAL.test(full)) return false;
-  const w = [...subjectWords(full)].slice(0, 16);
+  const correction = SCOPE_CORRECTION.test(full);
+  const focus = full.replace(SCOPE_CORRECTION, "").replace(/^[.!?,:\s]+/, "");
+  if (full.length < 12 || (!correction && !ASK_SIGNAL.test(full))) return false;
+  const w = [...subjectWords(focus)].slice(0, 16);
   if (w.length < 2) return false;
   c.asked ||= [];
   const key = clip(full, 80);
   if (c.asked.some((x) => clip(x.text, 80) === key)) return false;
-  c.asked.push({ at, text: clip(full, 220), w, answeredAt: null });
+  c.asked.push({ at, text: clip(full, 220), w, answeredAt: null, ...(correction ? { correction: true } : {}) });
+  if (correction) c.askedRefusals = 0;
   return true;
 }
 
@@ -277,6 +281,17 @@ function deflection(d, ticket, message) {
     const open = (c.asked || []).filter((x) => !x.answeredAt);
     if (!open.length || sentencesOf(text).some((s) => s.endsWith("?"))) return null;
     const words = subjectWords(text);
+    const corrected = open.reduce((latest, item) =>
+      item.correction && (!latest || item.at > latest.at) ? item : latest, null);
+    if (corrected && !addresses(words, corrected)) {
+      const repeats = sentencesOf(text).some((sentence) => {
+        const claim = readClaim(sentence);
+        return claim && c.claims.some((earlier) =>
+          earlier.status === "standing" && earlier.pol === claim.pol && sameSubject(claim.words, earlier.w)
+        );
+      });
+      if (repeats) return { asked: corrected, phrase: "repeats the earlier explanation" };
+    }
     if (open.some((a) => addresses(words, a))) return null;
     const phrase = (REDIRECT.exec(text) || CONCLUDE.exec(text) || [])[0];
     return phrase ? { asked: open[0], phrase } : null;
@@ -326,7 +341,7 @@ function render(d, ticket, { cap = CAP_CHARS } = {}) {
   if (!c) return null;
   const claimLine = (x) => `- ${stamp(x.at)} ${x.status}${x.status !== "standing" && x.by ? ` (${x.status === "corrected" ? "by" : "via"} ${stamp(x.byAt)}: ${clip(x.by, 70)})` : ""}: ${clip(x.text, 120)}${x.ev ? ` [${x.ev}]` : ""}`;
   const entries = [];
-  (c.asked || []).forEach((x, i) => entries.push({ section: "asked", line: `- ${stamp(x.at)} ${x.answeredAt ? "answered" : "OPEN"}: ${clip(x.text, 150)}`, open: !x.answeredAt, rank: x.answeredAt ? 50 + i : 2000 + i }));
+  (c.asked || []).forEach((x, i) => entries.push({ section: "asked", line: `- ${stamp(x.at)} ${x.answeredAt ? "answered" : x.correction ? "OPEN player correction" : "OPEN"}: ${clip(x.text, 150)}`, open: !x.answeredAt, rank: x.answeredAt ? 50 + i : (x.correction ? 2200 : 2000) + i }));
   (c.lessons || []).forEach((x, i) => entries.push({ section: "lessons", line: `- ${stamp(x.at)} ${clip(x.text, 220)}`, rank: 1800 + i }));
   (c.said || []).forEach((x, i) => entries.push({ section: "said", line: `- ${stamp(x.at)} ${clip(x.text, 220)}`, rank: 1500 + i }));
   c.claims.forEach((x, i) => entries.push({ section: "claims", line: claimLine(x), rank: x.status === "standing" ? 1000 + i : i }));
