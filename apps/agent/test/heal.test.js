@@ -60,6 +60,29 @@ test("planCall and applyCall target the right tools and only confirm prod on pro
   assert.equal(la.args.confirmProd, undefined);
 });
 
+test("direct live bond pool cash edits cannot be proposed or replayed from an approval", () => {
+  const pool = {
+    ...adhoc,
+    collection: "bondMarketPools",
+    description: "Restore the dollar pool cash",
+    filter: { _id: "USD" },
+    action: { kind: "set", set: { cashLocal: 7_409_997_588_000 } },
+    touchesMoney: true,
+  };
+  const required = /require a registered repair with a funding source/;
+  assert.match(h.validateRequest(pool).error, required);
+  assert.match(h.validateRequest({ ...pool, action: { kind: "unset", unset: ["cashLocal"] } }).error, required);
+  assert.throws(() => h.planCall(pool, "operator"), required);
+  assert.throws(() => h.applyCall(pool, "old-token", "operator"), required);
+  assert.equal(h.validateRequest({ ...pool, env: "sandbox" }).ok, true);
+  assert.equal(h.validateRequest({ ...pool, action: { kind: "set", set: { targetCashLocal: 1 } } }).ok, true);
+  assert.equal(h.planCall({
+    kind: "ledger",
+    env: "prod",
+    defectId: "AHD-2027-bond-pool-opening-cash",
+  }, "operator").name, "heal_plan");
+});
+
 test("planRefusal explains a withheld token", () => {
   assert.equal(h.planRefusal({ ok: true, token: "abc" }), null);
   assert.match(h.planRefusal({ ok: true, token: null, tokenWithheld: "nothing to heal" }), /nothing to heal/);
