@@ -20,3 +20,11 @@ test("a single pull request with one release is live; no release is not", () => 
 test("a cancelled job's pull request does not hold the ticket back", () => {
   assert.equal(mainCovered([{ state: "cancelled", pullRequests: ["pr/2"] }, { pullRequests: ["pr/1"], releaseEvidence: rel("x") }]), true);
 });
+
+test("a where lookup of another ticket's change is not this ticket's own live receipt (ticket 1859)", () => {
+  const { ownMainReceipt } = require("../lib/operator/livecoverage");
+  const lookup = { id: "a", releaseEvidence: { "9f06": { main: true, source: "lookup" } } };
+  assert.equal(ownMainReceipt([lookup]), false);
+  assert.equal(ownMainReceipt([{ id: "a", pullRequests: ["pr/1"], releaseEvidence: { x: { main: true } } }]), true);
+  assert.equal(ownMainReceipt([lookup, { id: "b", releaseEvidence: { y: { main: true, source: "dev-merges" } } }]), true);
+});

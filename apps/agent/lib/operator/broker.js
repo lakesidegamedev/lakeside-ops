@@ -719,6 +719,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       development: { done: merged || release.some((r) => r.development) },
       staging: { done: release.some((r) => r.staging) },
       main: { done: release.some((r) => r.main) && require("./livecoverage").mainCovered(jobs) },
+      mainOwn: { done: require("./livecoverage").ownMainReceipt(jobs) },
       // "Live, confirmed in game" (review 2026-10-19: 1602's card said it for a
       // change that never moved the player's mine): a turn processed after
       // the fix, then a game read after that turn.
@@ -1643,7 +1644,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const live = (i) => !i.blocked && (i.stage === "main" || i.stage === "confirmed");
     const card = d.statusCards?.[ticketNo]; if (!card) return false;
     // Keir 8.4: an update_kind "production" post is a claim about the deployed revision. Without the main-release receipt it is not sent.
-    if (!ticketEvidence(ticketNo).main.done) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "no main release evidence" }); return false; }
+    const evNow = ticketEvidence(ticketNo);
+    if (!evNow.main.done || !evNow.mainOwn.done) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "no main release evidence" }); return false; }
     const told = new Set([...(card.liveNotified || []), ...before.filter(live).map((i) => i.name)].map(statusCard.cleanName));
     const fresh = after.filter((i) => live(i) && !told.has(statusCard.cleanName(i.name)));
     if (!fresh.length) return false;
@@ -1730,7 +1732,9 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       const root = d.jobs[d.seen[`ticket:${n}`]];
       // Evidence is per ticket, not per fix, so only a one-fix card moves by itself; a card with several fixes stays with the model.
       if (!root || ["done", "cancelled", "dismissed", "paused"].includes(root.state) || root.channelClosed || root.resolved || !card.messageId || (card.items || []).length !== 1) continue;
-      const target = statusCard.stageFromEvidence(ticketEvidence(Number(n)), null);
+      const ev = ticketEvidence(Number(n));
+      if (ev.main.done && !ev.mainOwn.done) ev.main = { done: false }; // a lookup of someone else's change is not this ticket's fix (1859)
+      const target = statusCard.stageFromEvidence(ev, null);
       if (!target) continue;
       for (const item of card.items || []) {
         const r = await advanceCardStage(n, item.name, target, { stage: target }).catch(() => ({ advanced: false }));
@@ -3654,7 +3658,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = merged for web; it is live once github deployed shows the main server running a commit that contains it. turn-worker/production = turn processing source; it is live once github deployed shows the turn worker running it. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. staging = the fix is in the sandbox release line, but the sandbox server is rebuilt by hand and can lag staging by days: never wait for it to update, and do not ask anyone to start it. Once main contains a fix and github deployed shows it running, the sandbox step is done; verify on the main server instead.";
         // Release claims in ticket copy are checked against these receipts.
-        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true };
+        const ownPr = input.number && (job.pullRequests || []).some((u) => Number(String(u).split("/").pop()) === Number(input.number));
+        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, ...(ownPr ? {} : { source: "lookup" }) };
         ledger.save();
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
           const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));
