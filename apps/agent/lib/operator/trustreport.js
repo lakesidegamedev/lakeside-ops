@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 8.4 daily trust report. Short, plain language, for the owner who is away: what Keir did, what it
 // got wrong, what is waiting on him, and whether the machine stayed up. Built from the ledger only (pure),
 // then delivered by the reporter below: an owner DM, a file under the state dir, and an ops-knowledge doc.
@@ -8,7 +9,7 @@ const { trust, contradictedClaims } = require("./trustlog");
 
 const HOUR = 3600000, DAY = 86400000;
 const ts = (v) => { const n = typeof v === "number" ? v : Date.parse(v || ""); return Number.isFinite(n) ? n : 0; };
-const CLOSED = new Set(["done", "cancelled", "dismissed"]);
+const CLOSED = new Set(JOB_TERMINAL);
 
 // Quick, model-free read of one outgoing reply. It looks for the failures the owner has actually seen.
 function reviewReply(text, previous = []) {

@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // The Ops widget: one short line from Keir every thirty minutes, in his own
 // voice, drawn from what the studio is actually doing. The line is generated
 // by the configured DeepSeek route (the same quick lane Keir already runs on)
@@ -19,7 +20,7 @@ const REFRESH_FLOOR_MS = 60 * 1000;
 // Empty and repeated answers are retried inside the same attempt; a timeout is not (it would cost 90 seconds each).
 const ATTEMPTS = 3;
 const MAX = 240;
-const CLOSED = ["done", "dismissed", "cancelled"];
+const CLOSED = JOB_TERMINAL;
 const DEFAULT_ROUTE = "ollama:deepseek-v4.1-flash@low";
 
 const BRIEF = `You write one short line as Keir, the private studio operator for A House Divided.

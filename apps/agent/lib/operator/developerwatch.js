@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // A filed question is not an accepted handoff. Track the queue receipt until
 // somebody owns it, and wake the originating task on progress or a missed SLA.
 // These observations never grant execution authority or resolve a ticket.
@@ -30,7 +31,7 @@ function createDeveloperWatch({ ledger, mcp, now = () => Date.now(), held = () =
       // Keir's own cards (5.6): never chase them as someone else's handoff.
       // Close them on Keir's board when the task that owns them ends.
       for (const r of (job.raisedToDevelopers || []).filter((x) => x.selfOwned && !x.releasedAt)) {
-        const ended = ["done", "dismissed", "cancelled"].includes(job.state) || job.resolved || job.channelClosed;
+        const ended = JOB_TERMINAL.includes(job.state) || job.resolved || job.channelClosed;
         if (!ended) continue;
         if (count++ >= 5) { ledger.save(); return; }
         try {

@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const { GAME_REPO, canonicalRepository } = require("./github");
 // Keir 3.0 stage A: one canonical work record per ticket or owner request,
 // derived as a pure projection over the v1 ledger. Jobs become attempts on a
@@ -8,7 +9,7 @@ const { GAME_REPO, canonicalRepository } = require("./github");
 // legacy job, action, decision, watch and receipt can be proven to map to
 // exactly one record before any migration runs.
 
-const TERMINAL = ["done", "cancelled", "dismissed"];
+const TERMINAL = JOB_TERMINAL;
 const CI_MAX_WATCH_MS = 3 * 3600000; // mirrors ciwatch MAX_WATCH_MS
 
 const ticketNumberOf = (name) => Number(/^ticket-.*-(\d+)$/.exec(name || "")?.[1] || 0);

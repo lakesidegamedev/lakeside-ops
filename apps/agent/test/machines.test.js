@@ -25,6 +25,39 @@ test("the job rules that matter are pinned", () => {
   assert.ok(!allowed("action", "done", "approved") && !allowed("action", "executing", "approved"));
 });
 
+test("decisions, coding runs and findings are tracked and their one-way rules hold", () => {
+  assert.ok(allowed("decision", "pending", "approve") && allowed("decision", "approve", "revoked"));
+  assert.ok(!allowed("decision", "approve", "pending") && !allowed("decision", "expired", "approve"));
+  assert.ok(allowed("codingRun", "verifying", "done") && allowed("codingRun", "to_main", "escalated"));
+  assert.ok(!allowed("codingRun", "queued", "to_main") && !allowed("codingRun", "done", "queued"));
+  assert.ok(allowed("finding", "resolved", "observed") && !allowed("finding", "resolved", "raised"));
+  const ledger = tmpLedger();
+  ledger.data.decisions = { d1: { id: "d1", state: "expired" } };
+  ledger.data.codingWorkers = { runs: { r1: { id: "r1", state: "queued" } }, seq: 1 };
+  ledger.data.watch = { findings: { f1: { fp: "f1", state: "resolved" } } };
+  ledger.save();
+  ledger.data.decisions.d1.state = "approve";
+  Object.assign(ledger.data.codingWorkers.runs.r1, { state: "to_main" });
+  ledger.data.watch.findings.f1.state = "raised";
+  assert.deepEqual(ledger.data.audit.filter((r) => r.kind === "unexpected_transition").map((r) => `${r.machine} ${r.from}>${r.to}`),
+    ["decision expired>approve", "codingRun queued>to_main", "finding resolved>raised"]);
+});
+
+test("the shared finished list is the job machine's and cannot be edited by a caller", () => {
+  const { JOB_TERMINAL } = require("../lib/operator/machines");
+  assert.deepEqual([...JOB_TERMINAL].sort(), ["cancelled", "dismissed", "done"]);
+  assert.throws(() => JOB_TERMINAL.push("paused"));
+});
+
+// Guard: nobody re-copies the finished list instead of importing it.
+test("no source file spells out the finished job states again", () => {
+  const root = path.join(__dirname, ".."), files = [path.join(root, "operator.js")];
+  const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) e.isDirectory() ? walk(path.join(dir, e.name)) : e.name.endsWith(".js") && files.push(path.join(dir, e.name)); };
+  walk(path.join(root, "lib")); walk(path.join(root, "bin"));
+  const copy = /\[\s*"(done|cancelled|dismissed)",\s*"(done|cancelled|dismissed)",\s*"(done|cancelled|dismissed)"\s*\]/;
+  assert.deepEqual(files.filter((f) => !f.endsWith("machines.js") && copy.test(fs.readFileSync(f, "utf8"))).map((f) => path.relative(root, f)), []);
+});
+
 test("track sees a plain assignment, stamps it, and reports an unlisted move once without refusing it", () => {
   const seen = [], job = { id: "j1", state: "paused", ticket: 7 };
   track(job, "job", (machine, record, from, to) => seen.push([machine, record.id, from, to]), () => 1234);

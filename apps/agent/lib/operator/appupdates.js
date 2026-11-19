@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir as a dev partner in the owner's app. Work the owner did not start from
 // the app (tickets, watch findings, Discord requests, role tasks) shows on the
 // working-now board and in Activity. The main conversation only hears about
@@ -20,7 +21,7 @@ const { threadOf, isAppJob, appendMessage } = require("./appchannel");
 const { workStatus } = require("./workqueue");
 const { ticketOf } = require("./workrecord");
 
-const CLOSED = new Set(["done", "dismissed", "cancelled"]);
+const CLOSED = new Set(JOB_TERMINAL);
 const COALESCE_MS = 2 * 60000;
 const MIN_GAP_MS = 10 * 60000;
 const URGENT_GAP_MS = 60000;

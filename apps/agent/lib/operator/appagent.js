@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // The owner's Keir as a personal agent in Lakeside Ops: threads, visible
 // work with receipts, result cards, ideas with evidence, owner watches that
 // keep checking, and the memory Keir keeps. Everything here is owner-only and
@@ -6,7 +7,7 @@
 const crypto = require("node:crypto");
 const { threadOf, isAppJob } = require("./appchannel");
 
-const CLOSED = ["done", "dismissed", "cancelled"];
+const CLOSED = JOB_TERMINAL;
 const MAIN = "main";
 const WATCHES = "watches";
 const err = (status, message) => Object.assign(new Error(message), { status });

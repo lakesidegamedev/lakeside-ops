@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 8.4 stuck-ticket sweeper. Owner, 2026-11-06: "this needs to be Keir we can trust in our absence".
 // Tickets went hours with no progress (1766 posted the same non-answer seven times in five hours, 1763
 // stayed open for days). The wait contract in selfrecovery.js bounds how long a task may WAIT; this
@@ -28,7 +29,7 @@ const DEFAULTS = Object.freeze({ staleMs: 6 * HOUR, unansweredMs: 30 * MIN, wind
 // Effects that are chatter or bookkeeping, not progress: a posted update, a reply, a status-card post or edit,
 // the delivery of a notice.
 const NOT_PROGRESS = /^(?:ticket-update|reply|status-card|delivery)(?::|$)/;
-const CLOSED = new Set(["done", "cancelled", "dismissed"]);
+const CLOSED = new Set(JOB_TERMINAL);
 
 // Keir 10: a ticket whose support record says closed, resolved or merged is not stuck, whatever the job state
 // says (1812 was escalated to the owner a day after it was closed). The record status reaches the ledger

@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir review sweep: the one tool a review task uses to close its item (lib/operator/reviewsweep.js).
 //   resolve      close the Ask item this task was created for (POST /api/keir-ask/review/:kind/:id/resolve, shared secret)
 //   lesson       one line into the ticket case file about what went wrong
@@ -7,7 +8,7 @@
 // posts to a player.
 
 const WAKE_MS = 3600000;
-const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
+const TERMINAL = new Set(JOB_TERMINAL);
 const clip = (t, n) => String(t || "").replace(/\s+/g, " ").trim().slice(0, n);
 
 function createReviewItemTool({ config = {}, fetcher = fetch, ledger, now = () => Date.now() }) {

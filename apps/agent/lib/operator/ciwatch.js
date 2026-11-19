@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const { GAME_REPO, CI_REPOSITORIES, canonicalRepository, redChecks } = require("./github");
 // Polls GitHub for tasks waiting on a PR's checks (github watch) and wakes the
 // task when checks finish, fail, or an identical promotion is qualified. No model
@@ -30,7 +31,7 @@ function createCiWatch({ ledger, api, now = () => Date.now(), log = () => {}, on
     // within this tick so the next poll always observes the current head.
     const verdicts = new Map();
     for (const job of Object.values(ledger.data.jobs)) {
-      if (!job.ciWatch || ["done", "dismissed", "cancelled"].includes(job.state)) { if (job.ciWatch && ["done", "dismissed", "cancelled"].includes(job.state)) { delete job.ciWatch; ledger.save(); } continue; }
+      if (!job.ciWatch || JOB_TERMINAL.includes(job.state)) { if (job.ciWatch && JOB_TERMINAL.includes(job.state)) { delete job.ciWatch; ledger.save(); } continue; }
       for (const [number, w] of Object.entries(job.ciWatch)) {
         let v;
         try {

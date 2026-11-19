@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // The owner's private Keir app (Lakeside Ops on iOS). It is one more owner
 // channel: requests become owner-directed jobs exactly like an owner DM, and
 // every reply that would go to that channel lands in the app thread instead of
@@ -14,7 +15,7 @@ const musePolicy = require("./ownermuse-policy");
 
 const APP_CHANNEL = "app";
 const isAppJob = (job) => Boolean(job && job.replyChannel === APP_CHANNEL && job.source?.channelId === APP_CHANNEL);
-const CLOSED = ["done", "dismissed", "cancelled"];
+const CLOSED = JOB_TERMINAL;
 // Short remarks in the owner's app are questions in disguise ("Railway still
 // down"). They belong in the quick lane, which answers now and hands off for the
 // deeper pass. Explicit work still routes to the work lane.

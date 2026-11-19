@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 10.2: answer feedback. Keir's newest answer in a channel carries one small
 // row: Great, Helpful, Not helpful, Report. When a newer answer lands in the same
 // channel, or a day passes, the row is removed, so threads stay clean.
@@ -27,7 +28,7 @@ const RETAIN_MS = 180 * 86400000;
 const SCAN_MS = 30 * 60000;
 const SCAN_PER_SWEEP = 15;
 const WAKE_MS = 3600000; // one feedback wake per ticket per hour
-const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
+const TERMINAL = new Set(JOB_TERMINAL);
 
 function row() {
   return [{ type: 1, components: [
@@ -200,7 +201,7 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     for (const [channelId, l] of Object.entries(f.latest)) if (at - l.at > SHOW_MS) { delete f.latest[channelId]; ledger.save(); await strip(channelId, l.messageId); }
     f.scanned ||= {};
     const open = new Set(Object.values(ledger.data.jobs || {})
-      .filter((j) => j && j.kind === "ticket" && !["done", "dismissed", "cancelled"].includes(j.state))
+      .filter((j) => j && j.kind === "ticket" && !JOB_TERMINAL.includes(j.state))
       .map((j) => j.replyChannel || j.channelId).filter((c) => /^\d{15,22}$/.test(String(c || ""))));
     const due = [...open].filter((c) => at - (f.scanned[c] || 0) >= SCAN_MS).sort((a, b) => (f.scanned[a] || 0) - (f.scanned[b] || 0)).slice(0, SCAN_PER_SWEEP);
     for (const channelId of due) { f.scanned[channelId] = at; ledger.save(); await reconcile(channelId, { expire: true }); }

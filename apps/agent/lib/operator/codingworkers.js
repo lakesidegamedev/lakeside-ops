@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 8.5: Keir ships its own bug and display fixes while the owner is away.
 //
 // Owner, 2026-11-06: "Yes, bug/display fixes only". For a code bug classed bugfix or display,
@@ -279,7 +280,7 @@ function createCodingWorkers({
   async function adopt() {
     if (!enabled) return;
     for (const job of Object.values(d.jobs)) {
-      if (["done", "dismissed", "cancelled"].includes(job.state) || job.resolved || job.channelClosed || !job.ticket) continue;
+      if (JOB_TERMINAL.includes(job.state) || job.resolved || job.channelClosed || !job.ticket) continue;
       for (const r of job.raisedToDevelopers || []) {
         if (r.releasedAt || r.kind !== "bug" || r.workerSeen) continue;
         const dec = decideDispatch({ kind: r.kind, changeClass: r.changeClass || job.changeClass, requiresOwner: r.requiresOwner });

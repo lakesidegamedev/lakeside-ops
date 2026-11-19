@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 10.1.9 closing rule (owner, 2026-11-17): Keir never closed tickets. Tickets 1836, 1837, 1838, 1841 and 1842
 // sat answered and "waiting" with "awaiting auto-close" because nothing defined how long quiet is and the
 // question lane told the model not to resolve. This is the deterministic closer. A ticket is resolved, through
@@ -94,7 +95,7 @@ function createAutoCloser({ ledger, broker, config, now = () => Date.now(), log 
     const jobs = Object.values(d.jobs).filter((j) => j.ticket === n);
     releaseSatisfied(jobs, n, now());
     const coordinator = d.jobs[d.seen?.[`ticket:${n}`]];
-    const closed = root.channelClosed || root.resolved || root.resolutionSubmitted || ["done", "cancelled", "dismissed"].includes(root.state);
+    const closed = root.channelClosed || root.resolved || root.resolutionSubmitted || JOB_TERMINAL.includes(root.state);
     const pending = Object.values(d.decisions || {}).some((x) => x.state === "pending" && jobs.some((j) => j.id === x.jobId));
     const handoffs = jobs.some((j) => (j.raisedToDevelopers || []).some((r) => r.blocking && r.id && !r.releasedAt && !r.selfOwned));
     const fixPending = handoffs || jobs.some((j) => (j.raisedToDevelopers || []).some((r) => !r.selfOwned && !r.releasedAt && r.kind !== "question"));

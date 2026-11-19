@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const { requireRealDecision } = require("./decisionpolicy");
 const INTERNAL = /\b(?:decision|approval)\s+(?:DM|inbox)\b|\bdig done\b|\bportal\/env\b|\btask (?:finished|completed)\b/i;
 const CLOSED = new Set(["resolved", "closed", "merged"]);
@@ -40,7 +41,7 @@ function auditConversation(data, { tickets = {}, messages = {}, decisionMessages
   }
   const observedDecisions = Object.values(data.decisions || {}).filter(x => !excluded.has(Number(data.jobs?.[x.jobId]?.ticket)));
   const live = observedDecisions.filter(x => x.state === "pending");
-  for (const j of Object.values(data.jobs || {})) if (j.ownerDecisionPending && !excluded.has(Number(j.ticket)) && !["done", "cancelled", "dismissed"].includes(j.state) && !live.some(x => x.jobId === j.id)) add("orphan-owner-decision-hold", { jobId: j.id, ticket: j.ticket || null });
+  for (const j of Object.values(data.jobs || {})) if (j.ownerDecisionPending && !excluded.has(Number(j.ticket)) && !JOB_TERMINAL.includes(j.state) && !live.some(x => x.jobId === j.id)) add("orphan-owner-decision-hold", { jobId: j.id, ticket: j.ticket || null });
   const bindings = new Map();
   for (const x of live) {
     try { if (!x.actionId && !x.signoff && !x.binds) requireRealDecision(x.question); }

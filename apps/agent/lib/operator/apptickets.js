@@ -1,7 +1,8 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const { receiptOf } = require("./appagent");
 const { ticketOf } = require("./workrecord");
-const CLOSED = ["done", "dismissed", "cancelled"];
+const CLOSED = JOB_TERMINAL;
 const HOLD_LABELS = { "staff-category": "Staff category requires review", paused: "Keir is paused", "closure-grace": "Ticket closure grace period", "closed-ticket": "Ticket is closed", "uncertain-effect": "An earlier action needs verification", "pending-decision": "An owner decision is pending", "pending-action": "An action needs approval or completion" };
 function handoffOf(receipt) {
   return { id: receipt.id, directiveId: receipt.directiveId, sourceTaskId: receipt.sourceTaskId,

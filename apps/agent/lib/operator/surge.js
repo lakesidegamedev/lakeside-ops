@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 4.0 related tickets and incidents (owner, 2026-10-14).
 //
 // A new ticket is compared, in one bundled Jev call, with the other open
@@ -27,7 +28,7 @@ const WINDOW_MS = 24 * 3600000;
 const AUTO_OPEN_MS = 10 * 60000;
 const CHATTER_WINDOW_MS = 30 * 60000;
 const CHATTER_MIN = 4;
-const TERMINAL = ["done", "dismissed", "cancelled"];
+const TERMINAL = JOB_TERMINAL;
 const YES = "✅", NO = "❌";
 
 const clean = (t) => String(t || "").replace(/[–—]/g, ",").replace(/\s+/g, " ").trim().slice(0, 90);

@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 
 const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
 // AHDGame's custom-rules check fails any PR without a ticked "Conflict of
@@ -1281,7 +1282,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // A developer asking Keir in the ticket gets one answer, from their own task.
     // The automatic ticket task must not answer it over them (ticket 1510).
     if (job.kind === "ticket") {
-      const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
+      const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !JOB_TERMINAL.includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
       if (dev) refuse(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
     }
     const ev = ticketEvidence(ticketNo);
@@ -3331,7 +3332,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             // still live in the owner's DMs and its task is still open; a dead
             // one from a finished task blocked every staging promotion
             // (ticket 1537, 2026-10-14).
-            const liveAsk = (a) => !["done", "dismissed", "cancelled"].includes(d.jobs[a.jobId]?.state)
+            const liveAsk = (a) => !JOB_TERMINAL.includes(d.jobs[a.jobId]?.state)
               && Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.actionId === a.id);
             const same = (a) => a.kind === "github" && a.digest === hash({ kind: a.kind, args: a.args }) && (!docReview || a.args.repository === args.repository) && a.args.action === args.action &&
               a.args.head === head && (args.action === "merge" ? a.args.number === args.number : a.args.to === args.to);
@@ -4063,7 +4064,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       function attachCommandTicket(number, channelId) {
         if (developerTask(job) && authority.grant(d, config, number, { by: job.actorId, messageId: job.source?.messageId, how: "directed", at: now() })) ledger.audit("ticket_authority_granted", { ticket: number, by: job.actorId, job: job.id, how: "directed" });
         let child = d.jobs[d.seen[`ticket:${number}`]];
-        if (!child || ["done", "cancelled", "dismissed"].includes(child.state)) {
+        if (!child || JOB_TERMINAL.includes(child.state)) {
           child = ledger.createJob(`requested-ticket:${job.id}:${reportId}`, { kind: "ticket", role: "support", actorId: original.author.id,
             ticket: number, channelId, source: reportSource, deadline: now() + config.taskLifetimeMs });
           d.seen[`ticket:${number}`] = child.id;
@@ -4672,7 +4673,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // asks, re-armed it (replay 2026-10-19: 49 runs, median 3 refusals).
       if (state === "waiting" && job.kind === "ticket" && !job.codingParent && job.ticket) {
         const items = d.statusCards?.[job.ticket]?.items || [];
-        const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !["done", "dismissed", "cancelled"].includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
+        const working = Object.values(d.jobs).some((c) => c.codingParent === job.id && !JOB_TERMINAL.includes(c.state)) || Object.keys(job.ciWatch || {}).length > 0;
         const idle = items.filter((i) => !["main", "confirmed", "answered"].includes(i.stage) && (i.blocked || (!working && ["found", "written"].includes(i.stage))));
         const key = hash(idle.map((i) => i.name).sort());
         // KBX3: the review can ride on the finish itself (idleReason), saving the refused round.
@@ -4812,7 +4813,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // While a developer's own task holds this ticket, the ticket task only
       // comes back in half an hour (or sooner if the player writes); it was
       // waking every minute to be refused (ticket 1518).
-      if (job.kind === "ticket" && ["waiting", "done", "dismissed"].includes(state) && Object.values(d.jobs).some((j) => j.id !== job.id && j.kind === "command" && j.ticket === job.ticket && [config.ownerId, ...config.staffIds].includes(j.actorId) && !["done", "dismissed", "cancelled"].includes(j.state) && humanAt(job.ticket) <= (Date.parse(j.source?.at || "") || now()))) job.wakeAt = Math.max(job.wakeAt || 0, now() + 30 * 60000);
+      if (job.kind === "ticket" && ["waiting", "done", "dismissed"].includes(state) && Object.values(d.jobs).some((j) => j.id !== job.id && j.kind === "command" && j.ticket === job.ticket && [config.ownerId, ...config.staffIds].includes(j.actorId) && !JOB_TERMINAL.includes(j.state) && humanAt(job.ticket) <= (Date.parse(j.source?.at || "") || now()))) job.wakeAt = Math.max(job.wakeAt || 0, now() + 30 * 60000);
       // Claimed automatic tickets stay dormant; only the claiming developer's
       // own command may continue their work. Never turn a model "done" into
       // another scheduled investigation of the same staff-owned ticket.

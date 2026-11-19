@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // OpenMuse's present_choices pattern: structured input is part of the saved
 // conversation. Preference answers are never receipts for external effects.
 const crypto = require("node:crypto");
@@ -33,7 +34,7 @@ function createAppQuestions({ ledger, app, config, now = () => Date.now() }) {
     const d = ledger.data, t = threadOf(d); let changed = false;
     for (const q of Object.values(t.questions || {})) {
       const job = d.jobs?.[q.jobId];
-      if (q.state === "pending" && (!job || ["done", "dismissed", "cancelled"].includes(job.state))) { q.state = "expired"; q.expiredAt = now(); changed = true; }
+      if (q.state === "pending" && (!job || JOB_TERMINAL.includes(job.state))) { q.state = "expired"; q.expiredAt = now(); changed = true; }
     }
     if (changed) { ledger.audit("app_questions_expired", { thread }); ledger.save(); }
     return Object.values(t.questions || {}).filter((q) => q.thread === thread);

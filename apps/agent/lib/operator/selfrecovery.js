@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 5.6 self-recovery (owner, 2026-10-16: "a durable way to fix stuck
 // shit like this and let Keir self recover"). The watchkeeper only reported
 // stalls. This acts on them, without an owner command:
@@ -33,7 +34,7 @@ const VICTIM_DELAY_MS = 5 * 60000;
 const PARK_MS = 60 * 60000;
 const DEAD_APP_MS = 60 * 60000;
 const DEAD_STUCK_MS = 6 * 3600000;
-const CLOSED = new Set(["done", "dismissed", "cancelled"]);
+const CLOSED = new Set(JOB_TERMINAL);
 const UNEXPLAINED_WAIT_MS = 45 * 60000;
 const PLAYER_WAIT_MS = 24 * 3600000;
 const PLAYER_NUDGE_MS = 6 * 3600000;
@@ -41,7 +42,7 @@ const CLOSING_GRACE_MS = 2 * 3600000;
 const UNCERTAIN_EFFECT_MS = 30 * 60000;
 const HELD_MS = 2 * 3600000;
 const FINDING_PARK_MS = 12 * 3600000;
-const TERMINAL = ["done", "dismissed", "cancelled"];
+const TERMINAL = JOB_TERMINAL;
 const TICKET_LANES = /^investigation\d*$/;
 
 function fingerprint(j) {

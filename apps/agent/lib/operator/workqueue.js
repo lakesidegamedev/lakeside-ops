@@ -1,9 +1,10 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Work visibility is a projection. A scheduled check is never a delivery ETA.
 const crypto = require("node:crypto");
 const { rootJob, ticketOf } = require("./workrecord");
 const { parkedOnHandoffs } = require("./developerwatch");
-const CLOSED = new Set(["done", "dismissed", "cancelled"]);
+const CLOSED = new Set(JOB_TERMINAL);
 const clip = (s, n = 240) => String(s || "").slice(0, n);
 const timestamp = n => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null;
 function family(data, job) { return Object.values(data.jobs || {}).filter(j => rootJob(j, data.jobs).id === job.id); }

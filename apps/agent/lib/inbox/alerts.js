@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("../operator/machines");
 const fs = require("node:fs");
 
 // What needs a human, read from the operator ledger, the prod hold file and the
@@ -6,7 +7,7 @@ const fs = require("node:fs");
 // pending approvals and blocked tasks surface (ops dashboard /inbox).
 // Read-only: the operator process is the ledger's only writer.
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; } };
-const OPEN = new Set(["done", "cancelled", "dismissed"]);
+const OPEN = new Set(JOB_TERMINAL);
 const clip = (t, n = 400) => String(t || "").replace(/\s+/g, " ").trim().slice(0, n);
 
 function readAlerts({ ledgerFile = "/var/lib/keir-operator/ledger.json", holdFile = "/var/lib/keir-operator/prod-hold", shadowFile = "/var/lib/keir-operator/shadow.json", now = Date.now() } = {}) {

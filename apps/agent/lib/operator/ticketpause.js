@@ -1,6 +1,7 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // An owner pause is authority, not a model's promise to check back later.
-const CLOSED = new Set(["done", "cancelled", "dismissed"]);
+const CLOSED = new Set(JOB_TERMINAL);
 function pauseFor(data, job) {
   const seen = new Set();
   while (job && !seen.has(job.id)) {

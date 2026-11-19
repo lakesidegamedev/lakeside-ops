@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 const { GAME_REPO } = require("./github");
 // Owner, 2026-10-14: when a developer (Ariane, another session, anyone but
 // Keir's own ticket work) ships a change related to an open ticket, Keir
@@ -17,7 +18,7 @@ const defaultAsk = (spec) => (process.env.KEIR_JEV === "off" ? Promise.resolve(n
 
 function createDevMerges({ ledger, api, ask = defaultAsk, now = () => Date.now(), log = () => {} }) {
   const d = ledger.data;
-  const openTickets = () => Object.values(d.jobs).filter((j) => j.kind === "ticket" && j.ticket && !["done", "dismissed", "cancelled"].includes(j.state));
+  const openTickets = () => Object.values(d.jobs).filter((j) => j.kind === "ticket" && j.ticket && !JOB_TERMINAL.includes(j.state));
   const ownPrs = () => new Set(Object.values(d.jobs).flatMap((j) => (j.pullRequests || []).map((u) => Number(String(u).split("/").pop()))));
   const ticketText = (j) => [String(j.evidenceText || "").slice(0, 600), j.summary].filter(Boolean).join(" ").slice(0, 900);
 

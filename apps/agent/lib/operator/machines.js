@@ -36,6 +36,18 @@ function jobTransitions() {
   return t;
 }
 
+function codingRunTransitions() {
+  const exits = ["needs_owner", "escalated"];
+  return {
+    queued: ["running", ...exits],
+    running: ["checks", "queued", "reported", ...exits], // back to queued: one retry
+    checks: ["merge_ready", "to_staging", "queued", ...exits], // to queued: a fix worker
+    merge_ready: ["to_staging", "checks", ...exits],
+    to_staging: ["to_main", ...exits], to_main: ["verifying", ...exits], verifying: ["done", ...exits],
+    done: [], reported: [], needs_owner: [], escalated: [],
+  };
+}
+
 // What each state means, in the words the owner and the agents should use.
 const MACHINES = {
   job: {
@@ -73,6 +85,48 @@ const MACHINES = {
       approved: ["executing", "done", "pending", "expired", "superseded", "withdrawn", "cancelled"],
       executing: ["done", "failed"],
       failed: [], done: [], rejected: [], withdrawn: [], expired: [], superseded: [], cancelled: [],
+    },
+  },
+  // A question put to the owner. It is answered once and never reopened; the one
+  // move after an answer is an approval the owner takes back.
+  decision: {
+    states: {
+      pending: "waiting for the owner",
+      approve: "the owner approved", reject: "the owner rejected", explain: "the owner asked a question or gave another answer",
+      selected: "the owner picked one of the offered choices", answered: "the owner answered in the ticket channel",
+      expired: "nobody answered in time", withdrawn: "Keir took the question back", superseded: "a newer question replaced it",
+      cancelled: "stopped on request", revoked: "the owner took the approval back",
+    },
+    terminal: ["approve", "reject", "explain", "selected", "answered", "expired", "withdrawn", "superseded", "cancelled", "revoked"],
+    transitions: {
+      pending: ["approve", "reject", "explain", "selected", "answered", "expired", "withdrawn", "superseded", "cancelled"],
+      approve: ["revoked"],
+      reject: [], explain: [], selected: [], answered: [], expired: [], withdrawn: [], superseded: [], cancelled: [], revoked: [],
+    },
+  },
+  // A coding worker's run, from queue to live. codingworkers.js STEPS drives the
+  // main line; needs_owner and escalated are the side exits from any step.
+  codingRun: {
+    states: {
+      queued: "waiting for a worker slot", running: "a worker is writing the change", checks: "the pull request is waiting on its checks",
+      merge_ready: "checks are green; ready to merge", to_staging: "merged; moving to staging", to_main: "on staging; moving to the live game",
+      verifying: "on the live game; confirming it took effect", done: "live and confirmed",
+      reported: "the worker reported back without a change to ship", needs_owner: "the change needs the owner before it can ship",
+      escalated: "stopped on worker, check or deploy trouble",
+    },
+    terminal: ["done", "reported", "needs_owner", "escalated"],
+    transitions: codingRunTransitions(),
+  },
+  // Something the watch noticed in the game or the services (watch.js).
+  finding: {
+    states: {
+      observed: "seen, not yet acted on", raised: "a task was opened for it", correlated: "folded into an earlier finding with the same cause",
+      recurring: "came back after its task finished", resolved: "gone; a new sighting starts it again",
+    },
+    terminal: ["resolved"],
+    transitions: {
+      observed: ["raised", "correlated", "resolved"], raised: ["recurring", "resolved"], correlated: ["resolved"],
+      recurring: ["raised", "resolved"], resolved: ["observed"],
     },
   },
 };
@@ -120,6 +174,9 @@ function track(record, machine, onUnexpected, now = Date.now) {
 // ends, so "approved" in the ledger can mean "approved an hour ago" or "approved
 // last week for a task that no longer exists". This is the state to show and to
 // reason from. It never writes; the broker's own expiry checks are unchanged.
+// Do not "tidy" a stale approved record into expired: chain.js and the broker's
+// finding review read an approved merge as the receipt that the owner said yes,
+// well after the hour in which it could still be executed.
 function actionStanding(action, job, now = Date.now()) {
   const state = action?.state;
   if (!["pending", "approved", "executing"].includes(state)) return state;
@@ -140,4 +197,5 @@ function describe(machine, record) {
   };
 }
 
-module.exports = { MACHINES, isTerminal, allowed, track, describe, actionStanding };
+const JOB_TERMINAL = Object.freeze(MACHINES.job.terminal);
+module.exports = { MACHINES, JOB_TERMINAL, isTerminal, allowed, track, describe, actionStanding };

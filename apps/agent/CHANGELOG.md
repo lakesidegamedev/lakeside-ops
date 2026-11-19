@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Owner decisions, coding worker runs and watch findings join tasks and approvals in the one status definition, with the same check on every change. The list of finished task statuses, which had been copied into 50 files, now comes from that definition.
+
 ## 10.5.3 (2026-11-19)
 
 - Keir's task and approval statuses are now defined in one place. Every status change is checked against it; an unexpected one is logged for review and still goes ahead, so nothing that worked before is refused. Each task and approval also records when it entered its current status and what it was before.

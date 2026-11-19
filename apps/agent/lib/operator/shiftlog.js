@@ -1,4 +1,5 @@
 "use strict";
+const { JOB_TERMINAL } = require("./machines");
 // Keir 10.3 shift log. A short world summary (about 1,500 characters) for every ticket activation, so a task that starts
 // cold knows what the owner decided today, what is being fixed, what shipped, how the turn is doing and what is already a
 // known bug. Refreshed by a model-free collector every 10 minutes (operator.js ticker) and read from the ledger snapshot by
@@ -8,7 +9,7 @@
 
 const SHIFT_CHARS = 1600;
 const TTL_MS = 10 * 60000;
-const TERMINAL = new Set(["done", "dismissed", "cancelled"]);
+const TERMINAL = new Set(JOB_TERMINAL);
 const clip = (t, n) => String(t || "").replace(/\s+/g, " ").trim().slice(0, n);
 const parse = (v) => { if (typeof v === "string") { try { return JSON.parse(v); } catch { return null; } } if (v && typeof v === "object" && typeof v.content === "string") return parse(v.content); return v ?? null; };
 const rowsOf = (v) => { const p = parse(v); return Array.isArray(p) ? p : p?.items || p?.results || p?.turns || p?.cards || []; };
