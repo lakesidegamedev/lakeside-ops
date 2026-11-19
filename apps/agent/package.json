@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node operator.js",
     "release:stage": "bash deploy/release.sh",
+    "states:observed": "node bin/keir-states-observed.js",
     "test": "KEIR_PROD_HOLD_FILE=/nonexistent KEIR_JEV=off node --test test/*.test.js"
   },
   "engines": {
