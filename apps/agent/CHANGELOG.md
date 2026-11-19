@@ -3,9 +3,7 @@
 Keir: the A House Divided Discord operator, support desk and /summon bridge.
 New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/release.sh`.
 
-## 10.5.2 (2026-11-19)
-
-- A status card no longer moves to live, and no live notice is sent, because a lookup showed someone else's change on the main server (ticket 1859 was told its unfixed bug was live). Only the ticket's own pull request, its own merge or a linked developer change counts.
+## Unreleased
 
 - Staff commands can open nearby Discord mockups after intervening text replies. Keir passes image references into the work request and counts a screenshot as viewed after a successful download.
 
@@ -13,6 +11,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - Keir support can inspect the Discord bot source when investigating slash commands and can recover team activity lookups sent through the wrong tool.
 
 - A short Markdown welcome explains how Keir helps on a first support ticket, when staff step in, what details to include, and how to rate replies.
+
+## 10.5.2 (2026-11-19)
+
+- A status card no longer moves to live, and no live notice is sent, because a lookup showed someone else's change on the main server (ticket 1859 was told its unfixed bug was live). Only the ticket's own pull request, its own merge or a linked developer change counts.
 
 ## 10.5.1 (2026-11-17)
 
