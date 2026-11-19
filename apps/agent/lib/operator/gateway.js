@@ -102,15 +102,18 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     const controlAddress = (channel.type === 1 && role !== "player") || message.referenced_message?.author?.id === config.botId ||
       (message.mentions || []).some(u => u.id === config.botId) || new RegExp(`^\\s*(?:<@!?${config.botId}>|\\/?(?:keir|keith)\\b)`, "i").test(s.content);
     const pauseVerb = /^(?:please\s+)?(pause|resume)(?:\s+(?:this ticket|here|for now|now))?(?:\s+please)?[.!]*$/i.exec(controlText);
-    if (!historical && !summonTask && nTicket && role === "owner" && controlAddress && pauseVerb) {
+    const quietPause = /^(?:please\s+)?stop\s+(?:talking|replying|posting)(?:\s+(?:here|for now|now|in this ticket))?(?:[\s,]+please)?[.!]*$/i.test(controlText);
+    if (!historical && !summonTask && nTicket && role === "owner" && controlAddress && (pauseVerb || quietPause)) {
       const key = `discord:${message.id}`;
       if (d.seen[key]) return;
-      const paused = pauseVerb[1].toLowerCase() === "pause";
+      const paused = quietPause || pauseVerb[1].toLowerCase() === "pause";
       require("./ticketpause").setPause(ledger, channel.id, nTicket, paused, s, now());
-      const notice = ledger.createJob(`ticket-control:${message.id}`, { kind: "notice", role: "owner", ticket: nTicket,
-        channelId: channel.id, replyChannel: channel.id, ticketPauseControl: true, source: s });
-      notice.state = "done";
-      ledger.notify(key, `channel:${notice.id}`, paused ? "Paused. I'll wait for you to say resume." : "Resumed.");
+      if (!quietPause) {
+        const notice = ledger.createJob(`ticket-control:${message.id}`, { kind: "notice", role: "owner", ticket: nTicket,
+          channelId: channel.id, replyChannel: channel.id, ticketPauseControl: true, source: s });
+        notice.state = "done";
+        ledger.notify(key, `channel:${notice.id}`, paused ? "Paused. I'll wait for you to say resume." : "Resumed.");
+      }
       d.seen[key] = "ticket-control"; ledger.save(); drain(); return;
     }
     if (nTicket && d.channels[channel.id]?.keirPaused) {
@@ -243,13 +246,17 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       const n = ticketNumber(channel.name) || Number(/\bticket\s*#?(1\d{3,4})\b/i.exec(s.content)?.[1] || 0);
       if (n && authority.grant(d, config, n, { by: actor, messageId: message.id, how: "directed", at: now() })) ledger.audit("ticket_authority_granted", { ticket: n, by: actor, message: message.id, how: "directed" });
     }
-    // Staff talking in a ticket without naming Keir are handling it: hold the
-    // ticket's task for ten minutes so Keir does not talk over them.
-    const heldTicket = !historical && role !== "player" && ticketNumber(channel.name) && !explicit && !/\b(?:keir|keith|starmer)\b/i.test(s.content || "") && d.jobs[d.seen[`ticket:${ticketNumber(channel.name)}`]];
-    if (heldTicket && !["done", "cancelled"].includes(heldTicket.state)) {
-      heldTicket.staffActiveUntil = now() + STAFF_HOLD_MS;
-      if (heldTicket.state === "waiting" && !heldTicket.addressedPending) heldTicket.wakeAt = Math.max(heldTicket.wakeAt || 0, heldTicket.staffActiveUntil);
-      ledger.save();
+    // Keep staff chat as transcript context and hold automatic ticket work.
+    if (!historical && nTicket && role !== "player" && !explicit) {
+      const heldTicket = d.jobs[d.seen[`ticket:${nTicket}`]];
+      if (heldTicket && !["done", "cancelled"].includes(heldTicket.state)) {
+        heldTicket.staffActiveUntil = now() + STAFF_HOLD_MS;
+        if (heldTicket.state === "waiting" && !heldTicket.addressedPending) {
+          heldTicket.wakeAt = Math.max(heldTicket.wakeAt || 0, heldTicket.staffActiveUntil);
+        }
+      }
+      d.seen[key] = "staff-ticket-conversation";
+      delete d.classify?.[message.id]; ledger.save(); return;
     }
     // "itch test" in a DM switches on the inbox's reward-claim test mode; the
     // inbox answers it, so the operator stays out of that one message.
