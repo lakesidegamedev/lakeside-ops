@@ -14,4 +14,13 @@ function mainCovered(jobs) {
   if (!shas.size) return false;
   return shas.size >= prs.size;
 }
-module.exports = { mainCovered };
+// Keir 10.5.2 (ticket 1859, 03:16): the task ran a "where" lookup on the change that fixed ticket 1857; the lookup
+// left a main receipt on 1859, the card moved to "live", and the player was told their own unfixed bug was live.
+// A lookup receipt answers the model's question; only a receipt from the ticket's own pull request, a merge this
+// ticket owns or a linked developer change may move a card or send a live notice by itself.
+function ownMainReceipt(jobs) {
+  const list = Array.isArray(jobs) ? jobs : [];
+  return mainCovered(list) && list.some((j) => j && !["cancelled", "dismissed"].includes(j.state)
+    && Object.values(j.releaseEvidence || {}).some((r) => r && r.main && r.source !== "lookup"));
+}
+module.exports = { mainCovered, ownMainReceipt };

@@ -12,6 +12,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 - A short Markdown welcome explains how Keir helps on a first support ticket, when staff step in, what details to include, and how to rate replies.
 
+## 10.5.2 (2026-11-19)
+
+- A status card no longer moves to live, and no live notice is sent, because a lookup showed someone else's change on the main server (ticket 1859 was told its unfixed bug was live). Only the ticket's own pull request, its own merge or a linked developer change counts.
+
 ## 10.5.1 (2026-11-17)
 
 - Keir prepares guide corrections from Ask reviews, asks for approval on the exact PR head, then carries approved changes through normal release checks. A card alone cannot mark a guide fixed.
