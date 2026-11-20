@@ -11,24 +11,84 @@ import LakesideCore
     @Published var scheduler: JSONValue = .null
     @Published var decisions: [JSONValue] = []
     @Published var alerts: [JSONValue] = []
+    /// Keir's ticket work queue (`/api/keir/app/work`). Shared so the Inbox
+    /// badge, Ops and the Inbox list read the same tickets.
+    @Published var work: JSONValue = .null
     @Published var answerReceipt: JSONValue = .null
+    /// The last refresh that reached the server at all.
     @Published var updated: Date?
+    /// The last time Keir's activity (running, queued, tickets) was read. The
+    /// running count is only live while this is recent.
+    @Published var activityUpdated: Date?
     @Published var error: String?
+    /// Which panels failed on the last refresh, in plain words.
+    @Published var failedPanels: [String] = []
     @Published var loading = false
 
     private var generation = UUID()
     func reset() {
         generation = UUID(); services = []; hub = .null; kanban = .null; host = .null; scheduler = .null
-        decisions = []; alerts = []; answerReceipt = .null; updated = nil; error = nil; loading = false; UNBadge.set(0)
+        decisions = []; alerts = []; work = .null; answerReceipt = .null; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
         AttentionCenter.shared.reset()
     }
     var kpis: JSONValue { hub["kpis"] }
     var servicesDown: [JSONValue] { services.filter { !["operational", ""].contains($0["current"].string) } }
-    var redPRs: Int { Int(kpis["prsRed"].number ?? 0) }
+    /// Open pull requests with failing checks, exactly the list Failed checks shows.
+    /// Falls back to the server count only when the hub sent no PR list.
+    var failingPRs: [JSONValue] { hub["prs"].array.filter { $0["state"].string == "OPEN" && $0["ci"].string == "red" } }
+    var redPRs: Int { hub["prs"] == .null ? Int(kpis["prsRed"].number ?? 0) : failingPRs.count }
+    /// Exactly the rows the Blocked work lane lists.
     var blocked: [JSONValue] { kanban["blocked"].array }
     var needsOwner: [JSONValue] { kanban["needs_owner"].array }
-    /// The count on the Pulse tab badge: only things the owner can act on now.
+    /// Every ticket the app knows about, hub first, de-duplicated by number.
+    var knownTickets: [JSONValue] {
+        var seen = Set<String>()
+        return (hub["tickets"].array + work["tickets"].array).filter { seen.insert($0["number"].string).inserted }
+    }
+    /// The count on the Inbox tab badge: only things the owner can act on now.
     var attention: Int { AttentionCenter.shared.count }
+
+    // MARK: Heartbeat
+
+    /// Two missed foreground refreshes (every 30 seconds) plus slack.
+    static let staleAfter: TimeInterval = 150
+
+    enum Heartbeat: Equatable {
+        case connecting
+        case fresh(Date)
+        /// The last good read is too old, or the newest read failed.
+        case stalled(Date)
+        case unreachable
+    }
+
+    /// The one answer to "is what Ops shows current?". Running counts are only
+    /// presented as live while this is `.fresh`.
+    func heartbeat(now: Date = Date()) -> Heartbeat {
+        guard let updated else { return error == nil ? .connecting : .unreachable }
+        if !failedPanels.isEmpty && failedPanels.count >= Self.panelCount { return .stalled(updated) }
+        if now.timeIntervalSince(updated) > Self.staleAfter { return .stalled(updated) }
+        if let activity = activityUpdated, now.timeIntervalSince(activity) > Self.staleAfter { return .stalled(activity) }
+        return .fresh(updated)
+    }
+
+    /// One full sentence about freshness, for the Ops header.
+    func heartbeatSentence(now: Date = Date()) -> String {
+        switch heartbeat(now: now) {
+        case .connecting: return "Connecting to Ops."
+        case .unreachable: return "Ops could not be reached. Pull to retry."
+        case .fresh(let at):
+            let partial = failedPanels.isEmpty ? "" : " \(Self.list(failedPanels)) did not refresh."
+            return "Updated \(OpsFormat.ago(at)).\(partial)"
+        case .stalled(let at):
+            return "Updates stalled. Last good data is from \(OpsFormat.ago(at)), so counts may be out of date."
+        }
+    }
+
+    private static let panelCount = 7
+    private static func list(_ names: [String]) -> String {
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
 
     func refresh(_ session: AppSession) async {
         guard !loading else { return }
@@ -40,18 +100,41 @@ import LakesideCore
         async let schedule = try? session.get("/api/scheduler")
         async let open = try? session.get("/api/keir/app/decisions")
         async let feed = try? session.get("/api/keir/app/alerts")
-        let (s, k, b, h, d, a) = await (status, keir, board, schedule, open, feed)
+        async let queue = try? session.get("/api/keir/app/work")
+        let (s, k, b, h, d, a, w) = await (status, keir, board, schedule, open, feed, queue)
         guard generation == epoch else { return }
         if let s { services = s["services"].array }
-        if let k { hub = k }
+        if let k { hub = k; activityUpdated = Date() }
         if let b { kanban = b }
         if let h { host = h["host"]; scheduler = h }
         if let d { decisions = d["decisions"].array }
         if let a { alerts = a["alerts"].array }
-        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: kanban["needs_owner"].array)
-        let failed = [s, k, b, h, d, a].filter { $0 == nil }.count
-        error = failed == 6 ? "Ops is unreachable. Pull to retry." : failed > 0 ? "Some panels could not refresh." : nil
-        if failed < 6 { updated = Date() }
+        if let w { work = w }
+        rebuildAttention()
+        let names = ["Service status", "Keir activity", "Work board", "Scheduler", "Decisions", "Alerts", "Ticket queue"]
+        failedPanels = zip(names, [s, k, b, h, d, a, w]).filter { $0.1 == nil }.map { $0.0 }
+        error = failedPanels.count == Self.panelCount ? "Ops is unreachable. Pull to retry." : failedPanels.isEmpty ? nil : "\(Self.list(failedPanels)) could not refresh."
+        if failedPanels.count < Self.panelCount { updated = Date() }
+    }
+
+    /// Re-reads only decisions and the ticket queue. The Inbox calls this so its
+    /// rows and the tab badge come from the same read.
+    func refreshInbox(_ session: AppSession) async -> String? {
+        let epoch = generation
+        async let open = try? session.get("/api/keir/app/decisions")
+        async let queue = try? session.get("/api/keir/app/work")
+        let (d, w) = await (open, queue)
+        guard generation == epoch else { return nil }
+        if let d { decisions = d["decisions"].array }
+        if let w { work = w }
+        rebuildAttention()
+        if d == nil { return "Decisions could not refresh. Pull to retry." }
+        if w == nil { return "Ticket queue could not refresh. The last list is still shown." }
+        return nil
+    }
+
+    private func rebuildAttention() {
+        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: needsOwner, tickets: knownTickets)
         UNBadge.set(attention)
     }
 
@@ -62,9 +145,8 @@ import LakesideCore
             guard epoch == generation else { return false }
             answerReceipt = result
             decisions.removeAll { $0["id"].string == id }
-            AttentionCenter.shared.setWork(decisions: decisions, ownerWork: kanban["needs_owner"].array)
+            rebuildAttention()
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            UNBadge.set(attention)
             return true
         } catch { guard epoch == generation else { return false }; self.error = error.displayMessage; UINotificationFeedbackGenerator().notificationOccurred(.error); return false }
     }

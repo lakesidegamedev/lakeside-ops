@@ -27,14 +27,29 @@ final class WorkQueueTests: XCTestCase {
         XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tasks", filter: "all", search: ""))
         XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: "all", search: "1501"))
     }
-    func testOwnerDecisionsShowOnTheDefaultViewAndDecisionsOnly() {
-        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: "all", search: ""))
-        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: "needs-you", search: ""))
-        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(scope: "tasks", filter: "needs-you", search: ""))
+    func testNeedsYouShowsOnAllAndItsOwnFilterInEitherScope() {
+        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(filter: "all"))
+        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(filter: "needs-you"))
         for filter in ["working", "waiting", "stuck"] {
-            XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: filter, search: ""), filter)
+            XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(filter: filter), filter)
         }
-        XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(scope: "tasks", filter: "all", search: ""))
-        XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: "all", search: "ledger"))
+    }
+    func testEveryFilteredQueueRowIsAlsoOnAll() {
+        let rows: [JSONValue] = [
+            .object(["number": .number(1), "title": .string("Ledger"), "timing": .object(["state": .string("waiting")])]),
+            .object(["number": .number(2), "title": .string("Payroll"), "timing": .object(["state": .string("stuck"), "overdue": .bool(true)])]),
+            .object(["number": .number(3), "title": .string("Turn"), "timing": .object(["state": .string("working")])]),
+            .object(["number": .number(4), "title": .string("Held"), "timing": .object(["state": .string("needs-you")])]),
+        ]
+        for search in ["", "Ledger", "2"] {
+            let all = Set(rows.filter { WorkQueuePresentation.matches($0, filter: "all", search: search, ticket: true) }.map { $0["number"].string })
+            for filter in ["working", "waiting", "stuck", "needs-you"] {
+                let subset = Set(rows.filter { WorkQueuePresentation.matches($0, filter: filter, search: search, ticket: true) }.map { $0["number"].string })
+                XCTAssertTrue(subset.isSubset(of: all), "\(filter) / \(search)")
+            }
+        }
+    }
+    func testCompactRowsDoNotClaimAnUnknownCompletionTime() {
+        XCTAssertEqual(WorkTimingView.noEstimate, "Completion time not established")
     }
 }

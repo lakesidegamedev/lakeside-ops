@@ -20,17 +20,18 @@ enum WorkQueuePresentation {
         return statusMatches && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
     }
     /// The default Inbox (Tickets, All, no search) leads with owner pings:
-    /// tickets with no recorded reply, Needs you and Your decisions. A filter,
+    /// tickets with no recorded reply, then Needs you. A filter,
     /// a search or the Tasks scope is a request for specific work, so the
     /// matching queue rows lead instead.
     static func leadsWithOwnerItems(scope: String, filter: String, search: String) -> Bool {
         scope == "tickets" && filter == "all" && search.trimmingCharacters(in: .whitespaces).isEmpty
     }
-    /// Needs you and Your decisions show on the default view and on the
-    /// Decisions filter, which is their own subject. Other views leave them
-    /// out rather than mixing unrelated cards into the result.
-    static func showsOwnerItems(scope: String, filter: String, search: String) -> Bool {
-        leadsWithOwnerItems(scope: scope, filter: filter, search: search) || filter == "needs-you"
+    /// Needs you shows on All and on its own filter, in either scope. A search
+    /// narrows its rows instead of hiding the section, so every row a filter
+    /// shows is also on All with the same search. Running, Queued and Blocked
+    /// leave it out rather than mixing unrelated cards into the result.
+    static func showsOwnerItems(filter: String) -> Bool {
+        filter == "all" || filter == "needs-you"
     }
     static func rank(_ item: JSONValue) -> Int {
         if state(item) == "needs-you" { return 0 }
@@ -55,11 +56,18 @@ enum WorkQueuePresentation {
 struct WorkTimingView: View {
     let value: JSONValue
     var compact = false
+    /// Queue rows show the age on their top line beside the chevron.
+    var showsSince = true
+    static let noEstimate = "Completion time not established"
     private var estimate: Text {
         if let expected = OpsFormat.date(value["expectedDoneAt"]) {
             return Text(expected <= Date() ? "Keir's task estimate is overdue" : "Task estimate: \(expected.formatted(date: .omitted, time: .shortened))")
         }
-        return Text(value["etaLabel"].string.nonempty ?? "Completion time not established")
+        return Text(value["etaLabel"].string.nonempty ?? Self.noEstimate)
+    }
+    /// A compact row says nothing about completion unless there is an estimate.
+    private var hasEstimate: Bool {
+        OpsFormat.date(value["expectedDoneAt"]) != nil || !["", Self.noEstimate].contains(value["etaLabel"].string)
     }
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 5 : 10) {
@@ -73,14 +81,14 @@ struct WorkTimingView: View {
                 Text("Next: \(OpsText.scrub(value["next"].string))").font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(compact ? 2 : nil)
             }
             HStack(spacing: 12) {
-                if value["since"] != .null { Label("Since \(OpsFormat.ago(value["since"]))", systemImage: "clock").font(.caption2) }
+                if showsSince && value["since"] != .null { Label("Since \(OpsFormat.ago(value["since"]))", systemImage: "clock").font(.caption2) }
                 if let check = OpsFormat.date(value["nextCheckAt"]) {
                     Text(check <= Date() ? "Check due" : "Check \(OpsFormat.ago(check))").font(.caption2).foregroundStyle(check <= Date() ? OpsTheme.warn : OpsTheme.muted)
                 } else if ["waiting", "queued"].contains(value["state"].string) {
                     Text("No check scheduled").font(.caption2).foregroundStyle(OpsTheme.warn)
                 }
             }.foregroundStyle(OpsTheme.muted)
-            if compact && value["state"].string != "finished" {
+            if compact && value["state"].string != "finished" && hasEstimate {
                 estimate.font(.caption2).foregroundStyle(OpsTheme.muted)
             }
             if !compact {
