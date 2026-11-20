@@ -12,6 +12,11 @@ case "${OPS_TEST_SCOPE:-full}" in
       -only-testing:OpsSessionTests
       -only-testing:OpsUITests/LaunchTests/testChatShellInLightAndOLEDThemes
       -only-testing:OpsUITests/LaunchTests/testTicketSupervisionTakeDirectAndHandBack
+      -only-testing:OpsUITests/LaunchTests/testTicketQueueShowsBlockedWaitAndNextCheck
+      -only-testing:OpsUITests/LaunchTests/testActivityApprovalsPlanAndLiveWork
+      -only-testing:OpsUITests/LaunchTests/testTicketFollowUpStaysReachableInAConversationWithHistory
+      -only-testing:OpsUITests/LaunchTests/testNativeSignInAndCancellation
+      -only-testing:OpsUITests/KeirGamesUITests/testTicketQuestionsAreOnlyForAHouseDivided
       -only-testing:OpsUITests/LaunchTests/testKeirReopensTheLastPrivateConversationAfterForceQuit
       -only-testing:OpsUITests/KeirGamesUITests/testSelectAGameSeeWhatKeirCanReadAndAskInTheConversation
     )
