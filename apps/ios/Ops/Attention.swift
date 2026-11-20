@@ -329,23 +329,30 @@ struct AttentionRow: View {
                 OpsStatusBadge(status: status, label: item.kindLabel)
                 Spacer(minLength: 8)
                 if let date = item.openedAt {
-                    Text(OpsFormat.ago(date)).font(.opsCaption)
-                        .foregroundStyle(Date().timeIntervalSince(date) >= 7 * 86_400 ? OpsTheme.warning : OpsTheme.muted)
+                    let age = OpsFormat.waiting(date)
+                    Text(age.text).font(.opsCaption.weight(.medium)).monospacedDigit().foregroundStyle(age.color)
                 }
             }
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(item.title).font(.opsCardTitle).foregroundStyle(OpsTheme.ink)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let number = item.ticketNumber { Text("Ticket #\(String(number))").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
-                    if !item.detail.isEmpty, item.detail != item.title {
-                        Text(item.detail).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                    let ticketLine = item.ticketNumber.map { "Ticket #\(String($0))" }
+                    let detailLine = !item.detail.isEmpty && item.detail != item.title ? item.detail : nil
+                    let caption = [ticketLine, detailLine].compactMap { $0 }.joined(separator: " · ")
+                    if !caption.isEmpty {
+                        Text(caption).font(.opsCaption).foregroundStyle(OpsTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                     .foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+            }
+            // A stand-alone card says where its action lives, so an item that
+            // cannot be answered from the list does not look finished.
+            if card {
+                Label(action, systemImage: icon).font(.opsCaption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
             }
         }
     }

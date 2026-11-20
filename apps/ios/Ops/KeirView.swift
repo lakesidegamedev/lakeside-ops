@@ -753,9 +753,17 @@ struct DecisionCard: View {
     @State private var note = ""
     @State private var busy = false
     private var question: String { OpsText.scrub(decision["question"].string) }
+    private var checksStatus: String { decision["checksStatus"].string }
+    private var staleChecks: Bool { checksStatus == "Checks need a fresh run" }
     private var detail: String {
-        if let status = decision["checksStatus"].string.nonempty { return status }
+        if !checksStatus.isEmpty { return "" }
         return OpsText.decisionBody(question, title: OpsText.decisionTitle(decision))
+    }
+    /// One line for the merge checks: their state and when they last ran.
+    private var checksLine: String {
+        guard !checksStatus.isEmpty else { return "" }
+        guard let checked = OpsFormat.date(decision["checksAt"]) else { return checksStatus }
+        return checksStatus + ", last ran " + OpsFormat.contextual(checked)
     }
     var body: some View {
         Group {
@@ -771,18 +779,22 @@ struct DecisionCard: View {
                 OpsStatusBadge(status: .waiting, label: ["choice", "question"].contains(decision["type"].string) ? "Decision" : "Approval", symbol: decision["type"].string == "choice" ? "list.bullet.circle" : "checkmark.seal")
                 Spacer()
                 if let date = OpsFormat.date(decision["at"]) {
-                    Text(OpsFormat.ago(date)).font(.opsCaption)
-                        .foregroundStyle(Date().timeIntervalSince(date) >= 7 * 86_400 ? OpsTheme.warning : OpsTheme.muted)
+                    let age = OpsFormat.waiting(date)
+                    Text(age.text).font(.opsCaption.weight(.medium)).monospacedDigit().foregroundStyle(age.color)
                 }
             }
             Button { router.openDecisionTask(decision) } label: {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(OpsText.decisionTitle(decision)).font(.opsCardTitle).fixedSize(horizontal: false, vertical: true)
-                        if let n = decision["ticket"].number { Text("Ticket #\(String(Int(n)))").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
-                        if !detail.isEmpty { Text(detail).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
-                        if let checked = OpsFormat.date(decision["checksAt"]) {
-                            Text("Checks last ran · " + OpsFormat.contextual(checked)).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                        let ticketLine = decision["ticket"].number.map { "Ticket #\(String(Int($0)))" }
+                        let caption = [ticketLine, detail.nonempty].compactMap { $0 }.joined(separator: " · ")
+                        if !caption.isEmpty { Text(caption).font(.opsCaption).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true) }
+                        if !checksLine.isEmpty {
+                            Label(checksLine, systemImage: staleChecks ? "exclamationmark.triangle.fill" : "checkmark.seal")
+                                .font(.opsCaption.weight(.medium))
+                                .foregroundStyle(staleChecks ? OpsTheme.warning : OpsTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     Spacer(minLength: 4)
@@ -821,6 +833,11 @@ struct DecisionCard: View {
                 Text("Your choice gives direction. Actions needing permission get a separate approval.").font(.caption).foregroundStyle(OpsTheme.muted)
                 Button("Ask a question or give another answer") { explaining = true }.disabled(busy)
             } else {
+            if decision["canRefresh"].bool && staleChecks {
+                // Approve is locked until checks are fresh, so the way forward
+                // is the card's primary button, above the locked row.
+                refreshButton(primary: true)
+            }
             // Decline on the left, approve on the right, both full capsules: the
             // same shape an approval sheet uses, with reply one tap away.
             ViewThatFits(in: .horizontal) {
@@ -828,12 +845,14 @@ struct DecisionCard: View {
                 VStack(spacing: 8) { decisionButtons }
             }.buttonStyle(.plain).disabled(busy || decision["canAnswer"] == .bool(false))
             }
-            if decision["canRefresh"].bool { Button(decision["checksStatus"].string == "Checks need a fresh run" ? "Request fresh checks" : "Request a fresh proposal") { act("refresh") }.disabled(busy) }
+            if decision["canRefresh"].bool && !(staleChecks && decision["type"].string != "choice") {
+                refreshButton(primary: false)
+            }
             if decision["canAnswer"] == .bool(false) {
                 OwnerDirectionButton(title: "Ask Keir to recover this work", context: "Decision \(decision["id"].string) for task \(decision["jobId"].string): \(decision["question"].string)")
             }
         }
-        .keirObjectCard()
+        .keirObjectCard(padding: 16)
         }
         }
         .buttonStyle(.plain)
@@ -843,20 +862,34 @@ struct DecisionCard: View {
             Button("Cancel", role: .cancel) {}
         }
     }
+    private func refreshButton(primary: Bool) -> some View {
+        Button { act("refresh") } label: {
+            Label(staleChecks ? "Request fresh checks" : "Request a fresh proposal", systemImage: "arrow.clockwise")
+                .font(.callout.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .foregroundStyle(primary ? OpsTheme.onAccent : OpsTheme.sky)
+                .background(primary ? OpsTheme.sky : OpsTheme.sky.opacity(0.12), in: Capsule())
+        }.disabled(busy)
+    }
+    private var approveLocked: Bool { decision["canApprove"] == .bool(false) }
     @ViewBuilder private var decisionButtons: some View {
         Button { act("reject") } label: {
             Text("Decline").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
                 .background(OpsTheme.raised, in: Capsule())
+                .overlay(Capsule().strokeBorder(OpsTheme.hairline))
         }
         Button { act("approve") } label: {
-            Text("Approve").fontWeight(.semibold).lineLimit(1).multilineTextAlignment(.center)
+            Label("Approve", systemImage: approveLocked ? "lock.fill" : "checkmark")
+                .fontWeight(.semibold).lineLimit(1).minimumScaleFactor(0.8).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 8)
-                .background(decision["canApprove"] == .bool(false) ? OpsTheme.raised : OpsTheme.sky, in: Capsule())
-                .foregroundStyle(decision["canApprove"] == .bool(false) ? OpsTheme.muted : OpsTheme.onAccent)
+                .background(approveLocked ? Color.clear : OpsTheme.sky, in: Capsule())
+                .overlay(Capsule().strokeBorder(approveLocked ? OpsTheme.muted.opacity(0.45) : .clear, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                .foregroundStyle(approveLocked ? OpsTheme.muted : OpsTheme.onAccent)
         }
-        .disabled(decision["canApprove"] == .bool(false)).accessibilityIdentifier("decision-approve")
+        .disabled(approveLocked).accessibilityIdentifier("decision-approve")
         Button { explaining = true } label: {
             Image(systemName: "text.bubble").frame(width: 44, height: 44).background(OpsTheme.raised, in: Circle())
+                .overlay(Circle().strokeBorder(OpsTheme.hairline))
         }.accessibilityLabel("Reply or ask why")
     }
     private func act(_ verdict: String, _ text: String = "") {

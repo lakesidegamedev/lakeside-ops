@@ -156,8 +156,10 @@ struct ActivityView: View {
     private var work: JSONValue { ops.work }
     private var tickets: [JSONValue] { ops.openTickets }
     private var trimmedSearch: String { search.trimmingCharacters(in: .whitespaces) }
-    private let filters = [("all", "All"), ("needs-you", "Needs you"), ("stuck", "Blocked"), ("stalled", "Stalled"),
-                           ("failing", "Failing checks"), ("unanswered", "Unanswered"),
+    // Ordered by harm: what waits on the owner, then a player with no reply,
+    // then work that has stopped. Sections follow the same order as the chips.
+    private let filters = [("all", "All"), ("needs-you", "Needs you"), ("unanswered", "Unanswered"), ("stalled", "Stalled"),
+                           ("stuck", "Blocked"), ("failing", "Failing checks"),
                            ("working", "Running"), ("waiting", "Queued"), ("held", "Waiting"), ("finished", "Done")]
 
     // MARK: Rows per filter
@@ -192,15 +194,6 @@ struct ActivityView: View {
         List {
             DecisionAnswerReceipt().listRowBackground(Color.clear).listRowSeparator(.hidden)
             ownerSections
-            if !visibleFailures.isEmpty {
-                Section {
-                    ForEach(visibleFailures, id: \.["number"].string) { pr in
-                        if let url = URL(string: pr["url"].string.nonempty ?? pr["html_url"].string), url.scheme == "https" {
-                            Link(destination: url) { failingLabel(pr) }.inboxRow()
-                        } else { failingLabel(pr).inboxRow() }
-                    }
-                } header: { queueHeader("Failing checks", count: visibleFailures.count) }
-            }
             queueSection
             if visibleQueue.isEmpty && visibleOwner.isEmpty && visibleFailures.isEmpty {
                 Text(emptyText).font(.callout).foregroundStyle(OpsTheme.muted)
@@ -316,6 +309,15 @@ struct ActivityView: View {
     @ViewBuilder private var queueSection: some View {
         ForEach(filters.dropFirst(), id: \.0) { key, title in
             let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0.item) == key }
+            if key == "failing" && !visibleFailures.isEmpty {
+                Section {
+                    ForEach(visibleFailures, id: \.["number"].string) { pr in
+                        if let url = URL(string: pr["url"].string.nonempty ?? pr["html_url"].string), url.scheme == "https" {
+                            Link(destination: url) { failingLabel(pr) }.inboxRow(card: true)
+                        } else { failingLabel(pr).inboxRow(card: true) }
+                    }
+                } header: { queueHeader("Failing checks", count: visibleFailures.count) }
+            }
             if !rows.isEmpty {
                 Section {
                     ForEach(rows) { row in
@@ -324,7 +326,7 @@ struct ActivityView: View {
                             else { QueueRow(item: row.item, ticket: row.ticket) }
                         }
                         .buttonStyle(.plain)
-                        .inboxRow()
+                        .inboxRow(card: true)
                         .accessibilityIdentifier("work-row-\(row.key)")
                     }
                 } header: { queueHeader(title, count: rows.count) }
@@ -333,13 +335,15 @@ struct ActivityView: View {
     }
 
     private func failingLabel(_ pr: JSONValue) -> some View {
-        OpsQueueRow(title: pr["title"].string, detail: "Failing · #\(pr["number"].string)", status: .failed, icon: "xmark.circle.fill")
+        OpsQueueRow(title: pr["title"].string, detail: "Checks failing on pull request #\(pr["number"].string)", status: .failed, icon: "xmark.circle.fill", verticalPadding: 0)
+            .opsStripeCard(OpsTheme.danger)
     }
 
     private func queueHeader(_ title: String, count: Int, identifier: String? = nil) -> some View {
         SectionLabel(text: title, count: count, identifier: identifier)
+            .padding(.top, 10).padding(.bottom, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background { OpsTheme.background.padding(.horizontal, -16) }
+            .background { OpsTheme.background.padding(.horizontal, -40) }
     }
 
     @ViewBuilder private func destination(_ route: InboxRoute) -> some View {
@@ -400,7 +404,7 @@ private extension View {
     /// dividers start where the text starts.
     func inboxRow(card: Bool = false) -> some View {
         self
-            .listRowInsets(EdgeInsets(top: card ? 6 : 0, leading: 16, bottom: card ? 6 : 0, trailing: 16))
+            .listRowInsets(EdgeInsets(top: card ? 5 : 0, leading: 16, bottom: card ? 5 : 0, trailing: 16))
             .listRowBackground(Color.clear)
             .listRowSeparator(card ? .hidden : .visible)
             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
@@ -423,8 +427,7 @@ private struct InboxRowTop: View {
             if !number.isEmpty { Text("#\(number)").font(.caption).foregroundStyle(OpsTheme.muted) }
             Spacer(minLength: 8)
             if !age.isEmpty {
-                Label(age, systemImage: "clock").font(.caption2).monospacedDigit().foregroundStyle(ageColor)
-                    .labelStyle(.titleAndIcon)
+                Text(age).font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(ageColor)
             }
             Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted)
                 .accessibilityHidden(true)
@@ -449,8 +452,8 @@ private struct QueueRow: View {
             if item["timing"] != .null { WorkTimingView(value: item["timing"], compact: true, showsSince: false) }
             else if let summary = item["summary"].string.nonempty { Text(summary).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2) }
         }
-        .padding(.vertical, 12)
         .contentShape(Rectangle())
+        .opsStripeCard(WorkQueuePresentation.color(item))
         .accessibilityElement(children: .combine)
     }
 }
@@ -466,17 +469,20 @@ private struct UnansweredRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            InboxRowTop(state: "Unanswered", color: OpsTheme.warning,
+            InboxRowTop(state: "Unanswered", color: urgent ? OpsTheme.danger : OpsTheme.warning,
                         number: ticket["number"].string,
                         age: waited.map { OpsFormat.span(max(60, $0)) + " ago" } ?? "",
-                        ageColor: urgent ? OpsTheme.warn : OpsTheme.muted)
+                        ageColor: urgent ? OpsTheme.danger : OpsTheme.muted)
             Text(KeirTicketFollowUp.title(ticket)).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(2)
             if let waited {
-                Text("No reply recorded for \(OpsFormat.span(max(60, waited))).").font(.caption).foregroundStyle(OpsTheme.muted)
+                Label(urgent ? "Player waiting \(OpsFormat.span(max(60, waited))) with no recorded reply" : "No reply recorded for \(OpsFormat.span(max(60, waited)))",
+                      systemImage: urgent ? "exclamationmark.bubble.fill" : "bubble.left")
+                    .font(.caption.weight(urgent ? .semibold : .regular))
+                    .foregroundStyle(urgent ? OpsTheme.danger : OpsTheme.muted)
             }
         }
-        .padding(.vertical, 12)
         .contentShape(Rectangle())
+        .opsStripeCard(urgent ? OpsTheme.danger : OpsTheme.warning)
         .accessibilityElement(children: .combine)
     }
 }
