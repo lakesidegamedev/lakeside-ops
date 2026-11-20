@@ -3,6 +3,7 @@ const { JOB_TERMINAL } = require("./machines");
 
 const { ticketClaim } = require("./ticketClaim");
 const authority = require("./authority");
+const takeover = require("./supporttakeover");
 
 const { quickQuestion, isQuick } = require("./conversation");
 const { ackFacts } = require("./admission");
@@ -96,8 +97,9 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     s.role = role === "player" && conversation?.isModerator?.(actor) ? "moderator" : role;
     if (summonTask) { s.authorId = actor; s.content = summonTask.content; }
     const nTicket = ticketNumber(channel.name);
+    const pingHold = d.supportOwner?.tickets?.[nTicket] === takeover.AWAITING_PING;
     // Keir 5.7: feedback about Keir is logged by a fire-and-forget Jev check.
-    if (observe && !historical && !summonTask) Promise.resolve().then(() => observe({ text: s.content, role, actorId: actor, channelId: channel.id, ticket: nTicket || null, messageId: message.id,
+    if (observe && !historical && !summonTask && !pingHold) Promise.resolve().then(() => observe({ text: s.content, role, actorId: actor, channelId: channel.id, ticket: nTicket || null, messageId: message.id,
       dm: channel.type === 1, mentionsKeir: (message.mentions || []).some((u) => u.id === config.botId) || message.referenced_message?.author?.id === config.botId })).catch(() => {});
     const controlText = s.content.replace(new RegExp(`<@!?${config.botId}>`, "g"), "").replace(/^\s*\/?(?:keir|keith)\b[,:]?/i, "").trim();
     const controlAddress = (channel.type === 1 && role !== "player") || message.referenced_message?.author?.id === config.botId ||
@@ -128,6 +130,51 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     if (nTicket && d.channels[channel.id]?.keirPaused) {
       d.seen[`discord:${message.id}`] = "owner-ticket-pause";
       delete d.classify?.[message.id]; ledger.save(); return;
+    }
+    const standDown = !historical && !summonTask && nTicket && s.role !== "player" && controlAddress &&
+      /^(?:please\s+)?stand down(?: (?:here|on this ticket))? until (?:pinged|(?:someone|we|I) pings? you)[.!]*$/i.test(controlText);
+    if (standDown && (pingHold || takeover.ownerOf(d, nTicket) === "keir")) {
+      const key = `discord:${message.id}`;
+      if (d.seen[key]) return;
+      d.seen[key] = "ticket-awaiting-ping";
+      if (!pingHold) {
+        const owners = (d.supportOwner ||= { owner: "keir", since: now(), tickets: {} });
+        owners.tickets[nTicket] = takeover.AWAITING_PING;
+        takeover.record(ledger, nTicket, takeover.AWAITING_PING, actor, { correction: "Standing down until directly pinged in the ticket." }, now());
+      }
+      ledger.save(); return;
+    }
+    let resumedByPing = false;
+    if (pingHold) {
+      const key = `discord:${message.id}`;
+      if (d.seen[key]) return;
+      const hold = d.supportOwner.takeovers?.[nTicket];
+      // Discord may populate mentions on a reply even if its body contains no @mention.
+      const directPing = Boolean(config.botId) && (message.mentions || []).some(u => u.id === config.botId) &&
+        new RegExp(`<@!?${config.botId}>`).test(s.content);
+      const channelState = d.channels[channel.id];
+      if (historical || summonTask || !directPing || !(Date.parse(message.timestamp) > hold?.at) ||
+          channelState?.claimedBy || channelState?.keirStopped) {
+        if (!historical && !summonTask) {
+          d.seen[key] = "ticket-awaiting-ping"; delete d.classify?.[message.id]; ledger.save();
+        }
+        return;
+      }
+      // A new request may continue the ticket, but approvals from before the break
+      // do not carry over. Leave in-flight and completed effects alone.
+      const ticketJobs = new Set(Object.values(d.jobs).filter(job => takeover.ticketsOf(d, job).includes(nTicket)).map(job => job.id));
+      for (const action of Object.values(d.actions)) {
+        if (ticketJobs.has(action.jobId) && ["pending", "approved"].includes(action.state)) action.state = "withdrawn";
+      }
+      for (const decision of Object.values(d.decisions || {})) {
+        if (ticketJobs.has(decision.jobId) && decision.state === "pending") decision.state = "withdrawn";
+      }
+      for (const id of ticketJobs) delete d.jobs[id].ownerDecisionPending;
+      delete d.ticketAuthority?.[nTicket]; delete d.shipSignoffs?.[nTicket];
+      d.supportOwner.tickets[nTicket] = "keir";
+      takeover.record(ledger, nTicket, "keir", actor, { correction: `Resumed by direct Discord ping ${message.id}.` }, now());
+      resumedByPing = true;
+      ledger.save();
     }
     if (!historical && !summonTask && nTicket && role !== "player" && controlAddress &&
         /^(?:please\s+)?(?:stop|stand down|leave (?:this|the) ticket alone)(?:[\s,]+(?:please|now|for now|here|working|work|this ticket|on this ticket|on this one|on this|this one|this|it|thanks|thank you))*[.!]*$/i.test(controlText)) {
@@ -226,7 +273,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     // A mention-only nudge may refer to the author's immediately preceding
     // unanswered read-only question, never to older action requests or another user.
     let addressedText = text;
-    if (explicit && !text && (role !== "player" || playerVenue) && !s.attachments.length && !s.embeds.length) {
+    if (explicit && !text && (role !== "player" || playerVenue || resumedByPing) && !s.attachments.length && !s.embeds.length) {
       const rows = (conversation?.snapshot({ source: { channelId: channel.id } })?.messages || []).filter(r => r.id !== message.id);
       const referenced = rows.find(r => r.id === s.replyTo);
       const prior = rows.at(-1);
@@ -445,7 +492,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       // and while staff are talking in a ticket Keir keeps quiet for ten
       // minutes unless someone addresses it (ticket 1550 woke sixteen times in
       // twelve minutes while Ariane and the player talked).
-      const addressed = new RegExp(`\\b(?:keir|keith|starmer)\\b|<@!?${config.botId}>`, "i").test(s.content || "");
+      const addressed = resumedByPing || new RegExp(`\\b(?:keir|keith|starmer)\\b|<@!?${config.botId}>`, "i").test(s.content || "");
       if (role !== "player" && !addressed) job.staffActiveUntil = now() + STAFF_HOLD_MS;
       // A message that names Keir is answered promptly; later chatter that does
       // not name Keir must not push that wake back behind the staff hold
