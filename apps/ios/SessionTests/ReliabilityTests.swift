@@ -47,7 +47,8 @@ private final class ReliabilityTransport: URLProtocol, @unchecked Sendable {
             }
         }
         await fulfillment(of: [finished], timeout: 5)
-        XCTAssertEqual(OpsServices.shared.router.tab, .feed)
+        XCTAssertEqual(OpsServices.shared.router.tab, .ops)
+        XCTAssertEqual(OpsServices.shared.router.studioPath, [.feed])
     }
 
     func testDownstream401DoesNotDiscardTheOwnersSession() async throws {
