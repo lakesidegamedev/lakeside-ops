@@ -83,14 +83,15 @@ function setup() {
 }
 const updates = (f) => f.calls.filter((c) => c[1] === "support_public_update");
 
-test("a long reply goes out as several messages in order, a gap apart, and counts as one update", async () => {
+test("a ticket answer arrives as a single tracked message", async () => {
   const f = setup();
   f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
   const reply = "Your Indiana freight sector sells to the open market before your own manufacturing sees it. The sale order is by price, not by owner. That is why only five percent reaches your own company.\n\nNothing is missing from your account. A same-owner priority would be a rule change, so I am raising it with the developers.";
   const res = await f.broker.tool(f.job, "channel_reply", { message: reply });
   assert.equal(res.published, true);
   const sent = updates(f).map((c) => c[2].message).filter((m) => !/^Hi, I.m Keir/.test(m)); // the first-ever answer gets the standard introduction first
-  assert.ok(sent.length >= 2 && res.messages === sent.length, JSON.stringify(sent));
+  assert.deepEqual(sent, [reply]);
+  assert.equal(res.messages, 1);
   assert.equal(squash(sent.join(" ")), squash(reply), "order and content kept");
   assert.equal(f.gaps.length, sent.length - 1, "a pause between messages, none before the first");
   // One update to every counter: the post history and the monologue run.
@@ -98,7 +99,7 @@ test("a long reply goes out as several messages in order, a gap apart, and count
   assert.equal(f.ledger.data.monologue[123].count, 1);
 });
 
-test("a split reply counts as one post in the post history", async () => {
+test("a multi-paragraph reply counts as one post in the post history", async () => {
   const f = setup();
   const reply = "First fact is that the freight sector sells to the open market before your own plants. Second fact is that the order is by price.\n\nThird, no money is missing.";
   await f.broker.tool(f.job, "channel_reply", { message: reply });

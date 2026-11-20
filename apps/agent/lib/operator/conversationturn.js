@@ -1,0 +1,62 @@
+"use strict";
+const { AsyncLocalStorage } = require("node:async_hooks");
+
+// The snapshot belongs to one activation. The messages belong to the ledger.
+const active = new WeakMap();
+const calls = new AsyncLocalStorage();
+const foreground = new WeakSet();
+const foregroundTools = new Set(["conversation_updates", "ticket_history", "view_attachment", "check_draft", "channel_reply", "finish"]);
+
+function eligible(job) {
+  return !job.codingParent && job.channelId && job.channelId !== "app" &&
+    (job.replyChannel === job.channelId || (!job.replyChannel && job.kind === "ticket")) && ["ticket", "command", "conversation"].includes(job.kind);
+}
+function human(job, row) {
+  return eligible(job) && row?.messageId && row.authorId && row.channelId === job.channelId &&
+    !row.directiveId && !row.codingResult && !row.investigationResult &&
+    [undefined, "player", "moderator", "owner", "support"].includes(row.role) &&
+    (job.kind === "ticket" || row.authorId === job.actorId);
+}
+function begin(job, snapshot) {
+  active.set(job, { captured: new Set(snapshot), revision: 0 });
+}
+function consume(job, rows, history) {
+  const used = new Set(rows);
+  job.requestInbox = history;
+  job.inbox = (job.inbox || []).filter(row => !used.has(row));
+  if (!job.inbox.some(row => human(job, row))) delete job.addressedPending;
+}
+function unread(job) {
+  const turn = active.get(job);
+  return turn ? (job.inbox || []).filter(row => !turn.captured.has(row) && human(job, row)) : [];
+}
+function check(job) {
+  const call = calls.getStore();
+  if (unread(job).length || (call?.job === job && call.revision !== active.get(job)?.revision))
+    throw new Error("A newer Discord message arrived. Read conversation_updates, then answer the current question before continuing.");
+}
+function read(job) {
+  const rows = unread(job);
+  if (rows.length) {
+    consume(job, rows, [...(job.requestInbox || []), ...rows].slice(-20));
+    active.get(job).revision++;
+    job.activationInternalWake = false;
+    job.observedPlayerAt = Math.max(job.observedPlayerAt || 0, ...rows.map(row => Date.parse(row.at) || 0));
+  }
+  return rows;
+}
+// Discord snowflakes order messages even within the same millisecond. A job
+// may receive its next turn while the previous answer is still in the outbox.
+function latestSource(job) {
+  return [job.source, ...(job.requestInbox || []), ...(job.inbox || [])]
+    .filter(row => human(job, row) && /^\d{16,20}$/.test(row.messageId))
+    .reduce((id, row) => BigInt(row.messageId) > BigInt(id || 0) ? row.messageId : id, null);
+}
+function superseded(job, entry) {
+  const latest = job && entry.answerTo && latestSource(job);
+  return Boolean(latest && BigInt(latest) > BigInt(entry.answerTo));
+}
+function forCall(job, fn) {
+  return active.has(job) ? calls.run({ job, revision: active.get(job).revision }, fn) : fn();
+}
+module.exports = { foreground, foregroundTools, latestSource, superseded, eligible, human, begin, consume, unread, check, read, forCall, end(job) { active.delete(job); foreground.delete(job); } };

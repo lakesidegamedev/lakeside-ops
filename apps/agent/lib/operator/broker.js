@@ -1,4 +1,5 @@
 "use strict";
+const conversationTurn = require("./conversationturn");
 const { JOB_TERMINAL } = require("./machines");
 
 const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
@@ -328,7 +329,7 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
 const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings", "trace_bonds"]);
-const QUICK_TOOLS = ["check_draft", "ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
+const QUICK_TOOLS = ["conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -606,6 +607,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     active(job);
     const old = job.effects[key];
     if (old?.state === "done") return old.result;
+    conversationTurn.check(job);
     // Keir 10.1.13: nothing is said to a player on a ticket that is over (1842 got "still working on it" a minute after it closed).
     if (settle?.kind === "reply" && settle.ticket) { const why = require("./ticketstate").endedReason(d, settle.ticket, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: settle.ticket, why }); throw new Error(`Ticket ${settle.ticket} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
     // A merge receipt is settled from GitHub by effectrecovery.js; asking the
@@ -1650,7 +1652,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const told = new Set([...(card.liveNotified || []), ...before.filter(live).map((i) => i.name)].map(statusCard.cleanName));
     const fresh = after.filter((i) => live(i) && !told.has(statusCard.cleanName(i.name)));
     if (!fresh.length) return false;
-    card.liveNotified = [...told, ...fresh.map((i) => statusCard.cleanName(i.name))].slice(-20); ledger.save();
+    const root = d.jobs[d.seen[`ticket:${ticketNo}`]];
+    const openAsk = d.ticketCases?.[ticketNo]?.asked?.some(ask => !ask.answeredAt);
+    if (root && (openAsk || root.inbox?.some(m => conversationTurn.human(root, m)) || root.state === "running")) {
+      ledger.audit("live_notice_deferred_to_conversation", { job: root.id, ticket: ticketNo });
+      return false;
+    }
+
     const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
@@ -1660,6 +1668,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       guardPlayerRegister(effectJob, ticketNo, message);
       const key = `live-notice:${ticketNo}:${crypto.createHash("sha1").update(names.join("|")).digest("hex").slice(0, 10)}`;
       await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
+      card.liveNotified = [...told, ...fresh.map((i) => statusCard.cleanName(i.name))].slice(-20);
       effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
       ledger.audit("live_notice", { job: effectJob.id, ticket: ticketNo, items: names.length }); ledger.save();
       return true;
@@ -2142,7 +2151,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     const callId = appMuse()?.startTool?.(job, name, input);
     const safeLogInput = musePolicy.logInput(input);
     let result;
-    try { result = await toolInner(job, name, input, signal); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started, callId); }
+    try { result = await conversationTurn.forCall(job, () => toolInner(job, name, input, signal)); musePolicy.clearBlocker(ledger, job, name); appMuse()?.noteTool(job, name, safeLogInput, true, now() - started, callId); }
     catch (e) {
       appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
       // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
@@ -2232,6 +2241,19 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "support_updates") return supportDirectives.updates(job);
     if (supportDirectives.held(job)) throw new Error("Support directive is held by an existing approval, staff, category or conversation hold; no tool may bypass it.");
     if ((job.inbox || []).some((r)=>r.directiveId)) throw new Error("New owner guidance arrived from the app. Read support_updates before your next tool or external action.");
+    if (conversationTurn.foreground.has(job) && !conversationTurn.foregroundTools.has(name))
+      throw new Error("The worker owns this investigation. This activation can answer the current conversation only.");
+    if (name === "conversation_updates") {
+      if (!conversationTurn.eligible(job)) throw new Error("This task has no Discord conversation.");
+      const rows = conversationTurn.read(job);
+      if (rows.length) {
+        if (job.ticket) require("./ticketcase").syncActivation(d, job, { now: now(), ownerId: config.ownerId, botId: config.botId });
+        ledger.audit("conversation_interrupted", { job: job.id, count: rows.length });
+        ledger.save();
+      }
+      return { messages: rows, instruction: "Answer the latest person first. Reconcile any correction with your evidence and keep earlier promises open." };
+    }
+    conversationTurn.check(job);
     if (name === "present_choices") {
       if (job.role !== "owner") throw new Error("Owner task required for choices");
       if (job.replyChannel === "app") {
@@ -2705,23 +2727,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
-          // Keir 8.4.1: a reply goes out as a few short messages in order, one update to every
-          // guard above and to the caps below. The first is the tracked update; the rest follow it.
-          const parts = require("./replysplit").splitReply(message);
-          let result = null;
-          for (let i = 0; i < parts.length; i++) {
-            const args = { kind: "ticket", number: ticketNo, message: parts[i], deliver: true, update_kind: "progress", delivery_mode: "reply" };
-            if (i > 0) await sleep(require("./replysplit").GAP_MS);
-            const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: parts[i] });
-            const delivery = sent.delivery;
-            const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
-            if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
-            result ||= sent;
-          }
+          const args = { kind: "ticket", number: ticketNo, message: message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
+          const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: message });
+          const delivery = sent.delivery;
+          const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
+          if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
           job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, ticketNo, message);
           const ticketTask = d.jobs[d.seen[`ticket:${ticketNo}`]]; if (ticketTask) ticketTask.lastPublishedAt = now();
           ledger.save();
-          return { published: true, attachedToTicket: ticketNo, messages: parts.length, delivery: result.delivery?.status || "submitted" };
+          return { published: true, attachedToTicket: ticketNo, messages: 1, delivery: sent.delivery?.status || "submitted" };
         }
       }
       // Owner, 2026-10-23: a waiting app task re-posted the same "Railway is
@@ -2737,9 +2751,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         job.appReplies = [...sent, { at: now(), text: message.slice(0, 2000) }].slice(-5); job.appRepeats = 0; job.lastPublishedAt = now();
       }
-      const key = `channel-reply:${job.id}:${hash(message)}`;
+      conversationTurn.check(job);
+      const answerTo = conversationTurn.eligible(job) ? conversationTurn.latestSource(job) : null;
+      const key = `channel-reply:${job.id}:${answerTo && answerTo !== job.source?.messageId ? answerTo + ":" : ""}${hash(message)}`;
       if (ticketNo) recordTicketPost(job, ticketNo, message);
-      ledger.notify(key, `channel:${job.id}`, message);
+      ledger.notify(key, `channel:${job.id}`, message, answerTo ? { answerTo } : {});
       job.channelReplyQueued = true; job.channelRepliedAt = now(); ledger.save();
       return { queued: true, delivery: "durable channel outbox" };
     }
@@ -4496,6 +4512,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       ledger.save(); return { saved: true };
     }
     if (name === "finish") {
+      if (conversationTurn.foreground.has(job)) {
+        if (input.state !== "waiting" || input.needsOwner) throw new Error("Finish waiting for the delegated worker.");
+        if (!(job.lastPublishedAt >= job.startedAt)) throw new Error("Answer the current question before yielding to the worker.");
+        job.state = job.inbox?.length ? "queued" : "waiting";
+        delete job.wakeAt;
+        ledger.audit("conversation_yielded_to_worker", { job: job.id });
+        ledger.save();
+        return { state: job.state };
+      }
       if (input.needsOwner) { const hk = require("./prhousekeeping").housekeepingRequest(input.summary); if (hk) throw new Error(require("./prhousekeeping").INSTRUCTION(hk)); }
       if (input.needsOwner && !job.ownerMuseBlocker && !d.channels?.[job.channelId]?.claimedBy && !appQuestions?.list(job.appThread||"main").some(q=>q.jobId===job.id&&q.state==="pending") && !Object.values(d.decisions||{}).some(x=>x.jobId===job.id&&x.state==="pending")) throw new Error("Prepare a readable owner request first: use github merge/promote with explanation for an action, or present_choices/raise_to_developers with named policy options. A technical finish summary is not an approval request.");
       if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a completion summary. Call tools through their interface and preserve the last verified conclusion.");
@@ -4718,6 +4743,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         job.resultReceipt = { sha256: hash(input.result), at: now() };
         ledger.audit("structured_result", { job: job.id, ...job.resultReceipt });
       }
+      conversationTurn.check(job);
       if (["done", "dismissed"].includes(state) && job.kind === "ticket" && !job.resolved && !job.channelClosed) {
         // The model can finish a turn, but unresolved tickets stay owned.
         // Keir 10.0.4 (ticket 1833, 2026-11-16): a finished ticket where Keir spoke last is answered,

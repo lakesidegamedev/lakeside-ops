@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- Players can interrupt an active ticket conversation, including while its delegated worker runs. Keir reads the new turn before sending, keeps unrelated questions open, and sends its ticket answer in one tracked message.
+- In an enabled Discord channel, a mention can point back to a specific reply or the preceding discussion. Keir keeps the speakers and screenshots attached to that context.
+
 - Keir treats unaddressed staff messages in support tickets as conversation context. An owner telling Keir to stop talking, replying or posting now pauses that ticket without sending a reply.
 - Owner decisions, coding worker runs and watch findings join tasks and approvals in the one status definition, with the same check on every change. The list of finished task statuses, which had been copied into 50 files, now comes from that definition.
 

@@ -5,6 +5,8 @@ const isQuick = (job) => job.kind === "conversation";
 // Only unambiguous information requests enter the read-only lane. Actions keep
 // their authenticated request and go through the ordinary worker.
 function quickQuestion(text) {
+  text = String(text || "").trim().replace(/^(?:so|hang on|wait)[, ]+/i, "");
+  if (/^(?:any (?:updates?|news|progress)(?: (?:on (?:this|that)|yet))?|(?:do i|should i|did i) (?:need to )?(?:wait|retry|refile|try again))\s*[?.!]*$/i.test(text)) return true;
   if (/\b(deploy|fix|change|open|close|create|delete|remove|cancel|approve|reject|restart|merge|publish|install|update|set|run|build|implement|investigate)\b/i.test(text)) return false;
   if (/^(?:(?:ok(?:ay)?[,!. ]*)?let['’]s (?:talk|chat)(?: to each other)?|test|ping|hello|hi|hey|thanks|thank you)[!.? ]*$/i.test(text.trim())) return true;
   if (/^(?:please\s+)?ask me (?:for|about)\b/i.test(text.trim())) return true;
@@ -66,9 +68,18 @@ function createConversation({ ledger, config, now = () => Date.now(), mods }) {
         awaitingOwnerDecision: Boolean(j.ownerDecisionPending || Object.values(ledger.data.actions).some((a) => a.jobId === j.id && a.state === "pending")) })).slice(-20);
   }
   function lastAssistantAt(channelId) {
-    const row = (channels[channelId] || []).filter((r) => r.role === "assistant").at(-1);
+    const row = (channels[channelId] || []).filter((r) => r.role === "assistant" && (r.content || r.images?.length)).at(-1);
     return row ? (Date.parse(row.at) || row.observedAt) : 0;
   }
   return { record, snapshot, progress, lastAssistantAt, recentImages, isModerator: (id) => Boolean(mods?.isModerator?.(id)) };
 }
-module.exports = { createConversation, isQuick, quickQuestion };
+// Preserve an explicit reply reference even after a busy channel has moved on.
+function focusedMessages(messages, source) {
+  const references = new Set([source?.messageId, source?.replyTo, source?.contextMessageId, ...(source?.contextSinceMessageIds || [])]);
+  const recent = new Set(messages.slice(-6));
+  return messages.filter(m => recent.has(m) || (m.id && references.has(m.id))).map(m => ({
+    id: m.id, author: m.author, authorId: m.authorId, role: m.role, replyTo: m.replyTo,
+    text: String(m.text || m.content || "").slice(0, 1000), at: m.at, images: m.images
+  }));
+}
+module.exports = { createConversation, focusedMessages, isQuick, quickQuestion };
