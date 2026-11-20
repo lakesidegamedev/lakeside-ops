@@ -11,7 +11,7 @@ const NEGATIVE = new Set(["slow_or_silent", "wrong_or_misleading", "bot_bug", "t
 const DAY = 86400000;
 const isLive = (n) => !n.supersededBy && !n.retiredAt && !n.invalidatedAt;
 
-function buildReport({ notes = [], recalls = [], outcomes = {}, feedback = [], jobs = {}, now = Date.now(), minTrackingDays = 14, suspectMinTickets = 3, suspectMargin = 0.25 } = {}) {
+function buildReport({ notes = [], recalls = [], outcomes = {}, feedback = [], jobs = {}, evidenceGaps = null, now = Date.now(), minTrackingDays = 14, suspectMinTickets = 3, suspectMargin = 0.25 } = {}) {
   const trackingSince = recalls.length ? Math.min(...recalls.map((r) => r.at)) : null;
   const trackingDays = trackingSince ? (now - trackingSince) / DAY : 0;
   const state = new Map();
@@ -38,11 +38,16 @@ function buildReport({ notes = [], recalls = [], outcomes = {}, feedback = [], j
     if (!e && trackingDays >= minTrackingDays && ageDays >= minTrackingDays) flags.push("unused");
     if (e && m.tickets >= suspectMinTickets && ((m.negative ?? 0) - (baseline.negative ?? 0) >= suspectMargin || (m.reopened ?? 0) - (baseline.reopened ?? 0) >= suspectMargin)) flags.push("suspect");
     if (!n.verifiedAt) flags.push("unverified");
-    return { id: n.id, text: n.text, ageDays: Math.round(ageDays * 10) / 10, recalls: e?.events || 0, lastRecalledAt: e?.last || null, ...m, flags };
+    // Keir 11.1: for evidence lessons, the cases where the reporter gave an outcome of their own (confirmed) apart from
+    // independent cases where the lesson was recalled and the ticket simply closed (recalledQuiet). Only the first is evidence.
+    const sig = Object.values(evidenceGaps?.signatures || {}).find((x) => x.lesson === n.id);
+    const evidence = sig ? { outcomeConfirmed: (sig.cases || []).length, recalledQuiet: (sig.quiet || []).length } : null;
+    if (evidence && evidence.outcomeConfirmed === 0) flags.push("no_reporter_outcome");
+    return { id: n.id, text: n.text, ageDays: Math.round(ageDays * 10) / 10, recalls: e?.events || 0, lastRecalledAt: e?.last || null, ...m, ...(evidence ? { evidence } : {}), flags };
   });
   return {
     trackingSince, trackingDays: Math.round(trackingDays * 10) / 10, baseline, lessons,
-    summary: { lessons: lessons.length, recalledAtLeastOnce: lessons.filter((l) => l.recalls).length, unused: lessons.filter((l) => l.flags.includes("unused")).length, suspect: lessons.filter((l) => l.flags.includes("suspect")).length, unverified: lessons.filter((l) => l.flags.includes("unverified")).length,
+    summary: { lessons: lessons.length, recalledAtLeastOnce: lessons.filter((l) => l.recalls).length, unused: lessons.filter((l) => l.flags.includes("unused")).length, suspect: lessons.filter((l) => l.flags.includes("suspect")).length, unverified: lessons.filter((l) => l.flags.includes("unverified")).length, outcomeConfirmed: lessons.filter((l) => l.evidence?.outcomeConfirmed > 0).length, recalledQuietOnly: lessons.filter((l) => l.evidence && l.evidence.outcomeConfirmed === 0 && l.evidence.recalledQuiet > 0).length,
       enoughData: trackingDays >= minTrackingDays },
   };
 }

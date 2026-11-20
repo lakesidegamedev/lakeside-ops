@@ -21,6 +21,8 @@ const { getResolution, isTerminalStatus, normalizeActions } = require("./ticket-
 const { PLAYER_COPY, contextRequestKey } = require("./ticket-context");
 const replySplit = require("./reply-split");
 const feedbackRow = require("./feedback-row");
+const evidenceAttach = require("./ticket-evidence-attach");
+const privateReply = require("./ticket-private-reply");
 
 const AHD_REPO = process.env.AHD_REPO_DIR || primaryRepoDir();
 const OPS_CHANNEL = process.env.DISCORD_OPS_CHANNEL_NAME || "operations";
@@ -384,7 +386,7 @@ async function postDiscordEmbed(channelIdOrName, embed, { content } = {}) {
   }
 }
 
-async function postDiscordBot(channelIdOrName, content, { mentionRoleIds, nonce, components } = {}) {
+async function postDiscordBot(channelIdOrName, content, { mentionRoleIds, nonce, components, reference } = {}) {
   const token = process.env.DISCORD_BOT_TOKEN || "";
   if (!token) return { skipped: "no bot token" };
   let channelId = String(channelIdOrName || "");
@@ -399,7 +401,7 @@ async function postDiscordBot(channelIdOrName, content, { mentionRoleIds, nonce,
         Authorization: `Bot ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ ...discordMentionPayload(content, mentionRoleIds), ...(components ? { components } : {}), ...(nonce ? { nonce, enforce_nonce: true } : {}) }),
+      body: JSON.stringify({ ...discordMentionPayload(content, mentionRoleIds), ...(components ? { components } : {}), ...(reference ? { message_reference: reference } : {}), ...(nonce ? { nonce, enforce_nonce: true } : {}) }),
       signal: AbortSignal.timeout(10000),
     });
     if (!r.ok) {
@@ -468,22 +470,67 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * or a later failure keeps the record. Returns the usual post result with
  * `id` = first message and `parts` = every delivered part.
  */
-async function postReplyParts(channelId, content, { post, nonceBase, done = [], gapMs = replySplit.GAP_MS, onPart, pause = sleep, components } = {}) {
+async function postReplyParts(channelId, content, { post, nonceBase, done = [], gapMs = replySplit.GAP_MS, onPart, pause = sleep, components, attach = null, reference = null } = {}) {
   const chunks = replySplit.splitReply(content);
   const parts = done.filter((p) => p && Number.isInteger(p.index) && p.index < chunks.length).map((p) => ({ index: p.index, id: p.id || null }));
   let channel = channelId;
+  let evidence = null;
   for (let i = 0; i < chunks.length; i++) {
     if (parts.some((p) => p.index === i)) continue;
     if (parts.length) await pause(gapMs);
     const nonce = crypto.createHash("sha256").update(i === 0 ? nonceBase : `${nonceBase}:${i}`).digest("hex").slice(0, 24);
-    const r = await post(channelId, chunks[i], { nonce, ...(components && i === chunks.length - 1 ? { components } : {}) });
-    if (!r || !r.posted) return { ...(r || { error: "Discord post failed" }), parts };
+    // The first part answers the verified request it replies to.
+    const extra = { nonce, ...(components && i === chunks.length - 1 ? { components } : {}), ...(i === 0 && reference ? { reference } : {}) };
+    let r;
+    if (i === 0 && attach && !attach.png) {
+      // Keir 11.1, link only: the report link rides on the answer's first
+      // message, after the answer. "linked" needs Discord's stored message id.
+      const withLine = `${chunks[0]}\n\n${attach.line}`;
+      if (withLine.length > 2000) {
+        evidence = { status: "not_attached", reason: "answer_too_long" };
+        r = await post(channelId, chunks[0], extra);
+      } else {
+        r = await post(channelId, withLine, extra);
+        if (r && r.posted) {
+          evidence = SNOWFLAKE.test(String(r.id || "")) ? { status: "linked", messageId: String(r.id), link: true } : { status: "not_attached", reason: "no_message_id" };
+        }
+      }
+      if (evidence && r && r.posted && !evidence.messageId && SNOWFLAKE.test(String(r.id || ""))) evidence.messageId = String(r.id);
+    } else if (i === 0 && attach) {
+      // Keir 11.1: the chart and its report link ride on the answer's first message.
+      const withLine = attach.line ? `${chunks[0]}\n\n${attach.line}` : chunks[0];
+      const linked = Boolean(attach.line) && withLine.length <= 2000;
+      r = await attach.postWithFile(channelId, linked ? withLine : chunks[0], { ...extra, file: attach.png, filename: attach.filename });
+      if (r && r.posted) {
+        const a = (r.attachments || []).find((x) => x && x.filename === attach.filename) || (r.attachments || [])[0];
+        evidence = a && a.id && SNOWFLAKE.test(String(r.id || "")) ? { status: "attached", messageId: String(r.id), attachmentId: String(a.id), link: linked }
+          : { status: "not_attached", reason: a && a.id ? "no_message_id" : "discord_kept_no_attachment", messageId: r.id || null };
+      } else if (r && Number(r.status) >= 400 && Number(r.status) < 500 && Number(r.status) !== 429) {
+        // Discord refused the upload itself: the answer still goes, as text, with the same nonce.
+        evidence = { status: "not_attached", reason: `discord_${r.status}` };
+        r = await post(channelId, chunks[0], extra);
+        if (r && r.posted) evidence.messageId = r.id || null;
+      }
+    } else {
+      r = await post(channelId, chunks[i], extra);
+    }
+    if (!r || !r.posted) return { ...(r || { error: "Discord post failed" }), parts, ...(evidence ? { evidence } : {}) };
     channel = r.channel || channel;
     parts.push({ index: i, id: r.id || null });
     if (onPart) await onPart(parts.slice());
   }
   parts.sort((a, b) => a.index - b.index);
-  return { posted: true, via: "bot", id: parts[0] ? parts[0].id : null, channel, parts };
+  return { posted: true, via: "bot", id: parts[0] ? parts[0].id : null, channel, parts, ...(evidence ? { evidence } : {}) };
+}
+
+const SNOWFLAKE = /^\d{16,20}$/;
+// The private evidence receipt for an update key, when an earlier attempt made one.
+function storedEvidence(ticket, updateKey) {
+  const e = (Array.isArray(ticket && ticket.evidenceDeliveries) ? ticket.evidenceDeliveries : []).find((x) => x && x.updateKey === updateKey);
+  if (!e) return null;
+  const r = e.receipt || {};
+  return { presentation: e.presentation, status: r.status || e.status, ...(r.reason ? { reason: r.reason } : {}), ...(r.messageId ? { messageId: r.messageId } : {}),
+    ...(r.attachmentId ? { attachmentId: r.attachmentId } : {}), ...(r.link !== undefined ? { link: r.link } : {}) };
 }
 
 function compactTicketUpdate(kind, message) {
@@ -541,8 +588,14 @@ async function maybePostTicketChannelUpdate(db, {
   postChannel = postDiscordBot,
   editCard = editTicketIntakeCard,
   deliveryMode = "card",
+  ticketOnly = false,
   partGapMs = replySplit.GAP_MS,
   stripRows = feedbackRow.stripOthers,
+  evidence = null,
+  replyTo = null,
+  prepareEvidence = evidenceAttach.prepareEvidence,
+  postWithFile = evidenceAttach.postDiscordWithFile,
+  verifyReplyTarget = evidenceAttach.verifyReplyTarget,
 } = {}) {
   if (!Number.isInteger(Number(ticketNumber))) return { skipped: "no ticket number" };
   if (!String(key || "").trim()) return { skipped: "no update key" };
@@ -559,18 +612,43 @@ async function maybePostTicketChannelUpdate(db, {
   deliveryMode = kind === "resolution" ? "reply" : existing?.deliveryMode || deliveryMode;
   if (!["card", "reply"].includes(deliveryMode)) return { skipped: "invalid delivery mode" };
   const existingStatus = String(existing && existing.delivery && existing.delivery.status || "");
+  // A replay of an update reports the evidence receipt its first send made, and never posts again.
+  const prior = evidence ? storedEvidence(ticket, updateKey) : null;
   if (existingStatus === "posted") {
-    return { skipped: "already posted", alreadyPosted: true, posted: true, ticketNumber: Number(ticketNumber), key: updateKey };
+    return { skipped: "already posted", alreadyPosted: true, posted: true, ticketNumber: Number(ticketNumber), key: updateKey, ...(prior ? { evidence: prior } : {}) };
   }
   if (existingStatus === "pending") {
     const started = new Date(existing.at || 0).getTime();
     if (!Number.isFinite(started) || Date.now() - started < PLAYER_UPDATE_RETRY_MS) {
-      return { skipped: "delivery in progress", ticketNumber: Number(ticketNumber), key: updateKey };
+      return { skipped: "delivery in progress", ticketNumber: Number(ticketNumber), key: updateKey, ...(prior ? { evidence: prior } : {}) };
     }
   }
 
   const url = receiptUrl || ticketPublicUrl(ticketNumber);
-  const safeMessage = stripMentions(decodeHtmlEntities(message)).trim().slice(0, 1400);
+  let safeMessage = stripMentions(decodeHtmlEntities(message)).trim().slice(0, 1400);
+  // Keir 11.1: a ticket-only update shows the receipt generic status text; the exact
+  // text lives in a private record and is what Discord (and any retry) gets.
+  const narrowed = privateReply.isNarrowed({ ticket, existing, ticketOnly });
+  let publicMessage = safeMessage;
+  if (narrowed) {
+    const refusal = require("./mcp/support-delivery-gate").deliveryRefusal(ticket, ticketNumber);
+    if (refusal) return { skipped: "ticket no longer reachable", ticketNumber: Number(ticketNumber), key: updateKey };
+    publicMessage = privateReply.genericMessage(kind);
+    if (existing && existing.ticketOnly === true) {
+      // A retry: the stored text is authoritative, whatever the caller passed.
+      const record = await privateReply.loadPrivateReply(db, ticketNumber, updateKey);
+      const why = privateReply.ownershipRefusal(ticket, record);
+      if (why) return { skipped: why, ticketNumber: Number(ticketNumber), key: updateKey };
+      safeMessage = String(record.text);
+    } else {
+      if (!safeMessage) return { skipped: "empty player message" };
+      const record = await privateReply.savePrivateReply(db, ticket, { key: updateKey, kind, text: safeMessage, deliveryMode, now });
+      const why = privateReply.ownershipRefusal(ticket, record);
+      if (why) return { skipped: why, ticketNumber: Number(ticketNumber), key: updateKey };
+      safeMessage = String(record.text);
+    }
+    await privateReply.markTicket(tickets, ticket, now);
+  }
   if (!safeMessage) return { skipped: "empty player message" };
   const includeReceipt = ["opening", "resolution"].includes(String(kind || ""));
   const content = (url && includeReceipt ? `${safeMessage}\n\nView your support receipt: ${url}` : safeMessage).slice(0, 1900);
@@ -590,7 +668,7 @@ async function maybePostTicketChannelUpdate(db, {
           },
         },
       },
-      { $set: { "publicUpdates.$.delivery": pendingDelivery, "publicUpdates.$.at": now, "publicUpdates.$.message": safeMessage, updatedAt: now } }
+      { $set: { "publicUpdates.$.delivery": pendingDelivery, "publicUpdates.$.at": now, "publicUpdates.$.message": publicMessage, ...(narrowed ? { "publicUpdates.$.ticketOnly": true } : {}), updatedAt: now } }
     );
   } else {
     claim = await tickets.updateOne(
@@ -601,7 +679,8 @@ async function maybePostTicketChannelUpdate(db, {
             key: updateKey,
             kind: String(kind || "update").slice(0, 40),
             deliveryMode,
-            message: safeMessage,
+            message: publicMessage,
+            ...(narrowed ? { ticketOnly: true } : {}),
             at: now,
             ...(url ? { receiptUrl: url } : {}),
             delivery: pendingDelivery,
@@ -611,7 +690,38 @@ async function maybePostTicketChannelUpdate(db, {
       }
     );
   }
-  if (!updateWasModified(claim)) return { skipped: "already claimed", ticketNumber: Number(ticketNumber), key: updateKey };
+  if (!updateWasModified(claim)) return { skipped: "already claimed", ticketNumber: Number(ticketNumber), key: updateKey, ...(prior ? { evidence: prior } : {}) };
+
+  // Keir 11.1: a staged evidence chart goes on this reply's first message,
+  // once per presentation per ticket. Its receipt lives in evidenceDeliveries,
+  // never in publicUpdates (the public receipt timeline).
+  let attach = null, evidenceReceipt = null, evidenceClaimed = false;
+  if (evidence && deliveryMode === "reply" && ticket.discordChannelId) {
+    const claimed = await evidenceAttach.claimEvidence(tickets, ticket, { presentation: String(evidence), updateKey, now });
+    evidenceClaimed = claimed.claimed;
+    if (!claimed.claimed) evidenceReceipt = { status: "not_attached", reason: claimed.reason };
+    else if (doneParts.some((p) => p && p.index === 0)) evidenceReceipt = (claimed.prior && claimed.prior.receipt) || { status: "not_attached", reason: "first_message_already_sent" };
+    else {
+      const prepared = prepareEvidence({ ticket, presentation: String(evidence) });
+      if (prepared.ok) attach = { ...prepared, postWithFile };
+      else evidenceReceipt = { status: "not_attached", reason: prepared.reason };
+    }
+  } else if (evidence) {
+    evidenceReceipt = { status: "not_attached", reason: deliveryMode !== "reply" ? "card_update" : "no_ticket_channel" };
+  }
+
+  // A reply threads under the request it answers, only once that message is
+  // verified as a human message in this ticket's own channel. With evidence,
+  // the target is the one the stage recorded; a different reply_to is refused.
+  let reference = null;
+  const firstPending = deliveryMode === "reply" && ticket.discordChannelId && !doneParts.some((p) => p && p.index === 0);
+  if (firstPending) {
+    const staged = attach ? attach.answerTo || null : null;
+    const asked = SNOWFLAKE.test(String(replyTo || "")) ? String(replyTo) : null;
+    const target = attach ? (asked && staged && asked !== staged ? null : staged || asked) : asked;
+    if (target) reference = await Promise.resolve(verifyReplyTarget(ticket.discordChannelId, target)).catch(() => null);
+    if (reference && (reference.message_id !== target || reference.channel_id !== String(ticket.discordChannelId))) reference = null;
+  }
 
   const result = ticket.discordChannelId
     ? deliveryMode !== "reply" && ticket.intake && ticket.intake.cardMessageId
@@ -622,9 +732,16 @@ async function maybePostTicketChannelUpdate(db, {
         done: doneParts,
         gapMs: partGapMs,
         components: feedbackRow.row(),
+        attach,
+        reference,
         onPart: (parts) => tickets.updateOne({ _id: ticket._id, "publicUpdates.key": updateKey }, { $set: { "publicUpdates.$.delivery.parts": parts } }),
       })
     : { skipped: "no ticket channel" };
+  if (attach) evidenceReceipt = (result && result.evidence) || { status: "pending", reason: "reply_not_posted" };
+  if (result && result.evidence) delete result.evidence;
+  if (evidenceClaimed && evidenceReceipt) {
+    await evidenceAttach.recordEvidence(tickets, ticket, { presentation: String(evidence), updateKey, receipt: { ...evidenceReceipt, at: new Date() } }).catch(() => {});
+  }
   // The feedback row lives on the newest message in a channel only: take it off older replies
   // (and Keir's answers) now that this reply's last part carries it.
   if (result && result.posted && Array.isArray(result.parts) && result.parts.length) {
@@ -632,6 +749,7 @@ async function maybePostTicketChannelUpdate(db, {
     if (lastId) await Promise.resolve(stripRows(result.channel || ticket.discordChannelId, lastId)).catch(() => {});
   }
   const delivery = playerUpdateDelivery(result, new Date(), attempts);
+  if (narrowed && result && result.posted) await privateReply.markPosted(db, ticket, updateKey).catch(() => {});
   const set = {
     "publicUpdates.$.delivery": delivery,
     updatedAt: new Date(),
@@ -642,7 +760,7 @@ async function maybePostTicketChannelUpdate(db, {
     set["resolution.channelDelivery"] = delivery;
   }
   await tickets.updateOne({ _id: ticket._id, "publicUpdates.key": updateKey }, { $set: set });
-  return { ...result, ticketNumber: Number(ticketNumber), key: updateKey, content, receiptUrl: url, delivery };
+  return { ...result, ticketNumber: Number(ticketNumber), key: updateKey, content, receiptUrl: url, delivery, ...(narrowed ? { ticketOnly: true } : {}), ...(evidenceReceipt ? { evidence: { presentation: String(evidence), ...evidenceReceipt } } : {}) };
 }
 
 async function retryPendingTicketUpdates(db, { limit = 50 } = {}) {
@@ -661,13 +779,17 @@ async function retryPendingTicketUpdates(db, { limit = 50 } = {}) {
       const status = String(update && update.delivery && update.delivery.status || "");
       if (!["failed", "skipped", "pending"].includes(status)) continue;
       if (Number(update.delivery && update.delivery.attempts || 0) >= 5) continue;
+      // Keir 11.1: a retried answer keeps the chart it was sent with, if that chart is still unsent.
+      const staged = (Array.isArray(ticket.evidenceDeliveries) ? ticket.evidenceDeliveries : []).find((e) => e && e.updateKey === update.key && e.status === "pending");
       results.push(await maybePostTicketChannelUpdate(db, {
         ticketNumber: ticket.ticketNumber,
         key: update.key,
         kind: update.kind,
         message: update.message,
+        ...(update.ticketOnly === true ? { ticketOnly: true } : {}),
         receiptUrl: update.receiptUrl,
         deliveryMode: update.deliveryMode || "card",
+        ...(staged ? { evidence: staged.presentation } : {}),
       }));
     }
   }

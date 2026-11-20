@@ -43,6 +43,9 @@ const config = {
   releaseHistoryFile: env.KEIR_RELEASE_HISTORY_FILE || path.resolve(__dirname, "../../releases.jsonl"),
   releaseDirectory: env.KEIR_RELEASE_DIRECTORY || path.resolve(__dirname, ".."),
   stateDir: env.KEIR_OPERATOR_STATE_DIR || "/var/lib/keir-operator",
+  // Keir 11.1: evidence report and tracker pages, shared with the support web app (apps/web/mcp/evidence-pages.js).
+  // No default origin: page links stay off until EVIDENCE_PUBLIC_BASE names the origin whose /support/evidence route is live.
+  evidencePagesDir: env.EVIDENCE_PAGES_DIR || "/var/lib/lakeside-evidence", evidencePublicBase: env.EVIDENCE_PUBLIC_BASE || "",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   // @keir-bot on an AHDGame PR asks for a review; posted as keir-bot when its token is set.
   prMentionEnabled: env.KEIR_PR_MENTION !== "0", githubReviewerToken: env.KEIR_GITHUB_TOKEN || "", keirGitEmail: env.KEIR_GIT_EMAIL || "keir@localhost",
@@ -443,6 +446,14 @@ if (failures) tickers.every("failures", 15 * 60000, async () => {
 }, { immediateMs: 120000 });
 tickers.every("answerfeedback", 10 * 60000, async () => { await answerFeedback.sweep(); }, { immediateMs: 3 * 60000 });
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
+// Keir 11.1: keeps live evidence trackers current, once per settled turn, silently (KEIR_EVIDENCE_MONITOR=0 turns it off).
+// Page-only: no Discord post, no model call, no job created or revived. Ends at 24 h, stop, pause, takeover, kill switch, closed ticket or a wrong world.
+const evidenceMonitor = require("./lib/operator/evidencemonitor").createMonitor({ ledger, config, log,
+  read: (tool, args, signal) => mcp.call("gamestate", tool, args, false, signal),
+  currentTurn: async (signal) => (await mcp.call("gamestate", "game_overview", {}, false, signal)).turn,
+  readTicket: (number, signal) => mcp.call("support", "support_get", { kind: "ticket", number }, false, signal),
+  held: () => Boolean(killSwitch.state()?.engaged) });
+if (env.KEIR_EVIDENCE_MONITOR !== "0") tickers.every("evidencemonitor", 60000, ({ signal }) => evidenceMonitor.tick({ signal }), { immediateMs: 45000, maxMs: 90000 });
 // Keir 10.1.9: the closing rule. Resolves answered tickets on confirmation or six quiet hours (KEIR_AUTOCLOSE=0 turns it off).
 const autoCloser = require("./lib/operator/autoclose").createAutoCloser({ ledger, broker, config: { ...config, autoCloseEnabled: env.KEIR_AUTOCLOSE !== "0" }, log, killSwitch, held: ticketHeld,
   cardDone: async (id) => { const c = await mcp.call("ops-knowledge", "kanban_get", { id }, false); return Number(c?.id) === Number(id) && c.lane === "done"; } });
@@ -556,6 +567,8 @@ async function flushOutbox() {
       let dmId, clean;
       if (channelJob) {
         if (!channelJob.replyChannel || channelJob.replyChannel !== channelJob.source?.channelId) throw new Error("untrusted channel destination");
+        // Keir 11.1: a chart staged by present_evidence goes on this answer's first message, with its report link.
+        require("./lib/operator/evidencedelivery").attachOutbox(ledger, key, entry, channelJob, { at: Date.now() });
         // Only Keir's own rendered charts may carry an attachment into a channel.
         if (entry.files?.length && !(entry.chart && entry.files.every((f) => f.chart && /\/artifacts\/chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(f.path)))) throw new Error("private attachments cannot be delivered to channels");
         const channel = await discord("GET", `/channels/${channelJob.replyChannel}`);
@@ -573,7 +586,8 @@ async function flushOutbox() {
       }
       // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
       const text = clean.replace(/[\u2013\u2014]/g, ",");
-      const chunks = channelJob && !entry.files?.length && !entry.components ? splitReply(text).flatMap((c) => chunkMessage(c)) : chunkMessage(text);
+      // Keir 11.1: an answer carrying evidence (chart or report link) is one message, so the link never drifts onto a later part.
+      const chunks = channelJob && !entry.files?.length && !entry.components && !require("./lib/operator/evidencedelivery").carries(entry) ? splitReply(text).flatMap((c) => chunkMessage(c)) : chunkMessage(text);
       const lastRow = entry.components || answerFeedback.components(key, entry, channelJob);
       for (let i = entry.deliveredChunks || 0; i < chunks.length; i++) {
         if (channelJob && i > 0) await new Promise((r) => setTimeout(r, replyGapMs));
@@ -592,6 +606,7 @@ async function flushOutbox() {
           ...(files.length ? { attachments: files.map((f, id) => ({ id, filename: f.name })) } : {}) }, files);
         if (entry.decision && i === chunks.length - 1) { entry.sentContent = chunks[i]; decisions.delivered(entry, dmId, sent.id); }
         if (channelJob) conversation.record({ id: dmId }, { ...sent, content: chunks[i], author: { id: config.botId, bot: true, username: "Keir" }, timestamp: sent.timestamp || new Date().toISOString() });
+        if (i === 0 && entry.evidence) require("./lib/operator/evidencedelivery").outboxSent(ledger, key, entry, sent, Date.now(), chunks[0]);
         entry.messageIds ||= []; entry.messageIds.push(sent.id); entry.deliveredChunks = i + 1; ledger.save();
         if (!entry.components && lastRow && i === chunks.length - 1) await answerFeedback.delivered(dmId, sent.id, channelJob);
       }
@@ -605,7 +620,10 @@ async function flushOutbox() {
         discord("DELETE", `/channels/${dmId}/messages/${id}`).catch(() => {});
       }
     } catch (e) {
-      entry.attempts++; entry.retryAt = Date.now() + Math.min(3600000, 30000 * 2 ** Math.min(7, entry.attempts)); entry.error = redactSecrets(e.message); ledger.save(); log(`owner delivery retry: ${e.message}`);
+      entry.attempts++; entry.retryAt = Date.now() + Math.min(3600000, 30000 * 2 ** Math.min(7, entry.attempts)); entry.error = redactSecrets(e.message);
+      // Keir 11.1: an upload the answer cannot carry is dropped, and the answer goes as text on the next pass.
+      require("./lib/operator/evidencedelivery").outboxFallback(ledger, key, entry, e, Date.now());
+      ledger.save(); log(`owner delivery retry: ${e.message}`);
     }
   }
   } finally { delivering = false; }
@@ -949,7 +967,7 @@ const server = http.createServer(async (req, res) => {
     try { const job = engineering.enqueue(JSON.parse(raw)); if (!job) return reply(409, { error: "engineering disabled or backlog full" }); drain(); return reply(202, { task: job.id, state: job.state }); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
-  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), codingWorkers: codingWorkersInst?.status() || [], tickers: tickers.snapshot(), sweeper: sweeper.status(), trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
+  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), codingWorkers: codingWorkersInst?.status() || [], tickers: tickers.snapshot(), sweeper: sweeper.status(), evidenceMonitor: evidenceMonitor.status(), trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
   if (req.url === "/v5/trust/report" && req.method === "POST") { try { const r = await trustReporter.tick({ force: true }); drain(); return reply(200, { ok: true, text: r?.text, file: r?.file }); } catch (e) { return reply(500, { error: String(e.message).slice(0, 200) }); } }
   if (req.url === "/v5/trust/killswitch" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }
@@ -1137,6 +1155,10 @@ diaryTick();
 setInterval(diaryTick, 60000).unref();
 setInterval(drain, 1000);
 setInterval(() => flushOutbox().catch((e) => log(`outbox: ${e.message}`)), 1000);
+// Keir 11.1: evidence trackers end at 24 h, on stop, close, pause or takeover, across restarts.
+setInterval(() => { try { require("./lib/operator/evidencepages").sweep(ledger, Date.now()); } catch (e) { log(`evidence sweep: ${e.message}`); } }, 60000).unref();
+// Keir 11.1: a staged chart that missed its answer is recorded as released, never posted alone.
+setInterval(() => { try { require("./lib/operator/evidencedelivery").sweep(ledger, Date.now()); } catch (e) { log(`evidence delivery sweep: ${e.message}`); } }, 60000).unref();
 
 // Housekeeping keeps state small: finished tasks lose their workspaces after
 // an hour, unused shared checkouts after a day, artifacts after 30 days, and

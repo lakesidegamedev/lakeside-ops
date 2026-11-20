@@ -71,9 +71,9 @@ const READS = new Set(["discord_search", "ticket_performance", "release_efficien
 const PRIVATE = new Set(["owner_updates", "present_choices", "task_plan", "goal_update", "feed_post", "artifact_save", "idea_suggest", "checkpoint", "finish", "watch_turn", "handoff", "delegate_fix", "delegate_investigation", "review_fix", "repository_snapshot", "local_file"]);
 // A read token alone does not prove an arbitrary MCP method has no side effects.
 const MCP_READS = {
-  gamestate: ["entity_search", "legislation_catalog", "elections", "game_overview", "countries", "analytics_catalog", "analytics_query", "fx_quote", "player_wealth_statistics", "trace_corp", "trace_sector", "corporation_rankings", "extraction_market", "trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_approval", "invariant_check"],
+  gamestate: ["entity_search", "legislation_catalog", "elections", "game_overview", "countries", "analytics_catalog", "analytics_query", "fx_quote", "player_wealth_statistics", "trace_corp", "trace_sector", "corporation_rankings", "extraction_market", "trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_approval", "invariant_check", "market_history"],
   support: ["support_get", "support_list", "support_search"],
-  "ops-knowledge": ["knowledge_get", "knowledge_query", "code_search", "code_read", "code_exact", "kanban_brief", "kanban_list", "kanban_get"],
+  "ops-knowledge": ["knowledge_get", "knowledge_query", "code_search", "code_read", "code_exact", "kanban_brief", "kanban_list", "kanban_get", "support_evidence_lookup"],
   engine: ["engine_health", "economy_pulse", "recent_turns"],
   turndiag: ["turn_phase_timings", "phase_history", "phase_regressions", "turn_anomalies", "lock_status"],
   sentry: ["sentry_issues", "sentry_issue", "sentry_event_lookup", "sentry_player_errors", "sentry_new_since"],

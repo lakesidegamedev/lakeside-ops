@@ -1,5 +1,6 @@
 "use strict";
 const conversationTurn = require("./conversationturn");
+const evidenceDelivery = require("./evidencedelivery");
 const { JOB_TERMINAL } = require("./machines");
 
 const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubUrl, repositoryName, pullRequestNumber } = require("./github");
@@ -34,6 +35,7 @@ const settingClaim = require("./settingclaim");
 const standdown = require("./standdown");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
+const evidenceLookup = require("./evidencelookup");
 const crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
 const fs = require("node:fs");
@@ -79,7 +81,9 @@ const { playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorre
 const SUPPORT_READS = {
   support: ["support_get", "support_search", "support_list"],
   // Keir 2.0: runbooks, design docs and Discord history, not just the code index.
-  "ops-knowledge": ["code_search", "code_read", "code_exact", "knowledge_query", "knowledge_get", "kanban_get"],
+  "ops-knowledge": ["code_search", "code_read", "code_exact", "knowledge_query", "knowledge_get", "kanban_get",
+    // Keir 11.1: the vetted public dictionary of confusable measures. A player ping may call this one tool and no other ops-knowledge read.
+    "support_evidence_lookup"],
   community: ["community_search"],
   // Keir 5.6: raw read-only game records. Ticket tasks filed "developer
   // handoffs" for single-document reads that nobody claimed, and stalled for
@@ -109,7 +113,10 @@ const SUPPORT_READS = {
     // (reporter-scoped via PLAYER_PRIVATE) and a country's closed fiscal years.
     // alt_ring_audit and alt_rank stay staff-only: owner and developer tasks read
     // them through the full server list, automatic player tasks never do.
-    "military_roster", "trace_bonds", "country_fiscal_history"],
+    "military_roster", "trace_bonds", "country_fiscal_history",
+    // Keir 11.1: sourced multi-turn market and economy history (public), and the verified reporter's own
+    // operating results and action points (private, bound to the ticket's reporter below).
+    "market_history", "reporter_operating_results", "reporter_action_points"],
   // Keir 10 (W3): the game's own lore wiki and glossary, the same public text the
   // player-facing wiki shows. "How do I ..." tickets had no rulebook to read.
   lore: ["lore_wiki_search", "lore_wiki_page", "lore_glossary", "lore_country", "lore_parties", "lore_organizations"],
@@ -313,7 +320,7 @@ function outsideScopeMessage(scope, server, tool) {
 const FINDING_READS = {
   "heal-ops": ["heal_list", "heal_detect", ...SUPPORT_READS["heal-ops"]],
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
-  gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "character_holdings", "trace_bonds"].includes(n)), "invariant_check"],
+  gamestate: [...SUPPORT_READS.gamestate.filter((n) => !["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "character_holdings", "trace_bonds", "reporter_operating_results", "reporter_action_points"].includes(n)), "invariant_check"],
   lore: SUPPORT_READS.lore,
   engine: SUPPORT_READS.engine,
   sentry: SUPPORT_READS.sentry,
@@ -328,8 +335,13 @@ const QUICK_OWNER_READS = { ...SUPPORT_READS,
 };
 const gameKnowledge = knowledge.gameKnowledge;
 // Reads about one player: automatic tasks may only aim them at the ticket's reporter.
-const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings", "trace_bonds"]);
-const QUICK_TOOLS = ["conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
+const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_balance_sheet", "character_wealth_history", "trace_actions", "character_holdings", "trace_bonds", "reporter_operating_results", "reporter_action_points"]);
+// Keir 11.1: these reads take no identity from the model at all. The broker injects the ticket reporter's character
+// and refuses any argument that names someone else, in every context that inherits the ticket (investigators included).
+const REPORTER_BOUND = new Set(["reporter_operating_results", "reporter_action_points"]);
+const IDENTITY_ARGS = ["character", "characterId", "character_id", "sequentialId", "id", "name", "player", "playerId", "username", "user", "userId", "account", "accountId", "reporter", "ticket"];
+const NOT_FOUND_LIKE = /outside support scope|not a \S+ read|unknown tool|tool not found|method not found|not available to this task/i;
+const QUICK_TOOLS = ["conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -547,6 +559,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
+  async function callSupport(tool, args, write, signal) {
+    if (d.privateEvidenceTickets?.[args.number] && ["support_public_update", "support_resolve"].includes(tool)) {
+      const tools = await mcp.list("support", signal);
+      args = require("./ticketonly").narrowedArgs(args, tools, tool);
+    }
+    return mcp.call("support", tool, args, write, signal);
+  }
   // Deployed-commit probes run through the broker's own exec, like gh.
   const probe = probeWith(exec);
   const verifyLiveFix = (args) => verifyLiveFixWith({ probe, ...args });
@@ -569,13 +588,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (WRITE_LIKE.test(String(tool || ""))) return false;
     const watch = require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper";
     if (isQuick(job) && job.role === "owner") return Boolean(QUICK_OWNER_READS[server]?.includes(tool));
-    if (job.role === "player") return server === "gamestate" || (server === "support" && tool === "support_get");
+    if (job.role === "player") return server === "gamestate" || (server === "support" && tool === "support_get") || (server === evidenceLookup.SERVER && tool === evidenceLookup.TOOL);
     if (job.role === "owner" || developerTask(job)) return !watch || Boolean(require("./roles").WATCH_READS[server]?.includes(tool));
     return Boolean(readScope(job)[server]?.includes(tool));
   };
   if (process.env.KEIR_READY_READS === "0") config.readyReads = false;
   const readyReads = require("./readyreads").createReadyReads({ mcp, stateDir: config.stateDir, readable, embed: config.embed || null, log: config.log || (() => {}) });
-  const readServers = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? Object.keys(require("./roles").WATCH_READS) : job.kind === "finding" ? Object.keys(FINDING_READS) : (job.role === "owner" || developerTask(job)) ? (isQuick(job) ? Object.keys(QUICK_OWNER_READS).filter((s) => mcp.servers().includes(s)) : mcp.servers()) : job.role === "player" ? ["gamestate", "support"] : Object.keys(SUPPORT_READS);
+  const readServers = (job) => require("./roles").roleOf(job, ledger.data.jobs) === "watchkeeper" ? Object.keys(require("./roles").WATCH_READS) : job.kind === "finding" ? Object.keys(FINDING_READS) : (job.role === "owner" || developerTask(job)) ? (isQuick(job) ? Object.keys(QUICK_OWNER_READS).filter((s) => mcp.servers().includes(s)) : mcp.servers()) : job.role === "player" ? ["gamestate", "support", evidenceLookup.SERVER] : Object.keys(SUPPORT_READS);
   function active(job, states = ["running"]) {
     // Say why and that the turn is over: the bare phrase kept models calling
     // tools after a merge or finish (replay 2026-10-19: up to 21 calls).
@@ -752,14 +771,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   // Keir 2.0: every checkable figure in a public post must come from something
   // read this activation (or a registered calculation over such figures).
   function guardNumbers(job, message) {
-    const missing = knowledge.unsupportedNumbers(message, job.evidence || []);
+    const missing = knowledge.unsupportedNumbers(message, job.evidence || [], job.typedFacts || []);
     if (missing.length) throw new Error(`Not posted: ${missing.slice(0, 5).join(", ")} ${missing.length === 1 ? "does" : "do"} not appear in anything you read this activation. If you worked it out from figures you read, call calculate with that expression (for example "41288610 / 312540") and post the same reply; it then passes. Otherwise read the figure with a tool first or leave it out. Never hand the arithmetic to the player instead.`);
   }
   // Keir 9: ticket posts get the same number check, against everything this ticket has read (earlier
   // activations included). Refused at most twice per ticket, then skipped and audited (no loops, no
   // silenced player).
   function guardTicketNumbers(job, ticketNo, message) {
-    const missing = require("./sources").unsupported(message, require("./sources").ticketEvidence(ledger, job, ticketNo));
+    const missing = require("./sources").unsupported(message, require("./sources").ticketEvidence(ledger, job, ticketNo), require("./sources").ticketFacts(ledger, job, ticketNo));
     if (!missing.length) return;
     const counts = (d.numberCheckRefused ||= {});
     if ((counts[ticketNo] || 0) >= require("./sources").MAX_REFUSALS) {
@@ -822,7 +841,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (!opening.text) { d.disclosed[n] = { at: now(), posted: false, ...(opening.answered ? { answered: true } : opening.returning ? { returning: true, count: opening.count } : { staff: true }) }; ledger.save(); return; }
     try {
       require("./supporttakeover").assertCanAct(d, { ticket: n });
-      await mcp.call("support", "support_public_update", { kind: "ticket", number: n, message: opening.text, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
+      await callSupport("support_public_update", { kind: "ticket", number: n, message: opening.text, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
       d.disclosed[n] = { at: now(), posted: true, ...(opening.count ? { count: opening.count } : {}) }; ledger.save();
       ledger.audit("disclosure_posted", { ticket: n, count: opening.count || null, returning: !opening.text.startsWith("Hi, I'm Keir") });
     } catch (e) { d.disclosed[n] = { at: now(), posted: false, error: String(e.message).slice(0, 200) }; ledger.save(); }
@@ -864,7 +883,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       st.turns += 1;
       if (!st.plainPosted) {
         st.plainPosted = true;
-        try { await mcp.call("support", "support_public_update", { kind: "ticket", number: ticketNo, message: pc.PLAIN, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true); }
+        try { await callSupport("support_public_update", { kind: "ticket", number: ticketNo, message: pc.PLAIN, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true); }
         catch (e) { st.plainPosted = false; ledger.audit("page_check_post_failed", { ticket: ticketNo, error: String(e.message).slice(0, 160) }); }
       }
       if (job && ["waiting", "blocked"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
@@ -1633,7 +1652,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (items.some((i) => i.stage !== "found" && statusCard.stageIndex(i.stage) > statusCard.stageIndex((card.items || []).find((o) => o.name === i.name)?.stage || "found"))) { try { trustlog.markProgress(d, Number(ticketNo), now(), "status card stage"); } catch {} }
       // The public receipt keeps the history the card overwrites.
       const text = items.map((i) => `${i.name}: ${i.blocked ? `paused${i.note ? ` (${i.note})` : ""}` : (i.stage === "confirmed" ? "Live, confirmed in game" : i.stage === "answered" ? "Answered, no fix needed" : statusCard.labelOf(i.stage))}`).join("; ");
-      mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
+      callSupport("support_public_update", { kind: "ticket", number: Number(ticketNo), message: text.slice(0, 1400), deliver: false, update_kind: "progress" }, true).catch(() => {});
       recordTicketPost(effectJob, ticketNo, text, "status_card");
     }
     await liveNotice(effectJob, ticketNo, card.items || [], items);
@@ -1676,7 +1695,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     try {
       guardPlayerRegister(effectJob, ticketNo, message);
       const key = `live-notice:${ticketNo}:${crypto.createHash("sha1").update(names.join("|")).digest("hex").slice(0, 10)}`;
-      await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
+      await effect(effectJob, key, () => callSupport("support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
       delete card.pendingLiveNotice;
       card.liveNotified = [...told, ...fresh.map((i) => statusCard.cleanName(i.name))].slice(-20);
       effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
@@ -1829,7 +1848,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     try {
       const result = await effect(notice, "delivery", () => editing
         ? discord("PATCH", `/channels/${old.channelId}/messages/${old.messageId}`, { content: message, allowed_mentions: { parse: [] } })
-        : mcp.call("support", "support_public_update", { kind: "ticket", number: job.ticket, message, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true));
+        : callSupport("support_public_update", { kind: "ticket", number: job.ticket, message, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true));
       const delivery = result.delivery?.delivery || result.delivery || {};
       const delivered = editing || ["posted", "delivered", "sent", "already_posted"].includes(delivery.status) || result.delivery?.posted === true;
       if (!delivered) throw new Error("Waiting update delivery is unconfirmed; inspect receipt.");
@@ -1866,7 +1885,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (require("./supportblockers").unchangedWait(message)) {
       (d.supportWaitingNotices ||= {})[ticketNo] = { stage: waitingStage(ticketNo), humanAt: humanAt(ticketNo), at: now() };
     }
-    if (!card) { try { require("./ticketlearn").notePost(d, ticketNo, message, now()); } catch {} }
+    if (!card) { try { require("./ticketlearn").notePost(d, ticketNo, message, now()); } catch {}
+    if (!card) { try { require("./evidencegap").notePost(d, ticketNo, message, require("./playercopy").isCorrection(message), now()); } catch {} } }
     // Keir 10.1.14: durable record of the last substantive post (ticketPosts is pruned after an hour of silence), with the ticket state it was made in.
     if (!card && !/^hi,? i(?:'|’)?m keir\b/i.test(String(message || "").trim())) { const ls = (d.lastSubstantive ||= {}); ls[ticketNo] = { at: now(), text: String(message || "").slice(0, 800), fp: standdown.stateFingerprint(d, ticketNo), holding: holdingPost(message), question: /\?/.test(String(message || "")) }; for (const n of Object.keys(ls)) if (now() - ls[n].at > 14 * 86400000) delete ls[n]; }
     if (!card) { try { sharedAnswer.noteAnswer(d, ticketNo, message, { at: now(), jobId: job.id }); } catch {} }
@@ -2140,6 +2160,33 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     return job.reporterCharacter;
   }
+  // The task that owns the ticket for this one: itself, or the nearest ancestor of a coding or investigation child.
+  function ticketScopeOf(job) {
+    let scope = job;
+    for (let i = 0; i < 6 && scope && !scope.ticket; i++) scope = scope.codingParent ? d.jobs[scope.codingParent] : null;
+    return scope?.ticket ? scope : null;
+  }
+  // Keir 11.1: reporter-bound reads (reporter_operating_results, reporter_action_points). No role chooses the identity: the
+  // owner, a developer in a public room, a player task, a finding and every inherited child get the ticket's verified reporter
+  // injected, and anything that names someone else is refused before a call is made. The game server verifies the pair again.
+  async function bindReporterRead(job, tool, args, signal) {
+    const scope = ticketScopeOf(job);
+    if (!scope) throw new Error(`${tool} reads a ticket's verified reporter and this task has no assigned ticket. Work it from the ticket, or say the figures were not read; do not ask for them.`);
+    const rep = await reporterOf(scope, signal);
+    const mine = (v) => v !== undefined && v !== null && String(v).trim() !== "" && ((rep.id && String(v) === String(rep.id)) || (rep.name && String(v).trim().toLowerCase() === rep.name.toLowerCase()));
+    for (const k of IDENTITY_ARGS) {
+      if (args[k] === undefined) continue;
+      if (k === "ticket" ? Number(args[k]) !== scope.ticket : !mine(args[k])) throw new Error(`${tool} reads only this ticket's verified reporter (${rep.name || "unknown"}); it takes no ${k}. Call it with the period you need and nothing that names a person.`);
+      delete args[k];
+    }
+    if (!rep.id) throw new Error(`${tool} needs the reporter's linked character, and this ticket has none. Say the figures cannot be read until the account is linked; do not ask for them.`);
+    args.character = String(rep.id); args.ticket = scope.ticket;
+  }
+  // The gamestate tools this task can call right now (live list, inside its read scope), or null when the list cannot be read.
+  async function listedGamestate(job, hasTicket, signal) {
+    try { return new Set(evidenceLookup.callableTools(await mcp.list("gamestate", signal), { readable: (n) => readable(job, "gamestate", n), hasTicket })); }
+    catch { return null; }
+  }
   // Keir 10 (W3): ask, player_trail, resolve_reporter, turn_status, request_log.
   const w3 = require("./w3tools").createW3Tools({ config, mcp, ...(config.w3Fetch ? { fetcher: config.w3Fetch } : {}), staff: (job) => job.role === "owner" || developerTask(job), now, log: (m) => config.log?.(m), discord, exec, ledger, isModerator: (id) => conversation?.isModerator?.(id) || false });
   // Keir 2.0: the numbers and text of everything read this activation are the
@@ -2179,6 +2226,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     catch (e) {
       appMuse()?.noteTool(job, name, safeLogInput, false, now() - started, callId);
       // Every refusal is evidence for the nightly self-review (bin/keir-self-review.js).
+      if (name === "read_tool") { try { const ctx = NOT_FOUND_LIKE.test(String(e.message)) && input?.server === "gamestate" ? { callable: await listedGamestate(job, true, signal) } : {}; require("./evidencegap").noteRead(d, job, input, null, e.message, now(), ctx); } catch {} }
       try { ledger.audit("tool_refused", { job: job.id, ticket: job.ticket || null, jobKind: job.kind, tool: name, ...(name === "read_tool" && input?.server && input?.tool ? { target: `${input.server}/${input.tool}` } : {}), error: redactSecrets(String(e.message)).slice(0, 240) }); } catch {}
       // Keir 6.1: a refused answer to the player is owed until one is posted
       // (KBX3: Sonnet's reply was refused for length, then it finished done).
@@ -2201,7 +2249,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // became "nothing is signed". Empty reads are remembered so a claim that
     // something does not exist needs a second, differently shaped read.
     if (name === "read_tool" && !NATIVE_NOT_READ.has(input.tool) && config.readyReads !== false && result != null && !require("./ticketquality").emptyResult(result) && !/(?:_catalog|_tools|_servers)$/.test(input.tool || "")) {
-      try { readyReads.learn(job, input.server, input.tool); } catch {}
+      if (!REPORTER_BOUND.has(input.tool) && input.tool !== evidenceLookup.TOOL) { try { readyReads.learn(job, input.server, input.tool); } catch {} }
     }
     // Keir 9 audit: a refused, failed or empty code lookup is not a code read. Only a finished call that returned a result counts.
     if (name === "read_tool" && input?.server === "ops-knowledge" && /^code_/.test(String(input.tool)) && ruleLookup.codeResultHasContent(result)) {
@@ -2216,9 +2264,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v) ?? ""; } catch {}
       job.evidence = [...(job.evidence || []), ...knowledge.numbersIn(text).map((n) => n.value)].slice(-8000);
       job.evidenceText = (String(job.evidenceText || "") + `\n[${name}] ` + text.slice(0, 6000)).slice(-20000);
+      if (name === "read_tool") { try { const f = require("./typedfacts").fromRead(input, result); if (f.length) job.typedFacts = [...(job.typedFacts || []), ...f].slice(-200); } catch {} }
     }
     require("./investigation-memory").record(ledger, job, name, input, result, now());
     try { require("./ticketlearn").noteRead(d, job, name, input, result, now()); } catch {}
+    if (name === "read_tool") { try { require("./evidencegap").noteRead(d, job, input, result, null, now()); } catch {} }
     return result;
   }
   async function toolInner(job, name, input, signal) {
@@ -2267,6 +2317,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if ((job.inbox || []).some((r)=>r.directiveId)) throw new Error("New owner guidance arrived from the app. Read support_updates before your next tool or external action.");
     if (conversationTurn.foreground.has(job) && !conversationTurn.foregroundTools.has(name))
       throw new Error("The worker owns this investigation. This activation can answer the current conversation only.");
+    if (name === "read_tool" && conversationTurn.foreground.has(job) && !conversationTurn.readAllowed(job, input?.server, input?.tool))
+      throw new Error("This quick answer may read only the evidence dictionary (ops-knowledge support_evidence_lookup) and the vetted game reads market_history, commodity_market, reporter_operating_results, reporter_action_points and country_fiscal (gamestate). Anything wider belongs to the worker: say what you could not check and that the investigation is continuing.");
     if (name === "conversation_updates") {
       if (!conversationTurn.eligible(job)) throw new Error("This task has no Discord conversation.");
       const rows = conversationTurn.read(job);
@@ -2679,7 +2731,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const record = knowledge.readTicketRecord(ledger, n, job);
       return receipt ? {...record, supportDirective:receipt} : record;
     }
-    const participantTools = ["read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "channel_reply", "checkpoint", "finish", "task_progress"];
+    const participantTools = ["read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "channel_reply", "checkpoint", "finish", "task_progress", "present_evidence"];
     if (job.role === "player" && !participantTools.includes(name)) throw new Error("players can discuss and supply evidence, but cannot authorize actions");
     if (isQuick(job) && !QUICK_TOOLS.includes(name)) throw new Error("quick conversations cannot execute actions; hand off authenticated work instead");
     if (name === "task_progress") return conversation?.progress(job) || [];
@@ -2757,7 +2809,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
           const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
-          const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: message });
+          // Keir 11.1: a chart staged by present_evidence in this activation rides on this answer (the support service verifies and attaches it).
+          const evidence = evidenceDelivery.claimTicket(ledger, job, { config, key: `ticket-update:${hash(args)}`, ticket: ticketNo, at: now() });
+          // A stable update key for an answer bound to a presentation (a retry lands on the same update), and the verified request it answers.
+          const extra = evidenceDelivery.ticketArgs(ledger, job, { key: `ticket-update:${hash(args)}`, evidence });
+          let sent;
+          try { sent = await effect(job, `ticket-update:${hash(args)}`, () => callSupport("support_public_update", { ...args, ...extra, ...(evidence ? { evidence } : {}) }, true, signal), { kind: "reply", ticket: ticketNo, text: message }); }
+          catch (e) { evidenceDelivery.settleTicket(ledger, job, { id: evidence, error: e, at: now() }); throw e; }
+          evidenceDelivery.settleTicket(ledger, job, { id: evidence, result: sent, at: now() });
           const delivery = sent.delivery;
           const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
           if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
@@ -2792,10 +2851,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     if (name === "read_tools") {
       if (job.role !== "owner" && !developerTask(job) && !readScope(job)[input.server]) throw new Error("read server is outside support scope");
-      if (job.role === "player" && !["support", "gamestate"].includes(input.server)) throw new Error("player conversation reads are limited to its ticket and public game state");
+      if (job.role === "player" && !["support", "gamestate", evidenceLookup.SERVER].includes(input.server)) throw new Error("player conversation reads are limited to its ticket and public game state, including the public evidence dictionary");
       if (isQuick(job) && job.role === "owner" && !QUICK_OWNER_READS[input.server]) throw new Error("server is outside quick read scope");
       const list = await mcp.list(input.server);
-      const listed = list.filter((t) => (!musePolicy.origin(d, job).scoped || musePolicy.MCP_READS[input.server]?.includes(t.name)) && (job.role !== "player" || input.server !== "support" || t.name === "support_get") && ((job.role === "owner" || developerTask(job)) ? (!isQuick(job) || QUICK_OWNER_READS[input.server].includes(t.name)) : readScope(job)[input.server].includes(t.name))).map((t) => ({ name: t.name, description: t.description, schema: t.inputSchema }));
+      const listed = list.filter((t) => (!musePolicy.origin(d, job).scoped || musePolicy.MCP_READS[input.server]?.includes(t.name)) && (job.role !== "player" || input.server !== "support" || t.name === "support_get") && (job.role !== "player" || input.server !== evidenceLookup.SERVER || t.name === evidenceLookup.TOOL) && ((job.role === "owner" || developerTask(job)) ? (!isQuick(job) || QUICK_OWNER_READS[input.server].includes(t.name)) : readScope(job)[input.server].includes(t.name))).map((t) => ({ name: t.name, description: t.description, schema: t.inputSchema }));
       // KBX2: a second listing of the same server in one activation costs a full
       // round and repeats a large schema dump; return the names and point back.
       job.listedTools ||= {};
@@ -2852,7 +2911,20 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!seen.includes(key)) { seen.push(key); if (seen.length > 200) seen.shift(); job.distinctReads = (job.distinctReads || 0) + 1; } }
       if (isQuick(job) && job.role === "owner" && !QUICK_OWNER_READS[input.server]?.includes(input.tool)) throw new Error("tool is outside quick read scope");
       if (LOOKUP_READS[input.server]?.includes(input.tool)) job.lookupReads = (job.lookupReads || 0) + 1;
-      if (job.role === "player" && !(input.server === "gamestate" || (input.server === "support" && input.tool === "support_get"))) throw new Error("player conversation reads are limited to its ticket and public game state");
+      if (job.role === "player" && !(input.server === "gamestate" || (input.server === "support" && input.tool === "support_get") || (input.server === evidenceLookup.SERVER && input.tool === evidenceLookup.TOOL))) throw new Error("player conversation reads are limited to its ticket and public game state, including the public evidence dictionary");
+      // Keir 11.1: the evidence dictionary gets only what the broker builds: scrubbed wording, public identifiers and the live tool list.
+      const isLookup = input.server === evidenceLookup.SERVER && input.tool === evidenceLookup.TOOL;
+      let lookupCallable = null;
+      if (isLookup) {
+        const scopeJob = ticketScopeOf(job);
+        lookupCallable = await listedGamestate(job, Boolean(scopeJob), signal);
+        const rep = scopeJob ? await reporterOf(scopeJob, signal).catch(() => null) : null;
+        const built = evidenceLookup.lookupArgs(args, { names: [rep?.name, rep?.username].filter(Boolean), availableTools: lookupCallable ? [...lookupCallable] : undefined });
+        for (const k of Object.keys(args)) delete args[k];
+        Object.assign(args, built);
+      }
+      // Keir 11.1: reporter-bound reads take their identity from the broker alone, in every role and in every inherited child task.
+      if (input.server === "gamestate" && REPORTER_BOUND.has(input.tool)) await bindReporterRead(job, input.tool, args, signal);
       if (job.role !== "owner" && !developerTask(job)) {
         if (!readScope(job)[input.server]?.includes(input.tool)) throw new Error(outsideScopeMessage(readScope(job), input.server, input.tool));
         if (input.server === "ops-knowledge" && input.tool === "kanban_get") {
@@ -2877,7 +2949,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           return input.tool === "knowledge_get" ? (kept || { error: "not game knowledge; unavailable to support tasks" }) : kept;
         }
         // An investigator reads for its ticket task: same ticket, same reporter, read-only.
-        const scope = !job.ticket && job.investigation && d.jobs[job.codingParent]?.ticket ? d.jobs[job.codingParent] : job;
+        const scope = !job.ticket && job.investigation ? (ticketScopeOf(job) || job) : job;
         if (PLAYER_PRIVATE.has(input.tool)) {
           if (!scope.ticket) throw new Error("player history reads need an assigned ticket");
           await reporterOf(scope, signal);
@@ -2891,7 +2963,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             if (alias) { args.character = args[alias]; delete args[alias]; }
             else if (scope.reporterCharacter?.id) args.character = String(scope.reporterCharacter.id);
           }
-          if (args.ticket !== undefined && Number(args.ticket) === scope.ticket) delete args.ticket;
+          if (args.ticket !== undefined && Number(args.ticket) === scope.ticket && !REPORTER_BOUND.has(input.tool)) delete args.ticket;
           const want = String(args.character || "").trim().toLowerCase(), r = scope.reporterCharacter;
           if (!want || !((r.id && want === String(r.id)) || (r.name && want === r.name.toLowerCase()))) throw new Error(`player history is limited to this ticket's reporter (${r.name || "unknown"}${r.id ? `, id ${r.id}` : ""})`);
         }
@@ -2910,7 +2982,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           return items.map((r) => ({ number: r.number, category: r.category, status: r.status })).slice(0, 60);
         }
       }
-      let result;
+      let result, sentArgs = args;
       try { result = await mcp.call(input.server, input.tool, args, false, signal); }
       catch (error) {
         // A schema rejection with the schema attached is fixable in one retry;
@@ -2922,7 +2994,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // those against the schema and retry once instead of spending a round.
         const fixed = schema ? coerceArgs(args, schema) : null;
         if (fixed) {
-          try { result = await mcp.call(input.server, input.tool, fixed, false, signal); }
+          try { result = await mcp.call(input.server, input.tool, fixed, false, signal); sentArgs = fixed; }
           catch (retry) { if (!/-32602|Input validation error/.test(String(retry.message))) throw retry; }
         }
         if (result === undefined) throw new Error(String(error.message).slice(0, 600) + (schema ? ` Expected arguments for ${input.tool}: ${JSON.stringify({ properties: schema.properties, required: schema.required || [] }).slice(0, 1500)}` : ""));
@@ -2950,6 +3022,22 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       // Whole runbooks for every hit crowded out the rest of the context.
       if (input.server === "ops-knowledge" && ["knowledge_query", "knowledge_get"].includes(input.tool)) return knowledge.shapeKnowledge(result, input.tool, { limit: Number(args.limit) || 8, bodyChars: input.tool === "knowledge_get" ? 20000 : 3000 }) || result;
+      if (isLookup) return evidenceLookup.degrade(result, lookupCallable);
+      if (input.server === "gamestate") {
+        if (REPORTER_BOUND.has(input.tool) && sentArgs.ticket && result && !result.isError && !result.error) {
+          // Keep subsequent replies private even across a restart or task handoff.
+          (d.privateEvidenceTickets ||= {})[sentArgs.ticket] = true;
+          ledger.save();
+        }
+        // Trackers must remember the authorized scope the MCP actually read.
+        const observation = require("./evidencepages").observe(ledger, job, name, { ...input, args: sentArgs }, result, now());
+        if (observation && result && typeof result === "object" && !Array.isArray(result)) {
+          const instruction = input.tool === "commodity_market" && result.commodities?.length >= 12
+            ? "For a market-wide question, call present_evidence now with this observation. It stages the full dated table on your next reply. Lead with the actual shortage/surplus counts and the main exceptions from summary. The market snapshot cannot show who made a profit."
+            : "For a trend or a large comparison, stage this observation with present_evidence before channel_reply. Give the finding in the message. A tracker is appropriate only if future turns can answer an open question.";
+          return { presentation: { observation, instruction }, ...result };
+        }
+      }
       return result;
     }
     if (name === "support_tools") {
@@ -3879,6 +3967,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       ledger.audit("open_channel", { job: job.id, channel: job.replyChannel, minutes }); ledger.save();
       return { open: true, minutes, instruction: "Players addressing you in this channel get replies until then." };
     }
+    if (name === "present_evidence") {
+      // Keir 11.1: a chart built only from a game read this ticket received, attached under Keir's answer,
+      // plus a dated report or 24 h tracker page for dense data. The model names an observation, nothing else.
+      // Private pages are pinned to the ticket's original reporter from the support service's own ticket row.
+      return require("./evidencepages").present({ ledger, config, job, input: input || {}, now: now(),
+        readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, signal) });
+    }
     if (name === "chart") {
       // An AHD house-style chart, posted where the conversation is happening.
       if (job.role === "player") throw new Error("charts are for developer and support work");
@@ -4189,6 +4284,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const rows = await supportAuthority(job, undefined, { decisionNotice: input.tool === "support_public_update" });
       if (input.tool === "support_resolve" && (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)) throw new Error("Ticket closure is held by an explicit owner follow-up. Continue investigating and communicating; do not resolve or close it.");
       const args = { ...(input.args || {}), number: job.ticket };
+      delete args.evidence; delete args.update_key; delete args.reply_to; // Keir 11.1: only the broker names a staged chart, an update key or a reply target, never the model.
       if (input.tool !== "support_resolve") args.kind = "ticket";
       // Models name the update text loosely ("body", "text"); the service needs `message`.
       if (input.tool === "support_public_update" && args.message === undefined) for (const k of ["body", "text", "content"]) if (typeof args[k] === "string") { args.message = args[k]; delete args[k]; break; }
@@ -4263,8 +4359,17 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!ticket.trackerItemId) throw new Error("Ticket has no linked tracker item. Use support_tracker_sync first, then support_tracker_note with body; investigation and public updates can continue meanwhile.");
       }
       if (input.tool === "support_tracker_sync" && args.status && !["open", "active", "blocked"].includes(args.status)) throw new Error("terminal tracker statuses require a resolution receipt");
-      const result = await effect(job, hash({ tool: input.tool, args }), () => mcp.call("support", input.tool, args, true, signal),
-        input.tool === "support_public_update" && args.kind === "ticket" && typeof args.message === "string" && args.message.trim() ? { kind: "reply", ticket: Number(job.ticket), text: args.message } : null);
+      // Keir 11.1: a delivered reply carries a chart staged in this activation; a card edit never does.
+      const effectKey = hash({ tool: input.tool, args });
+      const evidence = input.tool === "support_public_update" && args.deliver === true && (args.delivery_mode || "reply") === "reply"
+        ? evidenceDelivery.claimTicket(ledger, job, { config, key: effectKey, ticket: job.ticket, at: now() }) : null;
+      const extra = input.tool === "support_public_update" && args.deliver === true && (args.delivery_mode || "reply") === "reply" ? evidenceDelivery.ticketArgs(ledger, job, { key: effectKey, evidence }) : {};
+      let result;
+      try {
+        result = await effect(job, effectKey, () => callSupport(input.tool, { ...args, ...extra, ...(evidence ? { evidence } : {}) }, true, signal),
+          input.tool === "support_public_update" && args.kind === "ticket" && typeof args.message === "string" && args.message.trim() ? { kind: "reply", ticket: Number(job.ticket), text: args.message } : null);
+      } catch (e) { evidenceDelivery.settleTicket(ledger, job, { id: evidence, error: e, at: now() }); throw e; }
+      evidenceDelivery.settleTicket(ledger, job, { id: evidence, result, at: now() });
       if (["support_tracker_sync", "support_tracker_note"].includes(input.tool)) { job.trackerRaised = true; ledger.save(); }
       if (input.tool === "support_public_update") {
         const delivered = ["sent", "delivered", "posted", "already_posted"].includes(result.delivery?.status) || result.delivery?.alreadyPosted === true || result.delivery?.posted === true || result.delivery?.delivery?.status === "posted";
@@ -4284,6 +4389,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // Keir 2.0: every resolution becomes a recallable note.
         // Keir 9: and at most one verified mechanic (plus a lesson after a retraction) from the code the ticket read.
         try { require("./ticketlearn").keep({ d, notebook, ticket: job.ticket, audit: (k, v) => ledger.audit(k, v) }); } catch {}
+        try { const r = await reporterOf(job, signal).catch(() => null); require("./evidencegap").settle({ d, notebook, ticket: job.ticket, reporter: r?.id || null, audit: (k, v) => ledger.audit(k, v), now }); } catch {}
         try { notebook?.remember({ kind: "resolution", text: `Ticket ${job.ticket}: ${String(args.message || job.summary || "").slice(0, 600)}`, ticket: job.ticket, by: job.id }); } catch {}
         try { const r = await reporterOf(job, signal); if (r?.id) notebook?.remember({ kind: "player", player: r.id, text: `${r.name || "Player"} raised ticket ${job.ticket}${r.title ? ` ("${String(r.title).slice(0, 80)}")` : ""}; resolved: ${String(args.message || job.summary || "").slice(0, 400)}`, ticket: job.ticket, by: job.id }); } catch {}
       }
@@ -4698,7 +4804,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             escalated = escalated && Boolean(receipt);
             const message = standdown.limitationLine(escalated ? receipt : null);
             const args = { kind: "ticket", number: tn, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
-            const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: tn, text: message });
+            const sent = await effect(job, `ticket-update:${hash(args)}`, () => callSupport("support_public_update", args, true, signal), { kind: "reply", ticket: tn, text: message });
             const dl = sent?.delivery;
             const posted = dl?.posted === true || dl?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(dl?.status) || dl?.delivery?.status === "posted";
             if (!posted) throw new Error("Not finished: the limitation message to the player was not confirmed as delivered. Retry the finish.");

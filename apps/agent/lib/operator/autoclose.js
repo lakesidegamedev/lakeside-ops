@@ -104,12 +104,12 @@ function createAutoCloser({ ledger, broker, config, now = () => Date.now(), log 
     const lastReplyAt = Math.max(0, ...jobs.map((j) => ts(j.lastPublishedAt)));
     const shared = coordinator && coordinator.ticket === n && coordinator.channelId === root.channelId ? coordinator.resolutionReadyAt || 0 : 0;
     return {
-      ticket: n, root, lane: root.lane, open: !closed && root.state === "waiting",
+      ticket: n, root, lane: root.lane, open: !closed && (root.state === "waiting" || (root.state === "paused" && Boolean(root.ticketPaused?.closePermission))),
       running: jobs.some((j) => j.state === "running" || j.state === "queued"),
       ownerClosureHold: Boolean(jobs.some((j) => j.ownerClosureHold) || coordinator?.ownerClosureHold),
       pendingDecision: pending || jobs.some((j) => j.ownerDecisionPending),
       pendingHandoffs: handoffs, fixPending,
-      held: (root.ticketPaused && "paused by the owner") || held(root) || null,
+      held: (root.ticketPaused && !root.ticketPaused.closePermission && "paused by the owner") || held(root) || null,
       answeredAt: shared || root.resolutionReadyAt || 0, liveAt: d.liveSaid?.[n] || 0,
       lastHumanAt, lastReplyAt, lastHumanUnanswered: false, confirmed: false,
     };
@@ -139,7 +139,7 @@ function createAutoCloser({ ledger, broker, config, now = () => Date.now(), log 
   async function readRows_(job, signal) {
     const was = job.state;
     job.state = "running";
-    try { return await broker.supportAuthority(job, ["running"]); } finally { if (job.state === "running") job.state = was; }
+    try { return await require("./ticketpause").runAsCloser(ledger.data, job, () => broker.supportAuthority(job, ["running"])); } finally { if (job.state === "running") job.state = was; }
   }
 
   async function closeOne(s, decision, signal) {
@@ -150,7 +150,7 @@ function createAutoCloser({ ledger, broker, config, now = () => Date.now(), log 
       if (!job.resolutionReadyAt && job.lastPublishedAt) job.resolutionReadyAt = ts(job.lastPublishedAt);
       // A confirmation was read and classified here, so it counts as seen; otherwise the resolve gate would refuse it as an unread reply.
       if (decision.rule === "a" && s.lastHumanTs) job.observedPlayerAt = Math.max(ts(job.observedPlayerAt), s.lastHumanTs);
-      return await broker.tool(job, "support_action", { tool: "support_resolve", args: { message: COPY[decision.rule] } }, signal);
+      return await require("./ticketpause").runAsCloser(ledger.data, job, () => broker.tool(job, "support_action", { tool: "support_resolve", args: { message: COPY[decision.rule] } }, signal));
     } finally { if (job.state === "running") job.state = was; }
   }
 

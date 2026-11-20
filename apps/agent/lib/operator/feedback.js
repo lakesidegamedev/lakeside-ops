@@ -187,6 +187,8 @@ function createFeedback({ ledger, config, discord, isModerator = null, now = () 
     f.votes[key] = vote;
     ledger.audit("answer_feedback", { message: messageId, voter: vote.voter, vote: vote.vote, previous, ticket: vote.ticket, model: vote.model });
     ledger.save();
+    if (vote.voter === "player" && (vote.vote === "down" || vote.vote === "report") && vote.ticket) { try { require("./evidencegap").noteFeedback(ledger.data, vote.ticket, "wrong_or_misleading", now()); } catch {} }
+    if (vote.voter === "player" && (vote.vote === "up" || vote.vote === "great") && vote.ticket) { try { require("./evidencegap").noteFeedback(ledger.data, vote.ticket, "helpful", now()); } catch {} }
     if (vote.voter === "player" && (vote.vote === "down" || vote.vote === "report") && previous !== vote.vote && vote.ticket) await playerUnhelpful(vote, answer);
     return { ok: true, vote: vote.vote, voter: vote.voter, changed: Boolean(previous && previous !== vote.vote) };
   }

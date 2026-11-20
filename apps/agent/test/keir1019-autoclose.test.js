@@ -162,3 +162,86 @@ test("10.1.11 gap 4: handoffs release when the fix is live or the issue/card is 
   const k = fixture({ raisedToDevelopers: [{ id: 57, at: NOW - 30 * H, kind: "bug", blocking: true }] });
   assert.equal(await mkCloser({ jobs: k.jobs, seen: { "ticket:7": "j1" }, decisions: {}, liveSaid: {} }, { cardDone: async () => false }).tick().then((r) => r.closed.length), 0);
 });
+
+test("closer: a silenced ticket closes only under explicit close permission and still needs the normal rule", async () => {
+  const pause = { ticket: 7, by: "own", messageId: "m1", at: NOW - H, stopUpdates: { by: "own" } };
+  // no permission: the pause holds
+  let f = fixture({ state: "paused", ticketPaused: pause });
+  assert.deepEqual((await f.closer.tick()).closed, []);
+  assert.equal(f.calls.length, 0);
+  // permission, answered and quiet: closes once, restores paused
+  f = fixture({ state: "paused", ticketPaused: { ...pause, closePermission: { by: "own" } } });
+  f.jobs.j1.channelId = "c1";
+  const r = await f.closer.tick();
+  assert.deepEqual(r.closed, [{ ticket: 7, rule: "c" }]);
+  assert.equal(f.calls[0].input.tool, "support_resolve");
+  assert.equal(f.jobs.j1.state, "paused");
+  // permission but the player outcome is missing (not answered): not closed
+  f = fixture({ state: "paused", ticketPaused: { ...pause, closePermission: { by: "own" } }, resolutionReadyAt: 0, lastPublishedAt: 0 });
+  assert.deepEqual((await f.closer.tick()).closed, []);
+});
+
+test("assertCanAct: only the closer's scope for this job and this receipt resolves a silenced ticket", async () => {
+  const tp = require("../lib/operator/ticketpause"), takeover = require("../lib/operator/supporttakeover");
+  const data = { channels: { c1: { keirPaused: { ticket: 7, closePermission: { by: "own", messageId: "m9" } } } }, jobs: {} };
+  const job = { id: "a", channelId: "c1", ticket: 7 };
+  assert.throws(() => tp.assertCanAct(data, job), /paused/);
+  // a flag on the job grants nothing
+  assert.throws(() => tp.assertCanAct(data, { ...job, closingUnderPermission: true }), /paused/);
+  await tp.runAsCloser(data, job, async () => {
+    await null;
+    assert.doesNotThrow(() => tp.assertCanAct(data, job));
+    assert.throws(() => tp.assertCanAct(data, { id: "other", channelId: "c1", ticket: 7 }), /paused/);
+    // a takeover still wins over the close permission
+    assert.throws(() => takeover.assertCanAct({ ...data, supportOwner: { tickets: { 7: "staff" } } }, job), /owned by staff/);
+    // permission replaced by a different receipt: the scope no longer matches
+    const swapped = { channels: { c1: { keirPaused: { ticket: 7, closePermission: { by: "own", messageId: "m10" } } } }, jobs: {} };
+    assert.throws(() => tp.assertCanAct(swapped, job), /paused/);
+  });
+  assert.throws(() => tp.assertCanAct(data, job), /paused/);
+  const none = { channels: { c1: { keirPaused: { ticket: 7 } } }, jobs: {} };
+  await tp.runAsCloser(none, job, async () => assert.throws(() => tp.assertCanAct(none, job), /paused/));
+});
+
+test("closer with the production pause and takeover guards: closes a paused ticket, nothing leaks into the ledger or other calls, insufficient outcome refuses", async () => {
+  const takeover = require("../lib/operator/supporttakeover");
+  const mk = (over = {}) => {
+    const pause = { ticket: 7, by: "own", messageId: "m1", at: NOW - H, stopUpdates: { by: "own" }, closePermission: { by: "own", messageId: "m2" } };
+    const jobs = { j1: { id: "j1", kind: "ticket", ticket: 7, state: "paused", at: NOW - 20 * H, channelId: "c1", lane: "question", resolutionReadyAt: NOW - 8 * H, lastPublishedAt: NOW - 8 * H, observedPlayerAt: NOW - 9 * H, lastPlayerAt: NOW - 9 * H, deadline: NOW + 99 * H, ticketPaused: pause, ...over } };
+    const data = { jobs, channels: { c1: { keirPaused: pause } }, ticketPauses: { 7: pause }, seen: { "ticket:7": "j1" }, decisions: {}, liveSaid: {} };
+    const log = { reloaded: [], unrelated: [], resolved: [] };
+    const ledger = { data, audit() {}, save() { log.reloaded.push(JSON.parse(JSON.stringify(data))); } };
+    const rows = [{ id: "10", timestamp: new Date(NOW - 9 * H).toISOString(), author: { id: "p1" }, content: "why is it 200k?" }, { id: "11", timestamp: new Date(NOW - 8 * H).toISOString(), author: { id: "bot", bot: true }, content: "answer" }];
+    const broker = {
+      supportAuthority: async (job) => { await null; takeover.assertCanAct(data, job); return rows; },
+      tool: async (job, name, input) => {
+        await null; ledger.save();
+        // an unrelated call racing the closer (its own async context) and a reloaded copy of the ledger are both still fenced
+        await new Promise((resolve) => setImmediate(resolve));
+        takeover.assertCanAct(data, job);
+        log.resolved.push(input.tool);
+        return { ok: true };
+      } };
+    const closer = createAutoCloser({ ledger, broker, config: { ownerId: "own", staffIds: [] }, now: () => NOW });
+    return { closer, data, log, broker };
+  };
+  const f = mk();
+  const racing = new Promise((resolve) => setImmediate(() => { try { takeover.assertCanAct(f.data, f.data.jobs.j1); resolve("allowed"); } catch (e) { resolve(e.code); } }));
+  const r = await f.closer.tick();
+  assert.deepEqual(r.closed, [{ ticket: 7, rule: "c" }], JSON.stringify(r.refused));
+  assert.deepEqual(f.log.resolved, ["support_resolve"]);
+  assert.equal(await racing, "TICKET_OWNER_PAUSED");
+  for (const snapshot of f.log.reloaded) assert.equal(JSON.stringify(snapshot).includes("closingUnderPermission"), false);
+  assert.equal(f.data.jobs.j1.state, "paused");
+  assert.throws(() => takeover.assertCanAct(f.data, f.data.jobs.j1), /paused/);
+  // the ledger as saved in flight, reloaded after a restart, grants nothing
+  for (const snapshot of f.log.reloaded) assert.throws(() => takeover.assertCanAct(snapshot, snapshot.jobs.j1), /paused/);
+  // a staff takeover still blocks the closer
+  const t = mk(); t.data.supportOwner = { tickets: { 7: "staff" } };
+  assert.deepEqual((await t.closer.tick()).closed, []);
+  assert.deepEqual(t.log.resolved, []);
+  // outcome insufficient (never answered): refuses, no resolve
+  const n = mk({ resolutionReadyAt: 0, lastPublishedAt: 0 });
+  assert.deepEqual((await n.closer.tick()).closed, []);
+  assert.deepEqual(n.log.resolved, []);
+});

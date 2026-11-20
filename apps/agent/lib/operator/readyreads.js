@@ -43,6 +43,18 @@ const SEEDS = [
   ["what is the national budget, treasury or deficit over the last years", "gamestate", "country_fiscal_history"],
   ["how do I do this, what does this mechanic mean, where is it explained", "lore", "lore_wiki_search"],
   ["what does this term mean in the game wiki", "lore", "lore_glossary"],
+  // Keir 11.1: the metric the question names decides the read. Level and growth, sold and offered are different measures.
+  ["how has the national GDP changed over the last turns, is it growing or what is the level", "gamestate", "market_history"],
+  ["what was the price or traded volume of a commodity over recent turns, how much was sold versus offered", "gamestate", "market_history"],
+  ["what did my shops sell, what were my fees and operating profit each turn", "gamestate", "reporter_operating_results"],
+  ["my shop profit does not add up with my sales and fees", "gamestate", "reporter_operating_results"],
+  ["where did my action points go, how many did I get and spend", "gamestate", "reporter_action_points"],
+  ["my action points do not add up, I had more before", "gamestate", "reporter_action_points"],
+  // Keir 11.1: the evidence dictionary for the measures players confuse most.
+  ["did the national economy drop, is GDP the level or the growth rate", "ops-knowledge", "support_evidence_lookup"],
+  ["is the market demand listed, filled or funded, why is demand different from what was sold", "ops-knowledge", "support_evidence_lookup"],
+  ["my shop revenue and operating profit do not match, what is realized profit versus revenue", "ops-knowledge", "support_evidence_lookup"],
+  ["how do action points get granted, spent and lost to the cap or the hoarding penalty", "ops-knowledge", "support_evidence_lookup"],
 ];
 
 const hash = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);

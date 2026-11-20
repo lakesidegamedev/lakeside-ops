@@ -24,7 +24,18 @@ function ticketEvidence(ledger, job, ticketNo) {
 }
 
 /** Figures in a ticket draft that nothing read for this ticket supports. */
-const unsupported = (message, evidence) => knowledge.unsupportedNumbers(message, evidence);
+const unsupported = (message, evidence, facts) => knowledge.unsupportedNumbers(message, evidence, facts);
+
+/** Typed facts from this activation's reads and every stored public read of this ticket. */
+function ticketFacts(ledger, job, ticketNo) {
+  const typed = require("./typedfacts");
+  const rows = ledger.data.ticketObservations?.[ticketNo] || [];
+  const stored = rows.filter((o) => o.tool === "read_tool").flatMap((o) => {
+    const input = parse(o.input), result = parse(o.result);
+    return input && result ? typed.fromRead(input, result) : [];
+  });
+  return [...(job.typedFacts || []), ...stored];
+}
 
 // Player terms. Each entry maps a read to plain words, or null when it cannot be said safely.
 const GAME_RULES = () => "the game's rules";
@@ -95,4 +106,4 @@ function appendChecked(message, observations) {
   return out;
 }
 
-module.exports = { ticketEvidence, unsupported, describe, checkedLine, appendChecked, MAX_REFUSALS, MAX_LINE };
+module.exports = { ticketFacts, ticketEvidence, unsupported, describe, checkedLine, appendChecked, MAX_REFUSALS, MAX_LINE };

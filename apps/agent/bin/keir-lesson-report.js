@@ -11,13 +11,14 @@ const read = (f, fallback) => { try { return JSON.parse(fs.readFileSync(path.joi
 const nb = read("notebook.json", { notes: [] }), ledger = read("ledger.json", {});
 let recalls = [];
 try { recalls = fs.readFileSync(path.join(dir, "notebook.json.recalls.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); } catch { /* no log yet */ }
-const report = buildReport({ notes: nb.notes || [], recalls, outcomes: ledger.ticketOutcomes || {}, feedback: ledger.feedbackLog || [], jobs: ledger.jobs || {}, minTrackingDays: days });
+const report = buildReport({ notes: nb.notes || [], recalls, outcomes: ledger.ticketOutcomes || {}, feedback: ledger.feedbackLog || [], jobs: ledger.jobs || {}, evidenceGaps: ledger.evidenceGaps || null, minTrackingDays: days });
 if (json) { console.log(JSON.stringify(report, null, 1)); process.exit(0); }
 const pct = (x) => (x == null ? "  -" : `${Math.round(x * 100)}%`.padStart(4));
 const s = report.summary;
 console.log(`tracking ${report.trackingSince ? new Date(report.trackingSince).toISOString().slice(0, 16) + "Z" : "not started"} (${report.trackingDays} days; ${s.enoughData ? "enough" : `needs ${days}`} for retirement flags)`);
 console.log(`live lessons ${s.lessons}: recalled at least once ${s.recalledAtLeastOnce}, unused ${s.unused}, suspect ${s.suspect}, never verified ${s.unverified}`);
+if (report.lessons.some((l) => l.evidence)) console.log(`evidence lessons: confirmed by the reporter ${s.outcomeConfirmed}, recalled on independent cases that only closed (not evidence) ${s.recalledQuietOnly}`);
 const b = report.baseline; console.log(`baseline over ${b.tickets} tickets with a recall: resolved ${pct(b.resolved)} reopened ${pct(b.reopened)} negative feedback ${pct(b.negative)} praise ${pct(b.praised)}\n`);
 console.log("most recalled:");
-for (const l of [...report.lessons].sort((a, c) => c.recalls - a.recalls).slice(0, 8)) console.log(`  ${String(l.recalls).padStart(4)}x ${String(l.tickets).padStart(3)} tickets  res ${pct(l.resolved)} neg ${pct(l.negative)}  ${l.flags.filter((f) => f !== "unverified").join(",") || "ok"}  ${l.text.slice(0, 80).replace(/\s+/g, " ")}`);
+for (const l of [...report.lessons].sort((a, c) => c.recalls - a.recalls).slice(0, 8)) console.log(`  ${String(l.recalls).padStart(4)}x ${String(l.tickets).padStart(3)} tickets  res ${pct(l.resolved)} neg ${pct(l.negative)}  ${l.evidence ? `conf ${l.evidence.outcomeConfirmed} quiet ${l.evidence.recalledQuiet}  ` : ""}${l.flags.filter((f) => f !== "unverified").join(",") || "ok"}  ${l.text.slice(0, 80).replace(/\s+/g, " ")}`);
 for (const flag of ["suspect", "unused"]) { const list = report.lessons.filter((l) => l.flags.includes(flag)); if (list.length) { console.log(`\n${flag} (${list.length}):`); for (const l of list.slice(0, 10)) console.log(`  ${l.id}  ${l.recalls}x  ${l.text.slice(0, 90).replace(/\s+/g, " ")}`); } }

@@ -5,7 +5,13 @@ const { AsyncLocalStorage } = require("node:async_hooks");
 const active = new WeakMap();
 const calls = new AsyncLocalStorage();
 const foreground = new WeakSet();
-const foregroundTools = new Set(["support_updates", "conversation_updates", "ticket_history", "view_attachment", "check_draft", "channel_reply", "finish"]);
+const foregroundTools = new Set(["support_updates", "conversation_updates", "ticket_history", "view_attachment", "check_draft", "channel_reply", "finish", "read_tool", "present_evidence"]);
+// Keir 11.1: the only reads a foreground turn may make through read_tool. The curated public dictionary and the vetted
+// game evidence reads; no raw records, code, knowledge or other servers. The full investigation stays with the worker.
+const foregroundReads = { "ops-knowledge": new Set(["support_evidence_lookup"]), gamestate: new Set(["market_history", "commodity_market", "reporter_operating_results", "reporter_action_points", "country_fiscal"]) };
+function readAllowed(job, server, tool) {
+  return eligible(job) && foregroundReads[server]?.has(tool) === true;
+}
 
 function eligible(job) {
   return !job.codingParent && job.channelId && job.channelId !== "app" &&
@@ -86,4 +92,4 @@ function owes(job) { return Boolean(active.get(job)?.owed.size); }
 function forCall(job, fn) {
   return active.has(job) ? calls.run({ job, revision: active.get(job).revision, owed: [...active.get(job).owed] }, fn) : fn();
 }
-module.exports = { inFlight: job => active.has(job), distinct, foreground, foregroundTools, latestSource, superseded, answered, owes, eligible, human, begin, consume, unread, check, read, forCall, end(job) { active.delete(job); foreground.delete(job); } };
+module.exports = { inFlight: job => active.has(job), distinct, foreground, foregroundTools, foregroundReads, readAllowed, latestSource, superseded, answered, owes, eligible, human, begin, consume, unread, check, read, forCall, end(job) { active.delete(job); foreground.delete(job); } };
