@@ -3437,7 +3437,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const args = { repository: repo, action: input.action, head, base, to, ...(pr ? {number:Number(input.number)} : {from}) };
         const asked = await requestGithubApproval(args, "Exact owner GitHub operation");
         if (asked.needsExplanation || asked.checksReady === false) return asked;
-        if (asked.state !== "approved") return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
+        if (asked.state !== "approved") return asked.needsExplanation || asked.checksReady === false ? asked : { approvalRequired: true, ...asked };
         scopedConsent = d.actions[asked.action];
         musePolicy.validate(d, config, job, scopedConsent, now(), true);
       }
@@ -3554,7 +3554,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               }
               if (prs.length > 1) {
                 const asked = await requestGithubApproval({ repository:repo, action: "merge-set", ticket: job.ticket, prs, summary: `Ticket ${job.ticket}: ${prs.length} related economy PRs (${prs.map((p) => "#" + p.number).join(", ")}) change the turn engine or economy, including ${list}.` }, "economy feature merge");
-                return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
+                return asked.needsExplanation || asked.checksReady === false ? asked : { approvalRequired: true, ...asked };
               }
             }
             // Keir 5.1 chain consent (owner, 2026-10-15): a promotion that carries
@@ -3611,7 +3611,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               const unverified = !sensitive;
               const summary = askForAuthority && Array.isArray(sensitive) && !sensitive.length ? `${what.replace(/ changes$| carries changes to$/, "")}: Keir found and fixed this itself and every check passed, but Keir has no standing permission to merge it without your yes.${carries} Head ${head.slice(0, 10)}` : shipSignoff ? `${shipWhat}${carries}` : unverified ? `${what.replace(/ changes$| carries changes to$/, "")}: GitHub did not list its changed files, so Keir cannot confirm it stays out of the economy and turn engine.${carries} Head ${head.slice(0, 10)}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}`;
               const asked = await requestGithubApproval({ ...args, summary }, askForAuthority && Array.isArray(sensitive) && !sensitive.length ? "merge of a green PR Keir opened without standing authority" : shipSignoff ? "ship to the live server" : unverified ? "merge or promotion with an unverified file list" : "economy merge or promotion");
-              return asked.needsExplanation ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
+              return asked.needsExplanation || asked.checksReady === false ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
             }
             if (consent.approvedBy === config.ownerId && !consent.approvedOnBehalfBy && consent.args?.action === "merge") ownerConsent = consent;
             if (askForAuthority && input.action === "merge") findingMergeApproval = consent;

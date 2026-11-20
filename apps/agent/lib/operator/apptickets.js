@@ -12,7 +12,26 @@ function handoffOf(receipt) {
     remainingBlockers: (receipt.remainingBlockers || []).map((reason) => HOLD_LABELS[reason] || String(reason).replace(/[_-]/g, " ")),
     approvalReferences: receipt.approvalReferences || [] };
 }
-function ticketDetail(data, number, now = Date.now(), config = {}) {
+function verifiedPlayerReply(ticket, number, guildId) {
+  if (ticket?.kind !== "ticket" || ticket.number !== number) return null;
+  const channel = ticket.conversation?.channelId;
+  const snowflake = value => typeof value === "string" && /^\d{16,20}$/.test(value);
+  if (!snowflake(channel)) return null;
+  const since = Date.parse(ticket.conversation.reopenedAt || ticket.createdAt);
+  if (!Number.isFinite(since) || !Array.isArray(ticket.publicUpdates)) return null;
+  let latest = null;
+  for (const update of ticket.publicUpdates) {
+    const receipt = update?.delivery;
+    if (update?.deliveryMode !== "reply" || receipt?.status !== "posted" || receipt.channelId !== channel ||
+        !snowflake(receipt.messageId) || receipt.messageId === ticket.intake?.cardMessageId) continue;
+    const at = Date.parse(receipt.postedAt);
+    if (!Number.isFinite(at) || at < since || at <= (latest?.at || 0)) continue;
+    latest = { id: receipt.messageId, at, kind: "Player reply", text: String(update.message || "").slice(0, 2000),
+      ...(snowflake(guildId) ? { url: `https://discord.com/channels/${guildId}/${channel}/${receipt.messageId}` } : {}) };
+  }
+  return latest;
+}
+function ticketDetail(data, number, now = Date.now(), config = {}, support = null) {
   const jobs = Object.values(data.jobs).filter((j) => Number(ticketOf(j)) === number).sort((a, b) => (b.updatedAt || b.at) - (a.updatedAt || a.at));
   const ids = new Set(jobs.map((j) => j.id));
   const card = data.statusCards?.[number] || {};
@@ -32,14 +51,13 @@ function ticketDetail(data, number, now = Date.now(), config = {}) {
   const current = jobs.find((j) => j.state === "running") || jobs.find((j) => !CLOSED.includes(j.state)) || jobs[0];
   const receipts = jobs.flatMap((j) => Object.entries(j.effects || {}).map(([key, value]) => ({ ...receiptOf(key, value), taskId: j.id }))).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 40);
   const history = jobs.flatMap((j) => (j.history || []).map((h, i) => ({ id: `${j.id}-${i}`, taskId: j.id, at: h.at, kind: h.kind || h.state || "checkpoint", text: String(h.summary || "").slice(0, 2000) })));
-  const posts = data.ticketPosts?.[number] || [];
-  for (const [i, post] of posts.entries()) history.push({ id: `post-${i}`, at: post.at, kind: post.kind === "reply" ? "Player reply" : "Status update", text: post.text });
-  const lastReply = data.lastSubstantive?.[number];
-  if (lastReply && !posts.some(post => post.text === lastReply.text || post.at === lastReply.at)) {
-    history.push({ id: "last-reply", at: lastReply.at, kind: "Player reply", text: lastReply.text });
+  for (const [i, post] of (data.ticketPosts?.[number] || []).entries()) {
+    if (post.kind === "status_card") history.push({ id: `post-${i}`, at: post.at, kind: "Status update", text: post.text });
   }
+  const playerReply = verifiedPlayerReply(support, number, config.guildId);
+  if (playerReply) history.push(playerReply);
   history.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-  return { number, title: data.ticketRecords?.[number]?.title || null, retryTaskId: stalledTicketJob(data, number)?.id || null, timing: current ? require("./workqueue").workStatus(data, require("./workrecord").rootJob(current, data.jobs), { now, config }) : null, blockers, decisions: decisions.map((x) => require("./appdecision").decisionView(data, x, now)),
+  return { number, title: support?.number === number ? support.title || null : data.ticketRecords?.[number]?.title || null, retryTaskId: stalledTicketJob(data, number)?.id || null, timing: current ? require("./workqueue").workStatus(data, require("./workrecord").rootJob(current, data.jobs), { now, config }) : null, blockers, decisions: decisions.map((x) => require("./appdecision").decisionView(data, x, now)),
     current: current ? { id: current.id, state: current.state, status: current.liveLog?.at(-1)?.what || card.status || current.summary || null, summary: current.summary || null, startedAt: current.startedAt || null, updatedAt: current.updatedAt || current.at, plan: current.plan || [] } : null,
     card, receipts, handoffs, history: history.slice(0, 50),
     tasks: jobs.map((j) => ({ id: j.id, canOpen: j.role === "owner", state: j.state, kind: j.kind, summary: j.summary, updatedAt: j.updatedAt || j.at })),
@@ -50,4 +68,4 @@ function stalledTicketJob(data, number) {
   if (job?.kind !== "ticket" || Number(job.ticket) !== number || job.state !== "blocked") return null;
   return job.deadlineBlockedAt || /activation aborted/i.test(job.summary || "") ? job : null;
 }
-module.exports = { ticketDetail, stalledTicketJob };
+module.exports = { ticketDetail, stalledTicketJob, verifiedPlayerReply };

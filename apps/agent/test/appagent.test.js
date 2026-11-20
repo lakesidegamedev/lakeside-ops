@@ -162,3 +162,30 @@ test("ticket retry queues the same stalled coordinator once and preserves receip
   assert.equal(job.effects["reply:one"], receipt);
   assert.equal(job.inbox.length, 1);
 });
+
+test("the ticket excerpt and Discord URL come from the same verified message receipt", () => {
+  const { verifiedPlayerReply } = require("../lib/operator/apptickets");
+  const guild = "123456789012345678";
+  const channel = "234567890123456789";
+  const good = "323456789012345678";
+  const old = "423456789012345678";
+  const intake = "523456789012345678";
+  const update = (message, id, at, fields = {}) => ({
+    message, deliveryMode: "reply", delivery: { status: "posted", channelId: channel, postedAt: at, messageId: id, ...fields },
+  });
+  const support = {
+    kind: "ticket", number: 1868, createdAt: "2026-11-19T02:00:00Z",
+    conversation: { channelId: channel, reopenedAt: "2026-11-20T02:00:00Z" }, intake: { cardMessageId: intake },
+    publicUpdates: [
+      update("Older conversation", old, "2026-11-19T19:00:00Z"),
+      update("Confirmed reply", good, "2026-11-20T02:15:00Z"),
+      update("Intake edit", intake, "2026-11-20T03:00:00Z"),
+      update("Undelivered reply", old, "2026-11-20T04:00:00Z", { status: "pending" }),
+      update("Other channel", old, "2026-11-20T05:00:00Z", { channelId: guild }),
+    ],
+  };
+  const reply = verifiedPlayerReply(support, 1868, guild);
+  assert.equal(reply.text, "Confirmed reply");
+  assert.equal(reply.url, `https://discord.com/channels/${guild}/${channel}/${good}`);
+  assert.equal(verifiedPlayerReply(support, 1001, guild), null);
+});

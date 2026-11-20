@@ -301,7 +301,11 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
     let m = /^\/threads\/([a-z0-9]{6,12})$/.exec(path);
     if (m && method === "POST") return updateThread(m[1], body);
     const ticketMatch = /^\/tickets\/(\d{1,7})$/.exec(path);
-    if (ticketMatch && method === "GET") return require("./apptickets").ticketDetail(d, Number(ticketMatch[1]), now(), config);
+    if (ticketMatch && method === "GET") {
+      const number = Number(ticketMatch[1]);
+      const support = await mcp?.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(3000)).catch(() => null);
+      return require("./apptickets").ticketDetail(d, number, now(), config, support);
+    }
     const ticketRetry = /^\/tickets\/(\d{1,7})\/retry$/.exec(path);
     if (ticketRetry && method === "POST") return retryTicket(Number(ticketRetry[1]), body.taskId);
     // Connected games: fixed read-only catalogue (appgames.js). Owner-only, never writes.
