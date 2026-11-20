@@ -1,1 +1,10 @@
-:root{color-scheme:dark;font:15px/1.6 system-ui;color:#e8e9ed;background:#111316}body{margin:52px 40px}small{font-size:10px;letter-spacing:2px;color:#9299a3}h1{font-size:32px;font-weight:500;letter-spacing:-1px}p{color:#9299a3}label{display:block}input,button{font:inherit;box-sizing:border-box;width:100%;padding:10px;margin-top:8px;border:1px solid #343a42;border-radius:7px;background:#1c2027;color:inherit}button{margin-top:18px;cursor:pointer}#error{font-size:12px;color:#e5a3ac}
+:root{color-scheme:dark;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;color:#e7e9f0;background:#0e1119}
+body{margin:52px 40px}
+h1{font:600 34px/1.1 Charter,"Iowan Old Style",Georgia,serif;letter-spacing:-.8px;margin:0 0 12px}
+p{color:#9097aa}
+label{display:block;margin-top:24px}
+input,button{font:inherit;box-sizing:border-box;width:100%;padding:11px 12px;margin-top:8px;border:1px solid #262d40;border-radius:8px;background:#131824;color:inherit}
+input:focus-visible,button:focus-visible{outline:2px solid #ffda83;outline-offset:2px}
+button{background:#ffda83;border-color:#ffda83;color:#1a1530;font-weight:600;cursor:pointer;margin-top:16px}
+button:hover{background:#ffe4a1}
+#error{color:#e8937c;min-height:1.6em}

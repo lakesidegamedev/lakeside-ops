@@ -44,6 +44,10 @@ test("standalone auth isolates clients and excludes studio routes", async t => {
   assert.equal((await request("/api/me", { cookie, host: "evil.example.com" })).status, 421);
   assert.equal((await request("/api/keir/app/messages", { cookie, origin: "https://evil.example.com", body: { text: "hello" } })).status, 403);
   assert.equal((await request("/api/engine/health", { cookie })).status, 404);
+  const page = await (await request("/")).text();
+  assert.match(page, /id="studio-links" aria-label="Studio" hidden/);
+  assert.equal((await request("/api/portal/config")).status, 200);
+  assert.equal((await (await request("/api/portal/config")).json()).mode, "standalone");
   const persisted = fs.readFileSync(path.join(state, "sessions.json"), "utf8");
   assert.ok(!persisted.includes(cookie.split("=")[1]));
   assert.match(cookie, /^ops_session=/);
