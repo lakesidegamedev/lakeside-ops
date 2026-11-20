@@ -342,8 +342,7 @@ struct KeirIdentitySection: View {
                     ForEach(5..<12) { h in Text("\(h):00 AM" + (differs ? " ET" : "")).tag(h) }
                 }
             }
-        } header: { SectionLabel(text: "Keir") } footer: {
-        }
+        } header: { SectionLabel(text: "Keir") }
         .task { if let r = try? await session.get("/api/keir/app/identity") { identity = r } }
     }
     private func save(_ body: [String: JSONValue]) {

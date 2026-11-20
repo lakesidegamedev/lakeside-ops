@@ -46,10 +46,12 @@ function workStatus(data, job, { now = Date.now(), config = {} } = {}) {
   // player has not answered yet. Keir's own review timer still nudges Keir.
   const onPlayer = state === "waiting" && ["player_reply", "player"].includes(String(waiting.waitingFor?.kind || ""));
   const overdue = !CLOSED.has(job.state) && !hold && !onPlayer && (Boolean(reviewAt && now >= reviewAt) || Boolean(forecast && now > forecast.expectedAt) || state === "stuck" || (state === "waiting" && (!checkAt || now > checkAt + 120000)));
+  if (state === "stuck" && !uncertain && !orphanApproval && (job.deadlineBlockedAt || /activation aborted/i.test(job.summary || ""))) state = "stalled";
+  const heartbeatAt = worker ? Math.max(...[worker.updatedAt, worker.startedAt, worker.liveLog?.at(-1)?.at].map(timestamp).filter(Boolean), 0) || null : null;
   const step = (job.plan || []).find(p => p.status === "running") || (job.plan || []).find(p => p.status !== "done");
   return { state, reason, next, milestone: clip(step?.title || data.statusCards?.[ticketOf(job)]?.status || reason),
     owner: hold ? "Current ticket owner" : "Keir", since, ageMs: since ? Math.max(0, now - since) : null,
-    nextCheckAt: checkAt, reviewAt, deadline: timestamp(job.deadline), overdue,
+    nextCheckAt: checkAt, reviewAt, heartbeatAt, deadline: timestamp(job.deadline), overdue,
     expectedDoneAt: forecast?.expectedAt || null, etaLabel: CLOSED.has(job.state) ? "Task finished" : forecast ? "Keir task estimate, not a guaranteed delivery time" : "Completion time not established", estimateBasis: forecast?.basis || null, estimateAt: forecast?.at || null, uncertain,
     activeWorkers: live.filter(j => j.state === "running").length };
 }

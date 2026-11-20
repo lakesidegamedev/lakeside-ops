@@ -41,7 +41,7 @@ function fixture({ conclusion = "success", head = "a".repeat(40), files = ["src/
     if (/commits\/c{40}\/pulls/.test(route)) return out([{ ...feature, merged_at: "2026-11-18", merge_commit_sha: featureCommit.sha }]);
     if (/compare\/staging\.\.\.development/.test(route)) return out({ ahead_by: 1, files: fileRows(patch), commits: [featureCommit] });
     if (/pulls\?state=open&base=staging/.test(route)) return out([promotion]);
-    if (/check-runs/.test(route)) return out({ check_runs: [{ name: "verify", status: "completed", conclusion }, { name: "custom-rules", status: "completed", conclusion }, { name: "dependency-review", status: "completed", conclusion }] });
+    if (/check-runs/.test(route)) return out({ check_runs: [{ name: "verify", status: "completed", completed_at: new Date(1_799_999_999_000).toISOString(), conclusion }, { name: "custom-rules", status: "completed", completed_at: new Date(1_799_999_999_000).toISOString(), conclusion }, { name: "dependency-review", status: "completed", completed_at: new Date(1_799_999_999_000).toISOString(), conclusion }] });
     return out({});
   };
   const mcp = { servers: () => [], list: async () => [], call: async (server, tool) => tool === "kanban_list" ? [] : tool === "kanban_add" ? { id: 900 } : {} };

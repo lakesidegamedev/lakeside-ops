@@ -30,7 +30,6 @@ struct OpsHub: View {
                 summary
                 if !issues.isEmpty || ops.redPRs > 0 { failing }
                 queues
-                StarmerWidget()
                 systems
             }
             .padding(16)
@@ -104,7 +103,7 @@ struct OpsHub: View {
         case .connecting: return .idle
         case .fresh:
             if running { return .running }
-            return activity.contains { WorkQueuePresentation.state($0) == "stalled" } ? .blocked : .idle
+            return activity.contains { WorkQueuePresentation.state($0) == "stalled" } ? .failed : .idle
         }
     }
 

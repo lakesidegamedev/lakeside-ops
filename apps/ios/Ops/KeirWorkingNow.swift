@@ -161,7 +161,7 @@ struct KeirWorkingNow: View {
                     }
                     KeirWorkLink(link: item["link"].string, ticket: item["ticket"], jobId: item["id"].string, title: item["title"].string.nonempty ?? (item["ticket"].number.map { "Ticket #\(Int($0))" } ?? "")) {
                         HStack(spacing: 6) {
-                            Text(item["link"].string == "ticket" ? "Open ticket" : "Open work")
+                            Text(item["link"].string == "ticket" ? "Open ticket" : "View details")
                             Image(systemName: "arrow.up.right")
                         }
                         .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.sky)

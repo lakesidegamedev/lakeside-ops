@@ -156,8 +156,8 @@ struct ActivityView: View {
     private var work: JSONValue { ops.work }
     private var tickets: [JSONValue] { ops.openTickets }
     private var trimmedSearch: String { search.trimmingCharacters(in: .whitespaces) }
-    private let filters = [("all", "All"), ("needs-you", "Needs you"), ("failing", "Failing checks"),
-                           ("stuck", "Blocked"), ("stalled", "Stalled"), ("unanswered", "Unanswered"),
+    private let filters = [("all", "All"), ("needs-you", "Needs you"), ("stuck", "Blocked"), ("stalled", "Stalled"),
+                           ("failing", "Failing checks"), ("unanswered", "Unanswered"),
                            ("working", "Running"), ("waiting", "Queued"), ("held", "Waiting"), ("finished", "Done")]
 
     // MARK: Rows per filter
@@ -170,7 +170,7 @@ struct ActivityView: View {
     }
     private func queueRows(_ key: String, search: String) -> [Entry] {
         let entries = ops.queueTickets.map { Entry(item: $0, ticket: true) } + ops.queueTasks.map { Entry(item: $0, ticket: false) }
-        return entries.filter { WorkQueuePresentation.matches($0.item, filter: key, search: search, ticket: $0.ticket) }
+        return entries.filter { WorkQueuePresentation.matches($0.item, filter: key, search: search) }
             .sorted { WorkQueuePresentation.rank($0.item) < WorkQueuePresentation.rank($1.item) }
     }
     private func failingRows(_ search: String) -> [JSONValue] {
@@ -209,6 +209,7 @@ struct ActivityView: View {
             }
         }
         .listStyle(.plain)
+        .opsScrollable()
         // The scope and filter controls sit outside the List so tapping one
         // never rebuilds or scrolls the row the tap came from.
         .safeAreaInset(edge: .top, spacing: 0) { queueControls }
@@ -296,7 +297,11 @@ struct ActivityView: View {
     @ViewBuilder private func ownerCard(_ item: AttentionItem) -> some View {
         switch item.kind {
         case .decision:
-            DecisionCard(decision: item.decision) { await load() }
+            if item.decision["type"].string == "choice", let number = item.ticketNumber {
+                InboxTicketDecision(item: item, knownChoice: item.decision, open: { route = .ticket(String(number)) }) { await load() }
+            } else {
+                DecisionCard(decision: item.decision) { await load() }
+            }
         case .question:
             Button { router.tab = .keir } label: { AttentionRow(item: item, action: "Answer in the conversation", icon: "bubble.left") }.buttonStyle(.plain)
         case .ownerWork:
@@ -359,6 +364,7 @@ struct ActivityView: View {
 private struct InboxTicketDecision: View {
     @EnvironmentObject private var session: AppSession
     let item: AttentionItem
+    var knownChoice: JSONValue?
     let open: () -> Void
     let changed: () async -> Void
     @State private var choices: [JSONValue] = []
@@ -366,12 +372,12 @@ private struct InboxTicketDecision: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button(action: open) { AttentionRow(item: item, action: "View ticket") }.buttonStyle(.plain)
-            ForEach(choices, id: \.["id"].string) { choice in
+            ForEach(knownChoice.map { [$0] } ?? choices, id: \.["id"].string) { choice in
                 TicketDecisionInline(decision: choice, showQuestion: false, changed: changed)
             }
         }
         .task(id: item.id) {
-            guard let number = item.ticketNumber,
+            guard knownChoice == nil, let number = item.ticketNumber,
                   let detail = try? await session.get("/api/keir/app/tickets/\(number)") else { return }
             choices = detail["decisions"].array.filter { $0["type"].string == "choice" && $0["state"].string == "pending" }
         }
@@ -460,9 +466,9 @@ private struct UnansweredRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            InboxRowTop(state: urgent ? "Unanswered" : "No reply yet", color: urgent ? OpsTheme.danger : OpsTheme.warn,
+            InboxRowTop(state: "Unanswered", color: OpsTheme.warning,
                         number: ticket["number"].string,
-                        age: waited.map { OpsFormat.span(max(60, $0)) } ?? "",
+                        age: waited.map { OpsFormat.span(max(60, $0)) + " ago" } ?? "",
                         ageColor: urgent ? OpsTheme.warn : OpsTheme.muted)
             Text(KeirTicketFollowUp.title(ticket)).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(2)
             if let waited {

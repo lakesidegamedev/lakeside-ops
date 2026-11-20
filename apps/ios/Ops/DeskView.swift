@@ -66,19 +66,17 @@ enum TicketPresentation {
     /// waiting on the owner and not stale.
     static func status(raw: String, updatedAt: JSONValue = .null, timing: JSONValue = .null, ownerDecision: Bool = false, blocked: Bool = false, now: Date = Date()) -> (status: OpsStatus, label: String) {
         let lowered = raw.lowercased()
-        if lowered.contains("abort") { return (.failed, "Stalled") }
+        if ownerDecision { return (.waiting, "Needs you") }
+        if lowered.contains("abort") || lowered == "stalled" || timing["state"].string == "stalled" { return (.failed, "Stalled") }
         let base = OpsStatus.from(raw)
         if base == .failed { return (.failed, "Failed") }
         if base == .done { return (.done, "Done") }
-        if ownerDecision { return (.waiting, "Waiting on you") }
         if base == .running {
             let seen = [updatedAt, timing["heartbeatAt"]].compactMap(OpsFormat.date).max()
-            if timing["stale"].bool || (seen.map { now.timeIntervalSince($0) > staleAfter } ?? true) { return (.blocked, "Stalled") }
+            if timing["stale"].bool || (seen.map { now.timeIntervalSince($0) > staleAfter } ?? true) { return (.failed, "Stalled") }
         }
         if blocked || base == .blocked { return (.blocked, "Blocked") }
-        let expected = OpsFormat.date(timing["expectedDoneAt"])
-        if timing["overdue"].bool || (expected.map { $0 <= now } ?? false) { return (.blocked, "Overdue") }
-        if lowered == "waiting" || lowered == "held" { return (.waiting, "Waiting") }
+        if lowered == "waiting" || lowered == "held" { return (.blocked, "Waiting") }
         switch base {
         case .running: return (.running, "Running")
         case .queued: return (.queued, "Queued")
@@ -124,13 +122,13 @@ struct TicketDetail: View {
 
     private var number: String { ticket["number"].string }
     private var replyState: JSONValue {
-        ops.hub["tickets"].array.first(where: { $0["number"] == ticket["number"] })?["replyState"] ?? ticket["replyState"]
+        ops.hub["tickets"].array.first(where: { $0["number"].string == number })?["replyState"] ?? ticket["replyState"]
     }
     private var card: JSONValue { detail["card"] == .null ? ticket["card"] : detail["card"] }
     private var timing: JSONValue {
         .object(ticket["timing"].object.merging(detail["timing"].object.filter { $0.value != .null }) { _, latest in latest })
     }
-    private var title: String { OpsText.scrub(ticket["title"].string).nonempty ?? "Ticket #\(number)" }
+    private var title: String { OpsText.scrub(ticket["title"].string.nonempty ?? detail["title"].string).nonempty ?? "Ticket #\(number)" }
     private var worker: JSONValue { supervision.worker }
     private var current: JSONValue { detail["current"] }
     private var decisions: [JSONValue] { detail["decisions"].array }
@@ -140,6 +138,9 @@ struct TicketDetail: View {
     /// Only the supervisor worker's own state counts; with no worker the
     /// ticket's recorded work is used, and nothing is ever assumed running.
     private var status: (status: OpsStatus, label: String) {
+        if current == .null && supervision.worker == .null {
+            return (WorkQueuePresentation.status(ticket), WorkQueuePresentation.label(ticket))
+        }
         let hasWorker = worker != .null
         let job = hasWorker ? worker : current
         let raw = [job["error"].string, job["summary"].string, job["status"].string]
@@ -209,7 +210,7 @@ struct TicketDetail: View {
 
     private var statusSection: some View {
         let expected = OpsFormat.date(timing["expectedDoneAt"])
-        let overdue = status.label == "Overdue" || (status.status != .done && (timing["overdue"].bool || (expected.map { $0 <= Date() } ?? false)))
+        let overdue = status.status != .done && (expected.map { $0 <= Date() } ?? false)
         let started = OpsFormat.ago(worker["startedAt"] == .null ? current["startedAt"] : worker["startedAt"])
         let since = OpsFormat.ago(timing["since"])
         return VStack(alignment: .leading, spacing: 10) {
@@ -228,7 +229,7 @@ struct TicketDetail: View {
                 }
             }
             if let deadline = OpsFormat.date(timing["deadline"]) {
-                row("Deadline") { Text(OpsFormat.contextual(deadline) + (Calendar.current.isDateInToday(deadline) ? "" : " · " + OpsFormat.clock(deadline))).font(.callout) }
+                row("Deadline") { Text(deadline.formatted(date: .abbreviated, time: .omitted) + " · " + OpsFormat.clock(deadline)).font(.callout) }
             }
         }.accessibilityIdentifier("ticket-status")
     }
@@ -338,7 +339,7 @@ struct TicketDetail: View {
 
     private var playerReply: String {
         let update = detail["history"].array.first { $0["kind"].string == "Player reply" }
-        return update?["text"].string.nonempty ?? ""
+        return replyState["state"].string == "delivered" ? (update?["text"].string.nonempty ?? "") : ""
     }
 
     @ViewBuilder private var replySection: some View {

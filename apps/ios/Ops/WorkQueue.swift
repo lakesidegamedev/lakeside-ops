@@ -26,25 +26,14 @@ enum WorkQueuePresentation {
         let state = state(item)
         if state == "needs-you" || state == "finished" || state == "stalled" { return state }
         if item["replyState"]["state"].string == "no_receipt" { return "unanswered" }
-        if ["stuck", "unassigned"].contains(state) { return "stuck" }
+        if state == "stuck" { return "stuck" }
         if state == "working" { return "working" }
-        return ["held", "waiting"].contains(state) ? "held" : "waiting"
+        return ["held", "waiting", "unassigned"].contains(state) ? "held" : "waiting"
     }
-    static func matches(_ item: JSONValue, filter: String, search: String, ticket: Bool) -> Bool {
+    static func matches(_ item: JSONValue, filter: String, search: String) -> Bool {
         let text = [item["title"].string, item["number"].string, item["ticket"].string, item["timing"]["reason"].string].joined(separator: " ")
         return (filter == "all" || filter == bucket(item)) && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
     }
-    /// The default Inbox (Tickets, All, no search) leads with owner pings:
-    /// Needs you, then the work groups. A filter,
-    /// a search or the Tasks scope is a request for specific work, so the
-    /// matching queue rows lead instead.
-    static func leadsWithOwnerItems(scope: String, filter: String, search: String) -> Bool {
-        scope == "tickets" && filter == "all" && search.trimmingCharacters(in: .whitespaces).isEmpty
-    }
-    /// Needs you shows on All and on its own filter, in either scope. A search
-    /// narrows its rows instead of hiding the section, so every row a filter
-    /// shows is also on All with the same search. Running, Queued and Blocked
-    /// leave it out rather than mixing unrelated cards into the result.
     static func showsOwnerItems(filter: String) -> Bool {
         filter == "all" || filter == "needs-you"
     }

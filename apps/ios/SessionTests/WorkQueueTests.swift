@@ -6,26 +6,16 @@ final class WorkQueueTests: XCTestCase {
     func testWaitingAndUnassignedWorkCannotHideInFinishedHistory() {
         let waiting: JSONValue = .object(["title": .string("Coupon ledger"), "number": .number(1501), "timing": .object(["state": .string("waiting"), "overdue": .bool(false)])])
         let stuck: JSONValue = .object(["title": .string("Missing owner"), "timing": .object(["state": .string("unassigned"), "overdue": .bool(true)])])
-        XCTAssertTrue(WorkQueuePresentation.matches(waiting, filter: "waiting", search: "1501", ticket: true))
-        XCTAssertFalse(WorkQueuePresentation.matches(waiting, filter: "stuck", search: "", ticket: true))
-        XCTAssertTrue(WorkQueuePresentation.matches(stuck, filter: "stuck", search: "", ticket: true))
-        XCTAssertLessThan(WorkQueuePresentation.rank(stuck), WorkQueuePresentation.rank(waiting))
+        XCTAssertTrue(WorkQueuePresentation.matches(waiting, filter: "held", search: "1501"))
+        XCTAssertFalse(WorkQueuePresentation.matches(waiting, filter: "stuck", search: ""))
+        XCTAssertTrue(WorkQueuePresentation.matches(stuck, filter: "held", search: ""))
     }
     func testBlockedWorkIsNotAutomaticallyAnOwnerDecision() {
         let blocked: JSONValue = .object(["state": .string("blocked")])
         XCTAssertEqual(WorkQueuePresentation.state(blocked), "stuck")
-        XCTAssertFalse(WorkQueuePresentation.matches(blocked, filter: "needs-you", search: "", ticket: false))
+        XCTAssertFalse(WorkQueuePresentation.matches(blocked, filter: "needs-you", search: ""))
         let approval: JSONValue = .object(["decisionPending": .bool(true)])
         XCTAssertEqual(WorkQueuePresentation.state(approval), "needs-you")
-    }
-    func testDefaultInboxLeadsWithOwnerPingsAndAnyNarrowingLeadsWithTheQueue() {
-        XCTAssertTrue(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: "all", search: ""))
-        XCTAssertTrue(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: "all", search: "  "))
-        for filter in ["working", "waiting", "stuck", "needs-you"] {
-            XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: filter, search: ""), filter)
-        }
-        XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tasks", filter: "all", search: ""))
-        XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: "all", search: "1501"))
     }
     func testNeedsYouShowsOnAllAndItsOwnFilterInEitherScope() {
         XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(filter: "all"))
@@ -42,19 +32,19 @@ final class WorkQueueTests: XCTestCase {
             .object(["number": .number(4), "title": .string("Held"), "timing": .object(["state": .string("needs-you")])]),
         ]
         for search in ["", "Ledger", "2"] {
-            let all = Set(rows.filter { WorkQueuePresentation.matches($0, filter: "all", search: search, ticket: true) }.map { $0["number"].string })
+            let all = Set(rows.filter { WorkQueuePresentation.matches($0, filter: "all", search: search) }.map { $0["number"].string })
             for filter in ["working", "waiting", "stuck", "needs-you"] {
-                let subset = Set(rows.filter { WorkQueuePresentation.matches($0, filter: filter, search: search, ticket: true) }.map { $0["number"].string })
+                let subset = Set(rows.filter { WorkQueuePresentation.matches($0, filter: filter, search: search) }.map { $0["number"].string })
                 XCTAssertTrue(subset.isSubset(of: all), "\(filter) / \(search)")
             }
         }
     }
-    func testAnAbortedWorkerIsBlockedWithoutBeingReportedAsRunning() {
+    func testAnAbortedAttemptIsStalledWithoutBeingReportedAsRunning() {
         let item: JSONValue = .object(["timing": .object([
             "state": .string("working"), "reason": .string("activation aborted: no result")
         ])])
         XCTAssertEqual(WorkQueuePresentation.label(item), "Stalled")
-        XCTAssertEqual(WorkQueuePresentation.bucket(item), "stuck")
+        XCTAssertEqual(WorkQueuePresentation.bucket(item), "stalled")
         XCTAssertEqual(WorkQueuePresentation.status(item), .failed)
     }
 }

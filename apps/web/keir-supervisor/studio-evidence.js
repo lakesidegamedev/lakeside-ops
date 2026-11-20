@@ -361,6 +361,8 @@ function createStudioEvidence({ mcpCall, configPath, ledgerPath, now = () => Dat
     const items = raw.items.map((row) => {
       const job = fresh && ledger.jobs?.[ledger.seen?.[`ticket:${row.number}`]];
       const current = job?.kind === "ticket" && job.ticket === row.number && ["running", "queued", "waiting", "blocked"].includes(job.state);
+      const stalled = current && (job.state === "blocked" && (job.deadlineBlockedAt || /activation aborted/i.test(job.summary || "")) ||
+        job.state === "running" && snapshotAt - Math.max(job.updatedAt || 0, job.startedAt || 0, job.at || 0) > 20 * 60000);
       const waitingFor = current && job.state === "waiting" && ["player_reply", "developer_reply"].includes(job.waitingFor?.kind)
         ? job.waitingFor.kind : null;
       const nextCheckAt = current && job.state === "waiting" && Number.isSafeInteger(job.wakeAt) &&
@@ -369,7 +371,7 @@ function createStudioEvidence({ mcpCall, configPath, ledgerPath, now = () => Dat
       return {
         number: row.number, title: text(row.title, 180), status: text(row.status, 40),
         reply: ["delivered", "no_receipt"].includes(row.replyState?.state) ? row.replyState.state : "unknown",
-        work: current ? job.state : null, waitingFor, nextCheckAt,
+        work: current ? stalled ? "stalled" : job.state : null, waitingFor, nextCheckAt,
         priorActivations: current && Number.isSafeInteger(job.activationCount) ? job.activationCount : null,
         implementationHeld: fresh ? Boolean(implementationOwner && implementationOwner !== "keir") : null,
         ownerDecisionPending: fresh ? pending.has(row.number) : null,

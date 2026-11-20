@@ -39,7 +39,7 @@ function ticketDetail(data, number, now = Date.now(), config = {}) {
     history.push({ id: "last-reply", at: lastReply.at, kind: "Player reply", text: lastReply.text });
   }
   history.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-  return { number, retryTaskId: stalledTicketJob(data, number)?.id || null, timing: current ? require("./workqueue").workStatus(data, require("./workrecord").rootJob(current, data.jobs), { now, config }) : null, blockers, decisions: decisions.map((x) => require("./appdecision").decisionView(data, x, now)),
+  return { number, title: data.ticketRecords?.[number]?.title || null, retryTaskId: stalledTicketJob(data, number)?.id || null, timing: current ? require("./workqueue").workStatus(data, require("./workrecord").rootJob(current, data.jobs), { now, config }) : null, blockers, decisions: decisions.map((x) => require("./appdecision").decisionView(data, x, now)),
     current: current ? { id: current.id, state: current.state, status: current.liveLog?.at(-1)?.what || card.status || current.summary || null, summary: current.summary || null, startedAt: current.startedAt || null, updatedAt: current.updatedAt || current.at, plan: current.plan || [] } : null,
     card, receipts, handoffs, history: history.slice(0, 50),
     tasks: jobs.map((j) => ({ id: j.id, canOpen: j.role === "owner", state: j.state, kind: j.kind, summary: j.summary, updatedAt: j.updatedAt || j.at })),

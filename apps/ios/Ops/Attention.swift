@@ -270,7 +270,7 @@ struct AttentionCard: View {
             NavigationLink {
                 WorkItemDetail(item: item.work)
             } label: {
-                AttentionRow(item: item, status: .waiting, action: "Open work")
+                AttentionRow(item: item, status: .waiting, action: "View details")
             }
             .buttonStyle(.plain)
         case .task:

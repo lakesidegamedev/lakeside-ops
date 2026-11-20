@@ -95,8 +95,11 @@ struct KeirHeader<Tools: View>: View {
     let workCount: Int
     let yolo: Bool
     let disabled: Bool
+    let showNavigation: Bool
     let openThreads: () -> Void
     let openInbox: () -> Void
+    let openAllInbox: () -> Void
+    let openOps: (() -> Void)?
     let reviewAutonomy: () -> Void
     @ViewBuilder let tools: () -> Tools
 
@@ -113,12 +116,22 @@ struct KeirHeader<Tools: View>: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, 52)
+                .padding(.leading, showNavigation ? 92 : 52).padding(.trailing, showNavigation ? 92 : 52)
                 .accessibilityLabel("Conversations, " + title)
                 .accessibilityIdentifier("keir-threads")
                 .disabled(disabled)
 
-                HStack {
+                HStack(spacing: 0) {
+                    if showNavigation {
+                        Button(action: openAllInbox) {
+                            Image(systemName: "tray").font(.opsHeadline).frame(width: 44, height: 44)
+                        }.accessibilityLabel("Inbox").accessibilityIdentifier("keir-open-inbox")
+                        if let openOps {
+                            Button(action: openOps) {
+                                Image(systemName: "square.grid.2x2").font(.opsHeadline).frame(width: 44, height: 44)
+                            }.accessibilityLabel("Ops").accessibilityIdentifier("keir-open-ops")
+                        }
+                    }
                     Spacer()
                     Menu { tools() } label: {
                         Image(systemName: "ellipsis").font(.opsHeadline).frame(width: 44, height: 44)

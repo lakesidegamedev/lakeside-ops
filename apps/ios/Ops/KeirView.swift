@@ -36,6 +36,8 @@ struct KeirView: View {
 
     private var standalone: Bool { session.profile["mode"].string == "standalone" }
 
+    private var activeChat: Bool { !keir.messages.isEmpty || composing }
+
     // MARK: Timeline
 
     private var timeline: some View {
@@ -102,9 +104,11 @@ struct KeirView: View {
     private var header: some View {
         KeirHeader(title: keir.threadTitle, presence: headerPresence, level: voice.level, sprite: sprite,
                    attention: attention.count, workCount: keir.isSupervisor ? 0 : keir.live.count + keir.backgroundTasks.count,
-                   yolo: keir.yolo, disabled: presentingSheet,
+                   yolo: keir.yolo, disabled: presentingSheet, showNavigation: activeChat,
                    openThreads: { sheet = .threads },
                    openInbox: { router.activityFilter = "needs-you"; router.tab = .activity },
+                   openAllInbox: { router.activityFilter = "all"; router.tab = .activity },
+                   openOps: standalone ? nil : { router.tab = .ops },
                    reviewAutonomy: { confirmingYoloOff = true }) {
             toolsMenu
         }
@@ -350,7 +354,7 @@ struct KeirView: View {
         .background(KeirChatTheme.canvas.ignoresSafeArea())
         .navigationTitle("Keir").navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar(composing ? .hidden : .visible, for: .tabBar)
+        .toolbar(activeChat ? .hidden : .visible, for: .tabBar)
         .toolbarBackground(OpsTheme.background, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .task(id: "\(scenePhase == .active)|\(keir.thread)|\(connectionAttempt)|\(voiceMode)") { if scenePhase == .active && !voiceMode { await keir.connect(session) } }

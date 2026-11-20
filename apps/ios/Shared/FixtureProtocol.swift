@@ -469,12 +469,13 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 "receipts": [["key": "reply:revenue", "label": "Explained the deposit network share", "state": "done", "at": hourAgo - 1800000]],
             ]
         case "/api/keir/app/tickets/1001" where ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens"):
+            let twoHoursAgo = Date().addingTimeInterval(-7200).timeIntervalSince1970 * 1000
             value = [
-                "current": ["id": "ticket-task", "state": "blocked", "summary": "Checked the payroll rules."],
+                "current": ["id": "ticket-task", "state": "blocked", "summary": "Checked the payroll rules.", "status": "I checked the payroll allocation rules and found where the funding total is calculated."],
                 "decisions": [["id": "abcdef123456", "kind": "choice", "type": "choice", "state": "pending",
                                "tldr": "Choose payroll behavior", "question": "Capacity or filled jobs?",
                                "options": [["id": "1", "label": "Capacity"], ["id": "2", "label": "Filled jobs"]]]],
-                "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]],
+                "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code", "at": twoHoursAgo]],
             ]
         case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
         case "/api/keir/app/tickets/1868/supervision", "/api/keir/app/tickets/1564/supervision", "/api/keir/app/tickets/1001/supervision", "/api/keir/app/tickets/1575/supervision", "/api/keir/app/tickets/1651/supervision":

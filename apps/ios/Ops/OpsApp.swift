@@ -119,7 +119,7 @@ struct OpsSettings: View {
 
     private var pushAvailable: Bool {
         (status == .authorized || status == .provisional || status == .ephemeral)
-            && (push.lastRegistered != nil || (delivery["registeredDevices"].number ?? 0) > 0)
+            && push.lastRegistered != nil
     }
 
     private func refreshNotificationRegistration() {

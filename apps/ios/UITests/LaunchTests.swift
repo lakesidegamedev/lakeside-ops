@@ -6,7 +6,7 @@ import XCTest
 final class LaunchTests: XCTestCase {
     private func launch() -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"]; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["keir-threads"].waitForExistence(timeout: 15))
         return app
     }
     /// Polls the element types that carry text. A descendants(.any) query over the
@@ -28,10 +28,15 @@ final class LaunchTests: XCTestCase {
     /// opened from Ops.
     private func go(_ app: XCUIApplication, _ place: String) {
         switch place {
-        case "Keir": app.tabBars.buttons["Chat"].tap()
-        case "Activity": app.tabBars.buttons["Inbox"].tap()
-        case "Feed", "Goals":
-            app.tabBars.buttons["Ops"].tap()
+        case "Keir":
+            if app.tabBars.buttons["Chat"].isHittable { app.tabBars.buttons["Chat"].tap() }
+        case "Activity", "Ops":
+            let shortcut = app.buttons[place == "Ops" ? "keir-open-ops" : "keir-open-inbox"]
+            if shortcut.isHittable { shortcut.tap() }
+            else { app.tabBars.buttons[place == "Ops" ? "Ops" : "Inbox"].tap() }
+        case "Feed", "Goals", "Execution metrics":
+            go(app, "Keir")
+            openTool(app, "More")
             openRow(app, place)
         default: app.tabBars.buttons[place].tap()
         }
@@ -793,7 +798,7 @@ final class LaunchTests: XCTestCase {
 
     func testKeirDashboardMetricsAndMonitoring() {
         let app = launch()
-        go(app, "Ops"); openRow(app, "Dashboard")
+        go(app, "Execution metrics")
         XCTAssertTrue(app.navigationBars["Keir dashboard"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Activations, 46"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Median activation, 12s"].exists)
@@ -812,7 +817,7 @@ final class LaunchTests: XCTestCase {
     func testKeirDashboardDoesNotInventMissingMetrics() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-metrics-partial"]; app.launch()
         XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 15))
-        go(app, "Ops"); openRow(app, "Dashboard")
+        go(app, "Execution metrics")
         XCTAssertTrue(app.staticTexts["Median activation, Not recorded"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Successful activations, No sample"].waitForExistence(timeout: 5))
         for _ in 0..<10 {
@@ -859,7 +864,7 @@ final class LaunchTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-fixtures", "-appearance", appearance] + extra
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 20), appearance)
+        XCTAssertTrue(app.buttons["keir-threads"].waitForExistence(timeout: 20), appearance)
         return app
     }
 
@@ -870,7 +875,7 @@ final class LaunchTests: XCTestCase {
         app.swipeDown()
         capture(app, "OLED Chat top")
         for _ in 0..<3 { app.swipeUp() }
-        XCTAssertTrue(find(app, "Support queue", timeout: 6).exists)
+        XCTAssertTrue(app.otherElements["keir-chat-support-queue"].exists || find(app, "Tickets", timeout: 6).exists)
         capture(app, "OLED Chat bottom")
 
         go(app, "Ops")
@@ -925,7 +930,7 @@ final class LaunchTests: XCTestCase {
         func returnToTabs() {
             app.terminate()
             app.launch()
-            XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
+            XCTAssertTrue(app.buttons["keir-threads"].waitForExistence(timeout: 15))
         }
         let composer = composer(app)
         XCTAssertTrue(composer.waitForExistence(timeout: 15))
@@ -1112,7 +1117,7 @@ final class LaunchTests: XCTestCase {
     }
     private func launchFresh(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"] + extra; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["keir-threads"].waitForExistence(timeout: 15))
         return app
     }
     private func openBondMarket(_ app: XCUIApplication) {

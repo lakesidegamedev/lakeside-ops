@@ -179,7 +179,8 @@ enum OpsText {
         switch raw.lowercased().replacingOccurrences(of: "_", with: "-") {
         case "needs-you", "needs-owner", "needsowner", "attention": return "Needs you"
         case "working", "running", "executing", "active", "processing": return "Running"
-        case "blocked", "stuck", "stalled": return "Blocked"
+        case "blocked", "stuck": return "Blocked"
+        case "stalled": return "Stalled"
         case "failed", "red", "error": return "Failed"
         case "done", "finished", "merged", "closed", "complete": return "Done"
         case "queued", "waiting", "held", "paused", "open", "next": return "Queued"
