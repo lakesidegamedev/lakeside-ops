@@ -315,7 +315,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/starmer", "/api/keir/app/starmer/refresh": value = OpsFixtures.starmer()
         case "/api/keir/app/recap": value = OpsFixtures.recap()
         case "/api/keir/app/recap/ack": value = ["acknowledgedAt": 1792020000000.0]
-        case "/api/keir/app/devices": value = ["registered": true]
+        case "/api/keir/app/devices": value = ["registered": true, "quiet": bodyObject()?["quiet"] ?? ["enabled": false] as [String: Any]]
         case "/api/keir/app/ideas/301": value = KeirAgentFixtures.dismiss("301")
         case "/api/keir/app/work", "/api/keir/app/threads", "/api/keir/app/tasks", "/api/keir/app/tasks/abcdef012345", "/api/keir/app/ideas", "/api/keir/app/watches", "/api/keir/app/memory":
             value = KeirAgentFixtures.value(url.path, method: request.httpMethod ?? "GET", body: bodyObject() ?? [:])

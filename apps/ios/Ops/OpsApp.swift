@@ -107,6 +107,7 @@ struct OpsSettings: View {
     @State private var delivery: JSONValue = .null
     @State private var deliveryMessage: String?
     @State private var testingDelivery = false
+    @State private var quiet = QuietHours.load()
 
     var body: some View {
         NavigationStack {
@@ -139,6 +140,7 @@ struct OpsSettings: View {
                         Button("Turn on notifications in Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
                     }
                 } header: { Text("Notifications") }
+                quietSection
                 if session.profile["mode"].string != "standalone" { KeirIdentitySection() }
                 Section("Appearance") {
                     Picker("Theme", selection: $appearance) { Text("Dark").tag("dark"); Text("Light").tag("light"); Text("System").tag("system") }
@@ -163,6 +165,30 @@ struct OpsSettings: View {
             }
         }
     }
+
+    private var quietSection: some View {
+        Section {
+            Toggle("Quiet hours on this iPhone", isOn: Binding(get: { quiet.enabled }, set: { quiet.enabled = $0; saveQuiet() }))
+            if quiet.enabled {
+                DatePicker("From", selection: timeBinding(\.startMinutes), displayedComponents: .hourAndMinute)
+                DatePicker("Until", selection: timeBinding(\.endMinutes), displayedComponents: .hourAndMinute)
+                Picker("Time zone", selection: Binding(get: { quiet.timeZone }, set: { quiet.timeZone = $0; saveQuiet() })) {
+                    ForEach(Array(Set(TimeZone.knownTimeZoneIdentifiers + [quiet.timeZone])).sorted(), id: \.self) { Text($0).tag($0) }
+                }
+            }
+            Text(quiet.summary).font(.caption).foregroundStyle(OpsTheme.muted)
+        } header: { Text("Quiet hours") } footer: { Text("Applies to this iPhone only. Your other devices are not affected.") }
+    }
+
+    private func timeBinding(_ field: WritableKeyPath<QuietHours, Int>) -> Binding<Date> {
+        Binding(get: { Calendar.current.date(bySettingHour: quiet[keyPath: field] / 60, minute: quiet[keyPath: field] % 60, second: 0, of: Date()) ?? Date() },
+                set: { date in
+                    let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+                    quiet[keyPath: field] = (c.hour ?? 0) * 60 + (c.minute ?? 0); saveQuiet()
+                })
+    }
+
+    private func saveQuiet() { quiet.save(); Task { await OpsPushRegistration.update() } }
 
     private func toggle(_ key: String, _ title: String, _ detail: String) -> some View {
         Toggle(isOn: Binding(get: { prefs[key] ?? true }, set: { on in

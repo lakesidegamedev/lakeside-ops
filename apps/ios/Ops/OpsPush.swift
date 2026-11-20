@@ -150,7 +150,7 @@ enum OpsNotificationDelivery {
         guard appSession.signedIn else { return }
         let status = OpsServices.shared.push
         do {
-            _ = try await appSession.post("/api/keir/app/devices", ["token": .string(token), "prefs": OpsPushPrefs.payload])
+            _ = try await appSession.post("/api/keir/app/devices", ["token": .string(token), "prefs": OpsPushPrefs.payload, "quiet": QuietHours.load().payload])
             status.lastRegistered = Date(); status.message = "Registered with Keir"; status.error = nil
         } catch { status.error = "Device registration will retry: \(error.displayMessage)" }
     }

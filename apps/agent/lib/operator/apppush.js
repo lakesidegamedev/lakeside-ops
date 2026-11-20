@@ -8,6 +8,9 @@ const fs = require("node:fs");
 const http2 = require("node:http2");
 const { describeAlert } = require("./notification-policy");
 const { alertKind, threadOf } = require("./appchannel");
+const { decisionView } = require("./appdecision");
+const { obsoleteReason } = require("./decisionpolicy");
+const { quietNow } = require("./quiethours");
 
 function createApns({ teamId, keyId, keyFile, topic, host = "api.push.apple.com", now = () => Date.now(), connect = http2.connect }) {
   if (!teamId || !keyId || !keyFile || !topic) return null;
@@ -47,6 +50,12 @@ function createApns({ teamId, keyId, keyFile, topic, host = "api.push.apple.com"
 
 const clip = (text, n) => { const s = String(text || "").replace(/\s+/g, " ").trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 
+// A decision the owner can act on right now. Delivery of its notification never
+// authorizes anything: the answer still goes through the authenticated decision path.
+const actionable = (d, x, at) => decisionView(d, x, at).canAnswer && !obsoleteReason(x, d);
+const deviceId = (device) => crypto.createHash("sha256").update(device.token).digest("hex").slice(0, 16);
+const DEFER_MAX_MS = 72 * 3600000, DEFER_KEEP_OTHERS = 10;
+
 // Builds the notifications that are due. Pure over the ledger so it is testable.
 function duePushes(d, { now = Date.now() } = {}) {
   const t = threadOf(d);
@@ -62,9 +71,11 @@ function duePushes(d, { now = Date.now() } = {}) {
     out.push({ key: `reply:${m.seq}`, pref: "replies", mark: () => { state.seq = Math.max(state.seq, m.seq); },
       payload: { aps: { alert: { title: m.watch ? "Keir watch" : "Keir", body: clip(m.text, 240) }, sound: "default", "thread-id": m.thread || "keir", "interruption-level": m.watch ? "time-sensitive" : "active" }, route: "keir", thread: m.thread || "main", seq: m.seq } });
   }
-  for (const x of Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !state.decisions[x.id] && x.at >= state.since - 3600000)) {
-    out.push({ key: `decision:${x.id}`, pref: "decisions", mark: () => { state.decisions[x.id] = now; },
-      payload: { aps: { alert: { title: x.options ? "Keir: choose an option" : "Keir: action approval", body: clip(x.review?.title ? `${x.review.title}: ${x.question}` : x.question, 240) }, sound: "default", "thread-id": "decisions", "interruption-level": "time-sensitive", category: x.options ? "KEIR_CHOICE" : "KEIR_DECISION" }, route: "decision", decision: x.id } });
+  // Support-origin approvals (a ticket's job) live in the same collection as the owner's own, so one rule covers both.
+  for (const x of Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !state.decisions[x.id] && x.at >= state.since - 3600000 && actionable(d, x, now))) {
+    const ticket = x.ticket || d.jobs?.[x.jobId]?.ticket || null, what = x.options ? "choose an option" : "action approval";
+    out.push({ key: `decision:${x.id}`, pref: "decisions", decision: x.id, mark: () => { state.decisions[x.id] = now; },
+      payload: { aps: { alert: { title: ticket ? `Keir, ticket ${ticket}: ${what}` : `Keir: ${what}`, body: clip(x.review?.title ? `${x.review.title}: ${x.question}` : x.question, 240) }, sound: "default", "thread-id": "decisions", "interruption-level": "time-sensitive", category: x.options ? "KEIR_CHOICE" : "KEIR_DECISION" }, route: "decision", decision: x.id, ...(ticket ? { ticket } : {}) } });
   }
   for (const a of (d.alerts || []).filter((a) => alertKind(a.key) === "incident" && a.at > state.since && !state.alerts[`${a.key}@${a.at}`])) {
     const notice = describeAlert(a, d, now);
@@ -90,6 +101,38 @@ function duePushes(d, { now = Date.now() } = {}) {
 
 function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() }) {
   let busy = false;
+  function dropDevice(t, device, r) {
+    t.devices = t.devices.filter((x) => x.token !== device.token); delete t.push.deferred?.[deviceId(device)];
+    ledger.audit("app_device_removed", { reason: r.reason || r.status });
+  }
+  // Sends what a phone held back once its quiet hours have ended. Resolved decisions are dropped, not sent;
+  // an approval that is still open but briefly not answerable (task paused) is kept for later.
+  async function flushDeferred(t) {
+    const queues = t.push.deferred;
+    if (!queues) return;
+    const ids = new Set(t.devices.map(deviceId));
+    for (const id of Object.keys(queues)) if (!ids.has(id)) delete queues[id];
+    for (const device of [...t.devices]) {
+      const id = deviceId(device);
+      if (!queues[id]?.length || quietNow(device.quiet, now())) continue;
+      const newest = new Map();
+      for (const e of queues[id]) if (e.collapseId) newest.set(e.collapseId, e.key);
+      const others = queues[id].filter((e) => !e.decision && !(e.collapseId && newest.get(e.collapseId) !== e.key)).slice(-DEFER_KEEP_OTHERS).map((e) => e.key);
+      let failed = false;
+      for (const e of [...queues[id]]) {
+        // Every removal is saved at once, so a restart resumes exactly where this left off.
+        const remove = () => { queues[id] = queues[id].filter((q) => q !== e); ledger.save(); };
+        const x = e.decision && ledger.data.decisions?.[e.decision];
+        if (device.prefs?.[e.pref] === false || (e.decision ? !x || x.state !== "pending" || now() - e.at > DEFER_MAX_MS : !others.includes(e.key))) { ledger.audit("app_push_deferred_dropped", { key: e.key }); remove(); continue; }
+        if (failed || e.decision && !actionable(ledger.data, x, now())) continue;
+        const r = await apns.send(device.token, e.payload, { collapseId: e.collapseId, priority: e.priority });
+        if (r.status === 200) { t.push.lastSuccess = now(); remove(); continue; }
+        t.push.lastError = { status: r.status, reason: r.reason || "delivery rejected", at: now() };
+        if (r.status === 410 || r.reason === "BadDeviceToken" || r.reason === "Unregistered") { dropDevice(t, device, r); ledger.save(); break; }
+        failed = true; log(`app push deferred ${e.pref}: ${r.status} ${r.reason || ""}`);
+      }
+    }
+  }
   async function tick() {
     if (!apns || busy) return;
     busy = true;
@@ -107,9 +150,10 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
       if (result.status === 200) { row.signature = signature; row.lastSent = now(); }
       if (result.status === 410 || result.reason === "BadDeviceToken" || result.reason === "Unregistered" || ended && result.status === 200) t.activities = t.activities.filter(a => a !== row);
     }
-    // With no device registered, history is marked seen so a first install is not flooded.
-    if (!t.devices?.length) { duePushes(ledger.data, { now: now() }).forEach((p) => p.mark()); ledger.save(); return; }
-      if (ledger.data.control?.stopped) { duePushes(ledger.data, { now: now() }).forEach(p => p.mark()); ledger.save(); return; }
+    // With no device registered, history is marked seen so a first install is not flooded. Open approvals stay due.
+    if (!t.devices?.length) { duePushes(ledger.data, { now: now() }).forEach((p) => p.pref !== "decisions" && p.mark()); ledger.save(); return; }
+      if (ledger.data.control?.stopped) { duePushes(ledger.data, { now: now() }).forEach((p) => p.pref !== "decisions" && p.mark()); ledger.save(); return; }
+      await flushDeferred(t);
       for (const p of duePushes(ledger.data, { now: now() }).slice(0, 10)) {
         if (ledger.data.control?.stopped) return;
         // Earlier entries in this tick can satisfy the same monitor group.
@@ -118,16 +162,24 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
         const receipts = delivered[p.key] ||= {};
         let retry = false;
         for (const device of [...t.devices]) {
-          const deviceId = crypto.createHash("sha256").update(device.token).digest("hex").slice(0, 16);
-          if (device.prefs?.[p.pref] === false || receipts[deviceId]) continue;
-          const r = await apns.send(device.token, p.payload, { collapseId: p.collapseId, priority: p.pref === "incidents" || p.collapseId === "keir-updates" ? 5 : 10 });
-          if (r.status === 200) { receipts[deviceId] = now(); t.push.lastSuccess = now(); }
+          const id = deviceId(device);
+          if (device.prefs?.[p.pref] === false || receipts[id]) continue;
+          const priority = p.pref === "incidents" || p.collapseId === "keir-updates" ? 5 : 10;
+          // A phone in quiet hours keeps its own durable copy and never holds up the others.
+          if (quietNow(device.quiet, now())) {
+            const queue = ((t.push.deferred ||= {})[id] ||= []);
+            if (!queue.some((e) => e.key === p.key)) queue.push({ key: p.key, pref: p.pref, payload: p.payload, collapseId: p.collapseId, priority, decision: p.decision || null, at: now() });
+            receipts[id] = now(); ledger.save(); continue;
+          }
+          const r = await apns.send(device.token, p.payload, { collapseId: p.collapseId, priority });
+          // Save each accepted send now so a restart cannot send the same notification twice.
+          if (r.status === 200) { receipts[id] = now(); t.push.lastSuccess = now(); ledger.save(); }
           else t.push.lastError = { status: r.status, reason: r.reason || "delivery rejected", at: now() };
-          if (r.status === 410 || r.reason === "BadDeviceToken" || r.reason === "Unregistered") { t.devices = t.devices.filter((x) => x.token !== device.token); ledger.audit("app_device_removed", { reason: r.reason || r.status }); }
+          if (r.status === 410 || r.reason === "BadDeviceToken" || r.reason === "Unregistered") { dropDevice(t, device, r); }
           else if (r.status !== 200) { retry = true; log(`app push ${p.pref}: ${r.status} ${r.reason || ""}`); }
         }
         if (retry) break; // Do not advance a shared cursor past a failed delivery.
-        p.mark(); delete delivered[p.key];
+        p.mark(); delete delivered[p.key]; ledger.save();
       }
       ledger.save();
     } finally { busy = false; }
