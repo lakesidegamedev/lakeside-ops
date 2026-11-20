@@ -32,13 +32,15 @@ function toolActivity(calls) {
   return group;
 }
 let team = null, decisions = [], decisionsVersion = "", mode = "standalone", answering = new Set();
+let decisionLayout = "", decisionRequest = 0;
+const draftReplies = new Map();
 let selected = "main", cursor = 0, version = "", stopped = true, generation = 0;
 function error(e) { $("error").textContent = e.message; $("error").hidden = false; }
 async function api(route, body, signal) {
   const r = await fetch(route, { method: body ? "POST" : "GET", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, signal });
   const data = await r.json(); if (!r.ok) { if (r.status === 401 && route !== "/api/login") signedOut(); throw new Error(data.error || "Request failed"); } return data;
 }
-function signedOut() { team = null; decisions = []; decisionsVersion = ""; renderAttention(); $("controls").close(); $("models").close(); controls = null; controlsVersion = ""; stopped = true; generation++; $("workspace").hidden = true; $("login").hidden = false; }
+function signedOut() { decisionRequest++; draftReplies.clear(); team = null; decisions = []; decisionsVersion = ""; renderAttention(); $("controls").close(); $("models").close(); controls = null; controlsVersion = ""; stopped = true; generation++; $("workspace").hidden = true; $("login").hidden = false; }
 async function connected() {
   const me = await api("/api/me"); $("identity").textContent = me.email;
   $("workspace").hidden = false; $("login").hidden = true; $("password").value = ""; $("error").hidden = true;
@@ -186,14 +188,14 @@ document.addEventListener("keydown", e => {
   }
 });
 function welcome() {
-  const empty = document.createElement("div"), mark = document.createElement("img"), title = document.createElement("h2"), intro = document.createElement("p"), prompts = document.createElement("div");
+  const empty = document.createElement("div"), mark = document.createElement("img"), title = document.createElement("h2"), prompts = document.createElement("div");
   empty.id = "welcome"; mark.src = "/keir/keir-mark.svg"; mark.alt = ""; mark.width = 56; mark.height = 56;
-  title.textContent = "What are we working on?"; intro.textContent = "Ask a question, investigate a problem, or put a plan into motion."; prompts.className = "starter-prompts";
+  title.textContent = "What are we working on?"; prompts.className = "starter-prompts";
   for (const [label, text] of [["Explore this project", "Explore this project and tell me how it works."], ["Investigate a problem", "Help me investigate a problem: "], ["Plan a change", "Help me plan a change: "]]) {
     const button = document.createElement("button"); button.type = "button"; button.textContent = label;
     button.onclick = () => { $("message").value = text; $("message").focus(); }; prompts.append(button);
   }
-  empty.append(mark, title, intro);
+  empty.append(mark, title);
   const glance = glanceLine(); if (glance) empty.append(glance);
   empty.append(prompts); $("messages").append(empty);
 }
@@ -223,8 +225,11 @@ function renderAttention() {
     const href = studioHref(item); if (href) { const a = document.createElement("a"); a.href = href; a.textContent = `Ticket ${item.ticket} in studio`; li.append(a); }
     board.append(li);
   }
-  const list = $("decisions"); list.replaceChildren();
-  for (const x of decisions) list.append(decisionCard(x));
+  const layout = JSON.stringify([decisions, [...answering]]);
+  if (layout !== decisionLayout) {
+    decisionLayout = layout;
+    $("decisions").replaceChildren(...decisions.map(decisionCard));
+  }
   if (!$("welcome")) return;
   $("welcome").querySelector(".glance")?.remove(); const glance = glanceLine(); if (glance) $("welcome").querySelector(".starter-prompts").before(glance);
 }
@@ -236,19 +241,37 @@ function decisionCard(x) {
   if (x.args && Object.keys(x.args).length) { const d = document.createElement("details"), s = document.createElement("summary"), pre = document.createElement("pre"); s.textContent = "Exact action"; pre.textContent = JSON.stringify(x.args, null, 2); d.append(s, pre); card.append(d); }
   actions.className = "actions";
   const add = (label, verdict, cls) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.disabled = !x.canAnswer || answering.has(x.id); b.onclick = () => answer(x, verdict); actions.append(b); };
-  if (x.options?.length) x.options.slice(0, 6).forEach((o, i) => add(String(o.label || o.title || o), `choose:${i + 1}`));
+  if (x.options?.length) x.options.slice(0, 6).forEach((o, i) => add(String(o.label || o.title || o), `choose:${o.id || i + 1}`));
   else { if (x.canApprove) add("Approve", "approve", "primary"); add("Reject", "reject"); }
+  if (x.canAnswer) {
+    const input = document.createElement("input");
+    input.setAttribute("aria-label", "Reply to " + x.question);
+    input.placeholder = "Reply to Keir"; input.maxLength = 2000;
+    input.value = draftReplies.get(x.id) || "";
+    const send = document.createElement("button"); send.type = "button"; send.textContent = "Reply";
+    const update = () => { draftReplies.set(x.id, input.value); send.disabled = answering.has(x.id) || !input.value.trim(); };
+    input.oninput = update; update();
+    send.onclick = () => answer(x, "explain", input.value.trim());
+    actions.append(input, send);
+  }
   card.append(actions); return card;
 }
-async function answer(x, verdict) {
+async function answer(x, verdict, text = "") {
   if (answering.has(x.id)) return; answering.add(x.id); renderAttention();
-  try { await api(`/api/keir/app/decisions/${x.id}`, { verdict }); decisionsVersion = ""; await refreshDecisions(""); $("error").hidden = true; }
+  try { await api(`/api/keir/app/decisions/${x.id}`, { verdict, text }); draftReplies.delete(x.id); decisionsVersion = ""; await refreshDecisions(""); $("error").hidden = true; }
   catch (e) { error(e); }
   finally { answering.delete(x.id); renderAttention(); }
 }
 async function refreshDecisions(v) {
   if (v && v === decisionsVersion) return; decisionsVersion = v || "";
-  try { decisions = (await api("/api/keir/app/decisions")).decisions || []; renderAttention(); } catch (e) { if (!stopped) error(e); }
+  const request = ++decisionRequest;
+  try {
+    const value = await api("/api/keir/app/decisions");
+    if (request !== decisionRequest || stopped) return;
+    decisions = value.decisions || [];
+    for (const id of draftReplies.keys()) if (!decisions.some(x => x.id === id)) draftReplies.delete(id);
+    renderAttention();
+  } catch (e) { if (!stopped && request === decisionRequest) { decisionsVersion = ""; error(e); } }
 }
 $("open-attention").onclick = () => { const open = $("attention").hidden; $("attention").hidden = !open; $("open-attention").setAttribute("aria-expanded", String(open)); };
 
