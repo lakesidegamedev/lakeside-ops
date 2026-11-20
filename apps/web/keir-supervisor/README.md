@@ -36,6 +36,23 @@ or `PROJECTS_ROOT`, `KEIR_SUPERVISOR_MODEL`, `KEIR_SUPERVISOR_EFFORT`,
 `KEIR_GUARDIAN_DIR`, `KEIR_SUPERVISOR_CLAUDE_BIN`. Without `KEIR_SUPERVISOR_DIR`
 the routes answer `503 {configured:false, missing}` to the owner.
 
+## Approval push alerts
+
+A new pending proposal can raise one required-attention push on the owner's
+registered iPhones. Both services need the same explicit absolute directory in
+`KEIR_APPROVAL_ATTENTION_DIR` (this web service writes it, the Keir operator
+reads it). It holds one tiny file per proposal with only the proposal id, a
+`pending` or `closed` state and timestamps: no chat, title, summary or patch, and
+it lives outside `KEIR_SUPERVISOR_DIR`. The push is sent by the operator's
+existing authenticated device and APNs path, honours each phone's quiet hours and
+notification settings, goes once per proposal, is dropped if the proposal is
+decided, superseded or older than 72 hours before it is sent, and deep links to
+that exact proposal. It never approves anything and has no lock-screen actions.
+Model progress updates never push. If the operator is down the files wait; if no
+Apple provider is installed, `GET /api/keir/app/notifications` reports
+`approvalAlerts.problem`. Leave the variable unset and nothing is projected; the
+in-app proposal card works as before.
+
 Requires `/usr/bin/bwrap` and a signed-in Claude Code for the service account;
 `GET /status` reports both. Tests that need bubblewrap skip with the reason when
 it is unavailable.

@@ -70,7 +70,7 @@ function brief(repos) {
 }
 
 function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/var/lib/keir-guardian", publishEnabled = false, publisher = null,
-  maxAttempts = 2, jobTimeoutMs = 30 * 60000, now = Date.now, log = () => {} }) {
+  attention = null, maxAttempts = 2, jobTimeoutMs = 30 * 60000, now = Date.now, log = () => {} }) {
   const store = createStore(stateDir, { now });
   const artifacts = path.join(stateDir, "artifacts"); fs.mkdirSync(artifacts, { recursive: true, mode: 0o700 });
   const lockFile = path.join(stateDir, "runner.lock");
@@ -79,6 +79,16 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
   const controllers = new Map();
   let running = null, owner = false, stopped = false, kicking = false;
   const st = () => store.state;
+  // Mirror pending approvals into the minimal alert projection the app push
+  // dispatcher reads. A write that fails is retried, never silently dropped, and
+  // never blocks the owner's own approval path.
+  let attentionRetry = null;
+  function syncAttention() {
+    if (!attention || stopped) return;
+    let failed = 0;
+    try { failed = attention.sync(st().proposals); } catch (e) { failed = 1; log(`keir-supervisor: attention projection failed: ${e.message}`); }
+    if (failed && !attentionRetry) { attentionRetry = setTimeout(() => { attentionRetry = null; syncAttention(); }, 15000); attentionRetry.unref?.(); }
+  }
   const iso = (t) => (t ? new Date(t).toISOString() : null);
 
   function acquireLock() {
@@ -184,6 +194,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
       store.append({ role: "supervisor", kind: "approval", proposalId: proposal.id, jobId: live.id,
         text: `Approval needed to publish "${title}" to ${repo.key} (${d.files.length} file${d.files.length === 1 ? "" : "s"}: ${d.files.slice(0, 6).join(", ")}${d.files.length > 6 ? ", ..." : ""}). Tests: ${proposal.tests}. Approve or reject it with the proposal buttons; a chat reply is not approval. Patch ${digest.slice(0, 12)}.` });
       store.save();
+      syncAttention();
       return { proposal: proposal.id, digest, state: "pending", files: d.files, publishing: publishEnabled ? "approval publishes a branch and pull request" : "publishing is not enabled on this server; the owner can still review and the patch is saved" };
     }
     throw new Error(`unknown tool ${name}`);
@@ -306,6 +317,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     }
     for (const p of Object.values(st().proposals)) if (p.state === "publishing") { p.state = "failed"; p.error = "web service restarted while publishing; check the branch before retrying"; }
     if (interrupted.length) store.save();
+    syncAttention();
     setImmediate(() => kick());
     return { owner, recovered: interrupted.length };
   }
@@ -390,7 +402,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     if (verdict === "reject") {
       Object.assign(p, { state: "rejected", decidedAt: now(), decidedVia: "owner-request" });
       store.append({ role: "supervisor", kind: "notice", proposalId: p.id, jobId: p.jobId, text: `Rejected "${p.title}". Nothing was published; the workspace keeps the changes.` });
-      store.save(); return { proposal: proposalView(p) };
+      store.save(); syncAttention(); return { proposal: proposalView(p) };
     }
     if (!publishEnabled || !publisher) throw Object.assign(new Error("Publishing is not enabled on this server. The patch stays saved and the proposal stays pending."), { status: 409, proposal: proposalView(p) });
     const repo = repos[p.repo];
@@ -398,7 +410,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     const file = path.join(artifacts, `${p.id}.patch`);
     const patch = fs.readFileSync(file, "utf8");
     if (sha(patch) !== p.digest) throw Object.assign(new Error("saved patch no longer matches its digest; refusing to publish"), { status: 409 });
-    Object.assign(p, { state: "publishing", decidedAt: now(), decidedVia: "owner-request" }); store.save();
+    Object.assign(p, { state: "publishing", decidedAt: now(), decidedVia: "owner-request" }); store.save(); syncAttention();
     try {
       const out = await publisher({ proposal: p, patchFile: file, repo, workDir: path.join(stateDir, "publish") });
       Object.assign(p, { state: "published", branch: out.branch, prUrl: out.prUrl || null });
@@ -415,7 +427,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     return { owner, queued: Object.values(st().jobs).filter((j) => j.state === "queued").length, running: running ? jobView(running) : null, session: st().session };
   }
 
-  function stop() { stopped = true; for (const c of controllers.values()) c.abort(); toolServer.close(); if (owner) { try { if (Number(fs.readFileSync(lockFile, "utf8")) === process.pid) fs.rmSync(lockFile, { force: true }); } catch { /* gone */ } } }
+  function stop() { stopped = true; clearTimeout(attentionRetry); for (const c of controllers.values()) c.abort(); toolServer.close(); if (owner) { try { if (Number(fs.readFileSync(lockFile, "utf8")) === process.pid) fs.rmSync(lockFile, { force: true }); } catch { /* gone */ } } }
 
   async function idle(timeoutMs = 60000) {
     const end = Date.now() + timeoutMs;

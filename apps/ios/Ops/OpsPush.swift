@@ -29,11 +29,16 @@ import LakesideCore
     func open(_ route: StudioRoute) { tab = .ops; studioPath = [route] }
     func openTask(_ id: String) { tab = .activity; destination = .task(id) }
     func openDecision(_ id: String) { activityFilter = "all"; tab = .activity; destination = .decision(id) }
+    /// A private supervisor approval alert. Opening it only brings the owner to
+    /// that exact proposal in private Keir; the approve or reject card there is
+    /// what decides, through the authenticated request. Alerts never approve.
+    @Published var supervisorProposal: String?
+    func openSupervisorProposal(_ id: String) { tab = .keir; supervisorProposal = id }
     func openDecisionTask(_ decision: JSONValue) {
         if decision["canOpenTask"] == .bool(false), decision["ticket"] != .null { tab = .activity; destination = .ticket(.object(["number": decision["ticket"]])) }
         else { openTask(decision["jobId"].string) }
     }
-    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; activityFilter = "all"; studioPath = []; showSettings = false }
+    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; supervisorProposal = nil; activityFilter = "all"; studioPath = []; showSettings = false }
 }
 
 enum OpsDestination: Identifiable, Equatable {
@@ -104,13 +109,13 @@ final class OpsAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationC
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         OpsNotificationDelivery.handle(route: info["route"] as? String, thread: info["thread"] as? String,
-                                       decision: info["decision"] as? String, action: response.actionIdentifier,
+                                       decision: info["decision"] as? String, proposal: info["proposal"] as? String, action: response.actionIdentifier,
                                        text: (response as? UNTextInputNotificationResponse)?.userText ?? "", completion: completionHandler)
     }
 }
 
 enum OpsNotificationDelivery {
-    nonisolated static func handle(route: String?, thread: String?, decision: String?, action: String, text: String,
+    nonisolated static func handle(route: String?, thread: String?, decision: String?, proposal: String? = nil, action: String, text: String,
                                     completion: @escaping () -> Void) {
         Task { @MainActor in
             defer { completion() }
@@ -118,6 +123,11 @@ enum OpsNotificationDelivery {
             switch route {
             case "keir": services.keir.select(thread ?? "main"); services.router.tab = .keir
             case "decision": if let decision { services.router.openDecision(decision) } else { services.router.tab = .activity }
+            case "supervisor-proposal":
+                // Only a well-formed proposal id is accepted, and only into the owner supervisor thread.
+                if let proposal, proposal.range(of: "^p_[a-f0-9]{16}$", options: .regularExpression) != nil {
+                    services.keir.select(KeirStore.supervisorThread); services.router.openSupervisorProposal(proposal)
+                } else { services.keir.select(KeirStore.supervisorThread); services.router.tab = .keir }
             case "alerts": services.router.tab = .ops; services.router.destination = .alerts
             case "feed": services.router.open(.feed)
             default: break

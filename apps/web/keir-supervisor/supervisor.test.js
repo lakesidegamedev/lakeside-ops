@@ -14,6 +14,7 @@ const http = require("node:http");
 const { execFileSync } = require("node:child_process");
 const { createSupervisor, createPublisher, guardianStatus } = require("./supervisor");
 const { createSandbox } = require("./sandbox");
+const { createAttention } = require("./attention");
 const { handleKeirSupervisorRoute, ownerIdentity } = require("./routes");
 
 const OWNER = ownerIdentity({ KEIR_OWNER_ID: "42" });
@@ -84,13 +85,13 @@ function repairModel(log = []) {
   };
 }
 
-function setup({ executor, sandbox, publisher = null, publishEnabled = false, root = tmp(), maxAttempts = 2 } = {}) {
+function setup({ executor, sandbox, publisher = null, publishEnabled = false, root = tmp(), maxAttempts = 2, attention = null } = {}) {
   const source = fs.existsSync(path.join(root, "source")) ? path.join(root, "source") : fixtureRepo(root);
   const guardianDir = fs.existsSync(path.join(root, "guardian")) ? path.join(root, "guardian") : guardianFile(root);
   const stateDir = path.join(root, "state");
   const repos = { "lakeside-ops": { key: "lakeside-ops", source, base: "main", github: null, deps: [], note: "fixture", available: true, reason: null } };
   const sb = sandbox || createSandbox(path.join(stateDir, "workspaces"));
-  const sup = createSupervisor({ stateDir, repos, sandbox: sb, executor, guardianDir, publisher, publishEnabled, maxAttempts });
+  const sup = createSupervisor({ stateDir, repos, sandbox: sb, executor, guardianDir, publisher, publishEnabled, maxAttempts, attention });
   return { root, source, stateDir, sup, sandbox: sb, repos, guardianDir };
 }
 
@@ -174,7 +175,8 @@ test("real repair in the sandbox: edit, focused test, proposal bound to the patc
   const ready = await sandboxReady();
   if (!ready.available) return t.skip(`bubblewrap unavailable: ${ready.reason}`);
   const prompts = [];
-  const { sup, source, stateDir } = setup({ executor: repairModel(prompts) });
+  const alertDir = path.join(tmp(), "alerts");
+  const { sup, source, stateDir } = setup({ executor: repairModel(prompts), attention: createAttention({ dir: alertDir }) });
   await sup.start();
   const app = await serve(sup);
   try {
@@ -206,14 +208,22 @@ test("real repair in the sandbox: edit, focused test, proposal bound to the patc
     assert.equal(proposals.length, 1);
     const p = proposals[0];
     assert.equal(p.state, "pending"); assert.deepEqual(p.files, ["lib/sum.js"]); assert.match(p.tests, /passed/);
+    // One alert file for the pending proposal, carrying only its id and state: no chat, title, summary or patch.
+    assert.deepEqual(fs.readdirSync(alertDir), [`${p.id}.json`]);
+    const alert = JSON.parse(fs.readFileSync(path.join(alertDir, `${p.id}.json`), "utf8"));
+    assert.deepEqual(Object.keys(alert).sort(), ["createdAt", "id", "kind", "state", "updatedAt", "version"]);
+    assert.equal(alert.state, "pending");
+    assert.doesNotMatch(JSON.stringify(alert), /sum|subtract|lib\//);
     const wrong = await app.req(`/api/keir/supervisor/proposals/${p.id}`, { method: "POST", body: { verdict: "approve", digest: "0".repeat(64) } });
     assert.equal(wrong.status, 409);
     const disabled = await app.req(`/api/keir/supervisor/proposals/${p.id}`, { method: "POST", body: { verdict: "approve", digest: p.digest } });
     assert.equal(disabled.status, 409);
     assert.match((await disabled.json()).error, /not enabled/);
     assert.equal(sup.proposals()[0].state, "pending");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(alertDir, `${p.id}.json`), "utf8")).state, "pending", "a refused approval leaves the alert open");
     const rejected = await (await app.req(`/api/keir/supervisor/proposals/${p.id}`, { method: "POST", body: { verdict: "reject", digest: p.digest } })).json();
     assert.equal(rejected.proposal.state, "rejected");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(alertDir, `${p.id}.json`), "utf8")).state, "closed", "deciding closes the alert");
     assert.equal((await app.req(`/api/keir/supervisor/proposals/${p.id}`, { method: "POST", body: { verdict: "reject", digest: p.digest } })).status, 409);
   } finally { app.close(); sup.stop(); }
 });
