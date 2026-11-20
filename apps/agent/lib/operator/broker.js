@@ -3376,17 +3376,19 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           return {needsExplanation:true,approvalRequired:false,reviewedHead:copy.headOf(args),destination:args.to||"development",evidence,
             instruction:"Nothing was sent for approval. Read these source changes, then call the same github action with explanation: reviewedHead exactly as returned, change (the problem and fix in ordinary language), impact (who notices and how), risk (verified risk or uncertainty). Cover every change in this version. No file paths, formulas, PR numbers, staging/development or developer jargon. Continue preparing now; do not wait for the owner or invent a recommendation."};
         }
-        let checksAt;
+        let checksAt, checksGreen;
         if (["merge", "merge-set"].includes(args.action)) {
           const targets = args.prs || [args];
           const verified = [];
+          checksGreen = true;
           for (const target of targets) {
-            const pr = await api([`repos/${repo}/pulls/${target.number}`]);
-            if (pr.head?.sha !== target.head || pr.state !== "open") {
+            const pr = await api([`repos/${repo}/pulls/${target.number}`]).catch(() => null);
+            if (pr?.head?.sha && (pr.head.sha !== target.head || pr.state === "closed")) {
               return { approvalRequired: false, checksReady: false, nextMove: "Review the current open pull request and its exact head." };
             }
-            const { runs, result } = await inspectChecks(pr);
-            const times = runs.map(run => Date.parse(run.completed_at));
+            const inspected = pr?.head?.sha ? await inspectChecks(pr).catch(() => null) : null;
+            const runs = inspected?.runs || [];
+            const times = runs.map(run => run.status === "completed" ? Date.parse(run.completed_at) : NaN);
             const at = times.length && times.every(Number.isFinite) ? Math.min(...times) : null;
             const fresh = require("./appdecision").mergeChecksFresh({ checksAt: at }, now());
             const refresh = job.mergeCheckRefresh;
@@ -3400,27 +3402,26 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
                 await api(["-X", "POST", `repos/${repo}/actions/runs/${id}/rerun`]);
                 refresh.rerun.push(id); ledger.save();
               }
+              return { approvalRequired: false, checksReady: false,
+                nextMove: "Wait for the new checks on this exact head, then ask for approval again." };
             }
-            if (!result.ready || result.pending.length || !fresh) {
-              return { approvalRequired: false, checksReady: false, ...result,
-                nextMove: "Wait for a fresh successful check run on the exact pull request head before asking for approval." };
-            }
-            verified.push(at);
+            if (at) verified.push(at);
+            checksGreen &&= Boolean(inspected?.result.ready && !inspected?.result.pending.length);
           }
-          checksAt = Math.min(...verified);
+          if (verified.length === targets.length) checksAt = Math.min(...verified);
         }
         const human=copy.explanation(value,args);
         if(existing?.state==="pending" && (!existing.explanation || !liveQuestion)) {
           for(const old of Object.values(d.decisions||{})) if(old.actionId===existing.id && old.state==="pending") {old.state="withdrawn";old.withdrawnReason="Needs a plain-language explanation";}
           existing.explanation=human;
-          if (checksAt) existing.checksAt = checksAt;
+          if (checksAt) { existing.checksAt = checksAt; existing.checksGreen = checksGreen; }
           const decision=openDecision(ledger,config,{jobId:job.id,actionId:existing.id,question:"Review this change",signoff:true});
           if(existing.ownerMuse) existing.ownerMuseDecision=decision.id;
           ledger.save();return {action:existing.id,decision:decision.id,state:"pending"};
         }
         const proposal = await request(job,"github",args,reason,human);
         const action = d.actions[proposal.action];
-        if (action && checksAt) { action.checksAt = checksAt; ledger.save(); }
+        if (action && checksAt) { action.checksAt = checksAt; action.checksGreen = checksGreen; ledger.save(); }
         return proposal;
       }
       const scopedOwner = musePolicy.origin(d, job).scoped;

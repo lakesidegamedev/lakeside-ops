@@ -27,7 +27,7 @@ function decisionView(data, x, now = Date.now()) {
     ticket: job?.ticket || null, canOpenTask: job?.role === "owner", signoff: Boolean(x.signoff), canAnswer: !unavailable,
     canRefresh: Boolean(job && x.state === "pending" && !JOB_TERMINAL.includes(job.state) && !data.paused && !job.appPaused && (!origin.scoped || origin.valid)),
     canApprove: !x.options && !unavailable && (!checkMerge || fresh) && (!origin.scoped || Boolean(action)), reason: unavailable || (origin.scoped && !action ? "Reply to this question. Approval requires an exact action proposal." : null),
-    ...(checkMerge ? { checksAt: action.checksAt || null, checksStatus: fresh ? "Checks green" : "Checks need a fresh run" } : {}),
+    ...(checkMerge ? { checksAt: action.checksAt || null, checksStatus: fresh ? action.checksGreen === false ? "Checks need review" : "Checks green" : "Checks need a fresh run" } : {}),
     ...(action ? { actionId: action.id, kind: action.kind, args: policy.logInput(action.args || {}), scope: policy.logInput(action.ownerMuse?.scope || {}), digest: action.ownerMuse?.digest || action.digest || null, expiresAt: action.expiresAt || null } : x.binds ? { scope: policy.logInput(x.binds) } : {}) };
 }
 module.exports = { decisionView, requiresFreshMergeChecks, mergeChecksFresh };
