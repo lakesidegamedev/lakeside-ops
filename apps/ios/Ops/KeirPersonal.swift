@@ -109,7 +109,7 @@ struct KeirStart: View {
             .accessibilityElement(children: .combine)
             if let ticket {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("No Discord reply recorded").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
+                    Text("Awaiting first reply").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
                     Button { suggest(ticket) } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "ticket")
@@ -150,7 +150,7 @@ struct KeirTicketMenu: View {
     var body: some View {
         if !tickets.isEmpty {
             Menu {
-                Section("No Discord reply recorded") {
+                Section("Awaiting first reply") {
                     ForEach(Array(tickets.prefix(5)), id: \.["number"].string) { ticket in
                         Button { suggest(ticket) } label: { Text("#\(ticket["number"].string) \(KeirTicketFollowUp.title(ticket))") }
                             .disabled(!draftEmpty)

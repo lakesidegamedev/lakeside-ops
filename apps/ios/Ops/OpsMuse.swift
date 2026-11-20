@@ -312,7 +312,7 @@ struct UpcomingRow: View {
     private var when: String {
         guard let date = OpsFormat.date(item["at"]) else { return item["kind"].string == "turn" ? "After the turn" : "Soon" }
         if date.timeIntervalSinceNow < 60 { return "Now" }
-        return date.formatted(.relative(presentation: .named)) + " · " + date.formatted(date: .omitted, time: .shortened)
+        return date.formatted(.relative(presentation: .named)) + " · " + OpsFormat.clock(date)
     }
 }
 
@@ -378,7 +378,7 @@ struct FeedActivityChart: View {
                 }.frame(height: 110).chartXSelection(value: $selected).chartXAxis { AxisMarks(values: .stride(by: .hour, count: 6)) { _ in AxisValueLabel(format: .dateTime.hour()) } }
                     .accessibilityIdentifier("feed-activity-chart")
                 if let row = inspected {
-                    Text("\(Date(timeIntervalSince1970: (row["at"].number ?? 0) / 1000).formatted(date: .omitted, time: .shortened)): \(Int(count(row))) activations\(row["failed"].number.map { ", \(Int($0)) unsuccessful" } ?? "")")
+                    Text("\(OpsFormat.clock(Date(timeIntervalSince1970: (row["at"].number ?? 0) / 1000))): \(Int(count(row))) runs\(row["failed"].number.map { ", \(Int($0)) unsuccessful" } ?? "")")
                         .font(.caption).foregroundStyle(OpsTheme.muted)
                 }
                 Text(duration ? "Average completed model duration, not message response time. Tap or drag to inspect." : "Completed model activations. Tap or drag to inspect.")

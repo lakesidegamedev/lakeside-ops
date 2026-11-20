@@ -380,9 +380,9 @@ struct KeirView: View {
             Group { switch which {
             case .controls: KeirControls(keir: keir, voice: voice)
             case .threads: KeirThreads(keir: keir)
-            case .computer: NavigationStack { KeirComputer().toolbar { Button("Done") { sheet = nil } } }
-            case .ideas: NavigationStack { IdeasView().toolbar { Button("Done") { sheet = nil } } }
-            case .watches: NavigationStack { WatchesView().toolbar { Button("Done") { sheet = nil } } }
+            case .computer: NavigationStack { KeirComputer().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }
+            case .ideas: NavigationStack { IdeasView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }
+            case .watches: NavigationStack { WatchesView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }
             case .memory: NavigationStack { MemoryView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }
             case .games: KeirGamesSheet(draftEmpty: draftIsEmpty) { text in guard draftIsEmpty else { return }; draft = text; composing = true; sheet = nil }
             case .desk: NavigationStack { DeskView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }

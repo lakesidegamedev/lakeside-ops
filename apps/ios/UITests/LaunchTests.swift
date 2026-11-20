@@ -1074,7 +1074,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(ticket.waitForExistence(timeout: 15), "a ticket with no recorded reply is offered")
         XCTAssertFalse(app.buttons["decision-approve"].exists, "An unrelated studio approval belongs in Inbox")
         XCTAssertTrue(ticket.label.contains("1001"))
-        XCTAssertTrue(find(app, "No Discord reply recorded").exists)
+        XCTAssertTrue(find(app, "Awaiting first reply").exists)
         capture(app, "Keir personal iPhone start")
         ticket.tap()
         let box = composer(app)

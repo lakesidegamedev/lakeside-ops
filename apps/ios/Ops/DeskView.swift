@@ -210,13 +210,13 @@ struct TicketDetail: View {
             row("Started") { Text(started.nonempty ?? "Not started").font(.callout) }
             row("Estimate") {
                 if overdue {
-                    Label(expected.map { "Overdue, was \($0.formatted(date: .omitted, time: .shortened))" } ?? "Overdue", systemImage: "exclamationmark.triangle.fill")
+                    Label(expected.map { "Overdue, was \(OpsFormat.clock($0))" } ?? "Overdue", systemImage: "exclamationmark.triangle.fill")
                         .font(.callout).foregroundStyle(OpsTheme.warn)
                 } else {
-                    Text(expected?.formatted(date: .omitted, time: .shortened) ?? "Not set").font(.callout)
+                    Text(expected.map { OpsFormat.clock($0) } ?? "Not set").font(.callout)
                 }
             }
-            row("Deadline") { Text(OpsFormat.date(timing["deadline"])?.formatted(date: .abbreviated, time: .shortened) ?? "None").font(.callout) }
+            row("Deadline") { Text(OpsFormat.date(timing["deadline"]).map { $0.formatted(date: .abbreviated, time: .omitted) + " at " + OpsFormat.clock($0) } ?? "None").font(.callout) }
         }.accessibilityIdentifier("ticket-status")
     }
 
