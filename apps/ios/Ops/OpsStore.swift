@@ -79,19 +79,49 @@ import LakesideCore
     @Published var sending = false
     @Published private(set) var lastSentJob: String?
     @Published var error: String?
-    static let supervisorThread = "owner-supervisor"
+    static let supervisorThread = KeirSupervisor.thread
     @Published private(set) var supervisorAvailable = false
+    /// Supervisor-only state: proposals, executor line, and why it may be unusable.
+    @Published var supervisor = KeirSupervisorState()
+    /// False from a fresh start or an account change until the profile says
+    /// whether this person has a private supervisor. Until then nothing is sent
+    /// and nothing is read from Support Keir, because "main" is only a
+    /// placeholder, not a place an owner's message may land.
+    @Published private(set) var homeResolved = false
     var isSupervisor: Bool { thread == Self.supervisorThread }
     var personalHome: Bool { isSupervisor || thread == "main" }
 
-    func setSupervisorAvailable(_ available: Bool) {
-        guard available != supervisorAvailable else { return }
-        supervisorAvailable = available
-        if available && !threadChosen && !restoreHeld && thread == "main" {
-            switchThread(Self.supervisorThread)
-        } else if !available && isSupervisor {
-            switchThread("main")
+    /// Settles which conversation is home for the signed-in account. An owner
+    /// lands in the private supervisor; everyone else in Support Keir. A profile
+    /// that is not loaded, or an inconclusive check, leaves it unresolved.
+    func ensureHome(_ session: AppSession) async {
+        guard !homeResolved else { return }
+        let epoch = generation, scope = resumeScope
+        var home = KeirSupervisor.home(profile: session.profile)
+        if home == .waitingForProfile { await session.refreshProfile(); home = KeirSupervisor.home(profile: session.profile) }
+        guard generation == epoch, resumeScope == scope, !homeResolved else { return }
+        switch home {
+        case .waitingForProfile:
+            error = "Keir could not confirm your account yet. Nothing has been sent."
+        case .supervisor: resolveHome(supervisor: true)
+        case .support: resolveHome(supervisor: false)
+        case .probe:
+            let result: Result<JSONValue, Error>
+            do { result = .success(try await session.get("\(KeirSupervisor.base)/status")) } catch { result = .failure(error) }
+            guard generation == epoch, resumeScope == scope, !homeResolved else { return }
+            switch KeirSupervisor.probe(result) {
+            case .owner: resolveHome(supervisor: true)
+            case .notOwner: resolveHome(supervisor: false)
+            case .inconclusive: error = "Keir could not confirm your account yet. Nothing has been sent."
+            }
         }
+    }
+
+    private func resolveHome(supervisor available: Bool) {
+        supervisorAvailable = available
+        homeResolved = true
+        error = nil
+        if available && !threadChosen && thread == "main" { switchThread(Self.supervisorThread) }
     }
 
     @Published var thread = "main"
@@ -106,7 +136,7 @@ import LakesideCore
     @Published var selectingModel = false
     @Published var controls: JSONValue = .null
     @Published var controlling = false
-    private var generation = UUID()
+    private(set) var generation = UUID()
 
     /// Which account's last conversation to reopen. See `KeirResume`.
     var resume: KeirResume
@@ -122,7 +152,7 @@ import LakesideCore
     init(resume: KeirResume = KeirResume()) { self.resume = resume }
 
     func reset() {
-        supervisorAvailable = false
+        supervisorAvailable = false; homeResolved = false; supervisor = KeirSupervisorState()
         resume.clear(); resumeScope = nil; restoredScope = nil; threadChosen = false; restoreHeld = false
         generation = UUID(); messages = []; tasks = []; backgroundTasks = []; questions = []; team = .null
         threads = []; thread = "main"; connected = false; working = false; sending = false; queued = 0
@@ -159,12 +189,27 @@ import LakesideCore
     private var version = ""
     private var pending: (text: String, thread: String, mode: String, task: String?, voice: Bool, attachments: JSONValue, id: String)?
 
-    var live: [JSONValue] { tasks.filter { !["done", "cancelled", "dismissed"].contains($0["state"].string) } }
+    var live: [JSONValue] {
+        // A supervisor job is live only while queued or running; a failed one is not work in progress.
+        if isSupervisor { return tasks.filter(KeirSupervisor.isLive) }
+        return tasks.filter { !["done", "cancelled", "dismissed"].contains($0["state"].string) }
+    }
 
     func connect(_ session: AppSession) async {
         let epoch = generation
         var delay = 1.0
         while !Task.isCancelled {
+            // Never read or post to a conversation before the account is known.
+            if !homeResolved {
+                await ensureHome(session)
+                guard generation == epoch, !Task.isCancelled else { return }
+                if !homeResolved {
+                    do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                    delay = min(20, delay * 2)
+                    continue
+                }
+                delay = 1
+            }
             do {
                 // The first read returns at once; after that the server holds the
                 // request until the thread or a task changes (25s at most).
@@ -184,6 +229,13 @@ import LakesideCore
                 if version == before { try await Task.sleep(for: .seconds(2)) }
             } catch {
                 if Task.isCancelled || generation != epoch { return }
+                // "Not set up" and "owner only" are answers, not outages: the
+                // server is reachable, so say so plainly and check again later.
+                if thread == Self.supervisorThread, let setup = KeirSupervisor.setup(for: error) {
+                    supervisor.setup = setup; connected = true; self.error = nil
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    continue
+                }
                 connected = false; self.error = error.displayMessage
                 do { try await Task.sleep(for: .seconds(delay)) } catch { return }
                 delay = min(20, delay * 2)
@@ -218,16 +270,11 @@ import LakesideCore
     private func apply(_ view: JSONValue) {
         // A revised answer keeps its id and seq and arrives in `revised`: replace
         // the row in place so the same message grows into the fuller answer.
-        let rows = view["messages"].array.map { row -> JSONValue in
-            guard isSupervisor, row["role"].string == "supervisor" else { return row }
-            var fields = row.object
-            fields["role"] = .string("keir")
-            if let date = OpsFormat.date(row["at"]) { fields["at"] = .number(date.timeIntervalSince1970 * 1000) }
-            return .object(fields)
-        }
+        let rows = isSupervisor ? view["messages"].array.map(KeirSupervisor.timelineRow) : view["messages"].array
         if merge(rows, view["revised"].array) { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
         if view["controls"] != .null { controls = view["controls"] }
-        tasks = (isSupervisor ? view["jobs"] : view["tasks"]).array
+        if isSupervisor { supervisor.apply(view) }
+        tasks = isSupervisor ? view["jobs"].array.map(KeirSupervisor.jobRow) : view["tasks"].array
         working = view["working"].bool
         queued = Int(view["queued"].number ?? 0)
         questions = view["questions"].array
@@ -247,6 +294,11 @@ import LakesideCore
     func send(_ text: String, _ session: AppSession, voice: Bool = false, attachments: JSONValue = .array([])) async -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (!body.isEmpty || !attachments.array.isEmpty), !sending else { return false }
+        // The one place that decides whether a message may leave the phone.
+        if case .withheld(let reason) = KeirSupervisor.destination(thread: thread, supervisorAvailable: supervisorAvailable, resolved: homeResolved, chosen: threadChosen) {
+            error = reason; return false
+        }
+        if isSupervisor, let setup = supervisor.setup { error = "\(setup.message). Nothing was sent."; return false }
         let epoch = generation
         sending = true; defer { if epoch == generation { sending = false } }
         let selected = thread, mode = voice ? "new" : sendMode, target = voice ? nil : steeringTask
@@ -257,7 +309,7 @@ import LakesideCore
             let result: JSONValue
             if selected == Self.supervisorThread {
                 guard attachments.array.isEmpty else { throw AppFailure(message: "This conversation currently accepts text and voice. Your attachments are still here.") }
-                result = try await session.post("/api/keir/supervisor/messages", ["text": .string(body), "clientId": .string(pending!.id)])
+                result = try await session.post("\(KeirSupervisor.base)/messages", ["text": .string(body), "clientId": .string(KeirSupervisor.clientId(pending!.id))])
             } else {
                 result = try await session.post("/api/keir/app/messages", ["text": .string(body), "clientId": .string(pending!.id), "thread": .string(selected), "mode": .string(mode), "taskId": target.map(JSONValue.string) ?? .null, "voice": .bool(voice), "attachments": attachments])
             }
@@ -267,8 +319,8 @@ import LakesideCore
             if !voice { steeringTask = nil; sendMode = "new" }
             if !isSupervisor, let created = result["thread"].string.nonempty { await loadThreads(session); select(created); return true }
             if result["controls"] != .null { controls = result["controls"] }
-            let message = result["message"]
-            if message != .null, !messages.contains(where: { $0["id"] == message["id"] }) { messages.append(message); if !isSupervisor { cursor = max(cursor, Int(message["seq"].number ?? 0)) } }
+            let message = isSupervisor ? KeirSupervisor.timelineRow(result["message"]) : result["message"]
+            if result["message"] != .null, !messages.contains(where: { $0["id"] == message["id"] }) { messages.append(message); if !isSupervisor { cursor = max(cursor, Int(message["seq"].number ?? 0)) } }
             return true
         } catch { if generation == epoch { self.error = error.displayMessage }; return false }
     }
@@ -283,6 +335,7 @@ import LakesideCore
     }
     private func switchThread(_ id: String) {
         steeringTask = nil; sendMode = "new"; modelSelection = "auto"
+        supervisor = KeirSupervisorState()
         connected = false; models = []; controls = .null; thread = id; questions = []; messages = []; tasks = []; cursor = 0; version = ""; queued = 0; working = false
     }
 
@@ -290,6 +343,9 @@ import LakesideCore
     /// saved or restored.
     func bindAccount(_ scope: String?) {
         guard scope != resumeScope else { return }
+        // A different account on the same installation never inherits the
+        // previous one's thread, messages, supervisor state or resolved home.
+        if resumeScope != nil { reset() }
         resumeScope = scope; restoredScope = nil
         if scope != nil, threadChosen { persistThread() }
     }

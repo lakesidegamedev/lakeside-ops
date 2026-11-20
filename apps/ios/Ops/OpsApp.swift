@@ -79,7 +79,9 @@ struct OpsRoot: View {
             guard scenePhase == .active else { return }
             let keir = OpsServices.shared.keir
             keir.bindAccount(KeirResume.scope(profile: session.profile, server: Surface.ops.base))
-            keir.setSupervisorAvailable(session.profile["ownerSupervisor"].bool)
+            // Decide the home conversation from the profile before anything
+            // is resumed, sent or read from Support Keir.
+            await keir.ensureHome(session)
             await keir.resumeLastThread(session)
         }
         .task(id: scenePhase == .active) {

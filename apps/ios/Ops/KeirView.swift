@@ -41,8 +41,8 @@ struct KeirView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
-                    else if keir.messages.isEmpty && keir.personalHome {
-                        KeirStart(ticket: waitingTickets.first, draftEmpty: draftIsEmpty,
+                    else if keir.messages.isEmpty && keir.personalHome && keir.supervisor.setup == nil {
+                        KeirStart(ticket: keir.isSupervisor ? nil : waitingTickets.first, supervisor: keir.isSupervisor, draftEmpty: draftIsEmpty,
                                   speak: { voice.stop(); composing = false; voiceMode = true },
                                   suggest: suggestFollowUp)
                     }
@@ -68,8 +68,11 @@ struct KeirView: View {
                             KeirObjectRow(icon: "desktopcomputer", title: task["computer"]["title"].string.nonempty ?? "Keir's computer", detail: "View or take control")
                         }.buttonStyle(.plain)
                     }
-                    ForEach(keir.live.filter { $0["state"].string == "running" || !$0["live"].array.isEmpty }, id: \.["id"].string) { task in
-                        KeirLiveWorkCard(task: task).accessibilityIdentifier("keir-chat-working")
+                    if keir.isSupervisor { KeirSupervisorTimeline(keir: keir) }
+                    else {
+                        ForEach(keir.live.filter { $0["state"].string == "running" || !$0["live"].array.isEmpty }, id: \.["id"].string) { task in
+                            KeirLiveWorkCard(task: task).accessibilityIdentifier("keir-chat-working")
+                        }
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
@@ -102,7 +105,7 @@ struct KeirView: View {
 
     private var header: some View {
         KeirHeader(title: keir.threadTitle, presence: headerPresence, level: voice.level, sprite: sprite,
-                   attention: AttentionCenter.shared.count, workCount: keir.live.count + keir.backgroundTasks.count,
+                   attention: AttentionCenter.shared.count, workCount: keir.isSupervisor ? 0 : keir.live.count + keir.backgroundTasks.count,
                    yolo: keir.yolo, disabled: presentingSheet,
                    openThreads: { sheet = .threads },
                    openInbox: { router.activityFilter = "all"; router.tab = .activity },
@@ -143,7 +146,11 @@ struct KeirView: View {
 
     private var bottomBar: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if draft.hasPrefix("/") { commands }
+            if draft.hasPrefix("/") && !keir.isSupervisor { commands }
+            if keir.isSupervisor, let notice = keir.supervisor.executorNotice {
+                Text(notice).font(.caption).foregroundStyle(OpsTheme.warn).padding(.horizontal, 20).lineLimit(3)
+                    .accessibilityIdentifier("supervisor-executor-notice")
+            }
             if let error = voice.error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn).padding(.horizontal, 20) }
             if voice.listening {
                 Text("Listening. Tap stop when you are done, then send.").font(.caption).foregroundStyle(OpsTheme.muted)
@@ -166,8 +173,9 @@ struct KeirView: View {
                         .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
                 }.buttonStyle(.plain).padding(.horizontal, 12)
             } else {
-                KeirComposerPill { plusMenu } field: {
-                    TextField("Message Keir", text: $draft, axis: .vertical).lineLimit(1...6).focused($composing)
+                KeirComposerPill { composerPlus } field: {
+                    TextField(composerPlaceholder, text: $draft, axis: .vertical).lineLimit(1...6).focused($composing)
+                        .disabled(composerLocked)
                         .accessibilityIdentifier("keir-composer")
                 } trailing: { trailingControl }
                 .padding(.horizontal, 12)
@@ -288,12 +296,32 @@ struct KeirView: View {
         } else {
             Button { voiceDraft = draft; Task { await voice.start() } } label: { KeirComposerIcon(system: "mic") }
                 .buttonStyle(.plain)
-                .disabled(keir.stopped || voice.requesting)
+                .disabled(keir.stopped || voice.requesting || composerLocked)
                 .accessibilityLabel("Dictate a message").accessibilityIdentifier("keir-dictate")
         }
     }
 
-    private var sendDisabled: Bool { keir.stopped || attachments.uploading || keir.sending }
+    private var sendDisabled: Bool { keir.stopped || attachments.uploading || keir.sending || composerLocked }
+
+    /// No typing until Keir knows which account this is (so a message cannot
+    /// land in Support Keir by default), and none where there is no supervisor.
+    private var composerLocked: Bool { !keir.homeResolved || keir.supervisor.setup != nil }
+    private var composerPlaceholder: String {
+        if !keir.homeResolved { return "Checking your account…" }
+        if keir.supervisor.setup != nil { return "Private supervisor is not set up" }
+        return keir.isSupervisor ? "Message your private Keir" : "Message Keir"
+    }
+
+    /// The "+" differs in the private conversation: no attachments, ticket
+    /// drafts, routing or model picker, which only Support Keir understands.
+    @ViewBuilder private var composerPlus: some View {
+        if keir.isSupervisor {
+            KeirSupervisorPlusMenu(keir: keir) {
+                guard let id = keir.supervisorLiveJob?["id"].string else { return }
+                Task { await keir.cancelSupervisorJob(id, session) }
+            }
+        } else { plusMenu }
+    }
 
     private func send() {
         voice.stopListening()
@@ -520,7 +548,7 @@ private struct KeirViewEvents: ViewModifier {
             }
             .onChange(of: keir.messages.count) { _, _ in
                 guard spokenReplies, !voiceMode, !voice.listening, scenePhase == .active,
-                      let message = keir.messages.last, message["role"].string == "keir",
+                      let message = keir.messages.last, message["role"].string == "keir", message["kind"].string != "update",
                       (message["at"].number ?? 0) / 1000 > appearedAt.timeIntervalSince1970 else { return }
                 voice.speakReply(message["text"].string, session: session)
             }
