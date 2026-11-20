@@ -16,6 +16,7 @@ const { JOB_TERMINAL } = require("./machines");
 const takeover = require("./supporttakeover");
 const { createHandoffDesk } = require("./handoffs");
 const { ticketClaim } = require("./ticketClaim");
+const { endedReason } = require("./ticketstate");
 
 const PREFIX = takeover.WORKER_PREFIX;
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,80}$/;
@@ -102,7 +103,7 @@ function createTicketSupervision({ ledger, config, mcp = null, discord = null, s
     return { staffClaim: ch.claimedBy && ch.claimedBy !== config.ownerId ? ch.claimedBy : null, ownerClaim: ch.claimedBy === config.ownerId,
       staffActiveUntil: staffActiveUntil > now() ? staffActiveUntil : 0, addressed: Boolean(job?.addressedPending),
       paused: Boolean(d.paused || (job && require("./ticketpause").pauseFor(d, job))),
-      closed: require("./ticketstate").endedReason(d, n, job) || null, category: ch.category || null,
+      closed: endedReason(d, n, job) || null, category: ch.category || null,
       uncertainEffects: p.uncertainEffects, pendingApprovals: p.pendingApprovals };
   }
   function revision(n) {
@@ -170,6 +171,9 @@ function createTicketSupervision({ ledger, config, mcp = null, discord = null, s
     if (text.length > MAX_TEXT) throw err(400, `text exceeds ${MAX_TEXT} characters`);
     if (text && require("./ownermuse-policy").hasCredentials(text)) throw err(400, "Credentials cannot be sent to a ticket worker.");
     if (op === "message" && !text) throw err(400, "text is required");
+    // A direction is written for one worker session. Without its worker it
+    // could land on a later worker the owner has not looked at yet.
+    if (op === "message" && !String(body?.workerId || "")) throw err(400, "workerId is required: name the worker this direction was written for");
     const fingerprint = digest([op, n, text, op === "message" ? String(body?.workerId || "") : ""]);
     const prior = store(d).requests[requestId];
     if (prior) {
@@ -289,9 +293,9 @@ function createTicketSupervision({ ledger, config, mcp = null, discord = null, s
     if (v.replay) return v.replay;
     const rec = record(d, v.n), worker = rec.active ? d.jobs[rec.active.workerId] : null;
     if (!worker || worker.supervision.retiredAt) throw err(409, "Your personal Keir is not working this ticket", "not-supervised");
-    if (body.workerId && String(body.workerId) !== worker.id) throw err(409, "That worker was handed back; this direction was not delivered", "worker-mismatch");
+    if (String(body.workerId) !== worker.id) throw err(409, "That worker was handed back; this direction was not delivered", "worker-mismatch");
     if (!takeover.activeWorker(d, worker)) throw err(409, `This ticket is now held by ${ownerOf(v.n)}`, "not-supervised");
-    if (require("./ticketstate").endedReason(d, v.n, worker)) throw err(409, "This ticket has ended", "ticket-closed");
+    if (endedReason(d, v.n, worker)) throw err(409, "This ticket has ended", "ticket-closed");
     (worker.inbox ||= []).push(direction(v.n, worker, v.text, v.requestId));
     delete worker.waitingFor;
     if (["waiting", "blocked", "deferred", "done", "dismissed"].includes(worker.state)) { worker.state = "queued"; worker.wakeAt = 0; }
@@ -305,12 +309,17 @@ function createTicketSupervision({ ledger, config, mcp = null, discord = null, s
   // are withdrawn, and Support Keir's coordinator receives a Handoff Desk
   // receipt with the worker's next action and evidence. Used by an explicit
   // owner handback and when staff or another operator moved the ticket first
-  // (their move wins; nothing here re-takes it). Staff claims and holds,
-  // granted approvals and uncertain receipts are left exactly as they are.
+  // (their move wins; nothing here re-takes it), and when the ticket itself
+  // ends. Staff claims and holds, granted approvals and uncertain receipts are
+  // left exactly as they are.
   function endSession(n, rec, { reason, endedBy, note = "", requestId = null, at = now() }) {
     const active = rec.active, worker = d.jobs[active.workerId] || null;
     const family = worker ? familyOf(worker) : [];
     const transfer = packet(d, family, n);
+    // An ended ticket has nobody to hand to: nothing is queued or filed for a
+    // coordinator that will not run again, and a verified reopen starts fresh
+    // from the support record. The worker's own record keeps its notes.
+    const ended = Boolean(endedReason(d, n, worker));
     if (worker) worker.supervision.retiredAt = at;
     let suppressedOutbox = 0;
     for (const [key, entry] of Object.entries(d.outbox || {})) {
@@ -326,40 +335,46 @@ function createTicketSupervision({ ledger, config, mcp = null, discord = null, s
     if (worker) (worker.history ||= []).push({ at: iso(at), kind: "supervision_ended", summary: reason });
     const channelId = worker?.channelId || channelIdOf(n);
     let coordinator = canonical(n);
-    if (!coordinator) coordinator = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId, replyChannel: channelId,
+    if (!coordinator && !ended) coordinator = ledger.createJob(`ticket:${n}`, { kind: "ticket", role: "support", ticket: n, channelId, replyChannel: channelId,
       source: { channelId, content: "Adopted when the owner's supervision of this ticket ended. Read the handoff before acting.", at: iso(at) }, deadline: at + (config.taskLifetimeMs || 86400000) });
     // Channel messages the worker never read go back to the coordinator.
     // Unread owner directions are summarized as context, not replayed as orders.
     const unread = worker ? (worker.inbox || []) : [];
-    const returned = unread.filter((r) => !r.supervisionRequestId && r.role !== "system");
+    const returned = ended ? [] : unread.filter((r) => !r.supervisionRequestId && r.role !== "system");
     const unreadDirections = rec.directions.filter((x) => unread.some((r) => r.supervisionRequestId === x.requestId));
     if (worker) worker.inbox = [];
-    (coordinator.inbox ||= []).push(...returned.map(({ relayedFrom, ...r }) => r));
-    const handoffId = `${active.takeoverId}-end`;
-    const desk = createHandoffDesk((d.handoffDesk ||= {}), { now: () => at });
-    const asks = ["Verify the ticket's current state and the worker's receipts before acting", "Continue the next action below unless the evidence shows it is done"];
-    if (transfer.uncertainEffects.length) asks.push("Check each uncertain effect listed before repeating anything");
-    const bodyText = [packetText(transfer) || "The worker recorded no work.",
-      unreadDirections.length ? `Owner directions the worker had not read (context, not approval):\n${unreadDirections.map((x) => `- ${clip(x.text, 300)}`).join("\n")}` : "",
-      note ? `Owner note on handback: ${note}` : ""].filter(Boolean).join("\n\n").slice(0, 3900);
-    const { handoff, duplicate } = desk.file({ id: handoffId, from: `personal-keir-worker:${active.workerId}`, scope: `Ticket ${n}: ${reason}`.slice(0, 500), asks, body: bodyText, workIds: [`ticket:${n}`] });
-    if (!duplicate) {
-      desk.acknowledge(handoff.id, "keir");
-      coordinator.inbox.push({ authorId: `handoff:personal-keir-worker:${active.workerId}`, role: "system", at: iso(at),
-        content: `Handoff from the owner's personal Keir worker ${active.workerId} (receipt ${handoff.id}). Scope: ${handoff.scope}\nAsks:\n${asks.map((a) => `- ${a}`).join("\n")}\n\n${bodyText}\n\nVerify the stated state against tools and receipts before relying on it; take no action it describes as pending unless the normal approvals allow it.` });
-      (coordinator.pendingHandoffs ||= []).includes(handoff.id) || coordinator.pendingHandoffs.push(handoff.id);
-      for (const url of transfer.pullRequests) if (!(coordinator.pullRequests ||= []).includes(url)) coordinator.pullRequests.push(url);
-      (coordinator.history ||= []).push({ at: iso(at), kind: "owner_supervision", summary: `Supervision by personal Keir worker ${active.workerId} ended (${endedBy}); handoff ${handoff.id}.` });
+    let handoff = null;
+    if (ended) {
+      if (coordinator) (coordinator.history ||= []).push({ at: iso(at), kind: "owner_supervision", summary: `Supervision by personal Keir worker ${active.workerId} ended because the ticket ended; no handoff filed.` });
+    } else {
+      (coordinator.inbox ||= []).push(...returned.map(({ relayedFrom, ...r }) => r));
+      const handoffId = `${active.takeoverId}-end`;
+      const desk = createHandoffDesk((d.handoffDesk ||= {}), { now: () => at });
+      const asks = ["Verify the ticket's current state and the worker's receipts before acting", "Continue the next action below unless the evidence shows it is done"];
+      if (transfer.uncertainEffects.length) asks.push("Check each uncertain effect listed before repeating anything");
+      const bodyText = [packetText(transfer) || "The worker recorded no work.",
+        unreadDirections.length ? `Owner directions the worker had not read (context, not approval):\n${unreadDirections.map((x) => `- ${clip(x.text, 300)}`).join("\n")}` : "",
+        note ? `Owner note on handback: ${note}` : ""].filter(Boolean).join("\n\n").slice(0, 3900);
+      const filed = desk.file({ id: handoffId, from: `personal-keir-worker:${active.workerId}`, scope: `Ticket ${n}: ${reason}`.slice(0, 500), asks, body: bodyText, workIds: [`ticket:${n}`] });
+      handoff = filed.handoff;
+      if (!filed.duplicate) {
+        desk.acknowledge(handoff.id, "keir");
+        coordinator.inbox.push({ authorId: `handoff:personal-keir-worker:${active.workerId}`, role: "system", at: iso(at),
+          content: `Handoff from the owner's personal Keir worker ${active.workerId} (receipt ${handoff.id}). Scope: ${handoff.scope}\nAsks:\n${asks.map((a) => `- ${a}`).join("\n")}\n\n${bodyText}\n\nVerify the stated state against tools and receipts before relying on it; take no action it describes as pending unless the normal approvals allow it.` });
+        (coordinator.pendingHandoffs ||= []).includes(handoff.id) || coordinator.pendingHandoffs.push(handoff.id);
+        for (const url of transfer.pullRequests) if (!(coordinator.pullRequests ||= []).includes(url)) coordinator.pullRequests.push(url);
+        (coordinator.history ||= []).push({ at: iso(at), kind: "owner_supervision", summary: `Supervision by personal Keir worker ${active.workerId} ended (${endedBy}); handoff ${handoff.id}.` });
+      }
+      // Wake Support Keir only when the ticket is really its own again; a
+      // staff hold or claim is enforced by admission as usual.
+      if (ownerOf(n) === "keir" && ["waiting", "blocked", "deferred", "done", "dismissed"].includes(coordinator.state) && !coordinator.channelClosed) { coordinator.state = "queued"; coordinator.wakeAt = 0; }
     }
-    // Wake Support Keir only when the ticket is really its own again; a
-    // staff hold or claim is enforced by admission as usual.
-    if (ownerOf(n) === "keir" && ["waiting", "blocked", "deferred", "done", "dismissed"].includes(coordinator.state) && !coordinator.channelClosed) { coordinator.state = "queued"; coordinator.wakeAt = 0; }
-    rec.sessions.push({ takeoverId: active.takeoverId, workerId: active.workerId, generation: active.generation, takenAt: active.at, handedBackAt: at, endedBy, handoffId: handoff.id,
+    rec.sessions.push({ takeoverId: active.takeoverId, workerId: active.workerId, generation: active.generation, takenAt: active.at, handedBackAt: at, endedBy, handoffId: handoff?.id || null,
       requestIds: { take: active.requestId, ...(requestId ? { handback: requestId } : {}) } });
     if (rec.sessions.length > 20) rec.sessions.splice(0, rec.sessions.length - 20);
     rec.active = null;
-    return { takeoverId: active.takeoverId, ticket: n, workerId: active.workerId, handoffId: handoff.id, coordinatorTaskId: coordinator.id, coordinatorState: coordinator.state,
-      suppressedOutbox, returnedInbox: returned.length, uncertainEffects: transfer.uncertainEffects.length, at };
+    return { takeoverId: active.takeoverId, ticket: n, workerId: active.workerId, handoffId: handoff?.id || null, coordinatorTaskId: coordinator?.id || null, coordinatorState: coordinator?.state || null,
+      suppressedOutbox, returnedInbox: returned.length, uncertainEffects: transfer.uncertainEffects.length, ticketEnded: ended, at };
   }
 
   function handback(n, body = {}) {
@@ -380,18 +395,30 @@ function createTicketSupervision({ ledger, config, mcp = null, discord = null, s
   }
 
   // Housekeeping on the operator tick. Keeps the worker the one voice, ends a
-  // session that staff or another operator took over first, and parks a
-  // retired worker whose last run has ended.
+  // session that staff or another operator took over first or whose ticket
+  // ended, and parks a retired worker whose last run has ended.
   function tick() {
     let changed = false;
     for (const [key, rec] of Object.entries(store(d).tickets)) {
       const n = Number(key);
       if (rec.active) {
         const worker = d.jobs[rec.active.workerId];
+        const why = worker ? endedReason(d, n, worker) : null;
         if (!worker || ownerOf(n) !== PREFIX + rec.active.workerId) {
           const holder = ownerOf(n);
           const receipt = endSession(n, rec, { reason: `the ticket was moved to ${holder === "keir" ? "Support Keir" : holder} outside the Ops app`, endedBy: holder });
           ledger.audit("ticket_supervision_superseded", { ...receipt, owner: holder });
+          changed = true;
+        } else if (why) {
+          // Closing ends the worker's job, so supervision ends with it. Leaving
+          // the dead worker as owner would hold the ticket away from Support
+          // Keir, and a verified reopen would find it owned elsewhere.
+          const takeoverId = rec.active.takeoverId;
+          worker.supervision.retiredAt = now();
+          owners.setTicketOwner(n, "keir", "ticket-ended", { id: `${takeoverId}-ended`, implementationOwner: "keir",
+            correction: `Ticket ${n} ended (${why}) while the owner's personal Keir held it; ownership returned to Support Keir.` });
+          const receipt = endSession(n, rec, { reason: `the ticket ended (${why})`, endedBy: "ticket-ended" });
+          ledger.audit("ticket_supervision_ended", { ...receipt, why });
           changed = true;
         } else {
           const coordinator = canonical(n);

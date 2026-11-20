@@ -15,6 +15,8 @@ const { createAppServer } = require("../lib/operator/appchannel");
 const { createTicketSupervision } = require("../lib/operator/ticketsupervision");
 const takeover = require("../lib/operator/supporttakeover");
 const { hold } = require("../lib/operator/admission");
+const { closeTicketJobs } = require("../lib/operator/ticketstate");
+const { createReopenedTickets } = require("../lib/operator/reopened");
 
 const CH = "777777777777777777", OWNER = "111111111111111111", STAFF = "222222222222222222", BOT = "333333333333333333", GUILD = "444444444444444444";
 const ANSWER = "Your plant is idle because its coal contract lapsed. Renew it and production resumes next turn.";
@@ -145,11 +147,11 @@ test("normal path: take, worker replies through the ticket gate, owner directs i
 
   // Fresh owner direction from native, replay-safe.
   worker.state = "waiting";
-  r = await f.api({ op: "message", requestId: "direction-00001", text: "Tell them it resumes next turn." });
+  r = await f.api({ op: "message", requestId: "direction-00001", text: "Tell them it resumes next turn.", workerId });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(worker.state, "queued");
   assert.equal(worker.inbox.filter((x) => x.supervisionRequestId === "direction-00001").length, 1);
-  r = await f.api({ op: "message", requestId: "direction-00001", text: "Something else" });
+  r = await f.api({ op: "message", requestId: "direction-00001", text: "Something else", workerId });
   assert.equal(r.status, 409);
   assert.equal(r.body.code, "request-id-reused");
   r = await f.api({ op: "message", requestId: "direction-00002", text: "Hi", workerId: "000000000000" });
@@ -246,7 +248,7 @@ test("staff taking the ticket during supervision ends it and fences the worker",
   assert.equal(worker.state, "cancelled");
   assert.ok(f.coordinator.inbox.some((x) => x.messageId === "m9"), "unread player messages return to the coordinator");
   assert.equal(f.coordinator.state, "deferred", "Support Keir stays held for staff");
-  r = await f.api({ op: "message", requestId: "late-direction1", text: "Keep going" });
+  r = await f.api({ op: "message", requestId: "late-direction1", text: "Keep going", workerId: worker.id });
   assert.equal(r.body.code, "not-supervised");
 });
 
@@ -278,6 +280,139 @@ test("only the owner reaches supervision, browser writes must be same-origin, in
   assert.equal((await f.api({ op: "take", requestId: "short", revision: rev })).status, 400);
   assert.equal((await f.api({ op: "take", requestId: "take-long-text1", revision: rev, text: "x".repeat(4001) })).status, 400);
   assert.equal((await f.api({ op: "shell", requestId: "shell-request1" })).status, 400);
-  assert.equal((await f.api({ op: "message", requestId: "message-none01", text: "hello" })).body.code, "not-supervised");
+  assert.equal((await f.api({ op: "message", requestId: "message-none01", text: "hello", workerId: "000000000000" })).body.code, "not-supervised");
   assert.equal(f.ledger.data.supportOwner?.tickets?.[123], undefined);
+});
+
+// Review finding: closing a ticket ended the worker's job but left the ticket
+// owned by that dead worker, so the reopen path saw it as held elsewhere and
+// nobody answered the player until the owner tapped Hand back.
+test("a ticket that ends while taken releases ownership at once, and its reopen goes to Support Keir", async (t) => {
+  const f = await fixture(t);
+  const d = f.ledger.data;
+  let r = await f.api({ op: "take", requestId: "take-closing-001", revision: (await f.api()).body.revision });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const worker = d.jobs[r.body.receipt.workerId];
+  r = await f.api({ op: "message", requestId: "direction-close1", text: "Check the contract first.", workerId: worker.id });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  d.outbox.closing = { destination: `channel:${worker.id}`, content: "Queued before the close", at: f.now() };
+
+  // The player's channel is deleted; the operator scan stops every job on it.
+  closeTicketJobs(f.ledger, 123, "channel closed", { channelGone: true, skipRunning: true });
+  assert.equal(worker.state, "done");
+  f.sup.tick();
+
+  // Supervision ended on its own: ownership is Support Keir's, the worker is fenced.
+  assert.equal(d.supportOwner.tickets[123], "keir");
+  assert.equal(d.supportOwner.takeovers[123].owner, "keir");
+  assert.ok(worker.supervision.retiredAt);
+  assert.ok(takeover.held(d, worker));
+  assert.equal(f.supportOwner.deferred(f.coordinator), false, "the reopen path no longer sees the ticket as held elsewhere");
+  assert.equal(takeover.held(d, f.coordinator), null);
+  assert.match(d.outbox.closing.skipped, /takeover/, "the worker's queued post is withdrawn");
+  assert.equal(f.coordinator.state, "done", "an ended ticket does not wake Support Keir");
+  assert.deepEqual(f.coordinator.inbox || [], [], "nothing is queued for a coordinator whose ticket ended");
+  assert.ok(!Object.keys(d.handoffDesk?.handoffs || {}).some((id) => id.endsWith("-end")), "no handoff is left waiting on a ticket nobody can work");
+  r = await f.api();
+  assert.equal(r.body.state, "ended");
+  assert.equal(r.body.canHandback, false);
+  assert.equal(r.body.canMessage, false);
+  assert.equal(r.body.sessions.length, 1);
+  assert.equal(r.body.sessions[0].endedBy, "ticket-ended");
+  assert.equal(r.body.sessions[0].handoffId, null);
+  assert.equal((await f.api({ op: "message", requestId: "direction-close2", text: "Still there?", workerId: worker.id })).body.code, "not-supervised");
+  assert.equal((await f.api({ op: "handback", requestId: "handback-close1", revision: r.body.revision })).body.code, "not-supervised");
+  f.sup.tick();
+  assert.equal((await f.api()).body.sessions.length, 1, "the session ends once");
+
+  // The player reopens: a fresh handoff arrives and the verified reopen adopts
+  // a new Support Keir job on the new channel. The old worker never returns.
+  // Reopen ordering compares against job stamps, which the ledger takes from
+  // wall time, so the fixture clock moves past them. The uncertain write was
+  // verified in the meantime; reopen never adopts over an unknown effect.
+  f.advance(Date.now() + 60000 - f.now());
+  f.coordinator.effects["heal:abc"].state = "done";
+  const NEW = "888888888888888888";
+  const canonical = { number: 123, status: "in_progress", category: "bug", resolution: null,
+    conversation: { channelId: NEW, previousChannelId: CH, reopenRequestId: "reopen-1", reopenedAt: new Date(f.now() - 1000).toISOString() } };
+  const fresh = { id: NEW, name: "ticket-bug-fixture-123", type: 0, guild_id: GUILD, topic: "support-reopen:123:reopen-1" };
+  f.supportOwner.receive({ id: "reopen-context", from: "support", scope: "Ticket 123 reopened", asks: ["Answer the follow-up"], tickets: [123] },
+    { ensureTicketJob: (n) => d.jobs[d.seen[`ticket:${n}`]] });
+  const reopen = createReopenedTickets({ ledger: f.ledger, config: f.config, supportOwner: f.supportOwner, now: f.now,
+    readTicket: async () => canonical, readChannel: async (id) => (id === NEW ? fresh : null) });
+  const adopted = await reopen.adopt(123, fresh);
+  assert.ok(adopted, "the reopened ticket is adopted");
+  const job = d.jobs[adopted.job];
+  assert.equal(job.state, "queued");
+  assert.equal(takeover.publisher(d, 123).id, job.id);
+  assert.equal(takeover.held(d, job), null);
+  assert.ok(takeover.held(d, worker), "the closed session's worker stays fenced");
+  f.sup.tick();
+  assert.equal(worker.state, "done");
+  assert.ok(!job.inbox.some((x) => x.role === "owner" || x.supervisionRequestId), "no owner direction from the closed session reaches the reopened job");
+  r = await f.api();
+  assert.equal(r.body.state, "support");
+  assert.equal(r.body.canTake, true);
+});
+
+test("a ticket the worker itself resolves ends supervision the same way", async (t) => {
+  const f = await fixture(t);
+  const d = f.ledger.data;
+  const r = await f.api({ op: "take", requestId: "take-resolve-01", revision: (await f.api()).body.revision });
+  const worker = d.jobs[r.body.receipt.workerId];
+  worker.resolutionSubmitted = true; worker.state = "done";
+  f.sup.tick();
+  assert.equal(d.supportOwner.tickets[123], "keir");
+  assert.ok(takeover.held(d, worker));
+  assert.equal((await f.api()).body.sessions[0].endedBy, "ticket-ended");
+});
+
+// Review finding: a half-typed direction survived a hand back and rode along
+// with the next take, reaching a player-facing worker the owner never saw.
+// The server side of that contract: a direction is bound to the worker it was
+// written for, and nothing written for one session lands on another.
+test("directions are bound to one worker: none survive a hand back or reach a later worker", async (t) => {
+  const f = await fixture(t);
+  const d = f.ledger.data;
+  let r = await f.api({ op: "take", requestId: "take-bound-0001", revision: (await f.api()).body.revision });
+  const first = d.jobs[r.body.receipt.workerId];
+  assert.equal(first.inbox.filter((x) => x.role === "owner").length, 0, "a take without text carries no direction");
+
+  // A direction must name the worker session it was written for.
+  r = await f.api({ op: "message", requestId: "direction-bound1", text: "Unbound direction" });
+  assert.equal(r.status, 400);
+  r = await f.api({ op: "message", requestId: "direction-bound2", text: "Ask for the turn number.", workerId: first.id });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+
+  // Race, message first: the unread direction goes back as context, never as an owner order.
+  r = await f.api({ op: "handback", requestId: "handback-bound1", revision: (await f.api()).body.revision });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(f.coordinator.inbox.filter((x) => x.role === "owner" || x.supervisionRequestId).length, 0);
+  assert.match(f.coordinator.inbox.find((x) => String(x.authorId).startsWith("handoff:")).content, /had not read \(context, not approval\)[\s\S]*Ask for the turn number/);
+  assert.deepEqual(first.inbox, []);
+
+  // Race, hand back first: the in-flight direction is refused and delivered nowhere.
+  const inboxes = () => JSON.stringify(Object.values(d.jobs).map((j) => j.inbox || []));
+  const before = inboxes();
+  r = await f.api({ op: "message", requestId: "direction-bound3", text: "Late thought", workerId: first.id });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, "not-supervised");
+  // A retry of the earlier, delivered direction replays its receipt and delivers nothing new.
+  r = await f.api({ op: "message", requestId: "direction-bound2", text: "Ask for the turn number.", workerId: first.id });
+  assert.equal(r.body.duplicate, true);
+  assert.equal(inboxes(), before);
+
+  // A new session starts clean, and the old session's directions cannot reach it.
+  r = await f.api({ op: "take", requestId: "take-bound-0002", revision: (await f.api()).body.revision });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const second = d.jobs[r.body.receipt.workerId];
+  assert.notEqual(second.id, first.id);
+  assert.equal(second.inbox.filter((x) => x.role === "owner" || x.supervisionRequestId).length, 0);
+  r = await f.api({ op: "message", requestId: "direction-bound4", text: "Late thought", workerId: first.id });
+  assert.equal(r.body.code, "worker-mismatch");
+  r = await f.api({ op: "message", requestId: "direction-bound2", text: "Ask for the turn number.", workerId: second.id });
+  assert.equal(r.body.code, "request-id-reused", "a retried request id cannot be redirected to the new worker");
+  assert.equal(second.inbox.filter((x) => x.role === "owner").length, 0);
+  r = await f.api();
+  assert.ok(r.body.directions.every((x) => x.workerId === first.id), "directions keep the worker they were written for");
 });

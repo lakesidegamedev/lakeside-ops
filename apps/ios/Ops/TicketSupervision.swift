@@ -7,6 +7,9 @@ import LakesideCore
 /// request id that is reused when the same action is retried, so a dropped
 /// connection never takes a ticket twice. Take and hand back also carry the
 /// revision the owner was looking at, so a stale screen cannot override staff.
+/// A direction belongs to the worker it was written for: it names that worker,
+/// and an unsent draft is discarded when that worker's session ends, so a
+/// half-typed note can never reach a later worker the owner has not seen.
 struct TicketSupervisionPanel: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.scenePhase) private var scenePhase
@@ -22,6 +25,10 @@ struct TicketSupervisionPanel: View {
 
     private var worker: JSONValue { state["worker"] }
     private var supervised: Bool { state["state"].string == "supervised" }
+    /// The worker a direction typed now would reach, or empty when none can.
+    private var directionTarget: String { state["canMessage"].bool ? worker["id"].string : "" }
+    /// Directions for the current worker only; earlier sessions' notes are history.
+    private var directions: [JSONValue] { state["directions"].array.filter { $0["workerId"] == worker["id"] } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -39,16 +46,16 @@ struct TicketSupervisionPanel: View {
                     }
                 }
                 if worker != .null { WorkerSummary(worker: worker, active: supervised) }
-                if !state["directions"].array.isEmpty && supervised {
+                if !directions.isEmpty && supervised {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Your directions").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
-                        ForEach(Array(state["directions"].array.prefix(3).enumerated()), id: \.offset) { _, direction in
+                        ForEach(Array(directions.prefix(3).enumerated()), id: \.offset) { _, direction in
                             HStack(alignment: .top, spacing: 6) {
                                 Image(systemName: direction["readAt"] == .null ? "envelope" : "envelope.open").foregroundStyle(OpsTheme.muted)
                                 Text(direction["text"].string).font(.caption).lineLimit(3)
                             }
                         }
-                    }
+                    }.accessibilityElement(children: .combine).accessibilityIdentifier("supervision-directions")
                 }
                 if state["canMessage"].bool {
                     HStack(alignment: .bottom, spacing: 8) {
@@ -79,10 +86,19 @@ struct TicketSupervisionPanel: View {
         .accessibilityIdentifier("ticket-supervision")
         .confirmationDialog(confirming?.title ?? "", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), titleVisibility: .visible) {
             if let action = confirming {
-                Button(action.title) { Task { await send(action, text: action == .take ? draft : "") } }
+                // Take and hand back never carry the direction draft: it is
+                // not on screen when they are offered.
+                Button(action.title) { Task { await send(action, text: "") } }
                 Button("Cancel", role: .cancel) { confirming = nil }
             }
         } message: { Text(confirming?.detail ?? "") }
+        // The session a draft was written for ended (hand back, staff, ticket
+        // closed) or a different worker took over: the draft and any unconfirmed
+        // direction request go with it.
+        .onChange(of: directionTarget) { _, _ in
+            draft = ""
+            requestIds = requestIds.filter { !$0.key.hasPrefix("\(SupervisionAction.message.rawValue)|") }
+        }
         .task(id: scenePhase == .active) {
             while scenePhase == .active && !Task.isCancelled {
                 await load()
@@ -109,18 +125,23 @@ struct TicketSupervisionPanel: View {
 
     private func send(_ action: SupervisionAction, text: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = "\(action.rawValue)|\(number)|\(trimmed)"
+        // A direction names the worker it was written for; with no worker to
+        // name there is nobody to send it to.
+        let target = action == .message ? directionTarget : ""
+        if action == .message && target.isEmpty { return }
+        let key = "\(action.rawValue)|\(number)|\(target)|\(trimmed)"
         let requestId = requestIds[key] ?? "ios-\(UUID().uuidString.lowercased())"
         requestIds[key] = requestId
         var body: [String: JSONValue] = ["op": .string(action.rawValue), "requestId": .string(requestId)]
         if !trimmed.isEmpty { body["text"] = .string(trimmed) }
         if action != .message { body["revision"] = state["revision"] }
-        if action == .message, worker["id"] != .null { body["workerId"] = worker["id"] }
+        if action == .message { body["workerId"] = .string(target) }
         busy = true; defer { busy = false; confirming = nil }
         do {
             let result = try await session.post(path, body)
             requestIds[key] = nil
-            if action != .handback { draft = "" }
+            // Sent, or its session just started or ended: nothing typed carries over.
+            draft = ""
             if result["supervision"] != .null { state = result["supervision"] } else { await load() }
             error = nil
         } catch {

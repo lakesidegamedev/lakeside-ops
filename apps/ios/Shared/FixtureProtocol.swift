@@ -216,6 +216,125 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         }
     }
     private static let computer = ComputerState()
+    /// Ticket supervision, shaped and ordered like the agent's
+    /// `/api/keir/app/tickets/:n/supervision` (ticketsupervision.js): per-ticket
+    /// state, a revision that moves when ownership moves, stable worker ids per
+    /// session, request-id replay and reuse checks, directions bound to the
+    /// worker they were written for, and a real hand back that retires the
+    /// worker and returns the ticket to Support Keir.
+    private final class SupervisionState: @unchecked Sendable {
+        struct Session { var workerId: String; var takeoverId: String; var generation: Int; var takenAt: Double; var endedAt: Double?; var takeRequest: String; var handbackRequest: String? }
+        struct Ticket { var generation = 0; var active: Session?; var sessions: [Session] = []; var directions: [[String: Any]] = [] }
+        let lock = NSLock()
+        var tickets: [Int: Ticket] = [:]
+        var requests: [String: (fingerprint: String, receipt: [String: Any])] = [:]
+        private var clock: Double { Date().timeIntervalSince1970 * 1000 }
+
+        private func revision(_ n: Int, _ t: Ticket) -> String {
+            "fx-\(n)-g\(t.generation)-\(t.active?.workerId ?? "keir")-s\(t.sessions.count)"
+        }
+        /// JSON null for a missing value, as the API sends it.
+        private func orNull(_ value: Any?) -> Any { value ?? NSNull() }
+        private func workerValue(_ s: Session, _ t: Ticket) -> [String: Any] {
+            let retired = s.endedAt != nil
+            let directed = t.directions.contains { $0["workerId"] as? String == s.workerId }
+            let state: String = retired ? "cancelled" : directed ? "running" : "queued"
+            let status: String = retired ? "Handed back to Support Keir" : directed ? "Following your direction" : "Reading the ticket and transferred evidence"
+            let empty: [Any] = []
+            var value: [String: Any] = ["id": s.workerId, "identity": "keir-worker:\(s.workerId)", "generation": s.generation, "takeoverId": s.takeoverId]
+            value["state"] = state; value["status"] = status; value["summary"] = NSNull(); value["nextAction"] = "Confirm the payroll allocation"
+            value["startedAt"] = s.takenAt; value["updatedAt"] = s.endedAt ?? clock; value["retiredAt"] = orNull(s.endedAt)
+            for key in ["plan", "receipts", "posts", "outbox", "history"] { value[key] = empty }
+            value["pendingInbox"] = 0
+            return value
+        }
+        private func view(_ n: Int) -> [String: Any] {
+            let t = tickets[n] ?? Ticket()
+            let supervised = t.active != nil
+            let empty: [Any] = []
+            let sessions: [[String: Any]] = t.sessions.suffix(10).reversed().map { s in
+                let requestIds: [String: Any] = ["take": s.takeRequest, "handback": orNull(s.handbackRequest)]
+                return ["takeoverId": s.takeoverId, "workerId": s.workerId, "generation": s.generation, "takenAt": s.takenAt, "handedBackAt": orNull(s.endedAt),
+                        "endedBy": "owner", "handoffId": "\(s.takeoverId)-end", "requestIds": requestIds]
+            }
+            let blockers: [Any] = supervised ? [["code": "already-supervised", "text": "Your personal Keir already has this ticket"]] : []
+            let coordinator: [String: Any] = ["taskId": "ticket-task", "state": supervised ? "deferred" : "queued", "summary": "Payroll code read; no duplicate charge found", "status": NSNull(), "nextAction": NSNull(), "updatedAt": clock]
+            let holds: [String: Any] = ["staffClaim": NSNull(), "staffActiveUntil": 0, "paused": false, "closed": false, "uncertainEffects": empty, "pendingApprovals": empty]
+            let shown: Session? = t.active ?? t.sessions.last
+            var value: [String: Any] = ["ticket": n, "revision": revision(n, t), "state": supervised ? "supervised" : "support"]
+            value["owner"] = t.active.map { "keir-worker:\($0.workerId)" } ?? "keir"
+            value["label"] = supervised ? "Your personal Keir is working this ticket" : "Support Keir is working this ticket"
+            value["canTake"] = !supervised; value["takeBlockers"] = blockers; value["canMessage"] = supervised; value["canHandback"] = supervised
+            value["coordinator"] = coordinator
+            value["worker"] = orNull(shown.map { workerValue($0, t) })
+            value["directions"] = Array(t.directions.suffix(20).reversed())
+            value["holds"] = holds; value["sessions"] = sessions; value["missing"] = empty
+            return value
+        }
+        private func refuse(_ status: Int, _ message: String, _ code: String? = nil) -> (Any, Int) {
+            var body: [String: Any] = ["error": message]
+            if let code { body["code"] = code }
+            return (body, status)
+        }
+
+        func route(_ path: String, method: String, body: [String: Any]) -> (Any, Int) {
+            lock.lock(); defer { lock.unlock() }
+            let pieces = path.split(separator: "/").map(String.init)
+            guard pieces.count == 6, let n = Int(pieces[4]) else { return refuse(404, "No test fixture for this endpoint") }
+            var t = tickets[n] ?? Ticket()
+            if method == "GET" {
+                // The worker reads its inbox between polls, as the real tick records.
+                if let worker = t.active?.workerId {
+                    for i in t.directions.indices where t.directions[i]["workerId"] as? String == worker && t.directions[i]["readAt"] is NSNull { t.directions[i]["readAt"] = clock }
+                    tickets[n] = t
+                }
+                return (view(n), 200)
+            }
+            let op = body["op"] as? String ?? ""
+            guard ["take", "message", "handback"].contains(op) else { return refuse(400, "op must be take, message or handback") }
+            let requestId = body["requestId"] as? String ?? ""
+            guard requestId.range(of: "^[A-Za-z0-9_-]{8,80}$", options: .regularExpression) != nil else { return refuse(400, "requestId must be 8 to 80 letters, digits, dashes or underscores") }
+            let text = (body["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let workerId = body["workerId"] as? String ?? ""
+            if op == "message" && text.isEmpty { return refuse(400, "text is required") }
+            if op == "message" && workerId.isEmpty { return refuse(400, "workerId is required: name the worker this direction was written for") }
+            let fingerprint = "\(op)|\(n)|\(text)|\(op == "message" ? workerId : "")"
+            if let prior = requests[requestId] {
+                guard prior.fingerprint == fingerprint else { return refuse(409, "This requestId already belongs to a different request", "request-id-reused") }
+                let replay: [String: Any] = ["ok": true, "op": op, "requestId": requestId, "duplicate": true, "receipt": prior.receipt, "supervision": view(n)]
+                return (replay, 200)
+            }
+            let current = revision(n, t)
+            let receipt: [String: Any]
+            switch op {
+            case "take":
+                guard body["revision"] as? String == current else { return refuse(409, "The ticket changed since you looked. Refresh and try again.", "stale-revision") }
+                guard t.active == nil else { return refuse(409, "Your personal Keir already has this ticket", "already-supervised") }
+                t.generation += 1
+                let session = Session(workerId: "fxworker\(n)g\(t.generation)", takeoverId: "sup-\(n)-\(t.generation)-fixture", generation: t.generation, takenAt: clock, takeRequest: requestId)
+                t.active = session
+                if !text.isEmpty { t.directions.append(["requestId": requestId, "text": text, "at": clock, "workerId": session.workerId, "deliveredAt": clock, "readAt": NSNull()]) }
+                receipt = ["takeoverId": session.takeoverId, "ticket": n, "workerId": session.workerId, "generation": session.generation, "coordinatorTaskId": "ticket-task", "suppressedOutbox": 0, "at": clock]
+            case "message":
+                guard let active = t.active else { return refuse(409, "Your personal Keir is not working this ticket", "not-supervised") }
+                guard workerId == active.workerId else { return refuse(409, "That worker was handed back; this direction was not delivered", "worker-mismatch") }
+                t.directions.append(["requestId": requestId, "text": text, "at": clock, "workerId": active.workerId, "deliveredAt": clock, "readAt": NSNull()])
+                if t.directions.count > 100 { t.directions.removeFirst(t.directions.count - 100) }
+                receipt = ["requestId": requestId, "ticket": n, "workerId": active.workerId, "at": clock, "workerState": "queued"]
+            default:
+                guard var active = t.active else { return refuse(409, "Your personal Keir is not working this ticket", "not-supervised") }
+                guard body["revision"] as? String == current else { return refuse(409, "The ticket changed since you looked. Refresh and try again.", "stale-revision") }
+                active.endedAt = clock; active.handbackRequest = requestId
+                t.sessions.append(active); t.active = nil
+                receipt = ["takeoverId": active.takeoverId, "ticket": n, "workerId": active.workerId, "handoffId": "\(active.takeoverId)-end", "coordinatorTaskId": "ticket-task", "coordinatorState": "queued", "suppressedOutbox": 0, "at": clock]
+            }
+            tickets[n] = t
+            requests[requestId] = (fingerprint: fingerprint, receipt: receipt)
+            let reply: [String: Any] = ["ok": true, "op": op, "requestId": requestId, "duplicate": false, "receipt": receipt, "supervision": view(n)]
+            return (reply, 200)
+        }
+    }
+    private static let supervision = SupervisionState()
 
     private func bodyObject() -> [String: Any]? {
         var data = request.httpBody ?? Data()
@@ -308,13 +427,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/questions/123456abcdef": value = Self.keir.answerChoices()
         case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
         case "/api/keir/app/tickets/1564/supervision", "/api/keir/app/tickets/1001/supervision", "/api/keir/app/tickets/1575/supervision", "/api/keir/app/tickets/1651/supervision":
-            // Ticket supervision: GET shows Support Keir; any accepted write returns the supervised view.
-            let taken = request.httpMethod == "POST"
-            let view: [String: Any] = ["ticket": 1001, "revision": "fixture-rev", "state": taken ? "supervised" : "support", "owner": taken ? "keir-worker:fixtureworker" : "keir",
-                "label": taken ? "Your personal Keir is working this ticket" : "Support Keir is working this ticket", "canTake": !taken, "takeBlockers": [] as [Any],
-                "canMessage": taken, "canHandback": taken, "directions": [] as [Any], "sessions": [] as [Any],
-                "worker": taken ? ["id": "fixtureworker", "state": "queued", "status": "Reading the ticket and transferred evidence", "nextAction": "Confirm the payroll allocation", "receipts": [] as [Any], "outbox": [] as [Any], "updatedAt": Date().timeIntervalSince1970 * 1000] as [String: Any] as Any : NSNull() as Any]
-            value = taken ? ["ok": true, "op": (bodyObject()?["op"] as? String) ?? "take", "duplicate": false, "receipt": [:] as [String: Any], "supervision": view] : view
+            (value, status) = Self.supervision.route(url.path, method: request.httpMethod ?? "GET", body: bodyObject() ?? [:])
         case "/api/keir/app/controls": value = Self.keir.controls(bodyObject())
         case "/api/keir/app/models": value = Self.keir.models(bodyObject()?["selection"] as? String)
         case "/api/keir/app/computer": value = ["computers": [] as [Any]]
