@@ -272,10 +272,19 @@ struct KeirGamesSheet: View {
                                 Text(gameSummary(game)).font(.opsCaption).foregroundStyle(OpsTheme.muted).lineLimit(1)
                             }
                             Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(OpsTheme.neutral)
-                                .accessibilityHidden(true)
+                            // The state of each game at a glance; the one being
+                            // shown below is marked instead of a chevron, since a
+                            // tap switches the detail rather than opening a page.
+                            if model.selected == game.id {
+                                Text("Showing").font(.opsCaption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                    .background(OpsTheme.accent.opacity(0.12), in: Capsule())
+                            } else {
+                                HStack(spacing: 5) {
+                                    Circle().fill(game.state.color).frame(width: 7, height: 7)
+                                    Text(game.state.title).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                                }.accessibilityHidden(true)
+                            }
                         }.contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -286,6 +295,7 @@ struct KeirGamesSheet: View {
                 }
             }
         } header: { SectionLabel(text: "Games") }
+        .listRowBackground(OpsTheme.surface)
     }
 
     private func gameSummary(_ game: KeirGame) -> String {
@@ -316,17 +326,13 @@ struct KeirGamesSheet: View {
                 Text("Checked \(OpsFormat.contextual(checked))").font(.caption).foregroundStyle(OpsTheme.muted)
                     .accessibilityIdentifier("keir-game-checked")
             }
-        } header: { SectionLabel(text: game.name) }
-        if let tickets = game.tickets {
-            Section {
-                HStack(spacing: 8) {
-                    KeirGameStateDot(state: tickets.state, label: tickets.state == .available ? "Through the Inbox" : nil)
-                    Text(tickets.state == .available ? "Through the Inbox" : tickets.state.title).font(.callout)
-                }
-            } header: { SectionLabel(text: "Tickets and pings") } footer: {
-                Text(tickets.note).font(.opsCaption).foregroundStyle(OpsTheme.muted)
-            }
+        } header: { SectionLabel(text: game.name) } footer: {
+            // What Keir does not read is a fact about the connection, not a
+            // state to act on, so it is one footnote instead of two panels.
+            let limits = scopeNote(game)
+            if !limits.isEmpty { Text(limits).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
         }
+        .listRowBackground(OpsTheme.surface)
         let topics = KeirGameDraft.topics(for: game)
         if !topics.isEmpty, !model.reading {
             Section {
@@ -335,9 +341,10 @@ struct KeirGamesSheet: View {
                         if let text = KeirGameDraft.prompt(topic, game: game) { ask(text) }
                     } label: {
                         HStack {
-                            Label(topic.title, systemImage: topic.icon)
+                            Label(topic == .health ? "Ask Keir if \(game.name) is healthy" : "Ask Keir: " + topic.title.lowercased(), systemImage: topic.icon)
+                                .font(.callout.weight(.semibold))
                             Spacer(minLength: 8)
-                            Image(systemName: "arrow.up.right").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.sky).accessibilityHidden(true)
+                            Image(systemName: "bubble.left").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.sky).accessibilityHidden(true)
                         }
                     }
                     .disabled(!draftEmpty)
@@ -346,16 +353,22 @@ struct KeirGamesSheet: View {
                 }
             } header: {
                 if topics.count > 1 { SectionLabel(text: "Ask Keir about \(game.name)") }
+            } footer: {
+                Text("Puts a question in the message box. Nothing is sent until you send it.").font(.opsCaption).foregroundStyle(OpsTheme.muted)
             }
+            .listRowBackground(OpsTheme.surface)
+        }
+    }
+
+    private func scopeNote(_ game: KeirGame) -> String {
+        var parts: [String] = []
+        if let tickets = game.tickets {
+            parts.append(tickets.state == .available ? "Tickets arrive through the Inbox." : tickets.note)
         }
         if !model.reading, !model.detailFailed, !game.withheld.isEmpty {
-            Section {
-                ForEach(game.withheld, id: \.self) { limit in
-                    Label(limit, systemImage: "lock").font(.opsCaption).foregroundStyle(OpsTheme.muted)
-                        .listRowSeparator(.hidden)
-                }
-            } header: { SectionLabel(text: "Not read by Keir") }
+            parts.append("Keir does not read: " + game.withheld.joined(separator: "; ") + ".")
         }
+        return parts.filter { !$0.isEmpty }.joined(separator: " ")
     }
 }
 
@@ -409,13 +422,6 @@ struct KeirGameReadRow: View {
                 Text("Checked \(OpsFormat.contextual(checked))").font(.opsCaption).foregroundStyle(OpsTheme.muted)
             } else if read.state != .live && !read.note.isEmpty {
                 Text(read.note).font(.opsCaption).foregroundStyle(OpsTheme.muted)
-            }
-            // Technical evidence stays available, folded away: which tool answered.
-            DisclosureGroup {
-                Text("Read from \(read.source)").font(.caption).foregroundStyle(OpsTheme.muted)
-                    .accessibilityIdentifier("keir-game-source-\(read.id)")
-            } label: {
-                Text("Details").font(.caption).foregroundStyle(OpsTheme.muted)
             }
         }
         .padding(.vertical, 2)

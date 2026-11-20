@@ -134,35 +134,57 @@ struct OpsSettings: View {
             Form {
                 Section {
                     if !pushAvailable {
-                        Label("Push notifications are inactive", systemImage: "bell.slash").foregroundStyle(OpsTheme.warning)
-                        Button(status == .denied ? "Open iPhone Settings" : "Enable notifications") {
-                            if status == .denied {
-                                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
-                            } else { refreshNotificationRegistration() }
+                        // The problem and its fix in one row: the button is the
+                        // only accent-filled control on this screen.
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Notifications are off on this iPhone", systemImage: "bell.slash.fill")
+                                .font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.warning)
+                            Text("You will not hear about decisions or incidents until they are on.")
+                                .font(.caption).foregroundStyle(OpsTheme.muted)
+                            Button {
+                                if status == .denied {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                                } else { refreshNotificationRegistration() }
+                            } label: {
+                                Label(status == .denied ? "Open iPhone Settings" : "Turn on notifications", systemImage: "bell.badge.fill")
+                                    .font(.callout.weight(.semibold))
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .foregroundStyle(OpsTheme.onAccent)
+                                    .background(OpsTheme.sky, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
+                        .padding(.vertical, 4)
                     }
                     Group {
                         toggle("replies", "Keir replies", "When Keir answers you in the app.")
                         toggle("decisions", "Decisions", "Time-sensitive approvals and decisions.")
                         toggle("incidents", "Incident alerts", "Turn failures and stalled work.")
-                    }.disabled(!pushAvailable)
-                } header: { SectionLabel(text: "Notifications") }
-                quietSection
+                    }.disabled(!pushAvailable).opacity(pushAvailable ? 1 : 0.55)
+                } header: { SectionLabel(text: "Notifications") } footer: {
+                    if !pushAvailable {
+                        Text("These choices take effect once notifications are on.").font(.caption).foregroundStyle(OpsTheme.muted)
+                    }
+                }
+                .listRowBackground(OpsTheme.surface)
+                quietSection.listRowBackground(OpsTheme.surface)
                 if session.profile["mode"].string != "standalone" { KeirIdentitySection() }
                 Section {
                     Picker("Theme", selection: $appearance) {
                         ForEach(KeirAppearance.allCases) { Text($0.title).tag($0.rawValue) }
                     }.accessibilityIdentifier("settings-theme")
                 } header: { SectionLabel(text: "Appearance") } footer: {
-                    Text(KeirAppearance.allCases.map(\.title).joined(separator: ", ") + ". System follows your iPhone. OLED black turns background pixels off on OLED screens.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text("System follows your iPhone. OLED black switches background pixels off.")
+                        .font(.caption).foregroundStyle(OpsTheme.muted)
                 }
+                .listRowBackground(OpsTheme.surface)
                 Section {
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
                 } header: { SectionLabel(text: "About") } footer: {
                     Text("Keir portrait art derived from an official Prime Minister's Office photograph, licensed under the Open Government Licence v3.0.")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(OpsTheme.muted)
                 }
+                .listRowBackground(OpsTheme.surface)
                 Section {
                     DisclosureGroup("Push diagnostics") {
                         LabeledContent("Delivery", value: push.message)
@@ -186,12 +208,14 @@ struct OpsSettings: View {
                         if let deliveryMessage { Text(deliveryMessage).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
                     }
                 } header: { SectionLabel(text: "Developer") }
+                .listRowBackground(OpsTheme.surface)
                 Section {
                     LabeledContent("Signed in as", value: session.profile["email"].string.hasPrefix("discord_") ? "Owner" : session.profile["email"].string)
                     Button(role: .destructive) { confirmSignOut = true } label: {
                         Text("Sign out").foregroundStyle(OpsTheme.danger)
                     }
                 } header: { SectionLabel(text: "Account") }
+                .listRowBackground(OpsTheme.surface)
             }
             .scrollContentBackground(.hidden).background(OpsTheme.background)
             .toolbarBackground(OpsTheme.background, for: .navigationBar)
@@ -220,8 +244,10 @@ struct OpsSettings: View {
                     ForEach(Array(Set(TimeZone.knownTimeZoneIdentifiers + [quiet.timeZone])).sorted(), id: \.self) { Text($0).tag($0) }
                 }
             }
-            Text(quiet.summary).font(.caption).foregroundStyle(OpsTheme.muted)
-        } header: { SectionLabel(text: "Quiet hours") } footer: { Text("Applies to this iPhone only. Your other devices are not affected.") }
+            if quiet.enabled { Text(quiet.summary).font(.caption).foregroundStyle(OpsTheme.muted) }
+        } header: { SectionLabel(text: "Quiet hours") } footer: {
+            Text("Silences notifications on this iPhone only.").font(.caption).foregroundStyle(OpsTheme.muted)
+        }
     }
 
     private func timeBinding(_ field: WritableKeyPath<QuietHours, Int>) -> Binding<Date> {
