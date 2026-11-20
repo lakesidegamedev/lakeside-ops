@@ -337,27 +337,27 @@ struct TicketDetail: View {
         }
     }
 
-    private var playerReply: String {
-        let update = detail["history"].array.first { $0["kind"].string == "Player reply" }
-        return replyState["state"].string == "delivered" ? (update?["text"].string.nonempty ?? "") : ""
+    private var verifiedReply: JSONValue? {
+        detail["history"].array.first { $0["kind"].string == "Player reply" }
     }
+
+    private var playerReply: String { verifiedReply?["text"].string.nonempty ?? "" }
 
     @ViewBuilder private var replySection: some View {
         let reply = playerReply
-        let summary = TicketPresentation.clean(card["status"].string)
-        let delivery = replyState["state"].string
-        if !reply.isEmpty || !summary.isEmpty || delivery == "delivered" || delivery == "no_receipt" {
+        let delivery = verifiedReply == nil ? replyState["state"].string : "delivered"
+        if !reply.isEmpty || ["delivered", "no_receipt"].contains(delivery) {
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Player-facing reply")
                 if !reply.isEmpty { NativeMarkdown(text: reply).textSelection(.enabled) }
-                else if !summary.isEmpty { Text(summary).font(.body).textSelection(.enabled) }
                 if delivery == "delivered" {
-                    if let url = URL(string: replyState["url"].string), url.scheme == "https", url.host == "discord.com" {
+                    let address = verifiedReply?["url"].string.nonempty ?? replyState["url"].string
+                    if let url = URL(string: address), url.scheme == "https", url.host == "discord.com" {
                         Link(destination: url) { Label("View in Discord", systemImage: "arrow.up.right.square") }.font(.callout)
                     } else {
                         Label("Delivered to Discord", systemImage: "checkmark.bubble").font(.callout).foregroundStyle(OpsTheme.mint)
                     }
-                } else if delivery == "no_receipt" {
+                } else {
                     Label("No Discord receipt", systemImage: "bubble.left").font(.callout).foregroundStyle(OpsTheme.warn)
                 }
             }

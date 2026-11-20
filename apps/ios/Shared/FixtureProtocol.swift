@@ -475,7 +475,11 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 "decisions": [["id": "abcdef123456", "kind": "choice", "type": "choice", "state": "pending",
                                "tldr": "Choose payroll behavior", "question": "Capacity or filled jobs?",
                                "options": [["id": "1", "label": "Capacity"], ["id": "2", "label": "Filled jobs"]]]],
-                "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code", "at": twoHoursAgo]],
+                "history": [
+                    ["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code", "at": twoHoursAgo],
+                    ["id": "reply-payroll", "kind": "Player reply", "text": "I checked how the budget screen totals spending. I’ll follow up once the payroll calculation is settled.",
+                     "at": twoHoursAgo + 120000, "url": "https://discord.com/channels/100/200/301"],
+                ],
             ]
         case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
         case "/api/keir/app/tickets/1868/supervision", "/api/keir/app/tickets/1564/supervision", "/api/keir/app/tickets/1001/supervision", "/api/keir/app/tickets/1575/supervision", "/api/keir/app/tickets/1651/supervision":

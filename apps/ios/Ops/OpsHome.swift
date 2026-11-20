@@ -78,7 +78,7 @@ struct OpsHub: View {
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
             Button { router.activityFilter = "needs-you"; router.tab = .activity } label: {
                 OpsSummaryTile(title: "Needs you", count: attention.count, icon: "hand.raised.fill", tone: OpsTheme.warning)
-            }
+            }.accessibilityIdentifier("ops-review-attention")
             Button { router.activityFilter = "failing"; router.tab = .activity } label: {
                 OpsSummaryTile(title: "Failing checks", count: ops.redPRs, icon: "xmark.circle.fill", tone: OpsTheme.danger)
             }
