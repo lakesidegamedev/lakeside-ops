@@ -571,7 +571,7 @@ function createAppServer({ app, authenticate, artifactsDir, agentRoutes = null, 
       }
       return reply(404, { error: "not found" });
     } catch (e) {
-      if (e.status) return reply(e.status, { error: e.message });
+      if (e.status) return reply(e.status, { error: e.message, ...(typeof e.reason === "string" ? { code: e.reason } : {}), ...(Array.isArray(e.blockers) ? { blockers: e.blockers } : {}) });
       log(`app: ${e.message}`); return reply(500, { error: "server error" });
     }
   });
