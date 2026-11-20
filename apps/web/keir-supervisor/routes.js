@@ -120,11 +120,12 @@ function createSupervisorHost({ env = process.env, log = (m) => console.log(m), 
     const publishEnabled = env.KEIR_SUPERVISOR_PUBLISH === "1";
     const guardianDir = env.KEIR_GUARDIAN_DIR || "/var/lib/keir-guardian";
     // Read-only ticket and game evidence through the ops web MCP client, with this host's own credentials.
+    const hub = require("../keir-hub-data");
     const evidence = overrides.evidence || (() => {
-      const hub = require("../keir-hub-data");
-      return require("./studio-evidence").createStudioEvidence({ mcpCall: hub._mcpCall, configPath: hub.PATHS.mcp });
+      return require("./studio-evidence").createStudioEvidence({ mcpCall: hub._mcpCall, configPath: hub.PATHS.mcp, ledgerPath: hub.PATHS.ledger });
     })();
-    const instance = createSupervisor({ stateDir: dir, repos, sandbox, executor, guardianDir, publishEnabled, evidence, attention,
+    const studioMcp = require("./studio-mcp").createStudioMcp({ configPath: hub.PATHS.mcp });
+    const instance = createSupervisor({ studioMcp, stateDir: dir, repos, sandbox, executor, guardianDir, publishEnabled, evidence, attention,
       publisher: overrides.publisher || (publishEnabled ? createPublisher({ env }) : null), log, ...(overrides.supervisor || {}) });
     const ready = instance.start().catch((e) => log(`keir-supervisor: start failed: ${e.message}`));
     built = { configured: true, missing: [], instance, ready,
