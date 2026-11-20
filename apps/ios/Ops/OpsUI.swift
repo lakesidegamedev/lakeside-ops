@@ -17,8 +17,13 @@ enum OpsTheme {
     static let mint = success
     static let warn = Brand.adaptive(0xe3ba88, 0xb26a12)
     static let danger = Brand.adaptive(0xf08a8a, 0xc0392b)
+    /// Blocked by something other than the owner: a dependency, a missing
+    /// receipt. Kept apart from amber, which means "waiting on you".
+    static let blocked = Brand.adaptive(0xb7a2ff, 0x6d4fd8)
     static let onAccent = Brand.onAccent
     static let neutral = muted
+    /// Soft depth under raised surfaces in Light; nothing on OLED black.
+    static let shadow = Brand.lightOnly(0x1b2a3c, alpha: 0.07)
     static let warning = warn
 }
 
@@ -115,6 +120,13 @@ enum OpsFormat {
         if s < 0 { return "in " + span(-s) }
         if s < 45 { return "now" }
         return span(s) + " ago"
+    }
+    /// How long something has waited on the owner. Grey while recent; past a
+    /// week it says "Waiting" and turns amber, so the colour has a stated reason.
+    static func waiting(_ date: Date, now: Date = Date()) -> (text: String, color: Color) {
+        let age = now.timeIntervalSince(date)
+        if age >= 7 * 86_400 { return ("Waiting " + span(age), OpsTheme.warning) }
+        return (ago(date), OpsTheme.muted)
     }
     static func span(_ s: Double) -> String {
         if s < 3600 { return "\(max(1, Int(s / 60)))m" }

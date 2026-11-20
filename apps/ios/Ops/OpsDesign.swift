@@ -129,14 +129,68 @@ struct OpsGlyph: View {
 
 struct OpsCard<Content: View>: View {
     var padding: CGFloat = 16
+    var spacing: CGFloat = 12
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) { content() }
+        VStack(alignment: .leading, spacing: spacing) { content() }
             .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 18))
-            .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(OpsTheme.hairline))
+            .opsSurface()
+    }
+}
+
+/// A run of rows on one raised surface, separated by inset hairlines: the
+/// grouped list every Ops section, ticket section and settings block uses, so
+/// lists read as one object with depth instead of loose text on the canvas.
+struct OpsGroup<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content() }
+            .padding(.horizontal, 14)
+            .opsSurface()
+    }
+}
+
+/// A single list item on its own raised surface with a status stripe down the
+/// leading edge, so state colour reads before any text does. Inbox rows use it.
+struct OpsStripeCard: ViewModifier {
+    let color: Color
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, 16).padding(.trailing, 14).padding(.vertical, 12)
+            .opsSurface(radius: 16)
+            .overlay {
+                HStack(spacing: 0) {
+                    Rectangle().fill(color).frame(width: 4)
+                    Spacer(minLength: 0)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+    }
+}
+
+extension View {
+    func opsStripeCard(_ color: Color) -> some View { modifier(OpsStripeCard(color: color)) }
+}
+
+/// An inset divider inside an `OpsGroup`, starting where row text starts.
+struct OpsGroupDivider: View {
+    var inset: CGFloat = 42
+    var body: some View { Rectangle().fill(OpsTheme.hairline).frame(height: 1).padding(.leading, inset) }
+}
+
+extension View {
+    /// The one raised surface: same radius, border and soft light-mode shadow
+    /// everywhere. On OLED black the shadow disappears and the border carries
+    /// the edge.
+    func opsSurface(radius: CGFloat = 20) -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(OpsTheme.hairline))
+            .shadow(color: OpsTheme.shadow, radius: 8, y: 2)
     }
 }
 

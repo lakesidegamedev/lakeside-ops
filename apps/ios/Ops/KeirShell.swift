@@ -30,9 +30,9 @@ extension View {
     func keirObjectCard(padding: CGFloat = 14) -> some View {
         self.padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(KeirChatTheme.stroke))
-            .shadow(color: KeirChatTheme.shadow, radius: 10, y: 3)
+            .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(KeirChatTheme.stroke))
+            .shadow(color: OpsTheme.shadow, radius: 8, y: 2)
     }
 }
 
@@ -64,17 +64,21 @@ struct KeirStatusPill<Leading: View>: View {
     let text: String
     var tone: Color = OpsTheme.muted
     var shimmer = false
+    /// A pill that opens somewhere shows a chevron and a tinted fill.
+    var opens = false
     @ViewBuilder var leading: () -> Leading
     var body: some View {
         HStack(spacing: 5) {
             leading()
             if shimmer { LoadingShimmer(text: text) } else { Text(text).foregroundStyle(tone) }
+            if opens { Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(tone).accessibilityHidden(true) }
         }
-        .font(.caption.weight(.medium))
+        .font(.caption.weight(opens ? .semibold : .medium))
         .lineLimit(1)
         .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(opens ? tone.opacity(0.12) : KeirChatTheme.chrome, in: Capsule())
         .background(KeirChatTheme.chrome, in: Capsule())
-        .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
+        .overlay(Capsule().strokeBorder(opens ? tone.opacity(0.35) : KeirChatTheme.stroke))
     }
 }
 
@@ -185,7 +189,7 @@ struct KeirHeader<Tools: View>: View {
         if attention > 0 {
             let text = attention == 1 ? "1 needs you" : "\(attention) need you"
             Button(action: openInbox) {
-                KeirStatusPill(text: text, tone: OpsTheme.warn) { Image(systemName: "hand.raised.fill").foregroundStyle(OpsTheme.warn) }
+                KeirStatusPill(text: text, tone: OpsTheme.warn, opens: true) { Image(systemName: "hand.raised.fill").foregroundStyle(OpsTheme.warn) }
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(text). Open inbox")
