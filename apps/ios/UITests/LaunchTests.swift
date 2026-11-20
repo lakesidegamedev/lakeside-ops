@@ -724,7 +724,7 @@ final class LaunchTests: XCTestCase {
         openBondMarket(app)
         sleep(1)
         app.terminate()
-        app = launchFresh()
+        app = launchFresh(["--uitest-keep-resume"])
         waitForThreadTitle(app, "Bond market")
     }
 
@@ -733,13 +733,13 @@ final class LaunchTests: XCTestCase {
         openBondMarket(app)
         sleep(1)
         app.terminate()
-        app = launchFresh(["--uitest-resume-archived"])
+        app = launchFresh(["--uitest-resume-archived", "--uitest-keep-resume"])
         waitForThreadTitle(app, "Keir")
         XCTAssertFalse(app.buttons["keir-threads"].label.contains("Bond market"))
         sleep(1)
         app.terminate()
         // The unlisted thread was forgotten, not just hidden: it stays gone when it is listed again.
-        app = launchFresh()
+        app = launchFresh(["--uitest-keep-resume"])
         waitForThreadTitle(app, "Keir")
         XCTAssertFalse(app.buttons["keir-threads"].label.contains("Bond market"))
     }
@@ -750,7 +750,8 @@ final class LaunchTests: XCTestCase {
         let ticket = app.buttons["keir-start-ticket"]
         XCTAssertTrue(ticket.waitForExistence(timeout: 15), "a ticket with no recorded reply is offered")
         XCTAssertTrue(ticket.label.contains("1001"))
-        XCTAssertTrue(find(app, "A reply may still have gone out elsewhere").exists, "the wording claims only what the receipts show")
+        XCTAssertTrue(find(app, "No Discord reply recorded").exists)
+        capture(app, "Keir personal iPhone start")
         ticket.tap()
         let box = composer(app)
         XCTAssertTrue(box.waitForExistence(timeout: 5))
@@ -780,6 +781,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(find(app, "How did the last turn go?").waitForExistence(timeout: 10))
         let menu = app.buttons["keir-ticket-followup"]
         XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        capture(app, "Keir personal iPhone conversation")
         menu.tap()
         let item = find(app, "#1001")
         XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()

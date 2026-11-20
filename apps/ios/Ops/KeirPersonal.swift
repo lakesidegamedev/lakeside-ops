@@ -15,7 +15,8 @@ struct KeirResume {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--uitest-reset-resume") { clear() }
+        let flags = ProcessInfo.processInfo.arguments
+        if flags.contains("--uitest-fixtures") && !flags.contains("--uitest-keep-resume") { clear() }
 #endif
     }
 
@@ -67,7 +68,7 @@ enum KeirTicketFollowUp {
     static func waiting(in hub: JSONValue) -> [JSONValue] {
         hub["tickets"].array.filter {
             $0["replyState"]["state"].string == "no_receipt" && !finished.contains($0["status"].string) && !$0["number"].string.isEmpty
-        }.sorted { ($0["createdAt"].number ?? 0) < ($1["createdAt"].number ?? 0) }
+        }.sorted { (OpsFormat.date($0["createdAt"]) ?? .distantFuture) < (OpsFormat.date($1["createdAt"]) ?? .distantFuture) }
     }
 
     static func title(_ ticket: JSONValue) -> String {
@@ -97,20 +98,16 @@ struct KeirStart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            KeirPortrait(size: .large)
-                .frame(width: 112, height: 112)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("I'm here.").font(.opsHero).tracking(-1)
-                Text("Talk or type. Anything you ask here carries your authority, the same as a DM.")
-                    .font(.callout).foregroundStyle(OpsTheme.muted)
-            }
-            Button(action: speak) {
-                Label("Talk to Keir", systemImage: "waveform").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
-            }
-            .background(OpsTheme.sky, in: RoundedRectangle(cornerRadius: 14)).foregroundStyle(OpsTheme.onAccent)
-            .accessibilityHint("Starts a spoken conversation")
-            .accessibilityIdentifier("keir-start-voice")
+            VStack(spacing: 8) {
+                KeirPortrait(size: .large).frame(width: 112, height: 112).accessibilityHidden(true)
+                Button(action: speak) {
+                    Label("Talk to Keir", systemImage: "waveform")
+                        .font(.headline).padding(.horizontal, 20).frame(minHeight: 44)
+                }
+                .background(OpsTheme.raised, in: Capsule()).foregroundStyle(OpsTheme.ink)
+                .accessibilityHint("Starts a spoken conversation")
+                .accessibilityIdentifier("keir-start-voice")
+            }.frame(maxWidth: .infinity)
             if let ticket {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("No Discord reply recorded").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
@@ -131,8 +128,6 @@ struct KeirStart: View {
                     .disabled(!draftEmpty)
                     .accessibilityHint(draftEmpty ? "Puts a draft in the message box for you to edit. Nothing is sent." : "Clear your draft first. This would replace it.")
                     .accessibilityIdentifier("keir-start-ticket")
-                    Text("This is the studio's receipt record. A reply may still have gone out elsewhere.")
-                        .font(.caption2).foregroundStyle(OpsTheme.muted)
                 }
             }
         }.padding(.top, 16)

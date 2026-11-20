@@ -12,11 +12,11 @@ import LakesideCore
     private var owner: String { KeirResume.scope(profile: .object(["email": .string("owner@example.test")]), server: server)! }
     private var other: String { KeirResume.scope(profile: .object(["email": .string("someone@example.test")]), server: server)! }
 
-    override func setUp() {
+    override func setUp() async throws {
         suite = "keir-resume-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suite)
     }
-    override func tearDown() { UserDefaults().removePersistentDomain(forName: suite) }
+    override func tearDown() async throws { UserDefaults().removePersistentDomain(forName: suite) }
 
     private func session() -> AppSession {
         let config = URLSessionConfiguration.ephemeral
@@ -209,7 +209,7 @@ import LakesideCore
     // MARK: Ticket follow-up
 
     private func ticket(_ number: Int, status: String = "open", reply: String = "no_receipt", created: Double = 1, title: String = "Budget") -> JSONValue {
-        .object(["number": .number(Double(number)), "title": .string(title), "status": .string(status), "createdAt": .number(created), "replyState": .object(["state": .string(reply)])])
+        .object(["number": .number(Double(number)), "title": .string(title), "status": .string(status), "createdAt": .number(1_700_000_000_000 + created), "replyState": .object(["state": .string(reply)])])
     }
 
     func testOnlyOpenTicketsWithNoRecordedReplyAreOfferedOldestFirst() {

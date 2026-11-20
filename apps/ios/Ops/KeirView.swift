@@ -32,6 +32,12 @@ struct KeirView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
+                        if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
+                        else if keir.messages.isEmpty && keir.thread == "main" {
+                            KeirStart(ticket: waitingTickets.first, draftEmpty: draftIsEmpty,
+                                      speak: { voice.stop(); composing = false; voiceMode = true },
+                                      suggest: suggestFollowUp)
+                        }
                         DecisionAnswerReceipt()
                         if AttentionCenter.shared.count > 0 {
                             VStack(alignment: .leading, spacing: 10) {
@@ -45,12 +51,6 @@ struct KeirView: View {
                             }
                         }
                         if keir.thread == "main", (keir.team["open"].number ?? 0) > 0 { KeirWorkingNow(team: keir.team) }
-                        if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
-                        else if keir.messages.isEmpty && keir.thread == "main" {
-                            KeirStart(ticket: waitingTickets.first, draftEmpty: draftIsEmpty,
-                                      speak: { voice.stop(); composing = false; voiceMode = true },
-                                      suggest: suggestFollowUp)
-                        }
                         if keir.messages.isEmpty && keir.thread == "watches" { Text("When a watch is met, Keir reports it here.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.top, 24) }
                         ForEach(keir.messages, id: \.["id"].string) { KeirMessage(message: $0).transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)) }
                         ForEach(keir.tasks.filter { $0["computer"] != .null }, id: \.["id"].string) { task in
@@ -71,7 +71,7 @@ struct KeirView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: keir.messages.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
-                .onChange(of: keir.live.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
+                .onChange(of: keir.live.count) { _, _ in guard !keir.messages.isEmpty else { return }; withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
             }
             if draft.hasPrefix("/") { commands }
 
