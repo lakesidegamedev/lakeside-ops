@@ -311,7 +311,7 @@ function summariseTicket(raw, number, at) {
   };
 }
 
-function createStudioEvidence({ mcpCall, configPath, now = () => Date.now(), readTimeoutMs = READ_TIMEOUT_MS, ticketTimeoutMs = 20000 } = {}) {
+function createStudioEvidence({ mcpCall, configPath, ledgerPath, now = () => Date.now(), readTimeoutMs = READ_TIMEOUT_MS, ticketTimeoutMs = 20000 } = {}) {
   if (typeof mcpCall !== "function") throw new Error("mcpCall is required");
   if (!configPath) throw new Error("configPath is required");
   const mcp = hostBridge({ mcpCall, configPath });
@@ -338,6 +338,37 @@ function createStudioEvidence({ mcpCall, configPath, now = () => Date.now(), rea
     }
   }
 
+  async function queue(signal) {
+    const checkedAt = new Date(now()).toISOString();
+    const timeout = AbortSignal.timeout(readTimeoutMs);
+    let raw;
+    try {
+      raw = await mcp.call("support", "support_list", { kind: "ticket", openOnly: true, includeReplyState: true, limit: 60 },
+        false, signal ? AbortSignal.any([signal, timeout]) : timeout);
+    } catch { return { state: "unavailable", checkedAt }; }
+    if (!Array.isArray(raw?.items) || raw.items.length > 60 || raw.count !== raw.items.length ||
+        raw.items.some((row) => !Number.isSafeInteger(row?.number) || row.number < 1 || typeof row.title !== "string")) {
+      return { state: "unavailable", checkedAt };
+    }
+
+    let ledger;
+    try { if (ledgerPath) ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8")); } catch { /* The support queue is still readable. */ }
+    const snapshotAt = now();
+    const fresh = Number.isFinite(ledger?.heartbeat) && Math.abs(snapshotAt - ledger.heartbeat) < 120000;
+    const items = raw.items.map((row) => {
+      const job = fresh && ledger.jobs?.[ledger.seen?.[`ticket:${row.number}`]];
+      const current = job?.kind === "ticket" && job.ticket === row.number && ["running", "queued", "waiting", "blocked"].includes(job.state);
+      const waitingFor = current && job.state === "waiting" && ["player_reply", "developer_reply"].includes(job.waitingFor?.kind)
+        ? job.waitingFor.kind : null;
+      return {
+        number: row.number, title: text(row.title, 180), status: text(row.status, 40),
+        reply: ["delivered", "no_receipt"].includes(row.replyState?.state) ? row.replyState.state : "unknown",
+        work: current ? job.state : null, waitingFor,
+      };
+    });
+    return { state: "read", checkedAt, source: "Support MCP and Keir's current coordinator state", items, possiblyMore: items.length === 60 };
+  }
+
   async function health(id) {
     if (id !== undefined && id !== null && id !== "" && !GAMES.some((g) => g.id === id)) throw new Error(`unknown game; one of ${GAMES.map((g) => g.id).join(", ")}`);
     const ids = id ? [id] : GAMES.map((g) => g.id);
@@ -348,7 +379,7 @@ function createStudioEvidence({ mcpCall, configPath, now = () => Date.now(), rea
     };
   }
 
-  return { ticket, games: health };
+  return { ticket, queue, games: health };
 }
 
 module.exports = { createStudioEvidence, createGames, summariseTicket, deliveryOf, hostBridge, GAMES, READS, STATES, TICKET_UNSUPPORTED };
