@@ -235,8 +235,11 @@ struct KeirGamesSheet: View {
                 gamesSection
                 if let game = model.selectedGame { detailSections(game) }
             }
+            .scrollContentBackground(.hidden).background(OpsTheme.background)
+            .toolbarBackground(OpsTheme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("Connected games").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .task { await model.load(session) }
         }
         // Contain, so the sheet's id does not replace the ids of the game rows,
@@ -274,7 +277,7 @@ struct KeirGamesSheet: View {
                     .accessibilityIdentifier("keir-game-\(game.id)")
                 }
             }
-        } header: { Text("Games") } footer: {
+        } header: { SectionLabel(text: "Games") } footer: {
             Text("Keir reads these without changing anything, and sends nothing to players.")
         }
     }
@@ -284,24 +287,37 @@ struct KeirGamesSheet: View {
             if model.reading { HStack(spacing: 8) { ProgressView(); Text("Reading \(game.name)…") }.accessibilityIdentifier("keir-game-reading") }
             else if model.detailFailed {
                 VStack(alignment: .leading, spacing: 8) {
-                    KeirGameStateBadge(state: .unavailable)
+                    KeirGameStateDot(state: .unavailable)
                     Text("Keir could not read \(game.name) just now. That says nothing about the game itself.").font(.callout)
                     Button("Read again") { Task { await model.choose(game.id, session) } }.accessibilityIdentifier("keir-game-reread")
                 }
             } else if game.state == .unsupported {
-                KeirGameStateBadge(state: .unsupported)
+                KeirGameStateDot(state: .unsupported)
                 Text(game.note.isEmpty ? "Keir has no read connection for this game." : game.note).font(.callout)
             } else {
                 ForEach(game.reads) { read in KeirGameReadRow(read: read) }
             }
-        } header: { Text(game.name) } footer: {
-            if !game.withheld.isEmpty { Text("Not read by Keir: " + game.withheld.joined(separator: "; ") + ".") }
+            if !model.reading, !model.detailFailed, game.state != .unsupported, let checked = game.reads.compactMap(\.checkedAt).max() {
+                Text("Checked \(checked.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("keir-game-checked")
+            }
+        } header: { SectionLabel(text: game.name) }
+        if !model.reading, !model.detailFailed, game.state != .unsupported, !(game.scope.isEmpty && game.withheld.isEmpty) {
+            Section {
+                if !game.scope.isEmpty { Label(game.scope, systemImage: "lock").font(.caption).foregroundStyle(.secondary) }
+                if !game.withheld.isEmpty {
+                    Label("Not read by Keir: " + game.withheld.joined(separator: "; ") + ".", systemImage: "lock").font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
         if let tickets = game.tickets {
-            Section("Tickets and pings") {
-                KeirGameStateBadge(state: tickets.state, label: tickets.state == .available ? "Through the Inbox" : nil)
+            Section {
+                HStack(spacing: 8) {
+                    KeirGameStateDot(state: tickets.state, label: tickets.state == .available ? "Through the Inbox" : nil)
+                    Text(tickets.state == .available ? "Through the Inbox" : tickets.state.title).font(.callout)
+                }
                 Text(tickets.note).font(.callout).foregroundStyle(.secondary)
-            }
+            } header: { SectionLabel(text: "Tickets and pings") }
         }
         let topics = KeirGameDraft.topics(for: game)
         if !topics.isEmpty, !model.reading {
@@ -309,62 +325,67 @@ struct KeirGamesSheet: View {
                 ForEach(topics) { topic in
                     Button {
                         if let text = KeirGameDraft.prompt(topic, game: game) { ask(text) }
-                    } label: { Label(topic.title, systemImage: topic.icon) }
+                    } label: {
+                        HStack {
+                            Label(topic.title, systemImage: topic.icon)
+                            Spacer(minLength: 8)
+                            Image(systemName: "arrow.up.right").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.sky).accessibilityHidden(true)
+                        }
+                    }
                     .disabled(!draftEmpty)
                     .accessibilityHint(draftEmpty ? "Puts an editable question in the message box. Nothing is sent." : "Clear your draft first. This would replace it.")
                     .accessibilityIdentifier("keir-game-ask-\(topic.rawValue)")
                 }
-            } header: { Text("Ask Keir about \(game.name)") } footer: {
-                Text(draftEmpty ? "The question appears in your message box to edit. Nothing is sent until you send it." : "Clear your message box first. A question would replace your draft.")
+            } header: {
+                if topics.count > 1 { SectionLabel(text: "Ask Keir about \(game.name)") }
             }
         }
     }
 }
 
-struct KeirGameStateBadge: View {
+/// A small semantic dot and the state word, on one line.
+struct KeirGameStateDot: View {
     let state: KeirGameState
     var label: String? = nil
     private var word: String { label ?? state.title }
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: state.icon).font(.caption2.weight(.semibold)).accessibilityHidden(true)
-            Text(word).font(.caption.weight(.semibold))
-        }
-        .foregroundStyle(state.color)
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(state.color.opacity(0.12), in: Capsule())
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Status: \(word)")
-        .accessibilityIdentifier("keir-game-state")
+        Circle().fill(state.color).frame(width: 8, height: 8)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Status: \(word)")
+            .accessibilityIdentifier("keir-game-state")
     }
 }
 
 struct KeirGameReadRow: View {
     let read: KeirGameRead
+    /// The count is redundant when the names are listed beside it.
+    private var facts: [KeirGameFact] {
+        read.facts.contains { $0.label == "Names" } ? read.facts.filter { $0.label != "Bundles" } : read.facts
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                KeirGameStateDot(state: read.state)
                 Text(read.label).font(.callout.weight(.semibold))
                 Spacer(minLength: 8)
-                KeirGameStateBadge(state: read.state)
+                if read.state != .live { Text(read.state.title).font(.caption).foregroundStyle(.secondary) }
             }
-            ForEach(read.facts) { fact in
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(fact.label).font(.caption).foregroundStyle(.secondary)
+            ForEach(facts) { fact in
+                LabeledContent {
                     Text(fact.value).font(.callout)
+                } label: {
+                    Text(fact.label).font(.callout).foregroundStyle(.secondary)
                 }
                 .accessibilityElement(children: .combine)
             }
             if !read.note.isEmpty { Text(read.note).font(.caption).foregroundStyle(.secondary) }
-            // The path to evidence: where the numbers came from and when. Keir can repeat the same read in the conversation.
-            HStack(spacing: 4) {
-                Image(systemName: "doc.text.magnifyingglass").accessibilityHidden(true)
-                Text("Read from \(read.source)")
-                if let at = read.checkedAt { Text("at \(at, style: .time)") }
+            // Technical evidence stays available, folded away: which tool answered.
+            DisclosureGroup {
+                Text("Read from \(read.source)").font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("keir-game-source-\(read.id)")
+            } label: {
+                Text("Details").font(.caption).foregroundStyle(.secondary)
             }
-            .font(.caption2).foregroundStyle(.secondary)
-            .accessibilityElement(children: .combine)
-            .accessibilityIdentifier("keir-game-source-\(read.id)")
         }
         .padding(.vertical, 2)
     }

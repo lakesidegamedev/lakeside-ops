@@ -114,6 +114,7 @@ struct OpsSettings: View {
     @State private var deliveryMessage: String?
     @State private var testingDelivery = false
     @State private var quiet = QuietHours.load()
+    @State private var confirmSignOut = false
 
     var body: some View {
         NavigationStack {
@@ -145,29 +146,37 @@ struct OpsSettings: View {
                     if status == .denied {
                         Button("Turn on notifications in Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
                     }
-                } header: { Text("Notifications") }
+                } header: { SectionLabel(text: "Notifications") }
                 quietSection
                 if session.profile["mode"].string != "standalone" { KeirIdentitySection() }
                 Section {
                     Picker("Theme", selection: $appearance) {
                         ForEach(KeirAppearance.allCases) { Text($0.title).tag($0.rawValue) }
                     }.accessibilityIdentifier("settings-theme")
-                } header: { Text("Appearance") } footer: {
-                    Text("System follows your iPhone's appearance setting. The black theme turns background pixels off on OLED screens.")
+                } header: { SectionLabel(text: "Appearance") } footer: {
+                    Text(KeirAppearance.allCases.map(\.title).joined(separator: ", ") + ". System follows your iPhone. OLED black turns background pixels off on OLED screens.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("About") {
+                Section {
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                } header: { SectionLabel(text: "About") } footer: {
                     Text("Keir portrait art derived from an official Prime Minister's Office photograph, licensed under the Open Government Licence v3.0.")
-                        .font(.caption).foregroundStyle(OpsTheme.muted)
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
                     LabeledContent("Signed in as", value: session.profile["email"].string.hasPrefix("discord_") ? "Owner" : session.profile["email"].string)
-                    Button("Sign out", role: .destructive) { Task { await session.signOut(); dismiss() } }
-                }
+                    Button("Sign out", role: .destructive) { confirmSignOut = true }
+                } header: { SectionLabel(text: "Account") }
             }
             .scrollContentBackground(.hidden).background(OpsTheme.background)
+            .toolbarBackground(OpsTheme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("Done") { dismiss() } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .confirmationDialog("Sign out of Keir on this iPhone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+                Button("Sign out", role: .destructive) { Task { await session.signOut(); dismiss() } }
+                Button("Cancel", role: .cancel) {}
+            }
             .task {
                 status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
                 do { delivery = try await session.get("/api/keir/app/notifications") }
@@ -187,7 +196,7 @@ struct OpsSettings: View {
                 }
             }
             Text(quiet.summary).font(.caption).foregroundStyle(OpsTheme.muted)
-        } header: { Text("Quiet hours") } footer: { Text("Applies to this iPhone only. Your other devices are not affected.") }
+        } header: { SectionLabel(text: "Quiet hours") } footer: { Text("Applies to this iPhone only. Your other devices are not affected.") }
     }
 
     private func timeBinding(_ field: WritableKeyPath<QuietHours, Int>) -> Binding<Date> {
