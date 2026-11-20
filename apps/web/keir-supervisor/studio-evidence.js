@@ -355,15 +355,24 @@ function createStudioEvidence({ mcpCall, configPath, ledgerPath, now = () => Dat
     try { if (ledgerPath) ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8")); } catch { /* The support queue is still readable. */ }
     const snapshotAt = now();
     const fresh = Number.isFinite(ledger?.heartbeat) && Math.abs(snapshotAt - ledger.heartbeat) < 120000;
+    const pending = new Set(Object.values(ledger?.decisions || {})
+      .filter((decision) => decision.state === "pending")
+      .map((decision) => decision.ticket ?? ledger.jobs?.[decision.jobId]?.ticket));
     const items = raw.items.map((row) => {
       const job = fresh && ledger.jobs?.[ledger.seen?.[`ticket:${row.number}`]];
       const current = job?.kind === "ticket" && job.ticket === row.number && ["running", "queued", "waiting", "blocked"].includes(job.state);
       const waitingFor = current && job.state === "waiting" && ["player_reply", "developer_reply"].includes(job.waitingFor?.kind)
         ? job.waitingFor.kind : null;
+      const nextCheckAt = current && job.state === "waiting" && Number.isSafeInteger(job.wakeAt) &&
+        job.wakeAt >= snapshotAt && job.wakeAt < snapshotAt + 366 * 86400000 ? new Date(job.wakeAt).toISOString() : null;
+      const implementationOwner = ledger?.supportOwner?.tickets?.[row.number];
       return {
         number: row.number, title: text(row.title, 180), status: text(row.status, 40),
         reply: ["delivered", "no_receipt"].includes(row.replyState?.state) ? row.replyState.state : "unknown",
-        work: current ? job.state : null, waitingFor,
+        work: current ? job.state : null, waitingFor, nextCheckAt,
+        priorActivations: current && Number.isSafeInteger(job.activationCount) ? job.activationCount : null,
+        implementationHeld: fresh ? Boolean(implementationOwner && implementationOwner !== "keir") : null,
+        ownerDecisionPending: fresh ? pending.has(row.number) : null,
       };
     });
     return { state: "read", checkedAt, source: "Support MCP and Keir's current coordinator state", items, possiblyMore: items.length === 60 };

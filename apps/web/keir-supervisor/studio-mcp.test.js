@@ -46,7 +46,7 @@ test("queue distinguishes support reply receipts from a fresh coordinator wait",
   const now = 1795160000000;
   const ledgerPath = path.join(dir, "ledger.json");
   const ledger = { heartbeat: now, seen: { "ticket:10": "a" }, jobs: {
-    a: { ticket: 10, kind: "ticket", state: "waiting", waitingFor: { kind: "player_reply" }, messages: ["private"] },
+    a: { ticket: 10, kind: "ticket", state: "waiting", waitingFor: { kind: "player_reply" }, wakeAt: now + 60000, activationCount: 3, messages: ["private"] },
   } };
   fs.writeFileSync(ledgerPath, JSON.stringify(ledger));
   const evidence = createStudioEvidence({ configPath, ledgerPath, now: () => now, mcpCall: async (server, tool, args) => {
@@ -56,8 +56,20 @@ test("queue distinguishes support reply receipts from a fresh coordinator wait",
     return { count: 1, items: [{ number: 10, title: "Test ticket", status: "open", replyState: { state: "delivered" } }] };
   } });
   const result = await evidence.queue();
-  assert.deepEqual(result.items, [{ number: 10, title: "Test ticket", status: "open", reply: "delivered", work: "waiting", waitingFor: "player_reply" }]);
+  assert.deepEqual(result.items, [{ number: 10, title: "Test ticket", status: "open", reply: "delivered", work: "waiting", waitingFor: "player_reply", nextCheckAt: new Date(now + 60000).toISOString(), priorActivations: 3, implementationHeld: false, ownerDecisionPending: false }]);
+  delete ledger.jobs.a.waitingFor;
+  ledger.supportOwner = { tickets: { 10: "owner" } };
+  ledger.decisions = { "decision-fixture": { jobId: "a", ticket: 10, state: "pending" } };
+  fs.writeFileSync(ledgerPath, JSON.stringify(ledger));
+  const scheduled = (await evidence.queue()).items[0];
+  assert.equal(scheduled.waitingFor, null);
+  assert.equal(scheduled.nextCheckAt, new Date(now + 60000).toISOString());
+  assert.equal(scheduled.implementationHeld, true);
+  assert.equal(scheduled.ownerDecisionPending, true);
   ledger.heartbeat -= 130000;
   fs.writeFileSync(ledgerPath, JSON.stringify(ledger));
-  assert.equal((await evidence.queue()).items[0].waitingFor, null);
+  const stale = (await evidence.queue()).items[0];
+  assert.equal(stale.waitingFor, null);
+  assert.equal(stale.nextCheckAt, null);
+  assert.equal(stale.implementationHeld, null);
 });
