@@ -33,6 +33,10 @@ test("studio Keir proxy authenticates first and pins even absolute request URLs 
   const page = await get("/keir/app");
   assert.equal(page.status, 200);
   assert.match(page.body, /id="back-to-ops"/);
+  assert.match(page.body, /id="studio-links"/);
+  assert.match(page.body, /href="\/inbox"/);
+  assert.match(page.body, /href="\/tickets"/);
+  assert.match(page.body, /id="attention"/);
   const config = await get("/api/portal/config");
   assert.equal(config.status, 200);
   assert.deepEqual(JSON.parse(config.body), { mode: "lakeside", auth: "sso", loginOrigins: [] });
@@ -40,6 +44,7 @@ test("studio Keir proxy authenticates first and pins even absolute request URLs 
   assert.equal(script.status, 200);
   assert.match(script.headers["content-type"], /javascript/);
   assert.match(script.body, /back-to-ops/);
+  assert.match(script.body, /\/api\/keir\/app\/decisions/);
   const styles = await get("/portal.css");
   assert.equal(styles.status, 200);
   assert.match(styles.headers["content-type"], /text\/css/);

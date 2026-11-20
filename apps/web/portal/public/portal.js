@@ -31,13 +31,16 @@ function toolActivity(calls) {
   }
   return group;
 }
+let team = null, decisions = [], decisionsVersion = "", mode = "standalone", answering = new Set();
+let decisionLayout = "", decisionRequest = 0;
+const draftReplies = new Map();
 let selected = "main", cursor = 0, version = "", stopped = true, generation = 0;
 function error(e) { $("error").textContent = e.message; $("error").hidden = false; }
 async function api(route, body, signal) {
   const r = await fetch(route, { method: body ? "POST" : "GET", headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined, signal });
   const data = await r.json(); if (!r.ok) { if (r.status === 401 && route !== "/api/login") signedOut(); throw new Error(data.error || "Request failed"); } return data;
 }
-function signedOut() { $("controls").close(); $("models").close(); controls = null; controlsVersion = ""; stopped = true; generation++; $("workspace").hidden = true; $("login").hidden = false; }
+function signedOut() { decisionRequest++; draftReplies.clear(); team = null; decisions = []; decisionsVersion = ""; renderAttention(); $("controls").close(); $("models").close(); controls = null; controlsVersion = ""; stopped = true; generation++; $("workspace").hidden = true; $("login").hidden = false; }
 async function connected() {
   const me = await api("/api/me"); $("identity").textContent = me.email;
   $("workspace").hidden = false; $("login").hidden = true; $("password").value = ""; $("error").hidden = true;
@@ -54,7 +57,7 @@ async function threads() {
 function select(id, title = "Keir") {
   navigation(false); $("models").close(); controls = null; controlsVersion = ""; legacyModelSelection = "auto"; $("model-picker").textContent = "Model · Loading…"; selected = id; cursor = 0; version = ""; $("title").textContent = title; $("messages").replaceChildren(); $("messages").append(taskPanel); $("tasks").replaceChildren();
   for (const b of $("threads").children) b.setAttribute("aria-current", String(b.dataset.thread === id));
-  welcome(); const run = ++generation; poll(run);
+  welcome(); renderAttention(); const run = ++generation; poll(run);
 }
 async function poll(run) {
   while (!stopped && run === generation) {
@@ -70,6 +73,7 @@ async function poll(run) {
       if (view.messages?.length || view.revised?.length) $("messages").scrollTop = $("messages").scrollHeight;
       cursor = view.cursor; version = view.version; $("connection").textContent = view.controls?.stopped ? "Stopped" : view.working ? "Working" : "Connected"; $("connection").dataset.state = view.controls?.stopped ? "stopped" : view.working ? "working" : "ready";
       legacyModelSelection = view.modelSelection || "auto";
+      team = view.team || null; renderAttention(); refreshDecisions(view.version);
       if (view.controls) renderControls(view.controls);
       $("tasks").replaceChildren();
       for (const task of view.tasks || []) {
@@ -92,7 +96,7 @@ $("compose").onsubmit = async e => { e.preventDefault(); const text = $("message
 };
 api("/api/portal/config").then(config => {
   if (config.mode === "lakeside") {
-    $("back-to-ops").hidden = false;
+    mode = "lakeside"; $("back-to-ops").hidden = false; $("studio-links").hidden = false; renderAttention();
     $("login").querySelector("p").textContent = "Sign in with your studio account to open Keir.";
     $("email-label").hidden = config.auth !== "password";
     $("sso").href = "/auth/game?next=" + encodeURIComponent(new URL("/keir/app", location.origin).href);
@@ -184,16 +188,92 @@ document.addEventListener("keydown", e => {
   }
 });
 function welcome() {
-  const empty = document.createElement("div"), mark = document.createElement("div"), title = document.createElement("h2"), intro = document.createElement("p"), prompts = document.createElement("div");
-  empty.id = "welcome"; mark.className = "presence-mark"; mark.setAttribute("aria-hidden", "true");
-  for (let i = 0; i < 5; i++) mark.append(document.createElement("i"));
-  title.textContent = "What are we working on?"; intro.textContent = "Ask a question, investigate a problem, or put a plan into motion."; prompts.className = "starter-prompts";
+  const empty = document.createElement("div"), mark = document.createElement("img"), title = document.createElement("h2"), prompts = document.createElement("div");
+  empty.id = "welcome"; mark.src = "/keir/keir-mark.svg"; mark.alt = ""; mark.width = 56; mark.height = 56;
+  title.textContent = "What are we working on?"; prompts.className = "starter-prompts";
   for (const [label, text] of [["Explore this project", "Explore this project and tell me how it works."], ["Investigate a problem", "Help me investigate a problem: "], ["Plan a change", "Help me plan a change: "]]) {
     const button = document.createElement("button"); button.type = "button"; button.textContent = label;
     button.onclick = () => { $("message").value = text; $("message").focus(); }; prompts.append(button);
   }
-  empty.append(mark, title, intro, prompts); $("messages").append(empty);
+  empty.append(mark, title);
+  const glance = glanceLine(); if (glance) empty.append(glance);
+  empty.append(prompts); $("messages").append(empty);
 }
+const STATE_LABEL = { "needs-you": "Needs you", stuck: "Stuck", working: "Working", queued: "Queued", waiting: "Waiting", held: "Held" };
+/// Real counts from Keir's board, only the non-zero ones. Nothing is shown before the first poll.
+function glanceLine() {
+  const parts = [];
+  if (decisions.length) parts.push(["needs a decision", decisions.length]);
+  if (team) for (const [key, label] of [["needsYou", "need you"], ["stuck", "stuck"], ["working", "working"], ["waiting", "waiting"]]) if (team[key]) parts.push([label, team[key]]);
+  if (!parts.length) return null;
+  const list = document.createElement("ul"); list.className = "glance";
+  for (const [label, n] of parts) { const li = document.createElement("li"), b = document.createElement("strong"); b.textContent = n; li.append(b, ` ${label}`); list.append(li); }
+  return list;
+}
+function studioHref(item) { return item.ticket && mode === "lakeside" ? `/tickets/${encodeURIComponent(item.ticket)}` : null; }
+function renderAttention() {
+  const board = $("work-items"); board.replaceChildren();
+  const count = Math.max(decisions.length, team?.needsYou || 0) + (team?.stuck || 0); // a decision is usually the same item the board calls needs-you
+  $("attention-count").hidden = !count; $("attention-count").textContent = count;
+  $("decisions-panel").hidden = !decisions.length;
+  $("work-summary").textContent = !team ? "Waiting for Keir's first report." : team.open ? `${team.open} open: ${[["needsYou", "need you"], ["stuck", "stuck"], ["working", "working"], ["waiting", "waiting or queued"], ["held", "held"]].filter(([k]) => team[k]).map(([k, l]) => `${team[k]} ${l}`).join(", ") || "none active"}.` : "Nothing in progress.";
+  for (const item of team?.items || []) {
+    const li = document.createElement("li"), title = document.createElement("span"), meta = document.createElement("span"), state = document.createElement("span"); li.dataset.state = item.state;
+    title.className = "item-title"; title.textContent = item.title; meta.className = "item-meta"; state.className = "state"; state.textContent = STATE_LABEL[item.state] || item.state;
+    meta.append(state); if (item.reason) meta.append(document.createTextNode(` · ${item.reason}`));
+    li.append(title, meta);
+    const href = studioHref(item); if (href) { const a = document.createElement("a"); a.href = href; a.textContent = `Ticket ${item.ticket} in studio`; li.append(a); }
+    board.append(li);
+  }
+  const layout = JSON.stringify([decisions, [...answering]]);
+  if (layout !== decisionLayout) {
+    decisionLayout = layout;
+    $("decisions").replaceChildren(...decisions.map(decisionCard));
+  }
+  if (!$("welcome")) return;
+  $("welcome").querySelector(".glance")?.remove(); const glance = glanceLine(); if (glance) $("welcome").querySelector(".starter-prompts").before(glance);
+}
+function decisionCard(x) {
+  const card = document.createElement("div"), question = document.createElement("div"), meta = document.createElement("div"), actions = document.createElement("div");
+  card.className = "decision"; question.className = "question"; question.textContent = x.question; meta.className = "meta";
+  meta.textContent = [x.kind, x.ticket ? `ticket ${x.ticket}` : null, x.canAnswer ? null : x.reason].filter(Boolean).join(" · ");
+  card.append(question); if (meta.textContent) card.append(meta);
+  if (x.args && Object.keys(x.args).length) { const d = document.createElement("details"), s = document.createElement("summary"), pre = document.createElement("pre"); s.textContent = "Exact action"; pre.textContent = JSON.stringify(x.args, null, 2); d.append(s, pre); card.append(d); }
+  actions.className = "actions";
+  const add = (label, verdict, cls) => { const b = document.createElement("button"); b.type = "button"; b.textContent = label; if (cls) b.className = cls; b.disabled = !x.canAnswer || answering.has(x.id); b.onclick = () => answer(x, verdict); actions.append(b); };
+  if (x.options?.length) x.options.slice(0, 6).forEach((o, i) => add(String(o.label || o.title || o), `choose:${o.id || i + 1}`));
+  else { if (x.canApprove) add("Approve", "approve", "primary"); add("Reject", "reject"); }
+  if (x.canAnswer) {
+    const input = document.createElement("input");
+    input.setAttribute("aria-label", "Reply to " + x.question);
+    input.placeholder = "Reply to Keir"; input.maxLength = 2000;
+    input.value = draftReplies.get(x.id) || "";
+    const send = document.createElement("button"); send.type = "button"; send.textContent = "Reply";
+    const update = () => { draftReplies.set(x.id, input.value); send.disabled = answering.has(x.id) || !input.value.trim(); };
+    input.oninput = update; update();
+    send.onclick = () => answer(x, "explain", input.value.trim());
+    actions.append(input, send);
+  }
+  card.append(actions); return card;
+}
+async function answer(x, verdict, text = "") {
+  if (answering.has(x.id)) return; answering.add(x.id); renderAttention();
+  try { await api(`/api/keir/app/decisions/${x.id}`, { verdict, text }); draftReplies.delete(x.id); decisionsVersion = ""; await refreshDecisions(""); $("error").hidden = true; }
+  catch (e) { error(e); }
+  finally { answering.delete(x.id); renderAttention(); }
+}
+async function refreshDecisions(v) {
+  if (v && v === decisionsVersion) return; decisionsVersion = v || "";
+  const request = ++decisionRequest;
+  try {
+    const value = await api("/api/keir/app/decisions");
+    if (request !== decisionRequest || stopped) return;
+    decisions = value.decisions || [];
+    for (const id of draftReplies.keys()) if (!decisions.some(x => x.id === id)) draftReplies.delete(id);
+    renderAttention();
+  } catch (e) { if (!stopped && request === decisionRequest) { decisionsVersion = ""; error(e); } }
+}
+$("open-attention").onclick = () => { const open = $("attention").hidden; $("attention").hidden = !open; $("open-attention").setAttribute("aria-expanded", String(open)); };
 
 function renderModelPicker() {
   const lane = $("model-lane").value, options = controls?.options?.[lane] || [];
