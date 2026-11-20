@@ -3628,6 +3628,12 @@ async function requestAutomatedTicketRecheck(ticket) {
 let wikiExportCache = null; // { md, json, builtAt }
 const WIKI_EXPORT_CACHE_MS = 10 * 60 * 1000;
 
+// Built on first use, or at boot when configured so a job that was running
+// when the server stopped resumes without waiting for the owner's next poll.
+const { handleKeirSupervisorRoute, createSupervisorHost } = require("./keir-supervisor/routes");
+const keirSupervisorHost = createSupervisorHost();
+if (process.env.KEIR_SUPERVISOR_DIR) keirSupervisorHost.get();
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const pathname = url.pathname;
@@ -3866,6 +3872,11 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
+
+  // Keir private owner supervisor (/api/keir/supervisor/*): the owner's own
+  // session with sandboxed repository work, served here so it keeps working
+  // while the support operator is offline. Owner identity only.
+  if (await handleKeirSupervisorRoute(req, res, pathname, { resolveSession, getSupervisor: keirSupervisorHost.get })) return;
 
   // The desktop app and direct web link open Keir without the studio dashboard.
   if (await require("./portal/studio").handleStudioPortal(req, res, pathname, {
