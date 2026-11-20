@@ -87,9 +87,10 @@ enum KeirTicketFollowUp {
 
 // MARK: Start screen
 
-/// The quiet first screen of an empty conversation: Keir, an invitation to
-/// talk, and at most one real ticket to follow up on. It repeats none of the
-/// attention counts the rest of the screen already shows.
+/// The quiet first screen of an empty conversation. Keir is already at the top
+/// of the screen, so this is only a line of welcome, an invitation to talk and
+/// at most one real ticket to follow up on. It repeats none of the attention
+/// counts the header already shows.
 struct KeirStart: View {
     let ticket: JSONValue?
     let draftEmpty: Bool
@@ -97,45 +98,58 @@ struct KeirStart: View {
     let suggest: (JSONValue) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(spacing: 8) {
-                KeirPortrait(size: .large).frame(width: 112, height: 112).accessibilityHidden(true)
-                Button(action: speak) {
-                    Label("Talk to Keir", systemImage: "waveform")
-                        .font(.headline).padding(.horizontal, 20).frame(minHeight: 44)
-                }
-                .background(OpsTheme.raised, in: Capsule()).foregroundStyle(OpsTheme.ink)
-                .accessibilityHint("Starts a spoken conversation")
-                .accessibilityIdentifier("keir-start-voice")
-            }.frame(maxWidth: .infinity)
+        VStack(spacing: 22) {
+            VStack(spacing: 6) {
+                Text("Hi, it's Keir.").font(.title2.weight(.semibold)).foregroundStyle(OpsTheme.ink)
+                Text("Ask about tickets, turns or anything in the studio.")
+                    .font(.callout).foregroundStyle(OpsTheme.muted).multilineTextAlignment(.center)
+            }
+            .accessibilityElement(children: .combine)
+            Button(action: speak) {
+                Label("Talk to Keir", systemImage: "waveform")
+                    .font(.callout.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 44)
+                    .background(KeirChatTheme.chrome, in: Capsule())
+                    .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
+                    .shadow(color: KeirChatTheme.shadow, radius: 8, y: 2)
+            }
+            .buttonStyle(.plain).foregroundStyle(OpsTheme.ink)
+            .accessibilityHint("Starts a spoken conversation")
+            .accessibilityIdentifier("keir-start-voice")
             if let ticket {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("No Discord reply recorded").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
+                    Text("No Discord reply recorded").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
                     Button { suggest(ticket) } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "ticket")
+                                .font(.callout).foregroundStyle(OpsTheme.warn)
+                                .frame(width: 34, height: 34)
+                                .background(OpsTheme.warn.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Follow up on ticket #\(ticket["number"].string)").font(.callout.weight(.semibold))
+                                Text("Follow up on ticket #\(ticket["number"].string)").font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
                                 Text(KeirTicketFollowUp.title(ticket)).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
                             }
                             Spacer(minLength: 8)
-                            Image(systemName: "arrow.up.left").font(.caption)
+                            Image(systemName: "arrow.up.left").font(.caption).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
                         }
-                        .padding(12).contentShape(Rectangle())
+                        .keirObjectCard(padding: 12)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(OpsTheme.hairline))
+                    .opacity(draftEmpty ? 1 : 0.5)
                     .disabled(!draftEmpty)
                     .accessibilityHint(draftEmpty ? "Puts a draft in the message box for you to edit. Nothing is sent." : "Clear your draft first. This would replace it.")
                     .accessibilityIdentifier("keir-start-ticket")
                 }
             }
-        }.padding(.top, 16)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 72).padding(.horizontal, 8)
     }
 }
 
-/// Always within reach once the conversation has history: a small menu in the
-/// composer row listing tickets with no recorded Discord reply.
+/// Inside the composer's "+" menu once the conversation has history: tickets
+/// with no recorded Discord reply, each an editable draft. Nothing is sent.
 struct KeirTicketMenu: View {
     let tickets: [JSONValue]
     let draftEmpty: Bool
@@ -151,8 +165,7 @@ struct KeirTicketMenu: View {
                     }
                 }
                 if !draftEmpty { Text("Clear your draft to use a suggestion.") }
-            } label: { Image(systemName: "ticket") }
-                .accessibilityLabel("Ask about a ticket with no recorded Discord reply")
+            } label: { Label("Ticket follow-ups", systemImage: "ticket") }
                 .accessibilityHint("Puts an editable draft in the message box. Nothing is sent.")
                 .accessibilityIdentifier("keir-ticket-followup")
         }

@@ -91,10 +91,10 @@ struct KeirThreads: View {
                     }
                 }.listRowBackground(Color.clear)
             }
-            .listStyle(.plain).opsScreen().navigationTitle("Threads").navigationBarTitleDisplayMode(.inline)
+            .listStyle(.plain).opsScreen().navigationTitle("Conversations").navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) { Button { title = ""; naming = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("New thread") }
+                ToolbarItem(placement: .primaryAction) { Button { title = ""; naming = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("New conversation") }
             }
             .alert("New thread", isPresented: $naming) {
                 TextField("What is it about?", text: $title)

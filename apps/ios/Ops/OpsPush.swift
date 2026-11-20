@@ -20,6 +20,9 @@ import LakesideCore
     @Published var openKeirVoice = false
     @Published var destination: OpsDestination?
     @Published var activityFilter = "all"
+    /// Settings is one sheet for the whole app. Inbox and Ops open it from their
+    /// toolbar; chat opens it from Keir's menu.
+    @Published var showSettings = false
     /// Pushed screens inside the Ops tab. Feed and Goals used to be tabs of their
     /// own; they now live under Ops, and notifications reach them through here.
     @Published var studioPath: [StudioRoute] = []
@@ -30,7 +33,7 @@ import LakesideCore
         if decision["canOpenTask"] == .bool(false), decision["ticket"] != .null { tab = .activity; destination = .ticket(.object(["number": decision["ticket"]])) }
         else { openTask(decision["jobId"].string) }
     }
-    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; activityFilter = "all"; studioPath = [] }
+    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; activityFilter = "all"; studioPath = []; showSettings = false }
 }
 
 enum OpsDestination: Identifiable, Equatable {

@@ -74,8 +74,10 @@ struct KeirWorkingNow: View {
                 .transition(.opacity)
             }
         }
-        .background(OpsTheme.surface)
-        .overlay(alignment: .bottom) { Hairline() }
+        .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(KeirChatTheme.stroke))
+        .shadow(color: KeirChatTheme.shadow, radius: 10, y: 3)
     }
 
     private var statusLine: String {

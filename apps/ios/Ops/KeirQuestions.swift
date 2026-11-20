@@ -40,7 +40,7 @@ struct KeirQuestions: View {
                                     if option["recommended"].bool { Text("Recommended").font(.caption2).foregroundStyle(OpsTheme.mint) }
                                 }
                                 Spacer(minLength: 0)
-                            }.padding(10).background(chosen ? OpsTheme.sky.opacity(0.12) : OpsTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+                            }.padding(10).background(chosen ? OpsTheme.sky.opacity(0.14) : OpsTheme.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }.buttonStyle(.plain).disabled(answered || busy)
                     }
                     TextField("Or write your own answer", text: Binding(get: { custom[id] ?? "" }, set: { custom[id] = $0 }), axis: .vertical)

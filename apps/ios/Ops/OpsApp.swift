@@ -19,19 +19,21 @@ struct OpsRoot: View {
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
     @Environment(\.scenePhase) private var scenePhase
-    @State private var settings = false
 
     private var standalone: Bool { session.profile["mode"].string == "standalone" }
 
-    /// Conversation is the landing place. The inbox holds tickets, decisions and
-    /// work that needs a person. Ops holds the studio's systems, the briefing and
-    /// goals. On iPad (iOS 18 and later) the same three become a sidebar.
+    /// Chat is the landing place: Keir, the timeline and one composer, with
+    /// settings, stop and model choice behind its menus instead of on screen.
+    /// The inbox holds tickets, decisions and work that needs a person. Ops holds
+    /// the studio's systems, the briefing and goals. The dock is the native tab
+    /// bar so it stays quiet, readable and reachable by VoiceOver; on iPad
+    /// (iOS 18 and later) the same places become a sidebar.
     private var tabs: some View {
         TabView(selection: $router.tab) {
-            NavigationStack { KeirView(keir: OpsServices.shared.keir).toolbar { settingsButton } }
-                .tabItem { Label("Conversation", systemImage: "bubble.left.and.text.bubble.right") }.tag(OpsTab.keir)
+            NavigationStack { KeirView(keir: OpsServices.shared.keir) }
+                .tabItem { Label("Chat", systemImage: "bubble.left") }.tag(OpsTab.keir)
             NavigationStack { ActivityView().toolbar { settingsButton } }
-                .tabItem { Label("Inbox", systemImage: "tray.full") }.tag(OpsTab.activity)
+                .tabItem { Label("Inbox", systemImage: "tray") }.tag(OpsTab.activity)
                 .badge(ops.attention)
             if !standalone {
                 NavigationStack(path: $router.studioPath) {
@@ -55,7 +57,6 @@ struct OpsRoot: View {
     var body: some View {
         adaptiveTabs
         .tint(OpsTheme.sky)
-        .toolbarBackground(.bar, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
         .onOpenURL { url in
             guard url.scheme == "lakesideops", url.host == "keir" else { return }
             let view = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value
@@ -69,7 +70,7 @@ struct OpsRoot: View {
             router.openKeirControls = view == "controls"
             router.openKeirVoice = view == "voice"
         }
-        .sheet(isPresented: $settings) { OpsSettings() }
+        .sheet(isPresented: $router.showSettings) { OpsSettings() }
         .sheet(item: $router.destination) { OpsDestinationView(destination: $0) }
         .task { await OpsPushRegistration.request() }
         // Reopen the last private conversation once the account is known, and
@@ -93,7 +94,7 @@ struct OpsRoot: View {
     }
 
     private var settingsButton: some View {
-        Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings")
+        Button { router.showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Settings")
     }
 }
 
@@ -140,8 +141,12 @@ struct OpsSettings: View {
                     }
                 } header: { Text("Notifications") }
                 if session.profile["mode"].string != "standalone" { KeirIdentitySection() }
-                Section("Appearance") {
-                    Picker("Theme", selection: $appearance) { Text("Dark").tag("dark"); Text("Light").tag("light"); Text("System").tag("system") }
+                Section {
+                    Picker("Theme", selection: $appearance) {
+                        ForEach(KeirAppearance.allCases) { Text($0.title).tag($0.rawValue) }
+                    }.accessibilityIdentifier("settings-theme")
+                } header: { Text("Appearance") } footer: {
+                    Text("System follows your iPhone's appearance setting. The black theme turns background pixels off on OLED screens.")
                 }
                 Section("About") {
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")

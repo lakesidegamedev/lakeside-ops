@@ -9,6 +9,9 @@ struct FailureBanner: View {
 struct NativeMarkdown: View {
     let text: String
     var streaming = false
+    /// Paragraphs fill the available width by default. A chat bubble passes
+    /// false so short replies hug their text instead of spanning the screen.
+    var fills = true
     @Environment(\.horizontalSizeClass) private var sizeClass
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -27,7 +30,8 @@ struct NativeMarkdown: View {
                     Text(inline(String(block.text.dropFirst(4)))).font(.headline)
                 } else if block.text.split(separator: "\n").filter({ $0.contains("|") }).count >= 2 {
                     table(block.text)
-                } else { Text(inline(block.text)).frame(maxWidth: .infinity, alignment: .leading) }
+                } else if fills { Text(inline(block.text)).frame(maxWidth: .infinity, alignment: .leading) }
+                else { Text(inline(block.text)).fixedSize(horizontal: false, vertical: true) }
             }
         }.textSelection(.enabled)
     }

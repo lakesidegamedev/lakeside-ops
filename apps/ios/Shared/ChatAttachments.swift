@@ -85,10 +85,8 @@ final class ChatAttachments: ObservableObject {
 }
 
 struct AttachmentPicker: View {
-    @EnvironmentObject private var session: AppSession
     @ObservedObject var attachments: ChatAttachments
     var compact = false
-    @State private var photo: PhotosPickerItem?
     @State private var files = false
     @State private var choices = false
     @State private var photos = false
@@ -104,6 +102,26 @@ struct AttachmentPicker: View {
                 Button("Choose file") { files = true }
                 Button("Cancel", role: .cancel) {}
             }
+            .attachmentSources(attachments, photos: $photos, files: $files)
+    }
+}
+
+extension View {
+    /// The photo library and file importer behind any attach control. Keir's
+    /// composer opens them from its own menu; other screens use AttachmentPicker.
+    func attachmentSources(_ attachments: ChatAttachments, photos: Binding<Bool>, files: Binding<Bool>) -> some View {
+        modifier(AttachmentSources(attachments: attachments, photos: photos, files: files))
+    }
+}
+
+private struct AttachmentSources: ViewModifier {
+    @EnvironmentObject private var session: AppSession
+    @ObservedObject var attachments: ChatAttachments
+    @Binding var photos: Bool
+    @Binding var files: Bool
+    @State private var photo: PhotosPickerItem?
+    func body(content: Content) -> some View {
+        content
             .photosPicker(isPresented: $photos, selection: $photo, matching: .images)
             .fileImporter(isPresented: $files, allowedContentTypes: [.image, .pdf, .text, .json, .data], allowsMultipleSelection: true) { result in
                 let selected = attachments.scope

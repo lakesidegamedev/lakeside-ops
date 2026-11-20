@@ -2,6 +2,11 @@ import SwiftUI
 import PDFKit
 import LakesideCore
 
+/// The chat. Keir sits at the top, the timeline is the screen, and one pill
+/// composer sits at the bottom above the dock. Work, decisions and questions
+/// appear inline as objects only when they exist. Settings, stop, model,
+/// routing, conversations and the desk are behind the two menus (Keir's menu
+/// at the top left and "+" in the composer), so the screen itself stays quiet.
 struct KeirView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
@@ -23,108 +28,299 @@ struct KeirView: View {
     @State private var sheetRequest: Task<Void, Never>?
     @State private var connectionAttempt = 0
     @State private var confirmingYoloOff = false
-    enum KeirSheet: String, Identifiable { case threads, ideas, watches, memory, computer, controls; var id: String { rawValue } }
+    @State private var attachPhotos = false
+    @State private var attachFiles = false
+    enum KeirSheet: String, Identifiable { case threads, ideas, watches, memory, computer, controls, desk; var id: String { rawValue } }
 
-    private var content: some View {
-        VStack(spacing: 0) {
-            runtimeStrip
-            contextBar
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 22) {
-                        if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
-                        else if keir.messages.isEmpty && keir.thread == "main" {
-                            KeirStart(ticket: waitingTickets.first, draftEmpty: draftIsEmpty,
-                                      speak: { voice.stop(); composing = false; voiceMode = true },
-                                      suggest: suggestFollowUp)
-                        }
-                        DecisionAnswerReceipt()
-                        if keir.messages.isEmpty && keir.thread == "watches" { Text("When a watch is met, Keir reports it here.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.top, 24) }
-                        ForEach(keir.messages, id: \.["id"].string) { KeirMessage(message: $0).transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)) }
-                        ForEach(threadDecisions, id: \.["id"].string) { DecisionCard(decision: $0) }
-                        ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) { KeirQuestions(panel: $0) }
-                        if keir.thread == "main", !keir.messages.isEmpty, (keir.team["open"].number ?? 0) > 0 {
-                            KeirWorkingNow(team: keir.team)
-                        }
-                        ForEach(keir.tasks.filter { $0["computer"] != .null }, id: \.["id"].string) { task in
-                            NavigationLink { KeirComputerScreen(taskId: task["id"].string) } label: {
-                                Label("\(task["computer"]["title"].string.nonempty ?? "Keir's computer") · View or take control", systemImage: "desktopcomputer").font(.callout)
-                            }
-                        }
-                        ForEach(keir.live.filter { $0["state"].string == "running" || !$0["live"].array.isEmpty }, id: \.["id"].string) { task in
-                            VStack(alignment: .leading, spacing: 6) {
-                                OpsStatusBadge(status: .running)
-                                if !task["live"].array.isEmpty { KeirToolCalls(calls: task["live"].array) }
-                            }.accessibilityIdentifier("keir-chat-working")
-                        }
-                        Color.clear.frame(height: 1).id("end")
-                    }.padding(.horizontal, 16).padding(.vertical, 16)
-                        .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
-                        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: keir.messages.count)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .onChange(of: keir.messages.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
-                .onChange(of: keir.live.count) { _, _ in guard !keir.messages.isEmpty else { return }; withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
-            }
-            if draft.hasPrefix("/") { commands }
+    private var standalone: Bool { session.profile["mode"].string == "standalone" }
 
-            if let error = voice.error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn).padding(.horizontal, 16) }
-            if voice.listening { Text("Listening. Tap the microphone to finish, then send.").font(.caption).foregroundStyle(OpsTheme.sky).padding(.horizontal, 16).padding(.vertical, 4) }
-            if voice.speaking {
-                Button { voice.stopSpeaking() } label: { Label("Stop speaking", systemImage: "speaker.slash").font(.caption) }.padding(.vertical, 6)
-            }
-            if let error = keir.error, keir.connected || !keir.messages.isEmpty { Text(error).font(.caption).foregroundStyle(OpsTheme.warn).padding(.horizontal, 16).padding(.bottom, 4).lineLimit(2) }
-            if keir.thread == "watches" {
-                Button { sheet = .watches } label: { Label("Manage watches", systemImage: "binoculars").fontWeight(.semibold).frame(maxWidth: .infinity).padding(.vertical, 12) }
-                    .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 16)).padding(.horizontal, 12).padding(.bottom, 8)
-            } else { composer }
-        }
-    }
+    // MARK: Timeline
 
-    private var navigationContent: some View {
-        content
-        .opsScreen()
-        .navigationTitle("Keir").navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Menu {
-                    Button { presentFromMenu(.controls) } label: { Label("Controls, providers & voice", systemImage: "slider.horizontal.3") }
-                    Toggle(isOn: $spokenReplies) { Label("Speak replies", systemImage: "speaker.wave.2") }
-                    if session.profile["mode"].string != "standalone" {
-                    Button { presentFromMenu(.computer) } label: { Label("Computer history", systemImage: "desktopcomputer") }
+    private var timeline: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
+                    else if keir.messages.isEmpty && keir.thread == "main" {
+                        KeirStart(ticket: waitingTickets.first, draftEmpty: draftIsEmpty,
+                                  speak: { voice.stop(); composing = false; voiceMode = true },
+                                  suggest: suggestFollowUp)
                     }
-                } label: { Image(systemName: "line.3.horizontal") }.accessibilityLabel("Keir tools").accessibilityIdentifier("keir-tools").disabled(presentingSheet)
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                if keir.controls["supported"].bool {
-                    Button {
-                        voice.stop()
-                        Task { await keir.control(["action": .string(keir.stopped ? "start" : "stop")], session) }
-                    } label: { Image(systemName: keir.stopped ? "play.circle.fill" : "stop.circle.fill") }
-                        .tint(keir.stopped ? OpsTheme.mint : OpsTheme.ink)
-                        .accessibilityLabel(keir.stopped ? "Start Keir" : "Stop Keir")
-                        .disabled(keir.controlling).accessibilityIdentifier("keir-kill-switch")
+                    DecisionAnswerReceipt()
+                    if keir.messages.isEmpty && keir.thread == "watches" {
+                        Text("When a watch is met, Keir reports it here.").font(.callout).foregroundStyle(OpsTheme.muted)
+                            .frame(maxWidth: .infinity).padding(.top, 48)
+                    }
+                    ForEach(timelineRows) { row in
+                        if let mark = row.mark { KeirTimeMark(date: mark) }
+                        KeirMessage(message: row.message)
+                            .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+                    }
+                    ForEach(threadDecisions, id: \.["id"].string) { DecisionCard(decision: $0) }
+                    ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) {
+                        KeirQuestions(panel: $0).keirObjectCard()
+                    }
+                    if keir.thread == "main", !keir.messages.isEmpty, (keir.team["open"].number ?? 0) > 0 {
+                        KeirWorkingNow(team: keir.team)
+                    }
+                    ForEach(keir.tasks.filter { $0["computer"] != .null }, id: \.["id"].string) { task in
+                        NavigationLink { KeirComputerScreen(taskId: task["id"].string) } label: {
+                            KeirObjectRow(icon: "desktopcomputer", title: task["computer"]["title"].string.nonempty ?? "Keir's computer", detail: "View or take control")
+                        }.buttonStyle(.plain)
+                    }
+                    ForEach(keir.live.filter { $0["state"].string == "running" || !$0["live"].array.isEmpty }, id: \.["id"].string) { task in
+                        KeirLiveWorkCard(task: task).accessibilityIdentifier("keir-chat-working")
+                    }
+                    Color.clear.frame(height: 1).id("end")
                 }
+                .padding(.horizontal, 14).padding(.top, 6).padding(.bottom, 12)
+                .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
+                .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: keir.messages.count)
             }
-            ToolbarItem(placement: .principal) {
-                Button { sheet = .threads } label: { HStack(spacing: 5) {
-                    KeirSpriteStill(state: "idle", size: .small)
-                        .frame(width: 30, height: 30).accessibilityHidden(true)
-                    Text(keir.threadTitle).font(.headline).lineLimit(1)
-                    Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(OpsTheme.muted)
-                } }.buttonStyle(.plain).accessibilityLabel("Conversations, " + keir.threadTitle).accessibilityIdentifier("keir-threads").disabled(presentingSheet)
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: keir.messages.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
+            .onChange(of: keir.live.count) { _, _ in guard !keir.messages.isEmpty else { return }; withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
+        }
+    }
+
+    /// Messages with the time line, if any, that goes above each one.
+    private struct TimelineRow: Identifiable {
+        let id: String
+        let message: JSONValue
+        let mark: Date?
+    }
+    private var timelineRows: [TimelineRow] {
+        var previous: JSONValue?
+        return keir.messages.map { message in
+            defer { previous = message }
+            let mark = KeirTimeMark.shows(message, after: previous) ? KeirTimeMark.timestamp(message) : nil
+            return TimelineRow(id: message["id"].string, message: message, mark: mark)
+        }
+    }
+
+    // MARK: Chrome
+
+    private var header: some View {
+        KeirHeader(title: keir.threadTitle, presence: headerPresence, level: voice.level, sprite: sprite,
+                   attention: AttentionCenter.shared.count, workCount: keir.live.count + keir.backgroundTasks.count,
+                   yolo: keir.yolo, disabled: presentingSheet,
+                   openThreads: { sheet = .threads },
+                   openInbox: { router.activityFilter = "all"; router.tab = .activity },
+                   startVoice: { voice.stop(); composing = false; voiceMode = true },
+                   reviewAutonomy: { confirmingYoloOff = true }) {
+            toolsMenu
+        }
+    }
+
+    /// Keir's menu: places and app-wide controls. Message-level choices (model,
+    /// routing, attachments, ticket drafts) are in the composer's "+" instead.
+    @ViewBuilder private var toolsMenu: some View {
+        Section {
+            Button { presentFromMenu(.threads) } label: { Label("Conversations", systemImage: "bubble.left.and.bubble.right") }
+        }
+        Section {
+            Button { presentFromMenu(.controls) } label: { Label("Controls, providers & voice", systemImage: "slider.horizontal.3") }
+            Toggle(isOn: $spokenReplies) { Label("Speak replies", systemImage: "speaker.wave.2") }
+            if !standalone {
+                Button { presentFromMenu(.computer) } label: { Label("Computer history", systemImage: "desktopcomputer") }
+                Button { presentFromMenu(.desk) } label: { Label("Support desk", systemImage: "lifepreserver") }
+            }
+            Button { afterMenu { router.showSettings = true } } label: { Label("Settings", systemImage: "gearshape") }
+        }
+        if keir.controls["supported"].bool {
+            Section {
+                Button(role: keir.stopped ? nil : .destructive) {
+                    voice.stop()
+                    Task { await keir.control(["action": .string(keir.stopped ? "start" : "stop")], session) }
+                } label: {
+                    Label(keir.stopped ? "Start Keir" : "Stop Keir", systemImage: keir.stopped ? "play.circle" : "stop.circle")
+                }
+                .disabled(keir.controlling)
             }
         }
     }
 
-    private var lifecycleContent: some View {
-        navigationContent
+    private var bottomBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if draft.hasPrefix("/") { commands }
+            if let error = voice.error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn).padding(.horizontal, 20) }
+            if voice.listening {
+                Text("Listening. Tap stop when you are done, then send.").font(.caption).foregroundStyle(OpsTheme.muted)
+                    .padding(.horizontal, 20)
+            }
+            if voice.speaking {
+                Button { voice.stopSpeaking() } label: { Label("Stop speaking", systemImage: "speaker.slash").font(.caption.weight(.semibold)) }
+                    .buttonStyle(.plain).foregroundStyle(OpsTheme.sky).padding(.horizontal, 20)
+            }
+            if let error = keir.error, keir.connected || !keir.messages.isEmpty {
+                Text(error).font(.caption).foregroundStyle(OpsTheme.warn).padding(.horizontal, 20).lineLimit(2)
+            }
+            AttachmentTray(attachments: attachments).padding(.horizontal, 16)
+            if keir.sendMode != "new" { routeChip }
+            if keir.thread == "watches" {
+                Button { sheet = .watches } label: {
+                    Label("Manage watches", systemImage: "binoculars").font(.callout.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .background(KeirChatTheme.pill, in: Capsule())
+                        .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
+                }.buttonStyle(.plain).padding(.horizontal, 12)
+            } else {
+                KeirComposerPill { plusMenu } field: {
+                    TextField("Message Keir", text: $draft, axis: .vertical).lineLimit(1...6).focused($composing)
+                        .accessibilityIdentifier("keir-composer")
+                } trailing: { trailingControl }
+                .padding(.horizontal, 12)
+            }
+        }
+        .padding(.top, 6).padding(.bottom, 8)
+        .frame(maxWidth: 760).frame(maxWidth: .infinity)
+        .background {
+            LinearGradient(stops: [.init(color: KeirChatTheme.canvas.opacity(0), location: 0), .init(color: KeirChatTheme.canvas, location: 0.3)],
+                           startPoint: .top, endPoint: .bottom)
+        }
+    }
+
+    /// How the next message is routed, shown only when it is not the default.
+    private var routeChip: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.branch").accessibilityHidden(true)
+            Text(routeLabel).lineLimit(1)
+            Spacer(minLength: 4)
+            Button { keir.sendMode = "new"; keir.steeringTask = nil } label: { Image(systemName: "xmark.circle.fill") }
+                .buttonStyle(.plain).foregroundStyle(OpsTheme.muted)
+                .accessibilityLabel("Send as a new task instead")
+        }
+        .font(.caption.weight(.medium)).foregroundStyle(OpsTheme.ink)
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(KeirChatTheme.chrome, in: Capsule())
+        .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
+        .padding(.horizontal, 16)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("keir-route-chip")
+    }
+
+    private var routeLabel: String {
+        switch keir.sendMode {
+        case "followup": return "Follow up on the current work"
+        case "steer":
+            let title = keir.live.first { $0["id"].string == keir.steeringTask }?["title"].string ?? ""
+            return title.isEmpty ? "Steer the running task" : "Steer: \(title)"
+        default: return "New task"
+        }
+    }
+
+    // MARK: Composer
+
+    /// Everything that shapes the next message: attach, draft a ticket
+    /// follow-up, choose how it is routed and which model answers.
+    private var plusMenu: some View {
+        Menu {
+            Section {
+                Button { afterMenu { attachPhotos = true } } label: { Label("Photo library", systemImage: "photo.on.rectangle") }
+                Button { afterMenu { attachFiles = true } } label: { Label("Choose file", systemImage: "doc") }
+            }
+            .disabled(attachments.uploading || attachments.items.count >= 6)
+            KeirTicketMenu(tickets: waitingTickets, draftEmpty: draftIsEmpty, suggest: suggestFollowUp)
+            Section {
+                Menu {
+                    routeButton("New task", mode: "new")
+                    routeButton("Follow up on the current work", mode: "followup")
+                    ForEach(keir.live, id: \.["id"].string) { task in
+                        Button { keir.sendMode = "steer"; keir.steeringTask = task["id"].string } label: {
+                            if keir.sendMode == "steer" && keir.steeringTask == task["id"].string { Label("Steer: \(task["title"].string)", systemImage: "checkmark") }
+                            else { Text("Steer: \(task["title"].string)") }
+                        }
+                    }
+                } label: { Label("Send as: \(routeLabel)", systemImage: "arrow.triangle.branch") }
+                    .accessibilityIdentifier("keir-send-mode")
+                modelMenu
+            }
+        } label: { KeirComposerIcon(system: "plus") }
+            .accessibilityLabel("Add to your message")
+            .accessibilityHint("Attach a photo or file, draft a ticket follow-up, or choose routing and model")
+            .accessibilityIdentifier("add-attachment")
+            .attachmentSources(attachments, photos: $attachPhotos, files: $attachFiles)
+    }
+
+    @ViewBuilder private func routeButton(_ title: String, mode: String) -> some View {
+        Button { keir.sendMode = mode; keir.steeringTask = nil } label: {
+            if keir.sendMode == mode { Label(title, systemImage: "checkmark") } else { Text(title) }
+        }
+    }
+
+    @ViewBuilder private var modelMenu: some View {
+        if keir.controls["supported"].bool {
+            Menu {
+                ForEach(keir.controls["options"]["conversation"].array, id: \.["id"].string) { model in
+                    Button { Task { await keir.control(["action": .string("configure"), "routes": .object(["conversation": .string(model["id"].string)])], session) } } label: {
+                        Text("\(model["label"].string) · \(model["provider"].string)")
+                    }.disabled(model["available"] == .bool(false))
+                }
+                Button { presentFromMenu(.controls) } label: { Label("Voice and work models…", systemImage: "slider.horizontal.3") }
+            } label: { Label("Model: \(keir.conversationModelLabel)", systemImage: "cpu") }
+                .disabled(keir.controlling).accessibilityIdentifier("keir-model")
+        } else {
+            Menu {
+                ForEach(keir.models, id: \.["id"].string) { model in
+                    Button { Task { await keir.selectModel(model["id"].string, session) } } label: {
+                        if model["id"].string == keir.modelSelection { Label("\(model["provider"].string) · \(model["label"].string)", systemImage: "checkmark") }
+                        else { Text("\(model["provider"].string) · \(model["label"].string)") }
+                    }
+                }
+            } label: { Label("Model: \(keir.modelLabel)", systemImage: "cpu") }
+                .disabled(keir.models.isEmpty || keir.selectingModel).accessibilityIdentifier("keir-model")
+        }
+    }
+
+    /// Microphone while empty (dictation into the box), send once there is
+    /// something to send, and stop while dictating.
+    @ViewBuilder private var trailingControl: some View {
+        if voice.listening {
+            Button { voice.stopListening() } label: { KeirComposerIcon(system: "stop.circle.fill") }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Finish dictation").accessibilityIdentifier("keir-dictate")
+        } else if !draftIsEmpty || !attachments.items.isEmpty {
+            Button(action: send) { KeirComposerIcon(system: "arrow.up", filled: true).opacity(sendDisabled ? 0.4 : 1) }
+                .buttonStyle(.plain)
+                .disabled(sendDisabled)
+                .accessibilityLabel("Send to Keir").accessibilityIdentifier("keir-send")
+        } else {
+            Button { voiceDraft = draft; Task { await voice.start() } } label: { KeirComposerIcon(system: "mic") }
+                .buttonStyle(.plain)
+                .disabled(keir.stopped || voice.requesting)
+                .accessibilityLabel("Dictate a message").accessibilityIdentifier("keir-dictate")
+        }
+    }
+
+    private var sendDisabled: Bool { keir.stopped || attachments.uploading || keir.sending }
+
+    private func send() {
+        voice.stopListening()
+        composing = false
+        let text = draft, files = attachments.payload, selected = keir.thread
+        Task {
+            if await keir.send(text, session, attachments: files) {
+                attachments.sent(files, in: selected)
+                if keir.thread == selected && draft == text { draft = "" }
+                else if drafts[selected] == text { drafts[selected] = "" }
+            }
+        }
+    }
+
+    // MARK: Screen
+
+    private var screen: some View {
+        timeline
+        .safeAreaInset(edge: .top, spacing: 0) { header }
+        .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+        .background(KeirChatTheme.canvas.ignoresSafeArea())
+        .navigationTitle("Keir").navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .task(id: "\(scenePhase == .active)|\(keir.thread)|\(connectionAttempt)|\(voiceMode)") { if scenePhase == .active && !voiceMode { await keir.connect(session) } }
         .task { await keir.loadThreads(session) }
         .task(id: keir.thread) { await keir.loadModels(session); await keir.loadControls(session) }
-        .onAppear { appearedAt = Date(); handleShortcut() }
+        .onAppear { appearedAt = Date(); attachments.scope = keir.thread; handleShortcut() }
         .onChange(of: router.openKeirControls) { _, _ in handleShortcut() }
-        .onAppear { attachments.scope = keir.thread }
         .onChange(of: router.openKeirVoice) { _, _ in handleShortcut() }
         .onDisappear(perform: leaveConversation)
         .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop() } }
@@ -132,7 +328,9 @@ struct KeirView: View {
     }
 
     var body: some View {
-        lifecycleContent
+        screen
+        .modifier(KeirViewEvents(keir: keir, voice: voice, spokenReplies: spokenReplies, voiceMode: voiceMode, appearedAt: appearedAt,
+                                 approvalNeeded: presence == .approval, draft: $draft, voiceDraft: voiceDraft))
         .confirmationDialog("Turn off autonomy?", isPresented: $confirmingYoloOff, titleVisibility: .visible) {
             Button("Turn off autonomy", role: .destructive) {
                 Task { await keir.control(["action": .string("configure"), "approvalMode": .string("ask")], session) }
@@ -140,20 +338,6 @@ struct KeirView: View {
             Button("Keep it on", role: .cancel) {}
         } message: {
             Text("Keir will ask before supported owner actions again. The grant is revoked immediately.")
-        }
-        .sensoryFeedback(.selection, trigger: voice.listening)
-        .sensoryFeedback(.warning, trigger: presence == .approval) { _, needed in needed }
-        .onChange(of: keir.stopped) { _, stopped in if stopped { voice.stop() } }
-        .onChange(of: spokenReplies) { _, enabled in if !enabled { voice.stopSpeaking() } }
-        .onChange(of: draft) { _, text in if keir.thread == "main", !text.isEmpty { keir.holdRestore() } }
-        .onChange(of: voice.transcript) { _, text in
-            draft = [voiceDraft, text].filter { !$0.isEmpty }.joined(separator: " ")
-        }
-        .onChange(of: keir.messages.count) { _, _ in
-            guard spokenReplies, !voiceMode, !voice.listening, scenePhase == .active,
-                  let message = keir.messages.last, message["role"].string == "keir",
-                  (message["at"].number ?? 0) / 1000 > appearedAt.timeIntervalSince1970 else { return }
-            voice.speakReply(message["text"].string, session: session)
         }
         .fullScreenCover(isPresented: $voiceMode) { KeirVoiceMode(keir: keir) }
         .onChange(of: sheet) { _, next in if next != nil { presentingSheet = true } }
@@ -165,6 +349,7 @@ struct KeirView: View {
             case .ideas: NavigationStack { IdeasView().toolbar { Button("Done") { sheet = nil } } }
             case .watches: NavigationStack { WatchesView().toolbar { Button("Done") { sheet = nil } } }
             case .memory: NavigationStack { MemoryView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { sheet = nil } } } }
+            case .desk: NavigationStack { DeskView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { sheet = nil } } } }
             }
         }
     }
@@ -182,87 +367,42 @@ struct KeirView: View {
         return ops.decisions.filter { !$0["jobId"].string.isEmpty && jobs.contains($0["jobId"].string) }
     }
 
-    private var runtimeStrip: some View {
-        HStack(spacing: 12) {
-            if presence != .ready && presence != .approval {
-                Button { router.tab = .activity } label: { KeirPresence(state: presence, level: voice.level) }.buttonStyle(.plain)
-            }
-            Spacer(minLength: 0)
-            if keir.yolo {
-                Button { confirmingYoloOff = true } label: {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "bolt.fill").accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Autonomy on").font(.caption.weight(.semibold))
-                            Text("Keir can act without asking for supported owner actions. Tap to turn it off.")
-                                .font(.caption2).fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(OpsTheme.warn.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-                    .foregroundStyle(OpsTheme.warn)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Autonomy mode is on. Keir can act without asking for supported owner actions. Double tap to turn it off.")
-                .accessibilityIdentifier("keir-yolo-banner")
-            }
-        }.padding(.horizontal, 18).padding(.vertical, (presence == .ready || presence == .approval) && !keir.yolo ? 0 : 8)
-    }
-
-    /// Where the conversation points to the rest of the app. Every count comes
-    /// from data the app already loads: the shared attention model, the open
-    /// ticket count from the hub, and Keir's live tasks. Nothing is shown at zero.
-    private struct ContextChip: Identifiable { let id: String; let icon: String; let text: String; let tone: Color; let filter: String }
-    private var contextChips: [ContextChip] {
-        var chips: [ContextChip] = []
-        let waiting = AttentionCenter.shared.count
-        if waiting > 0 { chips.append(ContextChip(id: "attention", icon: "hand.raised.fill", text: waiting == 1 ? "1 needs you" : "\(waiting) need you", tone: OpsTheme.warn, filter: "all")) }
-        return chips
-    }
-
-    @ViewBuilder private var contextBar: some View {
-        let chips = contextChips
-        if !chips.isEmpty && keir.thread == "main" {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(chips) { chip in
-                        Button { router.activityFilter = chip.filter; router.tab = .activity } label: {
-                            Label(chip.text, systemImage: chip.icon)
-                                .font(.footnote.weight(.semibold))
-                                .padding(.horizontal, 12).padding(.vertical, 8)
-                                .background(chip.tone.opacity(0.14), in: Capsule())
-                                .foregroundStyle(chip.tone)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("\(chip.text). Open inbox")
-                        .accessibilityIdentifier("keir-chip-\(chip.id)")
-                    }
-                }.padding(.horizontal, 16).padding(.vertical, 6)
-            }.accessibilityIdentifier("keir-context-bar")
-        }
-    }
-
     private func handleShortcut() {
         if router.openKeirControls { router.openKeirControls = false; sheet = .controls }
         if router.openKeirVoice { router.openKeirVoice = false; voice.stop(); voiceMode = true }
     }
+
     private var connectionPlaceholder: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(keir.error == nil ? "Connecting to Keir" : "Keir is unavailable").font(.title2.weight(.semibold)).accessibilityIdentifier("keir-connection-state")
-            Text("Your draft is kept here. Your conversation will load when the connection returns.").font(.callout).foregroundStyle(OpsTheme.muted)
+        VStack(spacing: 12) {
+            Text(keir.error == nil ? "Connecting to Keir" : "Keir is unavailable").font(.title3.weight(.semibold)).accessibilityIdentifier("keir-connection-state")
+            Text("Your draft is kept here. Your conversation will load when the connection returns.")
+                .font(.callout).foregroundStyle(OpsTheme.muted).multilineTextAlignment(.center)
             if keir.error != nil {
-                Button("Retry connection") { connectionAttempt += 1 }.font(.callout.weight(.semibold)).accessibilityIdentifier("keir-retry-connection")
+                Button("Retry connection") { connectionAttempt += 1 }
+                    .font(.callout.weight(.semibold))
+                    .padding(.horizontal, 18).frame(minHeight: 44)
+                    .background(KeirChatTheme.chrome, in: Capsule())
+                    .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
+                    .accessibilityIdentifier("keir-retry-connection")
             }
-        }.padding(.vertical, 24)
+        }
+        .frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.top, 64)
+    }
+
+    /// UIKit must finish dismissing a menu before anything is presented.
+    private func afterMenu(_ action: @escaping @MainActor () -> Void) {
+        sheetRequest?.cancel()
+        sheetRequest = Task { @MainActor in
+            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+            guard scenePhase == .active else { return }
+            action()
+        }
     }
 
     private func presentFromMenu(_ target: KeirSheet) {
-        sheetRequest?.cancel()
         presentingSheet = true
+        sheetRequest?.cancel()
         sheetRequest = Task { @MainActor in
-            // UIKit must finish dismissing the menu before presenting a sheet.
             do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
             guard scenePhase == .active else { presentingSheet = false; return }
             sheet = target
@@ -272,7 +412,7 @@ struct KeirView: View {
     private var commands: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(KeirCommand.all.filter { (session.profile["mode"].string != "standalone" || !["/computer", "/ticket", "/chart"].contains($0.id)) && (draft == "/" || $0.id.hasPrefix(draft.lowercased())) }) { command in
+                ForEach(KeirCommand.all.filter { (!standalone || !["/computer", "/ticket", "/chart"].contains($0.id)) && (draft == "/" || $0.id.hasPrefix(draft.lowercased())) }) { command in
                     Button {
                         if let prompt = command.prompt { draft = prompt; composing = true }
                         else {
@@ -286,32 +426,21 @@ struct KeirView: View {
                             default: break
                             }
                         }
-                    } label: { HStack { Text(command.id).font(.callout.monospaced().weight(.semibold)); Text(command.detail).font(.caption).foregroundStyle(OpsTheme.muted); Spacer() }.padding(.horizontal, 18).padding(.vertical, 10) }.buttonStyle(.plain)
-                }
-            }
-        }.frame(maxHeight: 210).background(OpsTheme.surface).accessibilityIdentifier("keir-commands")
-    }
-
-    private var activityStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 16) {
-                ForEach(keir.live, id: \.["id"].string) { task in
-                    NavigationLink { TaskDetail(id: task["id"].string) } label: {
-                        HStack(spacing: 6) {
-                            Circle().fill(OpsState.color(task["state"].string)).frame(width: 6, height: 6)
-                            Text(task["title"].string.nonempty ?? task["status"].string.nonempty ?? "Task").lineLimit(1)
-                            Text(task["steering"].bool ? "Updating direction" : OpsState.word(task["state"].string)).foregroundStyle(OpsTheme.muted)
-                        }.font(.caption).frame(maxWidth: 280)
+                    } label: {
+                        HStack { Text(command.id).font(.callout.monospaced().weight(.semibold)); Text(command.detail).font(.caption).foregroundStyle(OpsTheme.muted); Spacer() }
+                            .padding(.horizontal, 16).padding(.vertical, 10).contentShape(Rectangle())
                     }.buttonStyle(.plain)
                 }
-                ForEach(keir.backgroundTasks, id: \.["id"].string) { task in
-                    Button { keir.select(task["thread"].string) } label: {
-                        Label(task["title"].string, systemImage: "arrow.up.right").font(.caption).lineLimit(1).frame(maxWidth: 200)
-                    }.buttonStyle(.plain).foregroundStyle(OpsTheme.muted)
-                }
-            }.padding(.horizontal, 16).padding(.vertical, 10)
-        }.overlay(alignment: .top) { Hairline() }.accessibilityIdentifier("keir-activity-strip")
+            }
+        }
+        .frame(maxHeight: 210)
+        .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(KeirChatTheme.stroke))
+        .padding(.horizontal, 12)
+        .accessibilityIdentifier("keir-commands")
     }
+
+    // MARK: State
 
     private var presence: KeirPresence.State {
         if keir.stopped { return .stopped }
@@ -323,10 +452,34 @@ struct KeirView: View {
         if keir.sending { return .thinking }
         return keir.working ? .working : .ready
     }
+
+    /// What the header says Keir is doing. Running tasks and owner attention
+    /// have their own capsules, so this is only Keir's own state.
+    private var headerPresence: KeirPresence.State {
+        switch presence {
+        case .stopped, .offline, .listening, .speaking, .thinking: return presence
+        default:
+            if keir.sending || (keir.working && keir.live.isEmpty && keir.backgroundTasks.isEmpty) { return .thinking }
+            return .ready
+        }
+    }
+
+    /// The animated Keir follows the same state. With none, he idles.
+    private var sprite: String? {
+        switch headerPresence {
+        case .stopped: return "sleeping"
+        case .offline: return "concerned"
+        case .listening: return "listening"
+        case .speaking: return "talking"
+        case .thinking: return "thinking"
+        default: return keir.working ? "working" : nil
+        }
+    }
+
     /// Tickets with no recorded Discord reply. Never offered in standalone mode,
     /// which has no studio desk.
     private var waitingTickets: [JSONValue] {
-        session.profile["mode"].string == "standalone" ? [] : KeirTicketFollowUp.waiting(in: ops.hub)
+        standalone ? [] : KeirTicketFollowUp.waiting(in: ops.hub)
     }
     private var draftIsEmpty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     /// Fills the composer for the owner to edit. It never sends, and never
@@ -336,87 +489,67 @@ struct KeirView: View {
         draft = KeirTicketFollowUp.prompt(for: ticket)
         composing = true
     }
-    private var stopsInstead: Bool { keir.working && attachments.items.isEmpty && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    @ViewBuilder private var modelPicker: some View {
-        if keir.controls["supported"].bool {
-            Menu {
-                ForEach(keir.controls["options"]["conversation"].array, id: \.["id"].string) { model in
-                    Button { Task { await keir.control(["action": .string("configure"), "routes": .object(["conversation": .string(model["id"].string)])], session) } } label: {
-                        Text("\(model["label"].string) · \(model["provider"].string)")
-                    }.disabled(model["available"] == .bool(false))
-                }
-                Button { sheet = .controls } label: { Label("Voice and work models…", systemImage: "slider.horizontal.3") }
-            } label: { Label(keir.conversationModelLabel, systemImage: "cpu").lineLimit(1) }
-                .disabled(keir.controlling).accessibilityIdentifier("keir-model")
-        } else {
-            Menu {
-                ForEach(keir.models, id: \.["id"].string) { model in
-                    Button { Task { await keir.selectModel(model["id"].string, session) } } label: {
-                        if model["id"].string == keir.modelSelection { Label("\(model["provider"].string) · \(model["label"].string)", systemImage: "checkmark") }
-                        else { Text("\(model["provider"].string) · \(model["label"].string)") }
-                    }
-                }
-            } label: { Label(keir.modelLabel, systemImage: "cpu").lineLimit(1) }
-                .disabled(keir.models.isEmpty || keir.selectingModel).accessibilityIdentifier("keir-model")
-        }
-    }
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 4) {
-        HStack(spacing: 12) {
-            modelPicker
-            Spacer(minLength: 4)
-            KeirTicketMenu(tickets: waitingTickets, draftEmpty: draftIsEmpty, suggest: suggestFollowUp)
-            if !keir.live.isEmpty || !keir.backgroundTasks.isEmpty {
-                Button { router.tab = .activity } label: {
-                    Label(AttentionCenter.shared.count > 0 ? AttentionCenter.shared.shortSummary : "\(keir.live.count + keir.backgroundTasks.count) tasks", systemImage: AttentionCenter.shared.count > 0 ? "hand.raised" : "list.bullet")
-                }.accessibilityIdentifier("keir-activity-strip")
+}
+
+/// Side effects that follow Keir's state: spoken replies, haptics, and
+/// dictation flowing into the draft. Split out so the main view's modifier
+/// chain stays small enough for the type checker.
+private struct KeirViewEvents: ViewModifier {
+    @EnvironmentObject private var session: AppSession
+    @ObservedObject var keir: KeirStore
+    @ObservedObject var voice: KeirVoice
+    let spokenReplies: Bool
+    let voiceMode: Bool
+    let appearedAt: Date
+    let approvalNeeded: Bool
+    @Binding var draft: String
+    let voiceDraft: String
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            .sensoryFeedback(.selection, trigger: voice.listening)
+            .sensoryFeedback(.warning, trigger: approvalNeeded) { _, needed in needed }
+            .onChange(of: keir.stopped) { _, stopped in if stopped { voice.stop() } }
+            .onChange(of: spokenReplies) { _, enabled in if !enabled { voice.stopSpeaking() } }
+            .onChange(of: draft) { _, text in if keir.thread == "main", !text.isEmpty { keir.holdRestore() } }
+            .onChange(of: voice.transcript) { _, text in
+                draft = [voiceDraft, text].filter { !$0.isEmpty }.joined(separator: " ")
             }
-            Menu {
-                Button("New task") { keir.sendMode = "new"; keir.steeringTask = nil }
-                Button("Follow up") { keir.sendMode = "followup"; keir.steeringTask = nil }
-                ForEach(keir.live, id: \.["id"].string) { task in
-                    Button("Steer: \(task["title"].string)") { keir.sendMode = "steer"; keir.steeringTask = task["id"].string }
-                }
-            } label: { Image(systemName: "arrow.triangle.branch") }
-                .accessibilityLabel("Message routing").accessibilityIdentifier("keir-send-mode")
-        }.font(.caption).foregroundStyle(OpsTheme.muted).padding(.horizontal, 20).padding(.vertical, 6)
-        AttachmentTray(attachments: attachments).padding(.horizontal, 16)
-        HStack(alignment: .bottom, spacing: 10) {
-            AttachmentPicker(attachments: attachments, compact: true)
-            Button {
-                voice.stop(); composing = false; voiceMode = true
-            } label: {
-                Image(systemName: "waveform").foregroundStyle(OpsTheme.sky).frame(width: 28, height: 34)
-            }.accessibilityLabel("Start voice conversation").accessibilityIdentifier("keir-microphone")
-            TextField("Message Keir", text: $draft, axis: .vertical).lineLimit(1...6).focused($composing)
-                .accessibilityIdentifier("keir-composer").padding(.vertical, 8)
-            Button {
-                if stopsInstead { OpsServices.shared.router.tab = .activity; return }
-                voice.stopListening()
-                composing = false
-                let text = draft, files = attachments.payload, selected = keir.thread
-                Task {
-                    if await keir.send(text, session, attachments: files) {
-                        attachments.sent(files, in: selected)
-                        if keir.thread == selected && draft == text { draft = "" }
-                        else if drafts[selected] == text { drafts[selected] = "" }
-                    }
-                }
-            } label: {
-                Image(systemName: stopsInstead ? "list.bullet" : "arrow.up").font(.body.weight(.semibold)).frame(width: 34, height: 34)
-                    .background(stopsInstead ? OpsTheme.raised : OpsTheme.sky, in: Circle()).foregroundStyle(stopsInstead ? OpsTheme.ink : OpsTheme.onAccent)
-                    .contentTransition(.symbolEffect(.replace))
+            .onChange(of: keir.messages.count) { _, _ in
+                guard spokenReplies, !voiceMode, !voice.listening, scenePhase == .active,
+                      let message = keir.messages.last, message["role"].string == "keir",
+                      (message["at"].number ?? 0) / 1000 > appearedAt.timeIntervalSince1970 else { return }
+                voice.speakReply(message["text"].string, session: session)
             }
-            .disabled(keir.stopped || attachments.uploading || (!stopsInstead && (keir.sending || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.items.isEmpty))))
-            .accessibilityLabel(stopsInstead ? "View ongoing work" : "Send to Keir").accessibilityIdentifier("keir-send")
-        }
-        .padding(.horizontal, 14).padding(.vertical, 8)
-        .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(OpsTheme.hairline))
-        .padding(.horizontal, 12).padding(.bottom, 8)
-        }
     }
 }
+
+/// A tappable inline object: an icon tile, a title and one line of detail.
+struct KeirObjectRow: View {
+    let icon: String
+    let title: String
+    let detail: String
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.callout).foregroundStyle(OpsTheme.sky)
+                .frame(width: 34, height: 34)
+                .background(OpsTheme.sky.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(2)
+                Text(detail).font(.caption).foregroundStyle(OpsTheme.muted)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+        }
+        .keirObjectCard(padding: 12)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
 
 private struct KeirMessage: View {
     @EnvironmentObject private var session: AppSession
@@ -426,25 +559,25 @@ private struct KeirMessage: View {
         if message["update"].bool && !message["items"].array.isEmpty { KeirUpdateMessage(message: message) }
         else if owner {
             HStack {
-                Spacer(minLength: 48)
-                VStack(alignment: .leading, spacing: 8) {
-                    if !message["text"].string.isEmpty { Text(message["text"].string).textSelection(.enabled) }
+                Spacer(minLength: 56)
+                VStack(alignment: .trailing, spacing: 6) {
                     ForEach(message["attachments"].array, id: \.["id"].string) { KeirAttachment(attachment: $0) }
-                }.padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(OpsTheme.sky.opacity(0.16), in: RoundedRectangle(cornerRadius: 18))
+                    if !message["text"].string.isEmpty {
+                        Text(message["text"].string).textSelection(.enabled)
+                            .foregroundStyle(KeirChatTheme.ownerInk)
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .background(KeirChatTheme.ownerBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    }
+                }
             }.accessibilityLabel("You: \(message["text"].string)")
         } else {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Text("Keir").font(.caption.weight(.semibold))
-                    Text(OpsFormat.ago(message["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
-                    if message["editedAt"] != .null { Text("· edited").font(.caption).foregroundStyle(OpsTheme.muted) }
-                }
+            VStack(alignment: .leading, spacing: 6) {
                 if !message["text"].string.isEmpty {
-                    NativeMarkdown(text: message["text"].string)
+                    NativeMarkdown(text: message["text"].string, fills: false)
                         .textSelection(.enabled)
+                        .foregroundStyle(OpsTheme.ink)
                         .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .background(KeirChatTheme.keirBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 ForEach(message["attachments"].array, id: \.["id"].string) { KeirAttachment(attachment: $0) }
                 if !message["activity"].array.isEmpty { KeirToolCalls(calls: message["activity"].array) }
@@ -453,15 +586,26 @@ private struct KeirMessage: View {
                 if let progress = message["progress"].string.nonempty {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
-                        Text(progress).font(.caption).foregroundStyle(OpsTheme.muted).italic()
-                    }.accessibilityLabel("Keir is working: \(progress)")
+                        LoadingShimmer(text: progress).font(.caption)
+                    }
+                    .padding(.leading, 6)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Keir is working: \(progress)")
                 }
                 if !message["chart"].string.isEmpty { KeirChart(name: message["chart"].string) }
                 if !message["cards"].array.isEmpty { KeirCards(cards: message["cards"].array) }
                 if message["computer"] != .null, !message["jobId"].string.isEmpty {
-                    NavigationLink { KeirComputerScreen(taskId: message["jobId"].string) } label: { Label("Open computer result", systemImage: "desktopcomputer") }
+                    NavigationLink { KeirComputerScreen(taskId: message["jobId"].string) } label: {
+                        KeirObjectRow(icon: "desktopcomputer", title: "Computer result", detail: "Open what Keir did on the computer")
+                    }.buttonStyle(.plain)
+                }
+                if message["editedAt"] != .null {
+                    Text("Edited").font(.caption2).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
                 }
             }
+            .padding(.trailing, 32)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Keir, \(OpsFormat.ago(message["at"]))")
             .contextMenu {
                 Button { UIPasteboard.general.string = message["text"].string } label: { Label("Copy", systemImage: "doc.on.doc") }
                 ShareLink(item: message["text"].string)
@@ -476,8 +620,8 @@ private struct KeirChart: View {
     @State private var image: UIImage?
     var body: some View {
         Group {
-            if let image { Image(uiImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 12)) }
-            else { RoundedRectangle(cornerRadius: 12).fill(OpsTheme.surface).frame(height: 180).overlay(ProgressView()) }
+            if let image { Image(uiImage: image).resizable().scaledToFit().clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous)) }
+            else { RoundedRectangle(cornerRadius: 18, style: .continuous).fill(KeirChatTheme.keirBubble).frame(height: 180).overlay(ProgressView()) }
         }
         .task(id: name) {
             if let data = try? await session.data("/api/keir/app/artifacts/\(name)") { image = UIImage(data: data) }
@@ -547,20 +691,17 @@ struct DecisionCard: View {
                             Text(option["label"].string + (option["recommended"].bool ? " (recommended)" : "")).fontWeight(.semibold)
                             if !option["detail"].string.isEmpty { Text(option["detail"].string).font(.caption) }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                    }.background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 10)).disabled(busy || decision["canAnswer"] == .bool(false))
+                    }.background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous)).disabled(busy || decision["canAnswer"] == .bool(false))
                 }
                 Text("Your choice gives direction. Actions needing permission get a separate approval.").font(.caption).foregroundStyle(OpsTheme.muted)
                 Button("Ask a question or give another answer") { explaining = true }.disabled(busy)
             } else {
             Text("Approve authorizes this operation. Decline prevents it. Asking a question gives no approval.").font(.caption).foregroundStyle(OpsTheme.muted)
-            HStack(spacing: 10) {
-                Button { act("approve") } label: { Text("Approve this action").fontWeight(.semibold).frame(maxWidth: .infinity).padding(.vertical, 9) }
-                    .background(OpsTheme.sky, in: RoundedRectangle(cornerRadius: 10)).foregroundStyle(OpsTheme.onAccent)
-                    .disabled(decision["canApprove"] == .bool(false)).accessibilityIdentifier("decision-approve")
-                Button { act("reject") } label: { Text("Decline").frame(maxWidth: .infinity).padding(.vertical, 9) }
-                    .background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 10))
-                Button { explaining = true } label: { Image(systemName: "text.bubble").padding(.vertical, 9).padding(.horizontal, 12) }
-                    .background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 10)).accessibilityLabel("Reply or ask why")
+            // Decline on the left, approve on the right, both full capsules: the
+            // same shape an approval sheet uses, with reply one tap away.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { decisionButtons }
+                VStack(spacing: 8) { decisionButtons }
             }.buttonStyle(.plain).disabled(busy || decision["canAnswer"] == .bool(false))
             }
             if decision["canRefresh"].bool { Button("Request a fresh proposal") { act("refresh") }.disabled(busy) }
@@ -569,9 +710,7 @@ struct DecisionCard: View {
             }
             if !decision["jobId"].string.isEmpty { Button("Open task and result") { router.openDecisionTask(decision) } }
         }
-        .padding(14)
-        .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 1).fill(OpsTheme.warn).frame(width: 2).padding(.vertical, 14) }
+        .keirObjectCard()
         }
         }
         .buttonStyle(.plain)
@@ -580,6 +719,22 @@ struct DecisionCard: View {
             Button("Send") { act("explain", note) }
             Button("Cancel", role: .cancel) {}
         }
+    }
+    @ViewBuilder private var decisionButtons: some View {
+        Button { act("reject") } label: {
+            Text("Decline").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
+                .background(OpsTheme.raised, in: Capsule())
+        }
+        Button { act("approve") } label: {
+            Text("Approve this action").fontWeight(.semibold).lineLimit(2).multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 8)
+                .background(decision["canApprove"] == .bool(false) ? OpsTheme.raised : OpsTheme.sky, in: Capsule())
+                .foregroundStyle(decision["canApprove"] == .bool(false) ? OpsTheme.muted : OpsTheme.onAccent)
+        }
+        .disabled(decision["canApprove"] == .bool(false)).accessibilityIdentifier("decision-approve")
+        Button { explaining = true } label: {
+            Image(systemName: "text.bubble").frame(width: 44, height: 44).background(OpsTheme.raised, in: Circle())
+        }.accessibilityLabel("Reply or ask why")
     }
     private func act(_ verdict: String, _ text: String = "") {
         busy = true
@@ -604,11 +759,25 @@ private struct KeirAttachment: View {
         Button {
             opened = true
         } label: {
-            HStack(spacing: 8) {
-                if let bytes, let image = UIImage(data: bytes) {
-                    Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 220, maxHeight: 180).clipShape(RoundedRectangle(cornerRadius: 10))
-                } else { Image(systemName: attachment["type"].string.hasPrefix("image/") ? "photo" : "doc") }
-                Text(attachment["name"].string).font(.caption).lineLimit(2)
+            if let bytes, let image = UIImage(data: bytes) {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxWidth: 240, maxHeight: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            } else {
+                // A file is an object: its kind as a tile, then the name and type.
+                HStack(spacing: 10) {
+                    Image(systemName: fileIcon)
+                        .font(.callout).foregroundStyle(attachment["type"].string == "application/pdf" ? OpsTheme.danger : OpsTheme.sky)
+                        .frame(width: 34, height: 40)
+                        .background(KeirChatTheme.keirBubble, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(attachment["name"].string).font(.callout.weight(.medium)).foregroundStyle(OpsTheme.ink).lineLimit(2)
+                        Text(fileKind).font(.caption).foregroundStyle(OpsTheme.muted)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(10).frame(maxWidth: 280, alignment: .leading)
+                .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(KeirChatTheme.stroke))
             }
         }.buttonStyle(.plain).accessibilityLabel("Open attachment \(attachment["name"].string)")
         .task(id: attachment["id"].string) {
@@ -629,6 +798,19 @@ private struct KeirAttachment: View {
                     .task { await load() }
             }
         }
+    }
+    private var fileIcon: String {
+        let type = attachment["type"].string
+        if type.hasPrefix("image/") { return "photo" }
+        if type == "application/pdf" { return "doc.richtext" }
+        return "doc.text"
+    }
+    private var fileKind: String {
+        let type = attachment["type"].string
+        if type.hasPrefix("image/") { return "Image" }
+        if type == "application/pdf" { return "PDF" }
+        let ext = (attachment["name"].string as NSString).pathExtension
+        return ext.isEmpty ? "File" : ext.uppercased()
     }
     private func load() async {
         guard bytes == nil, !loading else { return }
