@@ -10,6 +10,8 @@ enum OpsText {
     static func scrub(_ raw: String) -> String {
         guard !raw.isEmpty else { return "" }
         var text = raw
+            .replacingOccurrences(of: "Task ran out of time twice; owner needs to choose the next move.",
+                                  with: "Keir ran out of time twice. The work needs to resume from the last saved step.")
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
@@ -138,6 +140,22 @@ enum OpsText {
         if !question.isEmpty, question.count <= 90 { return question }
         if let number = decision["ticket"].number { return "Decision for Ticket #\(Int(number))" }
         return decision["signoff"].bool ? "Sign-off needed" : "Decision needed"
+    }
+
+    static func decisionBody(_ question: String, title: String) -> String {
+        func normalized(_ value: String) -> String {
+            value.lowercased()
+                .replacingOccurrences(of: "pr #", with: "#")
+                .replacingOccurrences(of: " into ", with: " to ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "?! ."))
+        }
+
+        if normalized(question) == normalized(title) { return "" }
+        guard let separator = question.firstIndex(of: "?"),
+              normalized(String(question[..<separator])) == normalized(title) else { return question }
+        let next = question.index(after: separator)
+        let remaining = String(question[next...]).trimmingCharacters(in: .whitespaces)
+        return remaining.lowercased() == "checks are green." ? "Checks green" : remaining
     }
 
     /// A question panel's title, never raw option text.

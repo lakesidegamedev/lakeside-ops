@@ -17,7 +17,7 @@ on:
       test_scope:
         description: Simulator suite to run before signing the exact checkout
         type: choice
-        options: [full, owner, redesign, computer, connection, metrics]
+        options: [full, owner, redesign, computer, connection, metrics, review, critic]
         default: full
 
 permissions:

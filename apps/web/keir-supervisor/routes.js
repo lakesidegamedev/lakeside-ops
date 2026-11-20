@@ -3,7 +3,7 @@
 // /api/keir/supervisor/*. Owner only: a valid admin session whose identity is
 // the same owner identity the Keir operator accepts for /api/keir/app/*.
 // Another admin is refused. Writes need JSON and a same-origin (or absent,
-// native) Origin. Nothing here proxies to the support operator.
+// native) Origin. Creating a private side chat uses the authenticated app route.
 const path = require("node:path");
 
 function ownerIdentity(env = process.env) {
@@ -32,6 +32,27 @@ async function readJson(req, limit = 32000) {
   try { return JSON.parse(body || "{}"); } catch { throw Object.assign(new Error("invalid json"), { status: 400 }); }
 }
 
+function sideChatCreator(req, env) {
+  const session = /(?:^|;\s*)ops_session=([^;]+)/.exec(String(req.headers.cookie || ""))?.[1];
+  if (!session) return undefined;
+  let upstream;
+  try { upstream = new URL(env.KEIR_APP_BASE_URL || "http://127.0.0.1:9768"); } catch { return undefined; }
+  if (upstream.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(upstream.hostname) || upstream.username || upstream.password) return undefined;
+  const endpoint = new URL("/api/keir/app/threads", upstream);
+  return async (title, creationKey, signal) => {
+    const timeout = AbortSignal.timeout(10000);
+    const response = await fetch(endpoint, { method: "POST", headers: {
+      cookie: `ops_session=${session}`, "Content-Type": "application/json",
+    }, body: JSON.stringify({ title, creationKey }), redirect: "error", signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    if (!response.ok) throw new Error(response.status === 401 || response.status === 403
+      ? "The owner’s app session could not be verified. Ask them to resend the side-chat request after signing in."
+      : "The conversation service could not create a side chat.");
+    const row = await response.json();
+    if (!/^[a-f0-9]{12}$/.test(row.id) || typeof row.title !== "string") throw new Error("The conversation service returned no side chat receipt.");
+    return { id: row.id, title: row.title, archived: Boolean(row.archived) };
+  };
+}
+
 async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, getSupervisor, env = process.env }) {
   if (!pathname.startsWith("/api/keir/supervisor/")) return false;
   const reply = (status, value) => {
@@ -58,7 +79,7 @@ async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, g
       if (String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase() !== "application/json") return reply(415, { error: "JSON required" });
       if (!sameOrigin(req)) return reply(403, { error: "Unexpected origin" });
       const body = await readJson(req);
-      if (route === "/messages") { const r = s.post(body.text, body.clientId); return reply(r.duplicate ? 200 : 202, r); }
+      if (route === "/messages") { const r = s.post(body.text, body.clientId, sideChatCreator(req, env)); return reply(r.duplicate ? 200 : 202, r); }
       const cancel = /^\/jobs\/(j_[a-f0-9]{16})\/cancel$/.exec(route);
       if (cancel) return reply(200, s.cancel(cancel[1]));
       const decision = /^\/proposals\/(p_[a-f0-9]{16})$/.exec(route);

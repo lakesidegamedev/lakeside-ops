@@ -64,10 +64,14 @@ struct KeirResume {
 enum KeirTicketFollowUp {
     private static let finished = ["closed", "resolved", "duplicate", "merged", "archived", "wontfix"]
 
+    static func isOpen(_ ticket: JSONValue) -> Bool {
+        !finished.contains(ticket["status"].string.lowercased()) && !ticket["number"].string.isEmpty
+    }
+
     /// Oldest first, so the ticket that has waited longest leads.
     static func waiting(in hub: JSONValue) -> [JSONValue] {
         hub["tickets"].array.filter {
-            $0["replyState"]["state"].string == "no_receipt" && !finished.contains($0["status"].string) && !$0["number"].string.isEmpty
+            $0["replyState"]["state"].string == "no_receipt" && isOpen($0)
         }.sorted { (OpsFormat.date($0["createdAt"]) ?? .distantFuture) < (OpsFormat.date($1["createdAt"]) ?? .distantFuture) }
     }
 
@@ -96,7 +100,6 @@ struct KeirStart: View {
     /// The private conversation: no support tickets or studio counts here.
     var supervisor = false
     let draftEmpty: Bool
-    let speak: () -> Void
     let suggest: (JSONValue) -> Void
 
     var body: some View {
@@ -108,19 +111,9 @@ struct KeirStart: View {
                     .font(.callout).foregroundStyle(OpsTheme.muted).multilineTextAlignment(.center)
             }
             .accessibilityElement(children: .combine)
-            Button(action: speak) {
-                Label("Talk to Keir", systemImage: "waveform")
-                    .font(.callout.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 44)
-                    .background(KeirChatTheme.chrome, in: Capsule())
-                    .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
-                    .shadow(color: KeirChatTheme.shadow, radius: 8, y: 2)
-            }
-            .buttonStyle(.plain).foregroundStyle(OpsTheme.ink)
-            .accessibilityHint("Starts a spoken conversation")
-            .accessibilityIdentifier("keir-start-voice")
             if let ticket {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("No Discord reply recorded").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
+                    Text("Awaiting first reply").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
                     Button { suggest(ticket) } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "ticket")
@@ -161,7 +154,7 @@ struct KeirTicketMenu: View {
     var body: some View {
         if !tickets.isEmpty {
             Menu {
-                Section("No Discord reply recorded") {
+                Section("Awaiting first reply") {
                     ForEach(Array(tickets.prefix(5)), id: \.["number"].string) { ticket in
                         Button { suggest(ticket) } label: { Text("#\(ticket["number"].string) \(KeirTicketFollowUp.title(ticket))") }
                             .disabled(!draftEmpty)

@@ -85,22 +85,22 @@ function repairModel(log = []) {
   };
 }
 
-function setup({ executor, sandbox, publisher = null, publishEnabled = false, root = tmp(), maxAttempts = 2, attention = null } = {}) {
+function setup({ executor, sandbox, publisher = null, publishEnabled = false, root = tmp(), maxAttempts = 2, attention = null, evidence = null } = {}) {
   const source = fs.existsSync(path.join(root, "source")) ? path.join(root, "source") : fixtureRepo(root);
   const guardianDir = fs.existsSync(path.join(root, "guardian")) ? path.join(root, "guardian") : guardianFile(root);
   const stateDir = path.join(root, "state");
   const repos = { "lakeside-ops": { key: "lakeside-ops", source, base: "main", github: null, deps: [], note: "fixture", available: true, reason: null } };
   const sb = sandbox || createSandbox(path.join(stateDir, "workspaces"));
-  const sup = createSupervisor({ stateDir, repos, sandbox: sb, executor, guardianDir, publisher, publishEnabled, maxAttempts, attention });
+  const sup = createSupervisor({ stateDir, repos, sandbox: sb, executor, guardianDir, publisher, publishEnabled, maxAttempts, attention, evidence });
   return { root, source, stateDir, sup, sandbox: sb, repos, guardianDir };
 }
 
-async function serve(sup, status = async () => ({ configured: true })) {
+async function serve(sup, status = async () => ({ configured: true }), appUpstream = undefined) {
   const sessions = { owner: { role: "admin", email: OWNER }, staff: { role: "admin", email: "someone@else" }, mod: { role: "moderator", email: OWNER } };
   const server = http.createServer(async (req, res) => {
     const pathname = new URL(req.url, "http://x").pathname;
     const handled = await handleKeirSupervisorRoute(req, res, pathname, {
-      env: { KEIR_OWNER_ID: "42" },
+      env: { KEIR_OWNER_ID: "42", KEIR_APP_BASE_URL: appUpstream },
       resolveSession: async (r) => sessions[/ops_session=(\w+)/.exec(r.headers.cookie || "")?.[1]] || null,
       getSupervisor: () => ({ configured: true, missing: [], instance: sup, status }),
     });
@@ -115,6 +115,62 @@ async function serve(sup, status = async () => ({ configured: true })) {
 }
 
 async function untilIdle(sup) { assert.equal(await sup.idle(120000), true, "jobs did not settle"); }
+
+test("a signed-in owner can ask the supervisor to create a private side chat", async (t) => {
+  const received = [];
+  const upstream = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    received.push({ url: req.url, cookie: req.headers.cookie, ...JSON.parse(body) });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ id: "abcdef012345", title: "Payroll review" }));
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+  const executor = { available: () => ({ available: true }), async run({ toolUrl }) {
+    const client = mcp(toolUrl);
+    await client.init();
+    const created = await client.call("create_side_chat", { title: "Payroll review" });
+    assert.equal(created.id, "abcdef012345");
+    return { text: `Created ${created.title}.` };
+  } };
+  const { sup, root } = setup({ executor });
+  t.after(() => { sup.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  await sup.start();
+  const app = await serve(sup, undefined, `http://127.0.0.1:${upstream.address().port}`);
+  t.after(app.close);
+  const body = { text: "Create a side chat for payroll review", clientId: "side-chat-test" };
+  assert.equal((await app.req("/api/keir/supervisor/messages", { method: "POST", body })).status, 202);
+  await untilIdle(sup);
+  assert.equal(received.length, 1);
+  assert.equal(received[0].url, "/api/keir/app/threads");
+  assert.equal(received[0].cookie, "ops_session=owner");
+  assert.equal(received[0].title, "Payroll review");
+  assert.match(received[0].creationKey, /^sup:j_[a-f0-9]{16}:[a-f0-9]{16}$/);
+  assert.equal(sup.thread({}).messages.at(-1).text, "Created Payroll review.");
+});
+
+test("a requested queue snapshot persists with the answer and limits the rendered rows", async (t) => {
+  const snapshot = { state: "read", at: Date.now(), possiblyMore: false,
+    items: Array.from({ length: 13 }, (_, i) => ({ number: i + 1, title: `Ticket ${i + 1}`, status: "open" })) };
+  const evidence = { queue: async () => snapshot };
+  const executor = { available: () => ({ available: true }), async run({ toolUrl }) {
+    const client = mcp(toolUrl);
+    await client.init();
+    assert.deepEqual(await client.call("support_queue", { showCard: true }), snapshot);
+    return { text: "I found 13 open tickets." };
+  } };
+  const { sup, root } = setup({ executor, evidence });
+  t.after(() => { sup.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  await sup.start();
+  sup.post("Show my open tickets", "test-queue-card");
+  await untilIdle(sup);
+  const answer = sup.thread({}).messages.find((message) => message.kind === "answer");
+  assert.equal(answer.text, "I found 13 open tickets.");
+  assert.deepEqual(answer.queueCard.items, snapshot.items.slice(0, 12));
+  assert.equal(answer.queueCard.possiblyMore, true);
+});
+
 
 let sandboxState = null;
 async function sandboxReady() {

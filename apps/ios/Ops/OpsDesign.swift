@@ -8,8 +8,12 @@ import LakesideCore
 extension Font {
     static let opsHero = Font.system(.largeTitle, design: .rounded).weight(.bold)
     static let opsTitle = Font.system(.title2, design: .rounded).weight(.semibold)
-    static let opsCardTitle = Font.system(.headline, design: .default).weight(.semibold)
-    static let opsSection = Font.system(.footnote, design: .default).weight(.semibold)
+    static let opsHeadline = Font.headline
+    static let opsBody = Font.body
+    static let opsSecondary = Font.subheadline
+    static let opsCaption = Font.caption
+    static let opsCardTitle = opsHeadline
+    static let opsSection = opsHeadline
 }
 
 // MARK: - One status vocabulary
@@ -88,12 +92,13 @@ struct OpsStatusBadge: View {
     let status: OpsStatus
     var label: String? = nil
     var compact = false
+    var symbol: String? = nil
 
     private var word: String { label ?? status.title }
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: status.icon).font(.caption2.weight(.semibold)).accessibilityHidden(true)
+            Image(systemName: symbol ?? status.icon).font(.caption2.weight(.semibold)).accessibilityHidden(true)
             Text(word).font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold)).lineLimit(2)
         }
         .foregroundStyle(status.color)
@@ -106,6 +111,21 @@ struct OpsStatusBadge: View {
 }
 
 // MARK: - Surfaces
+
+struct OpsGlyph: View {
+    let icon: String
+    var tone: Color = OpsTheme.accent
+    var size: CGFloat = 34
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(tone)
+            .frame(width: size, height: size)
+            .background(tone.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityHidden(true)
+    }
+}
 
 struct OpsCard<Content: View>: View {
     var padding: CGFloat = 16
@@ -186,9 +206,8 @@ extension View {
     /// A muted section title that still scales with Dynamic Type.
     func opsSectionHeader() -> some View {
         font(.opsSection)
-            .textCase(.uppercase)
-            .tracking(0.6)
-            .foregroundStyle(OpsTheme.muted)
+            .textCase(nil)
+            .foregroundStyle(OpsTheme.ink)
     }
 }
 

@@ -22,6 +22,12 @@ struct NativeMarkdown: View {
                 } else if block.code {
                     ScrollView(.horizontal) { Text(block.text).font(.system(.footnote, design: .monospaced)).padding(12) }
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                } else if let marker = block.marker {
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        Text(marker).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+                        Text(inline(block.text)).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 } else if block.text.hasPrefix("# ") {
                     Text(inline(String(block.text.dropFirst(2)))).font(.title2.bold())
                 } else if block.text.hasPrefix("## ") {
@@ -38,7 +44,25 @@ struct NativeMarkdown: View {
     private func inline(_ value: String) -> AttributedString {
         (try? AttributedString(markdown: value, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(value)
     }
-    private struct Block { var text: String; var code: Bool; var language: String; var closed: Bool }
+    private struct Block {
+        var text: String
+        var code: Bool
+        var language: String
+        var closed: Bool
+        var marker: String? = nil
+    }
+
+    private func listItem(_ line: String) -> (marker: String, content: String)? {
+        let line = line.trimmingCharacters(in: .whitespaces)
+        if ["- ", "* ", "+ "].contains(where: { line.hasPrefix($0) }) {
+            return ("•", String(line.dropFirst(2)))
+        }
+        let digits = line.prefix(while: { $0.isASCII && $0.isNumber })
+        guard !digits.isEmpty, digits.count <= 4 else { return nil }
+        let rest = line.dropFirst(digits.count)
+        guard rest.hasPrefix(". ") || rest.hasPrefix(") ") else { return nil }
+        return ("\(digits).", String(rest.dropFirst(2)))
+    }
     private var blocks: [Block] {
         var result: [Block] = []; var lines: [String] = []; var code = false; var language = ""
         for line in text.components(separatedBy: "\n") {
@@ -46,6 +70,12 @@ struct NativeMarkdown: View {
                 if !lines.isEmpty { result.append(Block(text: lines.joined(separator: "\n"), code: code, language: language, closed: true)); lines = [] }
                 if !code { language = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces).lowercased() }
                 code.toggle()
+            } else if !code, let item = listItem(line) {
+                if !lines.isEmpty {
+                    result.append(Block(text: lines.joined(separator: "\n"), code: false, language: "", closed: true))
+                    lines = []
+                }
+                result.append(Block(text: item.content, code: false, language: "", closed: true, marker: item.marker))
             } else if line.isEmpty && !code {
                 if !lines.isEmpty { result.append(Block(text: lines.joined(separator: "\n"), code: false, language: "", closed: true)); lines = [] }
             } else { lines.append(line) }

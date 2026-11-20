@@ -11,24 +11,110 @@ import LakesideCore
     @Published var scheduler: JSONValue = .null
     @Published var decisions: [JSONValue] = []
     @Published var alerts: [JSONValue] = []
+    /// Keir's ticket work queue (`/api/keir/app/work`). Shared so the Inbox
+    /// badge, Ops and the Inbox list read the same tickets.
+    @Published var work: JSONValue = .null
+    @Published private var taskRows: [JSONValue] = []
     @Published var answerReceipt: JSONValue = .null
+    /// The last refresh that reached the server at all.
     @Published var updated: Date?
+    /// The last time Keir's activity (running, queued, tickets) was read. The
+    /// running count is only live while this is recent.
+    @Published var activityUpdated: Date?
     @Published var error: String?
+    /// Which panels failed on the last refresh, in plain words.
+    @Published var failedPanels: [String] = []
     @Published var loading = false
 
     private var generation = UUID()
     func reset() {
         generation = UUID(); services = []; hub = .null; kanban = .null; host = .null; scheduler = .null
-        decisions = []; alerts = []; answerReceipt = .null; updated = nil; error = nil; loading = false; UNBadge.set(0)
+        decisions = []; alerts = []; work = .null; taskRows = []; answerReceipt = .null; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
         AttentionCenter.shared.reset()
     }
     var kpis: JSONValue { hub["kpis"] }
     var servicesDown: [JSONValue] { services.filter { !["operational", ""].contains($0["current"].string) } }
-    var redPRs: Int { Int(kpis["prsRed"].number ?? 0) }
+    /// Open pull requests with failing checks, exactly the list Failed checks shows.
+    /// Falls back to the server count only when the hub sent no PR list.
+    var failingPRs: [JSONValue] { hub["prs"].array.filter { $0["state"].string == "OPEN" && $0["ci"].string == "red" } }
+    var redPRs: Int { hub["prs"] == .null ? Int(kpis["prsRed"].number ?? 0) : failingPRs.count }
+    /// Exactly the rows the Blocked work lane lists.
     var blocked: [JSONValue] { kanban["blocked"].array }
     var needsOwner: [JSONValue] { kanban["needs_owner"].array }
-    /// The count on the Pulse tab badge: only things the owner can act on now.
+    /// The support queue owns membership and timing. The hub adds delivery
+    /// receipts and ticket detail metadata for the matching records.
+    var openTickets: [JSONValue] {
+        let hubTickets = hub["tickets"].array
+        let queue = work["tickets"].array
+        let metadata = Dictionary(hubTickets.map { ($0["number"].string, $0.object) }, uniquingKeysWith: { first, _ in first })
+        let numbers = Set(queue.map { $0["number"].string })
+        let fallback = work["source"]["complete"].bool ? [] : hubTickets.filter { !numbers.contains($0["number"].string) }
+        let workers = Dictionary(runningWorkers.filter { !$0["ticket"].string.isEmpty }.map { ($0["ticket"].string, $0) }, uniquingKeysWith: { first, second in
+            (OpsFormat.date(first["startedAt"]) ?? .distantPast) >= (OpsFormat.date(second["startedAt"]) ?? .distantPast) ? first : second
+        })
+        return (queue.map { row in
+            let number = row["number"].string
+            var fields = (metadata[number] ?? [:]).merging(row.object, uniquingKeysWith: { _, current in current })
+            if let worker = workers[number], row["timing"]["state"].string == "working" { fields["active"] = worker }
+            return JSONValue.object(fields)
+        } + fallback).filter { KeirTicketFollowUp.isOpen($0) }
+    }
+    private var runningWorkers: [JSONValue] { hub["workers"].array.filter { $0["state"].string == "running" } }
+
+    /// The task feed carries state. Running worker records add start times to
+    /// jobs whose last progress happened during an earlier run.
+    var tasks: [JSONValue] {
+        let workers = Dictionary(runningWorkers.map { ($0["id"].string, $0) }, uniquingKeysWith: { first, _ in first })
+        return taskRows.map { task in
+            guard let worker = workers[task["id"].string] else { return task }
+            return .object(task.object.merging(["active": worker], uniquingKeysWith: { _, current in current }))
+        }
+    }
+
+    /// The count on the Inbox tab badge: only things the owner can act on now.
     var attention: Int { AttentionCenter.shared.count }
+
+    // MARK: Heartbeat
+
+    /// Two missed foreground refreshes (every 30 seconds) plus slack.
+    static let staleAfter: TimeInterval = 150
+
+    enum Heartbeat: Equatable {
+        case connecting
+        case fresh(Date)
+        /// The last good read is too old, or the newest read failed.
+        case stalled(Date)
+        case unreachable
+    }
+
+    /// The one answer to "is what Ops shows current?". Running counts are only
+    /// presented as live while this is `.fresh`.
+    func heartbeat(now: Date = Date()) -> Heartbeat {
+        guard let updated else { return error == nil ? .connecting : .unreachable }
+        if !failedPanels.isEmpty && failedPanels.count >= Self.panelCount { return .stalled(updated) }
+        if now.timeIntervalSince(updated) > Self.staleAfter { return .stalled(updated) }
+        if let activity = activityUpdated, now.timeIntervalSince(activity) > Self.staleAfter { return .stalled(activity) }
+        return .fresh(updated)
+    }
+
+    /// One full sentence about freshness, for the Ops header.
+    func heartbeatSentence(now: Date = Date()) -> String {
+        switch heartbeat(now: now) {
+        case .connecting: return "Connecting to Ops."
+        case .unreachable: return "Ops could not be reached. Pull to retry."
+        case .fresh(let at):
+            let partial = failedPanels.isEmpty ? "" : " \(Self.list(failedPanels)) did not refresh."
+            return "Updated \(OpsFormat.ago(at)).\(partial)"
+        case .stalled(let at):
+            return "Updates stalled. Last good data is from \(OpsFormat.ago(at)), so counts may be out of date."
+        }
+    }
+
+    private static let panelCount = 8
+    private static func list(_ names: [String]) -> String {
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + names.last!
+    }
 
     func refresh(_ session: AppSession) async {
         guard !loading else { return }
@@ -40,18 +126,48 @@ import LakesideCore
         async let schedule = try? session.get("/api/scheduler")
         async let open = try? session.get("/api/keir/app/decisions")
         async let feed = try? session.get("/api/keir/app/alerts")
-        let (s, k, b, h, d, a) = await (status, keir, board, schedule, open, feed)
+        async let queue = try? session.get("/api/keir/app/work")
+        async let taskList = try? session.get("/api/keir/app/tasks")
+        let (s, k, b, h, d, a, w, t) = await (status, keir, board, schedule, open, feed, queue, taskList)
         guard generation == epoch else { return }
         if let s { services = s["services"].array }
         if let k { hub = k }
+        if t != nil, w != nil { activityUpdated = Date() }
         if let b { kanban = b }
         if let h { host = h["host"]; scheduler = h }
         if let d { decisions = d["decisions"].array }
         if let a { alerts = a["alerts"].array }
-        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: kanban["needs_owner"].array)
-        let failed = [s, k, b, h, d, a].filter { $0 == nil }.count
-        error = failed == 6 ? "Ops is unreachable. Pull to retry." : failed > 0 ? "Some panels could not refresh." : nil
-        if failed < 6 { updated = Date() }
+        if let w { work = w }
+        if let t { taskRows = t["tasks"].array }
+        rebuildAttention()
+        let names = ["Service status", "Keir activity", "Work board", "Scheduler", "Decisions", "Alerts", "Ticket queue", "Tasks"]
+        failedPanels = zip(names, [s, k, b, h, d, a, w, t]).filter { $0.1 == nil }.map { $0.0 }
+        error = failedPanels.count == Self.panelCount ? "Ops is unreachable. Pull to retry." : failedPanels.isEmpty ? nil : "\(Self.list(failedPanels)) could not refresh."
+        if failedPanels.count < Self.panelCount { updated = Date() }
+    }
+
+    /// Re-reads only decisions and the ticket queue. The Inbox calls this so its
+    /// rows and the tab badge come from the same read.
+    func refreshInbox(_ session: AppSession) async -> String? {
+        let epoch = generation
+        async let open = try? session.get("/api/keir/app/decisions")
+        async let queue = try? session.get("/api/keir/app/work")
+        async let taskList = try? session.get("/api/keir/app/tasks")
+        let (d, w, t) = await (open, queue, taskList)
+        guard generation == epoch else { return nil }
+        if let d { decisions = d["decisions"].array }
+        if let w { work = w }
+        if let t { taskRows = t["tasks"].array }
+        if t != nil, w != nil { activityUpdated = Date() }
+        rebuildAttention()
+        if d == nil { return "Decisions could not refresh. Pull to retry." }
+        if w == nil { return "Ticket queue could not refresh. The last list is still shown." }
+        if t == nil { return "Tasks could not refresh. The last list is still shown." }
+        return nil
+    }
+
+    private func rebuildAttention() {
+        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: needsOwner, tickets: openTickets, tasks: tasks)
         UNBadge.set(attention)
     }
 
@@ -62,9 +178,8 @@ import LakesideCore
             guard epoch == generation else { return false }
             answerReceipt = result
             decisions.removeAll { $0["id"].string == id }
-            AttentionCenter.shared.setWork(decisions: decisions, ownerWork: kanban["needs_owner"].array)
+            rebuildAttention()
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            UNBadge.set(attention)
             return true
         } catch { guard epoch == generation else { return false }; self.error = error.displayMessage; UINotificationFeedbackGenerator().notificationOccurred(.error); return false }
     }
@@ -443,17 +558,24 @@ import LakesideCore
         do { let made = try await session.post("/api/keir/app/threads", ["title": .string(title)]); guard epoch == generation else { return }; await loadThreads(session); select(made["id"].string) }
         catch { if epoch == generation { self.error = error.displayMessage } }
     }
-    var conversationRows: [JSONValue] {
-        guard supervisorAvailable else { return threads }
-        let home = JSONValue.object(["id": .string(Self.supervisorThread), "title": .string("Keir"), "system": .bool(true), "preview": .string("Your private conversation")])
-        let others = threads.map { row -> JSONValue in
-            guard row["id"].string == "main" else { return row }
-            var fields = row.object; fields["title"] = .string("Support Keir")
-            return .object(fields)
-        }
-        return [home] + others
+    var mainThread: String { supervisorAvailable ? Self.supervisorThread : "main" }
+    var sideChats: [JSONValue] { threads.filter { !$0["system"].bool && $0["id"].string != "main" } }
+    var systemChats: [JSONValue] { threads.filter { $0["system"].bool && $0["id"].string != "main" } }
+
+    var threadTitle: String {
+        if thread == mainThread { return "Keir" }
+        if thread == "main" { return "Support desk" }
+        return threads.first { $0["id"].string == thread }?["title"].string ?? "Keir"
     }
-    var threadTitle: String { conversationRows.first { $0["id"].string == thread }?["title"].string ?? (thread == "watches" ? "Watches" : "Keir") }
+
+    func removeSideChat(_ id: String, _ session: AppSession) async throws {
+        guard sideChats.contains(where: { $0["id"].string == id }) else { return }
+        let epoch = generation
+        _ = try await session.post("/api/keir/app/threads/\(id)", ["archived": .bool(true)])
+        guard epoch == generation else { return }
+        threads.removeAll { $0["id"].string == id }
+        if thread == id { select(mainThread) }
+    }
 
     private var observedStart: [String: Date] = [:]
 
