@@ -160,7 +160,8 @@ test("pushes cover new Keir replies, open decisions and Watchkeeper incidents on
   duePushes(d, { now: 1000 }).forEach((p) => p.mark());
   const { jobId } = app.post("What turn is it?");
   app.deliver(`channel-reply:${jobId}:x`, { content: "Turn 202." }, d.jobs[jobId]);
-  d.decisions = { aaaaaaaaaaaa: { id: "aaaaaaaaaaaa", question: "Promote to main?", state: "pending", at: 2000 } };
+  d.jobs.promo = { id: "promo", kind: "command", role: "owner", state: "working", source: {} };
+  d.decisions = { aaaaaaaaaaaa: { id: "aaaaaaaaaaaa", jobId: "promo", question: "Promote to main?", state: "pending", at: 2000 } };
   d.alerts = [{ key: "error:watch-recurring:turn", content: "Turn warning again", at: 3000 }, { key: "digest:2026-10-15", content: "digest", at: 3000 }];
   const due = duePushes(d, { now: 4000 });
   assert.deepEqual(due.map((p) => p.pref), ["replies", "decisions", "incidents"]);
