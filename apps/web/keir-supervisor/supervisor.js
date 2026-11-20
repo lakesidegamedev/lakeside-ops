@@ -145,7 +145,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
       if (!evidence) throw new Error("Support reads are not configured on this server.");
       const snapshot = await evidence.queue(signal);
       if (input.showCard && snapshot.state === "read" && !signal?.aborted) {
-        queueCards.set(job.id, { ...snapshot, items: snapshot.items.slice(0, 12),
+        queueCards.set(job.id, { ...snapshot, items: snapshot.items.slice(0, 12).map((row) => ({ ...row, title: redact(row.title) })),
           possiblyMore: snapshot.possiblyMore || snapshot.items.length > 12 });
       }
       return snapshot;

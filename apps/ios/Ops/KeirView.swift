@@ -747,7 +747,7 @@ struct DecisionCard: View {
         else {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                OpsStatusBadge(status: .waiting, label: decision["type"].string == "choice" ? "Choose one" : "Approval")
+                OpsStatusBadge(status: .waiting, label: decision["type"].string == "choice" ? "Choose one" : "Approval", symbol: decision["type"].string == "choice" ? "list.bullet.circle" : "checkmark.seal")
                 if let n = decision["ticket"].number { Text("Ticket \(Int(n))").font(.caption).foregroundStyle(OpsTheme.muted) }
                 Spacer()
                 Text(OpsFormat.ago(decision["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
@@ -757,8 +757,9 @@ struct DecisionCard: View {
             }
             Text(OpsText.decisionTitle(decision)).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
             let question = OpsText.scrub(decision["question"].string)
-            if !question.isEmpty && question != OpsText.decisionTitle(decision) {
-                Text(question).font(.callout).foregroundStyle(decision["tldr"].string.isEmpty ? OpsTheme.ink : OpsTheme.muted)
+            let detail = OpsText.decisionBody(question, title: OpsText.decisionTitle(decision))
+            if !detail.isEmpty {
+                Text(detail).font(.callout).foregroundStyle(decision["tldr"].string.isEmpty ? OpsTheme.ink : OpsTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if decision["type"].string != "choice" && decision["review"]["scope"] != .null {

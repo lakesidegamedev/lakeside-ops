@@ -92,12 +92,13 @@ struct OpsStatusBadge: View {
     let status: OpsStatus
     var label: String? = nil
     var compact = false
+    var symbol: String? = nil
 
     private var word: String { label ?? status.title }
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: status.icon).font(.caption2.weight(.semibold)).accessibilityHidden(true)
+            Image(systemName: symbol ?? status.icon).font(.caption2.weight(.semibold)).accessibilityHidden(true)
             Text(word).font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold)).lineLimit(2)
         }
         .foregroundStyle(status.color)

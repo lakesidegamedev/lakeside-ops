@@ -120,6 +120,19 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 view["working"] = true
                 view["questions"] = [["id": "123456abcdef", "title": "Payroll decision", "state": choiceState, "questions": [["id": "1", "prompt": "How should payroll work?", "options": [["id": "1", "label": "Use active capacity", "recommended": true], ["id": "2", "label": "Use filled jobs"]]]]]]
             }
+            if ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens"), after < 4 {
+                let now = Date().timeIntervalSince1970 * 1000
+                let ask: [String: Any] = ["seq": 3, "id": "review-ask", "role": "owner", "text": "What needs my attention?", "at": now]
+                let answer: [String: Any] = ["seq": 4, "id": "review-answer", "role": "keir", "at": now,
+                    "text": "I reviewed the open tickets. I need your payroll decision before I can finish the funding investigation.\n\n- **#1001** I confirmed the payroll calculation and saved the evidence with the ticket. The choice is whether to use funded positions or filled jobs.\n- **#1868** The revenue investigation stopped before it finished. I saved the last result so the investigation can resume without repeating the same checks.\n\nThe latest reply is in Discord. I’ll check the next settled turn for changes to the player’s result.",
+                    "queueCard": ["checkedAt": now, "items": [
+                        ["number": 1001, "title": "Budget screen shows zero funding", "ownerDecisionPending": true],
+                        ["number": 1868, "title": "Massive drop in revenue turn 77-78", "work": "blocked"],
+                    ]]]
+                let appended = [ask, answer].filter { ($0["seq"] as? Int ?? 0) > after }
+                view["messages"] = (view["messages"] as? [[String: Any]] ?? []) + appended
+                view["cursor"] = 4
+            }
             if ProcessInfo.processInfo.arguments.contains("--uitest-table") {
                 view["messages"] = [["seq": 100, "id": "table-fixture", "role": "keir", "text": "| Ticket | Current position |\n| --- | --- |\n| Tech tree | Implementation is waiting on the assigned developer and needs a verified handoff before proceeding. |\n| Hardware profits | Verification is waiting for the next completed turn. |", "at": 1792020120000]]
             }

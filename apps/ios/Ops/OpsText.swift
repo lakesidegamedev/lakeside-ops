@@ -140,6 +140,22 @@ enum OpsText {
         return decision["signoff"].bool ? "Sign-off needed" : "Decision needed"
     }
 
+    static func decisionBody(_ question: String, title: String) -> String {
+        func normalized(_ value: String) -> String {
+            value.lowercased()
+                .replacingOccurrences(of: "pr #", with: "#")
+                .replacingOccurrences(of: " into ", with: " to ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "?! ."))
+        }
+
+        if normalized(question) == normalized(title) { return "" }
+        guard let separator = question.firstIndex(of: "?"),
+              normalized(String(question[..<separator])) == normalized(title) else { return question }
+        let next = question.index(after: separator)
+        let remaining = String(question[next...]).trimmingCharacters(in: .whitespaces)
+        return remaining.lowercased() == "checks are green." ? "Checks green" : remaining
+    }
+
     /// A question panel's title, never raw option text.
     static func questionTitle(_ panel: JSONValue) -> String {
         if let title = panel["title"].string.nonempty { return scrub(title) }
