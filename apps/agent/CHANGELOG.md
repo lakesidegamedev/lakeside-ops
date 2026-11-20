@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- A reply delivered to a ticket by another job or an operator, cross-checked against the Discord channel (every part present, in order, together exactly the stored update), now stops a closing job from posting a recap or close notice. It never licenses closure: only the ticket's own answer mark or a player confirmation does.
+
 ## 11.1.0 (2026-11-20)
 
 ### For users

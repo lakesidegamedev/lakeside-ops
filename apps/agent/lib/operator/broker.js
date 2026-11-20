@@ -4339,25 +4339,22 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         const coordinator = ownerDirected(job) && d.jobs[d.seen[`ticket:${job.ticket}`]];
         const sharedAnswerAt = coordinator?.kind === "ticket" && coordinator.ticket === job.ticket && coordinator.channelId === job.channelId ? coordinator.resolutionReadyAt || 0 : 0;
-        let answerAt = sharedAnswerAt || job.resolutionReadyAt;
-        // Keir 11.1.1: an answer delivered to this ticket's channel after the latest human message counts even when another
-        // job or an authenticated operator sent it, but only from the support record cross-checked against Discord.
-        let receipt = null;
+        const answerAt = sharedAnswerAt || job.resolutionReadyAt;
+        // Keir 11.1.1: a reply delivered to this ticket's channel by another job or an operator, cross-checked against Discord,
+        // only stops this job from posting a recap or a close notice. It never licenses closure: a progress note proves a message
+        // was sent, not that it solved the case. Closure still needs this ticket's own answer mark or a player confirmation.
         if (!answerAt) {
           const ticket = await mcp.call("support", "support_get", { kind: "ticket", number: job.ticket }, false, signal).catch(() => null);
-          receipt = require("./answerreceipt").verifiedAnswerAfterRequest({ ticket, number: job.ticket, channelId: job.channelId, rows,
+          const receipt = require("./answerreceipt").verifiedAnswerAfterRequest({ ticket, number: job.ticket, channelId: job.channelId, rows,
             isAnswerSide: (m) => Boolean(m.author?.bot) || closeStaff.has(m.author?.id), isHolding: holdingPost });
-          if (receipt) ledger.audit("ticket_answer_receipt_seen", { job: job.id, ticket: job.ticket, messageId: receipt.messageId, key: receipt.key, at: receipt.at, complete: receipt.complete });
-          if (receipt && !receipt.complete) throw new Error("Not closed: the player already has a delivered reply after their latest message, but that reply or a later one promises a further follow-up, so it is not a final answer. If the follow-up is yours, deliver it with what you found; otherwise finish waiting with waitFor \"player_reply\". Do not post a recap or a notice that you will close the ticket.");
-          if (receipt) answerAt = receipt.at;
+          if (receipt) {
+            ledger.audit("ticket_answer_receipt_seen", { job: job.id, ticket: job.ticket, messageId: receipt.messageId, key: receipt.key, at: receipt.at, complete: receipt.complete });
+            throw new Error("Not closed: the player already has a delivered reply after their latest message, but nothing confirms it solved their question. Do not post another recap or a notice that you will close. Finish waiting with waitFor \"player_reply\"; close only after the player confirms or you hold a verified outcome for this request.");
+          }
         }
         // The task wakes when the grace ends, not on a long reply wait (ticket 1755 was due to
         // close two hours after its fix and slept nine).
-        if (!answerAt || now() - answerAt < config.closeGraceMs) {
-          if (answerAt) job.closeReadyAt = answerAt + config.closeGraceMs;
-          if (receipt) throw new Error(`Not closed yet: a verified answer was already delivered in this ticket after the player's latest message (${new Date(receipt.at).toISOString()}). Do not post another answer, a recap or a notice that you will close. Finish waiting with waitFor "player_reply"; closure is allowed after ${new Date(answerAt + config.closeGraceMs).toISOString()}.`);
-          throw new Error("give the player the final answer and wait for the closure grace period");
-        }
+        if (!answerAt || now() - answerAt < config.closeGraceMs) { if (answerAt) job.closeReadyAt = answerAt + config.closeGraceMs; throw new Error("give the player the final answer and wait for the closure grace period"); }
         // Review 2026-10-19: 1610 resolved one minute after "live", 1611 52
         // minutes after (the player's deliveries had fallen), 1630 before the
         // change shipped. After a fix goes live the player gets a turn to see

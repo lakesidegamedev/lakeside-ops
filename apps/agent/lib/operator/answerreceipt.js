@@ -9,13 +9,15 @@
 //   - the support service's stored public update for this ticket, delivered as a reply into this ticket's channel,
 //   - the Discord channel itself, where every delivered part exists as a bot message, after the latest human message,
 //     with text that is part of the stored update.
-// The reply is complete only when it is not a holding line, promises no further follow-up, and no later bot or staff
+// The receipt never licenses closure by itself (a progress note proves a send, not a solution); the caller only uses it to
+// suppress a redundant recap. The reply is complete only when it is not a holding line, promises no further follow-up, and no later bot or staff
 // post promises one either.
 // Everything else (grace, unread replies, holds, staff claims, decisions) stays with the caller.
 const { promisesFollowUp, outstandingPromise } = require("./standdown");
 
 const DELIVERED = new Set(["posted", "sent", "delivered", "already_posted"]);
 const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+const squash = (s) => String(s || "").replace(/\s+/g, "");
 const byId = (a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0);
 const snowflake = (v) => typeof v === "string" && /^\d{1,25}$/.test(v);
 
@@ -35,9 +37,12 @@ function verifiedAnswerAfterRequest({ ticket, number, channelId, rows, isAnswerS
     const ids = (Array.isArray(del.parts) && del.parts.length ? del.parts.map((p) => p?.id) : [del.messageId]);
     if (!ids.length || !ids.every(snowflake)) continue;
     const parts = ids.map((id) => rowOf.get(id));
-    const text = norm(u.message);
-    if (!text || parts.some((m) => !m || !m.author?.bot || !norm(m.content) || !text.includes(norm(m.content)))) continue;
-    const first = parts.slice().sort(byId)[0];
+    const text = squash(u.message);
+    // Every part is a bot message, parts arrive in order, and together they are exactly the stored update.
+    if (!text || parts.some((m) => !m || !m.author?.bot || !norm(m.content))) continue;
+    if (parts.some((m, i) => i && byId(parts[i - 1], m) >= 0)) continue;
+    if (parts.map((m) => squash(m.content)).join("") !== text) continue;
+    const first = parts[0];
     if (BigInt(first.id) <= BigInt(latestRequest.id)) continue;
     if (!best || BigInt(first.id) > BigInt(best.first.id)) best = { u, first };
   }

@@ -65,18 +65,29 @@ function setup({ rows = baseRows(), ticket = ticketRecord(), at = ANSWER_AT + 10
 const resolves = (f) => f.calls.filter((c) => c[0] === "support_resolve").length;
 const posts = (f) => f.calls.filter((c) => c[0] === "support_public_update").length;
 
-test("a verified answer delivered after the latest question holds closure only for the grace, with no request for another answer", async () => {
-  const f = setup();
-  await assert.rejects(f.resolve(), (e) => /verified answer was already delivered/.test(e.message) && /Do not post another answer/.test(e.message) && !/give the player the final answer/.test(e.message));
-  assert.equal(f.job.closeReadyAt, ANSWER_AT + 60 * MIN);
+test("a verified delivered reply alone never closes, however long ago, and asks for no recap or notice", async () => {
+  const f = setup({ at: ANSWER_AT + 5 * 60 * MIN });
+  for (let i = 0; i < 2; i++) await assert.rejects(f.resolve(), (e) => /nothing confirms it solved/.test(e.message) && /Do not post another recap/.test(e.message) && /player_reply/.test(e.message) && !/give the player the final answer/.test(e.message));
   assert.equal(resolves(f), 0);
   assert.equal(posts(f), 0);
-  f.set(ANSWER_AT + 61 * MIN);
-  await f.resolve();
-  assert.equal(f.job.resolutionSubmitted, true);
-  assert.equal(resolves(f), 1);
-  assert.equal(posts(f), 0, "no recap or closing promise is posted");
   assert.ok(f.d.audit.some((a) => a.kind === "ticket_answer_receipt_seen" && a.messageId === "900000000000000040" && a.complete === true));
+});
+
+test("two ordinary progress sentences with no promise are never sufficient to close", async () => {
+  const note = "The fund card was reviewed this morning. The numbers on it look different now.";
+  const rows = [...baseRows().slice(0, 3), row("900000000000000040", note, BOT, ANSWER_AT, true)];
+  const ticket = ticketRecord([update({ message: note, delivery: { ...update().delivery, parts: [{ index: 0, id: "900000000000000040" }] } })]);
+  const f = setup({ rows, ticket, at: ANSWER_AT + 24 * 60 * MIN });
+  await assert.rejects(f.resolve(), /nothing confirms it solved/);
+  assert.equal(resolves(f), 0);
+  assert.equal(posts(f), 0);
+});
+
+test("an existing local answer mark still closes after the grace", async () => {
+  const f = setup({ at: ANSWER_AT + 61 * MIN });
+  f.coordinator.resolutionReadyAt = ANSWER_AT;
+  await f.resolve();
+  assert.equal(resolves(f), 1);
 });
 
 test("a worker's own claim of a delivered answer, without a matching support receipt, does not count", async () => {
@@ -128,14 +139,14 @@ test("a verified reply that promises a follow-up keeps the ticket waiting on the
   const rows = [...baseRows().slice(0, 3), row("900000000000000040", promise, BOT, ANSWER_AT, true)];
   const ticket = ticketRecord([update({ message: promise, delivery: { ...update().delivery, parts: [{ index: 0, id: "900000000000000040" }] } })]);
   const f = setup({ rows, ticket, at: ANSWER_AT + 3 * 60 * MIN });
-  await assert.rejects(f.resolve(), (e) => /promises a further follow-up/.test(e.message) && /player_reply/.test(e.message) && /Do not post a recap/.test(e.message));
+  await assert.rejects(f.resolve(), (e) => /player_reply/.test(e.message) && /Do not post another recap/.test(e.message));
   assert.equal(resolves(f), 0);
   assert.equal(posts(f), 0);
   // A holding line is not a final answer either.
   const hold = "I am checking that now.";
   const g = setup({ rows: [...baseRows().slice(0, 3), row("900000000000000040", hold, BOT, ANSWER_AT, true)],
     ticket: ticketRecord([update({ message: hold, delivery: { ...update().delivery, parts: [{ index: 0, id: "900000000000000040" }] } })]), at: ANSWER_AT + 3 * 60 * MIN });
-  await assert.rejects(g.resolve(), /promises a further follow-up/);
+  await assert.rejects(g.resolve(), /player_reply/);
   assert.equal(resolves(g), 0);
 });
 
@@ -159,6 +170,11 @@ test("the verifier picks the newest verified reply and reports a later outstandi
   assert.deepEqual(got, { at: ANSWER_AT, messageId: "900000000000000040", key: "progress:fixture", complete: true });
   const later = [...rows, row("900000000000000070", "I will look into the fund card and get back to you.", BOT, ANSWER_AT + 20 * MIN, true)];
   assert.equal(verifiedAnswerAfterRequest({ ticket: ticketRecord(), number: TICKET, channelId: CH, rows: later, isAnswerSide }).complete, false);
+  // A missing, reordered or extra part never counts, even when each part is a substring of the update.
+  const parts = (...ids) => ticketRecord([update({ delivery: { ...update().delivery, parts: ids.map((id, index) => ({ index, id })) } })]);
+  assert.equal(verifiedAnswerAfterRequest({ ticket: parts("900000000000000040"), number: TICKET, channelId: CH, rows, isAnswerSide }), null);
+  assert.equal(verifiedAnswerAfterRequest({ ticket: parts("900000000000000041", "900000000000000040"), number: TICKET, channelId: CH, rows, isAnswerSide }), null);
+  assert.equal(verifiedAnswerAfterRequest({ ticket: ticketRecord([update({ message: `${ANSWER} Extra sentence.` })]), number: TICKET, channelId: CH, rows, isAnswerSide }), null);
   assert.equal(verifiedAnswerAfterRequest({ ticket: null, number: TICKET, channelId: CH, rows, isAnswerSide }), null);
   assert.equal(verifiedAnswerAfterRequest({ ticket: ticketRecord([update({ delivery: { ...update().delivery, parts: [{ id: "not-a-snowflake" }] } })]), number: TICKET, channelId: CH, rows, isAnswerSide }), null);
 });
