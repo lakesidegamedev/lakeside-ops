@@ -34,6 +34,35 @@ final class KeirGamesUITests: XCTestCase {
         } while Date() < deadline
         return app.staticTexts.matching(match).firstMatch
     }
+    /// The sheet is a Form: rows below the fold are not built, so they are
+    /// absent from the hierarchy until scrolled to. Drag inside the sheet, up to
+    /// reach the questions at the bottom or down to return to the game list,
+    /// until `element` is on screen.
+    @discardableResult
+    private func reveal(_ app: XCUIApplication, _ element: @autoclosure () -> XCUIElement, down: Bool = false, attempts: Int = 6) -> XCUIElement {
+        let window = app.windows.firstMatch
+        for _ in 0..<attempts {
+            let current = element()
+            // Going down, stop as soon as the row is built: a further drag at
+            // the top of the sheet would pull the sheet closed, and tap scrolls
+            // a built row the rest of the way.
+            if current.exists && (down || current.isHittable) { return current }
+            let low = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+            let high = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+            if down { high.press(forDuration: 0.05, thenDragTo: low) } else { low.press(forDuration: 0.05, thenDragTo: high) }
+            usleep(400_000)
+        }
+        return element()
+    }
+    /// Scroll the whole sheet down to its end, so an absent question is absent
+    /// because it is not offered, not because it was never built.
+    private func scrollToEnd(_ app: XCUIApplication) {
+        let window = app.windows.firstMatch
+        for _ in 0..<4 {
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75)).press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)))
+            usleep(300_000)
+        }
+    }
     private func capture(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
     }
@@ -49,12 +78,14 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(find(app, "metroforge · mf_status").exists, "the evidence path names the read")
         XCTAssertTrue(find(app, "Preview site", timeout: 1).exists)
         XCTAssertTrue(find(app, "Not read by Keir", timeout: 1).exists, "withheld data is stated")
-        XCTAssertTrue(find(app, "A House Divided desk only", timeout: 1).exists, "tickets are not claimed for MetroForge")
+        let ask = reveal(app, app.buttons["keir-game-ask-health"])
+        XCTAssertTrue(ask.waitForExistence(timeout: 5))
+        XCTAssertTrue(find(app, "A House Divided desk only", timeout: 2).exists, "tickets are not claimed for MetroForge")
+        scrollToEnd(app)
+        XCTAssertTrue(ask.exists)
         XCTAssertFalse(app.buttons["keir-game-ask-tickets"].exists, "no ticket question for a game without tickets")
         capture(app, "Connected games MetroForge")
-        let ask = app.buttons["keir-game-ask-health"]
-        XCTAssertTrue(ask.waitForExistence(timeout: 5))
-        ask.tap()
+        reveal(app, ask).tap()
         let box = composer(app)
         XCTAssertTrue(box.waitForExistence(timeout: 10))
         let draft = box.value as? String ?? ""
@@ -68,10 +99,12 @@ final class KeirGamesUITests: XCTestCase {
         let app = launch()
         openGames(app)
         app.buttons["keir-game-ahd"].tap()
-        XCTAssertTrue(app.buttons["keir-game-ask-tickets"].waitForExistence(timeout: 10))
-        XCTAssertTrue(find(app, "engine · engine_health", timeout: 1).exists)
-        app.buttons["keir-game-grand-century"].tap()
+        XCTAssertTrue(find(app, "engine · engine_health").exists)
+        XCTAssertTrue(reveal(app, app.buttons["keir-game-ask-tickets"]).waitForExistence(timeout: 5), "A House Divided offers a ticket question")
+        reveal(app, app.buttons["keir-game-grand-century"], down: true).tap()
         XCTAssertTrue(find(app, "grand-century · gc_status").exists)
+        XCTAssertTrue(reveal(app, app.buttons["keir-game-ask-health"]).waitForExistence(timeout: 5))
+        scrollToEnd(app)
         XCTAssertFalse(app.buttons["keir-game-ask-tickets"].exists)
     }
 
@@ -82,8 +115,9 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(find(app, "could not read this just now").exists)
         XCTAssertFalse(find(app, "Responding", timeout: 1).exists, "no numbers for a failed read")
         capture(app, "Connected games unavailable")
-        app.buttons["keir-game-grand-century"].tap()
+        reveal(app, app.buttons["keir-game-grand-century"], down: true).tap()
         XCTAssertTrue(find(app, "No read connection is registered").exists)
+        scrollToEnd(app)
         XCTAssertFalse(app.buttons["keir-game-ask-health"].exists, "an unconnected game offers no question")
     }
 
@@ -98,7 +132,8 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
         let metroforge = app.buttons["keir-game-metroforge"]
         XCTAssertTrue(metroforge.waitForExistence(timeout: 10)); metroforge.tap()
-        let ask = app.buttons["keir-game-ask-health"]
+        XCTAssertTrue(find(app, "metroforge · mf_status").exists)
+        let ask = reveal(app, app.buttons["keir-game-ask-health"])
         XCTAssertTrue(ask.waitForExistence(timeout: 10))
         XCTAssertFalse(ask.isEnabled, "a question would replace the draft")
     }

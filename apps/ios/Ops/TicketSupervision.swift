@@ -83,6 +83,10 @@ struct TicketSupervisionPanel: View {
                 Button("Refresh") { Task { await load() } }.font(.caption)
             }
         }
+        // A container identifier on a plain stack is copied onto every child
+        // and replaces their own, which hid "supervision-take" and the other
+        // controls. Make the panel a container so each control keeps its id.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ticket-supervision")
         .confirmationDialog(confirming?.title ?? "", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), titleVisibility: .visible) {
             if let action = confirming {
