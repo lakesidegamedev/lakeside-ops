@@ -111,7 +111,6 @@ struct KeirView: View {
                    yolo: keir.yolo, disabled: presentingSheet,
                    openThreads: { sheet = .threads },
                    openInbox: { router.activityFilter = "all"; router.tab = .activity },
-                   startVoice: { voice.stop(); composing = false; voiceMode = true },
                    reviewAutonomy: { confirmingYoloOff = true }) {
             toolsMenu
         }
@@ -131,7 +130,6 @@ struct KeirView: View {
                 Button { presentFromMenu(.computer) } label: { Label("Computer history", systemImage: "desktopcomputer") }
                 Button { presentFromMenu(.desk) } label: { Label("Support desk", systemImage: "lifepreserver") }
             }
-            Button { afterMenu { router.showSettings = true } } label: { Label("Settings", systemImage: "gearshape") }
         }
         if keir.controls["supported"].bool {
             Section {
@@ -185,10 +183,7 @@ struct KeirView: View {
         }
         .padding(.top, 6).padding(.bottom, 8)
         .frame(maxWidth: 760).frame(maxWidth: .infinity)
-        .background {
-            LinearGradient(stops: [.init(color: KeirChatTheme.canvas.opacity(0), location: 0), .init(color: KeirChatTheme.canvas, location: 0.3)],
-                           startPoint: .top, endPoint: .bottom)
-        }
+        .background(KeirChatTheme.canvas)
     }
 
     /// How the next message is routed, shown only when it is not the default.
@@ -296,10 +291,16 @@ struct KeirView: View {
                 .disabled(sendDisabled)
                 .accessibilityLabel("Send to Keir").accessibilityIdentifier("keir-send")
         } else {
-            Button { voiceDraft = draft; Task { await voice.start() } } label: { KeirComposerIcon(system: "mic") }
-                .buttonStyle(.plain)
+            Menu {
+                Button("Voice conversation", systemImage: "waveform") {
+                    voice.stop(); composing = false; voiceMode = true
+                }.accessibilityIdentifier("keir-voice-conversation")
+                Button("Dictate a message", systemImage: "mic") {
+                    voiceDraft = draft; Task { await voice.start() }
+                }.accessibilityIdentifier("keir-dictate")
+            } label: { KeirComposerIcon(system: "mic") }
                 .disabled(keir.stopped || voice.requesting || composerLocked)
-                .accessibilityLabel("Dictate a message").accessibilityIdentifier("keir-dictate")
+                .accessibilityLabel("Voice input").accessibilityIdentifier("keir-microphone")
         }
     }
 
@@ -311,7 +312,7 @@ struct KeirView: View {
     private var composerPlaceholder: String {
         if !keir.homeResolved { return "Checking your account…" }
         if keir.supervisor.setup != nil { return "Private supervisor is not set up" }
-        return keir.isSupervisor ? "Message your private Keir" : "Message Keir"
+        return "Message Keir"
     }
 
     /// The "+" differs in the private conversation: no attachments, ticket
@@ -341,9 +342,13 @@ struct KeirView: View {
     // MARK: Screen
 
     private var screen: some View {
-        timeline
-        .safeAreaInset(edge: .top, spacing: 0) { header }
-        .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+        VStack(spacing: 0) {
+            header
+            timeline
+                .clipped()
+            bottomBar
+        }
+        .safeAreaPadding(.bottom, 16)
         .background(KeirChatTheme.canvas.ignoresSafeArea())
         .navigationTitle("Keir").navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
@@ -379,9 +384,9 @@ struct KeirView: View {
             case .computer: NavigationStack { KeirComputer().toolbar { Button("Done") { sheet = nil } } }
             case .ideas: NavigationStack { IdeasView().toolbar { Button("Done") { sheet = nil } } }
             case .watches: NavigationStack { WatchesView().toolbar { Button("Done") { sheet = nil } } }
-            case .memory: NavigationStack { MemoryView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { sheet = nil } } } }
+            case .memory: NavigationStack { MemoryView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }
             case .games: KeirGamesSheet(draftEmpty: draftIsEmpty) { text in guard draftIsEmpty else { return }; draft = text; composing = true; sheet = nil }
-            case .desk: NavigationStack { DeskView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { sheet = nil } } } }
+            case .desk: NavigationStack { DeskView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }
             } }
             .onAppear { sheetOnScreen = which }
         }
@@ -616,11 +621,9 @@ private struct KeirMessage: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 if !message["text"].string.isEmpty {
-                    NativeMarkdown(text: message["text"].string, fills: false)
-                        .textSelection(.enabled)
+                    NativeMarkdown(text: message["text"].string)
+                        .font(.opsBody)
                         .foregroundStyle(OpsTheme.ink)
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(KeirChatTheme.keirBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
                 ForEach(message["attachments"].array, id: \.["id"].string) { KeirAttachment(attachment: $0) }
                 if !message["activity"].array.isEmpty { KeirToolCalls(calls: message["activity"].array) }
@@ -646,7 +649,8 @@ private struct KeirMessage: View {
                     Text("Edited").font(.caption2).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
                 }
             }
-            .padding(.trailing, 32)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Keir, \(OpsFormat.ago(message["at"]))")
             .contextMenu {

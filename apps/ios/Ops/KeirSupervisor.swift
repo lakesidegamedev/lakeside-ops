@@ -100,16 +100,16 @@ enum KeirSupervisor {
 
     enum Destination: Equatable { case supervisor, support, withheld(String) }
 
-    /// Where a message typed now would go. Support Keir is only a destination
+    /// Where a message typed now would go. the support desk is only a destination
     /// when the account is known and either the person has no supervisor or
-    /// they opened Support Keir themselves. It is never a default for an owner.
+    /// they opened the support desk themselves. It is never a default for an owner.
     static func destination(thread: String, supervisorAvailable: Bool, resolved: Bool, chosen: Bool) -> Destination {
         guard resolved else { return .withheld("Keir is still checking which account this is. Nothing was sent.") }
         if thread == Self.thread {
             return supervisorAvailable ? .supervisor : .withheld("Your private conversation is not available. Nothing was sent.")
         }
         if thread == "main", supervisorAvailable, !chosen {
-            return .withheld("Open Support Keir yourself to message the support desk. Nothing was sent.")
+            return .withheld("Open support desk yourself to message the support desk. Nothing was sent.")
         }
         return .support
     }

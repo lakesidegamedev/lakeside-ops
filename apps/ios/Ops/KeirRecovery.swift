@@ -63,7 +63,7 @@ struct OpsDestinationView: View {
                 case .ticket(let ticket): TicketDetail(ticket: ticket)
                 case .alerts: OpsAttentionView()
                 }
-            }.toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            }.toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
     }
 }

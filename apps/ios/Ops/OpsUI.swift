@@ -11,16 +11,25 @@ enum OpsTheme {
     static let ink = Brand.ink
     // 6.7:1 on true black and 5.4:1 on the light canvas.
     static let muted = Brand.adaptive(0x8e8e93, 0x5b6470)
-    static let sky = Brand.sky
-    static let mint = Brand.mint
+    static let accent = Brand.sky
+    static let success = Brand.mint
+    static let sky = accent
+    static let mint = success
     static let warn = Brand.adaptive(0xe3ba88, 0xb26a12)
     static let danger = Brand.adaptive(0xf08a8a, 0xc0392b)
     static let onAccent = Brand.onAccent
+    static let neutral = muted
+    static let warning = warn
 }
 
 extension View {
     func opsScreen() -> some View {
-        scrollContentBackground(.hidden).background(OpsTheme.background)
+        scrollContentBackground(.hidden)
+            .background(OpsTheme.background)
+            .safeAreaPadding(.bottom, 16)
+            .clipped()
+            .toolbarBackground(OpsTheme.background, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
             .toolbarBackground(OpsTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
     }
@@ -111,6 +120,13 @@ enum OpsFormat {
         if s < 3600 { return "\(max(1, Int(s / 60)))m" }
         if s < 86400 { return "\(Int(s / 3600))h" }
         return "\(Int(s / 86400))d"
+    }
+    static func clock(_ date: Date, timeZone: TimeZone = .current) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("hma")
+        return formatter.string(from: date)
     }
     static func date(_ value: JSONValue) -> Date? {
         if let ms = value.number, ms > 1_000_000_000_000 { return Date(timeIntervalSince1970: ms / 1000) }

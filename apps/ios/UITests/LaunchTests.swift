@@ -553,7 +553,7 @@ final class LaunchTests: XCTestCase {
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["keir-yolo-banner"])
         waitForExpectations(timeout: 5)
         XCTAssertTrue(menuItemLabel(app, "add-attachment", "Model").contains("Fixture model"))
-        app.buttons["keir-microphone"].tap()
+        chooseFromMenu(app, "keir-microphone", "Voice conversation", until: { app.staticTexts["Keir voice"].exists })
         XCTAssertTrue(app.staticTexts["Keir voice"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Microsoft Ava · online voice"].exists)
         capture(app, "Keir voice mode")
@@ -563,7 +563,7 @@ final class LaunchTests: XCTestCase {
 
     func testVoiceAcceptsLateAnswerAfterTimeout() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-late-voice"]; app.launch()
-        XCTAssertTrue(app.buttons["keir-microphone"].waitForExistence(timeout: 15)); app.buttons["keir-microphone"].tap()
+        XCTAssertTrue(app.buttons["keir-microphone"].waitForExistence(timeout: 15)); chooseFromMenu(app, "keir-microphone", "Voice conversation", until: { app.staticTexts["Keir voice"].exists })
         XCTAssertTrue(find(app, "The voice reply has not arrived", timeout: 3).exists)
         XCTAssertTrue(app.staticTexts["The late answer is now ready."].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Try voice again"].exists)
@@ -890,7 +890,8 @@ final class LaunchTests: XCTestCase {
             capture(app, "\(name) composer menu")
             dismissMenu(app, closing: app.buttons["Photo library"])
 
-            chooseFromMenu(app, "keir-tools", "Settings", until: { app.navigationBars["Settings"].exists })
+            go(app, "Ops")
+            app.buttons["Settings"].tap()
             XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8), name)
             let expected = appearance == "dark" ? "OLED black" : "Light"
             let picker = app.buttons["settings-theme"]
@@ -906,7 +907,7 @@ final class LaunchTests: XCTestCase {
             app.terminate()
 
             app = launch(appearance: appearance, ["--uitest-empty-keir", "--uitest-reset-resume"])
-            XCTAssertTrue(app.buttons["keir-start-voice"].waitForExistence(timeout: 15), name)
+            XCTAssertTrue(app.buttons["keir-microphone"].waitForExistence(timeout: 15), name)
             sleep(2)
             capture(app, "\(name) empty chat")
             app.terminate()
@@ -926,7 +927,7 @@ final class LaunchTests: XCTestCase {
     /// above the composer only when it is not the default.
     func testComposerSwapsMicrophoneForSendAndShowsRouting() {
         let app = launch()
-        XCTAssertTrue(app.buttons["keir-dictate"].waitForExistence(timeout: 10), "an empty composer offers dictation")
+        XCTAssertTrue(app.buttons["keir-microphone"].waitForExistence(timeout: 10), "an empty composer offers voice input")
         XCTAssertFalse(app.buttons["keir-send"].exists, "nothing to send yet")
         XCTAssertFalse(app.otherElements["keir-route-chip"].exists)
         let box = composer(app)
@@ -934,7 +935,7 @@ final class LaunchTests: XCTestCase {
         if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { box.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap() }
         app.typeText("Draft")
         XCTAssertTrue(app.buttons["keir-send"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["keir-dictate"].exists)
+        XCTAssertFalse(app.buttons["keir-microphone"].exists)
         capture(app, "Composer ready to send")
         chooseFromMenu(app, "add-attachment", "Send as")
         let followUp = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Follow up")).firstMatch

@@ -88,7 +88,7 @@ private struct KeirConversationActionRow: View {
     private var title: String {
         switch intent {
         case .take(let n, _): return "Take over ticket #\(n)"
-        case .handback(let n, _): return "Hand ticket #\(n) back to Support Keir"
+        case .handback(let n, _): return "Hand ticket #\(n) back to the support desk"
         case .message(let n, _): return "Message the worker on ticket #\(n)"
         case .approvals: return "Review approvals"
         case .proposal: return "Review this proposal"
@@ -201,7 +201,7 @@ private struct KeirTicketActionSheet: View {
             }
             .opsScreen()
             .navigationTitle("Ticket #\(ticket)").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .refreshable { await reload() }
             .task { await reload() }
         }
@@ -269,15 +269,15 @@ private struct KeirTicketActionSheet: View {
 
     private var explanation: String {
         switch op {
-        case .take: return "Support Keir stops working this ticket and its waiting public replies are held back. A separate worker takes it over and replies to the player only through the normal ticket checks."
-        case .handback: return "The worker stops at once and cannot post or act afterwards. The ticket returns to Support Keir with the worker's next step and evidence. Nothing is sent to the player."
+        case .take: return "the support desk stops working this ticket and its waiting public replies are held back. A separate worker takes it over and replies to the player only through the normal ticket checks."
+        case .handback: return "The worker stops at once and cannot post or act afterwards. The ticket returns to the support desk with the worker's next step and evidence. Nothing is sent to the player."
         case .message: return "This goes to the worker's inbox only. It is not shown to the player, and it does not approve anything."
         }
     }
     private var placeholder: String {
         switch op {
         case .take: return "First direction for the worker (optional)"
-        case .handback: return "Note for Support Keir (optional)"
+        case .handback: return "Note for the support desk (optional)"
         case .message: return "Message for the worker"
         }
     }
@@ -413,7 +413,7 @@ private struct KeirApprovalsSheet: View {
             }
             .opsScreen()
             .navigationTitle("Approvals").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .refreshable { await load() }
             .task { await load() }
         }

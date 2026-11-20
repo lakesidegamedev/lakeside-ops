@@ -8,8 +8,12 @@ import LakesideCore
 extension Font {
     static let opsHero = Font.system(.largeTitle, design: .rounded).weight(.bold)
     static let opsTitle = Font.system(.title2, design: .rounded).weight(.semibold)
-    static let opsCardTitle = Font.system(.headline, design: .default).weight(.semibold)
-    static let opsSection = Font.system(.footnote, design: .default).weight(.semibold)
+    static let opsHeadline = Font.headline
+    static let opsBody = Font.body
+    static let opsSecondary = Font.subheadline
+    static let opsCaption = Font.caption
+    static let opsCardTitle = opsHeadline
+    static let opsSection = opsHeadline
 }
 
 // MARK: - One status vocabulary
@@ -186,9 +190,8 @@ extension View {
     /// A muted section title that still scales with Dynamic Type.
     func opsSectionHeader() -> some View {
         font(.opsSection)
-            .textCase(.uppercase)
-            .tracking(0.6)
-            .foregroundStyle(OpsTheme.muted)
+            .textCase(nil)
+            .foregroundStyle(OpsTheme.ink)
     }
 }
 

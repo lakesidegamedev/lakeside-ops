@@ -32,7 +32,9 @@ struct OpsRoot: View {
         TabView(selection: $router.tab) {
             NavigationStack { KeirView(keir: OpsServices.shared.keir) }
                 .tabItem { Label("Chat", systemImage: "bubble.left") }.tag(OpsTab.keir)
-            NavigationStack { ActivityView().toolbar { settingsButton } }
+            NavigationStack {
+                ActivityView().toolbar { if standalone { settingsButton } }
+            }
                 .tabItem { Label("Inbox", systemImage: "tray") }.tag(OpsTab.activity)
                 .badge(ops.attention)
             if !standalone {
@@ -56,7 +58,7 @@ struct OpsRoot: View {
 
     var body: some View {
         adaptiveTabs
-        .tint(OpsTheme.sky)
+        .tint(OpsTheme.accent)
         .onOpenURL { url in
             guard url.scheme == "lakesideops", url.host == "keir" else { return }
             let view = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value
