@@ -19,11 +19,18 @@ enum WorkQueuePresentation {
         let text = [item["title"].string, item["number"].string, item["ticket"].string, item["timing"]["reason"].string].joined(separator: " ")
         return statusMatches && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
     }
-    /// Owner pings (Needs you and Your decisions) sit above the queue on the
-    /// All and Decisions filters. A status filter shows only work in that state,
-    /// so its rows are not pushed below the decision cards and out of view.
-    static func showsOwnerItems(filter: String) -> Bool {
-        filter == "all" || filter == "needs-you"
+    /// The default Inbox (Tickets, All, no search) leads with owner pings:
+    /// tickets with no recorded reply, Needs you and Your decisions. A filter,
+    /// a search or the Tasks scope is a request for specific work, so the
+    /// matching queue rows lead instead.
+    static func leadsWithOwnerItems(scope: String, filter: String, search: String) -> Bool {
+        scope == "tickets" && filter == "all" && search.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+    /// Needs you and Your decisions show on the default view and on the
+    /// Decisions filter, which is their own subject. Other views leave them
+    /// out rather than mixing unrelated cards into the result.
+    static func showsOwnerItems(scope: String, filter: String, search: String) -> Bool {
+        leadsWithOwnerItems(scope: scope, filter: filter, search: search) || filter == "needs-you"
     }
     static func rank(_ item: JSONValue) -> Int {
         if state(item) == "needs-you" { return 0 }
