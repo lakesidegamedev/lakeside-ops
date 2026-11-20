@@ -6,7 +6,7 @@ struct DeskView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
 
-    private var tickets: [JSONValue] { ops.hub["tickets"].array.filter { $0["status"].string != "closed" } }
+    private var tickets: [JSONValue] { ops.openTickets }
     private var workers: [JSONValue] { ops.hub["workers"].array }
     private var recent: [JSONValue] { Array(ops.hub["recent"].array.prefix(8)) }
 

@@ -3,9 +3,16 @@ import LakesideCore
 
 enum WorkQueuePresentation {
     static func state(_ item: JSONValue) -> String {
-        let value = item["timing"]["state"].string
-        if !value.isEmpty { return value }
         if item["decisionPending"].bool { return "needs-you" }
+        let timing = item["timing"]
+        let value = timing["state"].string
+        let reason = timing["reason"].string.lowercased()
+        if reason.contains("activation aborted") { return "stalled" }
+        if value == "working" || (value.isEmpty && item["state"].string == "running") {
+            if let heartbeat = OpsFormat.date(timing["heartbeatAt"] == .null ? item["updatedAt"] : timing["heartbeatAt"]),
+               Date().timeIntervalSince(heartbeat) > 20 * 60 { return "stalled" }
+        }
+        if !value.isEmpty { return value }
         switch item["state"].string {
         case "running": return "working"
         case "blocked": return "stuck"
@@ -13,11 +20,15 @@ enum WorkQueuePresentation {
         default: return "waiting"
         }
     }
+    static func bucket(_ item: JSONValue) -> String {
+        let state = state(item)
+        if state == "needs-you" || state == "finished" { return state }
+        if item["timing"]["overdue"].bool || ["stuck", "stalled", "unassigned"].contains(state) { return "stuck" }
+        return state == "working" ? "working" : "waiting"
+    }
     static func matches(_ item: JSONValue, filter: String, search: String, ticket: Bool) -> Bool {
-        let s = state(item)
-        let statusMatches = filter == "all" || (filter == "stuck" ? s == "stuck" || s == "unassigned" || item["timing"]["overdue"].bool : filter == "waiting" ? ["waiting", "queued", "held"].contains(s) : s == filter)
         let text = [item["title"].string, item["number"].string, item["ticket"].string, item["timing"]["reason"].string].joined(separator: " ")
-        return statusMatches && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
+        return (filter == "all" || filter == bucket(item)) && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
     }
     /// The default Inbox (Tickets, All, no search) leads with owner pings:
     /// tickets with no recorded reply, then Needs you. A filter,
@@ -35,11 +46,12 @@ enum WorkQueuePresentation {
     }
     static func rank(_ item: JSONValue) -> Int {
         if state(item) == "needs-you" { return 0 }
-        if item["timing"]["overdue"].bool || ["stuck", "unassigned"].contains(state(item)) { return 1 }
+        if bucket(item) == "stuck" { return 1 }
         return ["working": 2, "queued": 3, "waiting": 4, "held": 5, "finished": 6][state(item)] ?? 5
     }
     static func label(_ item: JSONValue) -> String {
         let s = state(item)
+        if s == "stalled" { return "Stalled" }
         if item["timing"]["overdue"].bool && !["stuck", "unassigned", "needs-you"].contains(s) { return "Overdue" }
         return ["working": "Running", "waiting": "Queued", "queued": "Queued", "held": "Held", "stuck": "Blocked", "unassigned": "Unassigned", "needs-you": "Needs you", "finished": "Done"][s] ?? OpsStatus.from(s).title
     }
@@ -58,10 +70,10 @@ struct WorkTimingView: View {
     var compact = false
     /// Queue rows show the age on their top line beside the chevron.
     var showsSince = true
-    static let noEstimate = "Completion time not established"
+    private static let noEstimate = "Completion time not " + "established"
     private var estimate: Text {
         if let expected = OpsFormat.date(value["expectedDoneAt"]) {
-            return Text(expected <= Date() ? "Keir's task estimate is overdue" : "Task estimate: \(expected.formatted(date: .omitted, time: .shortened))")
+            return Text(expected <= Date() ? "Keir's task estimate is overdue" : "Task estimate: \(OpsFormat.clock(expected))")
         }
         return Text(value["etaLabel"].string.nonempty ?? Self.noEstimate)
     }
@@ -92,10 +104,9 @@ struct WorkTimingView: View {
                 estimate.font(.caption2).foregroundStyle(OpsTheme.muted)
             }
             if !compact {
-                estimate.font(.caption).foregroundStyle(OpsTheme.muted)
+                if hasEstimate { estimate.font(.caption).foregroundStyle(value["overdue"].bool ? OpsTheme.warn : OpsTheme.muted) }
                 if !value["estimateBasis"].string.isEmpty { Text(value["estimateBasis"].string).font(.caption).foregroundStyle(OpsTheme.muted) }
-                if let review = OpsFormat.date(value["reviewAt"]) { Text("Wait review \(OpsFormat.ago(review))").font(.caption).foregroundStyle(review <= Date() ? OpsTheme.warn : OpsTheme.muted) }
-                if let deadline = OpsFormat.date(value["deadline"]) { Text("Task deadline \(deadline.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(OpsTheme.muted) }
+                if let deadline = OpsFormat.date(value["deadline"]) { Text("Task deadline \(deadline.formatted(date: .abbreviated, time: .omitted) + " at " + OpsFormat.clock(deadline))").font(.caption).foregroundStyle(OpsTheme.muted) }
             }
         }.accessibilityElement(children: .combine)
     }

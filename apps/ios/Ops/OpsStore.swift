@@ -40,10 +40,17 @@ import LakesideCore
     /// Exactly the rows the Blocked work lane lists.
     var blocked: [JSONValue] { kanban["blocked"].array }
     var needsOwner: [JSONValue] { kanban["needs_owner"].array }
-    /// Every ticket the app knows about, hub first, de-duplicated by number.
-    var knownTickets: [JSONValue] {
-        var seen = Set<String>()
-        return (hub["tickets"].array + work["tickets"].array).filter { seen.insert($0["number"].string).inserted }
+    /// The support queue owns membership and timing. The hub adds delivery
+    /// receipts and ticket detail metadata for the matching records.
+    var openTickets: [JSONValue] {
+        let hubTickets = hub["tickets"].array
+        let queue = work["tickets"].array
+        let metadata = Dictionary(hubTickets.map { ($0["number"].string, $0.object) }, uniquingKeysWith: { first, _ in first })
+        let numbers = Set(queue.map { $0["number"].string })
+        let fallback = work["source"]["complete"].bool ? [] : hubTickets.filter { !numbers.contains($0["number"].string) }
+        return (queue.map { row in
+            JSONValue.object((metadata[row["number"].string] ?? [:]).merging(row.object, uniquingKeysWith: { _, current in current }))
+        } + fallback).filter { KeirTicketFollowUp.isOpen($0) }
     }
     /// The count on the Inbox tab badge: only things the owner can act on now.
     var attention: Int { AttentionCenter.shared.count }
@@ -134,7 +141,7 @@ import LakesideCore
     }
 
     private func rebuildAttention() {
-        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: needsOwner, tickets: knownTickets)
+        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: needsOwner, tickets: openTickets)
         UNBadge.set(attention)
     }
 

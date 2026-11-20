@@ -127,46 +127,35 @@ struct ActivityView: View {
 
     /// The queue and the badge read the same ticket list from the shared store.
     private var work: JSONValue { ops.work }
-    private var tickets: [JSONValue] { work["tickets"].array }
+    private var tickets: [JSONValue] { ops.openTickets }
     private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
     private var entries: [JSONValue] { showTickets ? tickets : tasks }
     private var trimmedSearch: String { search.trimmingCharacters(in: .whitespaces) }
 
     /// Chips use the same words as the sections they open. Blocked sits above
     /// the plain queue states, as it does on Ops.
-    private let filters = [("all", "All"), ("needs-you", AttentionCenter.label), ("stuck", "Blocked"), ("working", "Running"), ("waiting", "Queued")]
+    private let filters = [("all", "All"), ("needs-you", AttentionCenter.label), ("stuck", "Blocked"), ("working", "Running"), ("waiting", "Queued"), ("finished", "Done")]
 
     // MARK: Rows per filter
 
     private func queueRows(_ key: String, search: String) -> [JSONValue] {
         guard key != "needs-you" else { return [] }
-        return entries.filter { WorkQueuePresentation.matches($0, filter: key, search: search, ticket: showTickets) }
-            .sorted { WorkQueuePresentation.rank($0) < WorkQueuePresentation.rank($1) }
+        let held = Set(attention.items.compactMap(\.ticketNumber).map(String.init))
+        return entries.filter {
+            (!showTickets || !held.contains($0["number"].string))
+                && WorkQueuePresentation.matches($0, filter: key, search: search, ticket: showTickets)
+        }.sorted { WorkQueuePresentation.rank($0) < WorkQueuePresentation.rank($1) }
     }
     private func ownerRows(_ key: String, search: String) -> [AttentionItem] {
         guard WorkQueuePresentation.showsOwnerItems(filter: key) else { return [] }
         return attention.items.filter { $0.matches(search) }
     }
-    /// Tickets with no recorded reply, oldest first. Only on All, in the
-    /// ticket view, and never repeating a ticket already in Needs you.
-    private func unansweredRows(_ key: String, search: String) -> [JSONValue] {
-        guard session.profile["mode"].string != "standalone", scope == "tickets", key == "all" else { return [] }
-        let held = Set(attention.items.compactMap { $0.ticketNumber }.map { String($0) })
-        let needle = search.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "#")))
-        return KeirTicketFollowUp.waiting(in: ops.hub).filter {
-            !held.contains($0["number"].string)
-                && (needle.isEmpty || $0["title"].string.localizedCaseInsensitiveContains(needle) || $0["number"].string == needle)
-        }
-    }
-    /// The rows a filter shows. Every filter's rows also appear on All, so no
-    /// chip can outnumber All, and Needs you always equals the tab badge.
     private func count(_ key: String) -> Int {
-        queueRows(key, search: "").count + ownerRows(key, search: "").count + unansweredRows(key, search: "").count
+        queueRows(key, search: "").count + ownerRows(key, search: "").count
     }
 
     private var visibleQueue: [JSONValue] { queueRows(filter, search: trimmedSearch) }
     private var visibleOwner: [AttentionItem] { ownerRows(filter, search: trimmedSearch) }
-    private var visibleUnanswered: [JSONValue] { unansweredRows(filter, search: trimmedSearch) }
     private var leadsWithOwnerItems: Bool { WorkQueuePresentation.leadsWithOwnerItems(scope: scope, filter: filter, search: search) }
 
     var body: some View {
@@ -175,7 +164,7 @@ struct ActivityView: View {
             if leadsWithOwnerItems { ownerSections }
             queueSection
             if !leadsWithOwnerItems { ownerSections }
-            if visibleQueue.isEmpty && visibleOwner.isEmpty && visibleUnanswered.isEmpty {
+            if visibleQueue.isEmpty && visibleOwner.isEmpty {
                 Text(emptyText).font(.callout).foregroundStyle(OpsTheme.muted)
                     .listRowBackground(Color.clear).listRowSeparator(.hidden)
                     .accessibilityIdentifier("inbox-empty")
@@ -262,18 +251,7 @@ struct ActivityView: View {
         .accessibilityIdentifier("work-filter-\(key)")
     }
 
-    /// Tickets with no recorded reply, then Needs you. Above the queue on the
-    /// default view, below it when the owner is looking for specific work.
     @ViewBuilder private var ownerSections: some View {
-        if !visibleUnanswered.isEmpty {
-            Section {
-                ForEach(visibleUnanswered, id: \.["number"].string) { item in
-                    Button { route = .ticket(item["number"].string) } label: { UnansweredRow(ticket: item) }
-                        .buttonStyle(.plain)
-                        .inboxRow()
-                }
-            } header: { SectionLabel(text: "No recorded reply", count: visibleUnanswered.count) }
-        }
         if !visibleOwner.isEmpty {
             Section {
                 ForEach(visibleOwner) { item in
@@ -299,18 +277,25 @@ struct ActivityView: View {
     }
 
     @ViewBuilder private var queueSection: some View {
-        if !visibleQueue.isEmpty {
-            Section {
-                ForEach(visibleQueue, id: \.[showTickets ? "number" : "id"].string) { item in
-                    let id = item[showTickets ? "number" : "id"].string
-                    Button { route = showTickets ? .ticket(id) : .task(id) } label: {
-                        QueueRow(item: item, ticket: showTickets)
+        ForEach(filters.dropFirst(), id: \.0) { key, title in
+            let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0) == key }
+            if !rows.isEmpty {
+                Section {
+                    ForEach(rows, id: \.[showTickets ? "number" : "id"].string) { item in
+                        let id = item[showTickets ? "number" : "id"].string
+                        Button { route = showTickets ? .ticket(id) : .task(id) } label: {
+                            if showTickets && item["replyState"]["state"].string == "no_receipt" && WorkQueuePresentation.bucket(item) != "needs-you" {
+                                UnansweredRow(ticket: item)
+                            } else {
+                                QueueRow(item: item, ticket: showTickets)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .inboxRow()
+                        .accessibilityIdentifier("work-row-\(id)")
                     }
-                    .buttonStyle(.plain)
-                    .inboxRow()
-                    .accessibilityIdentifier("work-row-\(id)")
-                }
-            } header: { SectionLabel(text: showTickets ? "Ticket queue" : "Task queue", count: visibleQueue.count) }
+                } header: { SectionLabel(text: title, count: rows.count) }
+            }
         }
     }
 
@@ -369,9 +354,9 @@ private struct InboxRowTop: View {
     var ageColor: Color = OpsTheme.muted
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             StateWord(text: state, color: color)
-            if !number.isEmpty { Text("#\(number)").font(.caption.monospaced()).foregroundStyle(OpsTheme.muted) }
+            if !number.isEmpty { Text("#\(number)").font(.caption).foregroundStyle(OpsTheme.muted) }
             Spacer(minLength: 8)
             if !age.isEmpty {
                 Label(age, systemImage: "clock").font(.caption2).monospacedDigit().foregroundStyle(ageColor)
@@ -420,7 +405,7 @@ private struct UnansweredRow: View {
             InboxRowTop(state: urgent ? "Unanswered" : "No reply yet", color: urgent ? OpsTheme.danger : OpsTheme.warn,
                         number: ticket["number"].string,
                         age: waited.map { OpsFormat.span(max(60, $0)) } ?? "",
-                        ageColor: urgent ? OpsTheme.danger : OpsTheme.muted)
+                        ageColor: urgent ? OpsTheme.warn : OpsTheme.muted)
             Text(KeirTicketFollowUp.title(ticket)).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(2)
             if let waited {
                 Text("No reply recorded for \(OpsFormat.span(max(60, waited))).").font(.caption).foregroundStyle(OpsTheme.muted)
@@ -533,7 +518,7 @@ struct TaskDetail: View {
                                 }
                             }
                         }
-                        if !task["blocker"]["message"].string.isEmpty { Text(task["blocker"]["message"].string).font(.caption.monospaced()).textSelection(.enabled) }
+                        if !task["blocker"]["message"].string.isEmpty { Text(task["blocker"]["message"].string).font(.caption).textSelection(.enabled) }
                         }.font(.callout)
                     }
                     if !task["receipts"].array.isEmpty {

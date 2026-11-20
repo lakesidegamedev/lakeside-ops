@@ -12,7 +12,7 @@ struct OpsHub: View {
     @ObservedObject private var attention = AttentionCenter.shared
 
     private var broken: Int { ops.servicesDown.count + ops.redPRs }
-    private var openTickets: Int { ops.hub["tickets"].array.filter { $0["status"].string != "closed" }.count }
+    private var openTickets: Int { ops.openTickets.count }
     private var running: Int { Int(ops.kpis["running"].number ?? 0) }
     private var queued: Int { Int(ops.kpis["queued"].number ?? 0) }
     private var blockedWork: Int { ops.blocked.count }
@@ -46,7 +46,8 @@ struct OpsHub: View {
         // even when no refresh lands.
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
             VStack(alignment: .leading, spacing: 10) {
-                Text(headline).font(.opsTitle).foregroundStyle(OpsTheme.ink)
+                Text(headline).font(.opsTitle)
+                    .foregroundStyle(broken > 0 ? OpsTheme.danger : blockedWork > 0 ? OpsTheme.warn : OpsTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                 OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
@@ -136,15 +137,18 @@ struct OpsHub: View {
 
     private var needsYou: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "ops-attention-count")
-                if attention.count > 0 {
+            if attention.count == 0 {
+                Text("Nothing needs you.").font(.caption).foregroundStyle(OpsTheme.muted)
+                    .accessibilityIdentifier("ops-attention-count")
+            } else {
+                HStack(alignment: .firstTextBaseline) {
+                    SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "ops-attention-count")
                     Button("Review all \(attention.count)") { router.activityFilter = "needs-you"; router.tab = .activity }
                         .font(.caption.weight(.semibold))
                         .accessibilityIdentifier("ops-review-attention")
                 }
+                AttentionStack(limit: 3, showEmpty: false)
             }
-            AttentionStack(limit: 3, showEmpty: true)
         }
     }
 
@@ -154,11 +158,11 @@ struct OpsHub: View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: "Queues")
             NavigationLink { WorkView(lane: .now) } label: {
-                OpsQueueRow(title: "Work in progress", detail: nowWork == 0 ? "Nothing moving" : "\(nowWork) moving", status: nowWork > 0 ? .running : .idle, icon: "rectangle.split.3x1")
+                OpsQueueRow(title: "Studio work in progress", detail: "\(nowWork)", status: .idle, icon: "rectangle.split.3x1")
             }
             Hairline()
             NavigationLink { WorkView(lane: .blocked) } label: {
-                OpsQueueRow(title: "Blocked", detail: blockedWork == 0 ? "Nothing blocked" : "\(blockedWork) need unblocking", status: blockedWork > 0 ? .blocked : .idle, icon: "exclamationmark.triangle")
+                OpsQueueRow(title: "Blocked", detail: "\(blockedWork)", status: blockedWork > 0 ? .blocked : .idle, icon: "exclamationmark.triangle")
             }
             Hairline()
             NavigationLink { WorkView(lane: .next) } label: {

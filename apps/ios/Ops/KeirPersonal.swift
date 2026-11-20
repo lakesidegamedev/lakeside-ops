@@ -64,10 +64,14 @@ struct KeirResume {
 enum KeirTicketFollowUp {
     private static let finished = ["closed", "resolved", "duplicate", "merged", "archived", "wontfix"]
 
+    static func isOpen(_ ticket: JSONValue) -> Bool {
+        !finished.contains(ticket["status"].string.lowercased()) && !ticket["number"].string.isEmpty
+    }
+
     /// Oldest first, so the ticket that has waited longest leads.
     static func waiting(in hub: JSONValue) -> [JSONValue] {
         hub["tickets"].array.filter {
-            $0["replyState"]["state"].string == "no_receipt" && !finished.contains($0["status"].string) && !$0["number"].string.isEmpty
+            $0["replyState"]["state"].string == "no_receipt" && isOpen($0)
         }.sorted { (OpsFormat.date($0["createdAt"]) ?? .distantFuture) < (OpsFormat.date($1["createdAt"]) ?? .distantFuture) }
     }
 

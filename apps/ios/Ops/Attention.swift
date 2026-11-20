@@ -42,8 +42,7 @@ final class AttentionCenter: ObservableObject {
     /// A ticket held on the owner: the server says a decision is pending, or
     /// its timing state is needs-you. Finished tickets never count.
     static func waitsOnDecision(_ ticket: JSONValue) -> Bool {
-        guard ticket["number"].number != nil || !ticket["number"].string.isEmpty else { return false }
-        if ["closed", "resolved", "duplicate", "merged", "archived", "wontfix"].contains(ticket["status"].string) { return false }
+        guard KeirTicketFollowUp.isOpen(ticket) else { return false }
         return ticket["decisionPending"].bool || ticket["timing"]["state"].string == "needs-you"
     }
 

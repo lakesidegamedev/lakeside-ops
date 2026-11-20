@@ -18,6 +18,7 @@ struct OpsRoot: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
+    @ObservedObject private var attention = AttentionCenter.shared
     @Environment(\.scenePhase) private var scenePhase
 
     private var standalone: Bool { session.profile["mode"].string == "standalone" }
@@ -36,7 +37,7 @@ struct OpsRoot: View {
                 ActivityView().toolbar { if standalone { settingsButton } }
             }
                 .tabItem { Label("Inbox", systemImage: "tray") }.tag(OpsTab.activity)
-                .badge(ops.attention)
+                .badge(attention.count)
             if !standalone {
                 NavigationStack(path: $router.studioPath) {
                     OpsHub().toolbar { settingsButton }

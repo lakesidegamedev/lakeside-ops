@@ -457,7 +457,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             value = [
                 "current": ["id": "ticket-task", "state": "blocked", "summary": "Checked the payroll rules."],
                 "decisions": [["id": "abcdefabcdef", "kind": "choice", "type": "choice", "state": "pending",
-                               "title": "Choose payroll behavior", "question": "Capacity or filled jobs?",
+                               "tldr": "Choose payroll behavior", "question": "Capacity or filled jobs?",
                                "options": [["id": "capacity", "label": "Capacity"], ["id": "filled", "label": "Filled jobs"]]]],
                 "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]],
             ]
@@ -731,9 +731,10 @@ enum KeirAgentFixtures {
                                "summary": "activation aborted: no result before the 15-minute turn limit"],
                 ]
                 let sample = OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []
-                return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue]]
+                let blocked: [String: Any] = ["number": 1502, "title": "Verify an interrupted action", "status": "open", "timing": stuck]
+                return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue, blocked]]
             }
-            return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]
+            return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": (OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []) + [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]
         case "/api/keir/app/tasks":
             let running: [String: Any] = ["id": "abcdef012345", "kind": "command", "state": "running", "title": "Promote development to production", "surface": "app", "receipts": 2, "decisionPending": false, "updatedAt": 1792020000000.0, "at": 1792019000000.0]
             let done: [String: Any] = ["id": "fedcba543210", "kind": "conversation", "state": "done", "title": "How did the last turn go?", "surface": "app", "receipts": 0, "decisionPending": false, "updatedAt": 1792018000000.0, "at": 1792018000000.0]

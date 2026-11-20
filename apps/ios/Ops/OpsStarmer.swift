@@ -8,6 +8,8 @@ import LakesideCore
 /// the same palette as the rest of Ops.
 struct StarmerWidget: View {
     @EnvironmentObject private var session: AppSession
+    @EnvironmentObject private var ops: OpsStore
+    @EnvironmentObject private var router: OpsRouter
     @State private var line: JSONValue = .null
     @State private var showWork = false
     @State private var busy = false
@@ -17,17 +19,12 @@ struct StarmerWidget: View {
     @State private var readFailed = false
 
     private var message: String {
-        line["text"].string.nonempty ?? "Keir is settling in. The first line lands shortly."
+        line["text"].string.replacingOccurrences(of: #"\s+on \d+\.\d+\.\d+(?=:|\b)"#, with: "", options: .regularExpression).nonempty ?? "Keir is settling in. The first line lands shortly."
     }
     private var working: JSONValue { line["working"] }
-    private var workHeadline: String {
-        working["headline"].string.nonempty ?? "Keir's queue"
-    }
-    private var workDetail: String {
-        working["detail"].string.nonempty ?? "Nothing is running right now."
-    }
-    private var items: [JSONValue] { working["items"].array }
-    private var waiting: Int { Int(working["waiting"].number ?? 0) }
+    private var workHeadline: String { "Keir's queue" }
+    private var workDetail: String { "Open Inbox to view tickets and tasks." }
+    private var waiting: Int { ops.openTickets.filter { WorkQueuePresentation.bucket($0) == "waiting" }.count }
     private var lineDate: Date? { line["at"].number.map { Date(timeIntervalSince1970: $0 / 1000) } }
     /// UI tests force one state so the four widget screenshots are stable.
     private var forcedState: String? {
@@ -52,6 +49,8 @@ struct StarmerWidget: View {
             .animation(.snappy(duration: 0.25), value: showWork)
             .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
             footer
+            Button("Chat with Keir") { router.tab = .keir }
+                .font(.opsSecondary)
         }
         .padding(14)
         .background(
@@ -92,7 +91,7 @@ struct StarmerWidget: View {
     /// in a sentence under the line instead.
     private var header: some View {
         HStack(spacing: 8) {
-            Text("KEIR").opsSectionHeader()
+            Text("Keir").opsSectionHeader()
             Spacer()
             Button {
                 Task { await refresh() }
@@ -111,7 +110,7 @@ struct StarmerWidget: View {
 
     private var messageFace: some View {
         HStack(alignment: .top, spacing: 14) {
-            KeirPortrait(busy: busy, waiting: waiting, lineAt: lineDate, changedAt: changedAt, error: error != nil, size: .medium, forced: forcedState)
+            KeirPortrait(busy: busy, waiting: waiting, lineAt: lineDate, changedAt: changedAt, error: false, size: .medium, forced: forcedState)
                 .frame(width: 72, height: 72)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
@@ -119,7 +118,6 @@ struct StarmerWidget: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(OpsTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
-                    .lineLimit(5)
                     .accessibilityIdentifier("ops-starmer-line")
                 // Re-read each minute so the stated age never freezes.
                 TimelineView(.periodic(from: .now, by: 60)) { _ in Text(sinceLine) }
@@ -140,7 +138,7 @@ struct StarmerWidget: View {
         let age = OpsFormat.ago(line["at"])
         let when = age == "now" ? "just now" : age
         if readFailed { return "Could not check for a newer line. This one was written \(when)." }
-        return "Written \(when). Keir writes a new line every thirty minutes."
+        return "Updated \(when)"
     }
 
     // MARK: Work face
@@ -160,31 +158,8 @@ struct StarmerWidget: View {
                     .foregroundStyle(OpsTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .lineLimit(3)
-                HStack(spacing: 12) {
-                    count("running", "running")
-                    count("waiting", "waiting")
-                    count("queued", "queued")
-                }
-                if !items.isEmpty {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(Array(items.prefix(2).enumerated()), id: \.offset) { pair in
-                            HStack(spacing: 6) {
-                                Circle().fill(OpsStatus.from(pair.element["state"].string).color).frame(width: 5, height: 5)
-                                Text(OpsText.workTitle(pair.element)).font(.caption2).foregroundStyle(OpsTheme.muted).lineLimit(1)
-                            }
-                        }
-                    }
-                }
             }
             Spacer(minLength: 0)
-        }
-    }
-
-    private func count(_ key: String, _ label: String) -> some View {
-        let value = Int(working[key].number ?? 0)
-        return HStack(spacing: 4) {
-            Text("\(value)").font(.caption.weight(.bold)).monospacedDigit().foregroundStyle(value > 0 ? OpsTheme.ink : OpsTheme.muted)
-            Text(label).font(.caption2).foregroundStyle(OpsTheme.muted)
         }
     }
 
