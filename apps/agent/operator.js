@@ -1115,6 +1115,10 @@ server.listen(positive("KEIR_OPERATOR_PORT", 9765), "127.0.0.1", () => { log("Ke
 // Every app request re-checks the caller's own ops session; nothing here trusts a header.
 // Keir as the owner's personal agent: threads, activity, ideas, watches, memory.
 const appAgent = createAppAgent({ ledger, config, app: appChannel, notebook, muse: appMuse, mcp, drain: () => drain() });
+// Owner ticket supervision: take a ticket from Support Keir for a personal
+// worker, direct it from the app, hand it back (ticketsupervision.js).
+const ticketSupervision = require("./lib/operator/ticketsupervision").createTicketSupervision({ ledger, config, mcp, discord, supportOwner, drain: () => drain() });
+tickers.every("supervision", 10000, async () => { try { ticketSupervision.tick(); } catch (e) { log(`supervision: ${e.message}`); } });
 const publicationRecovery = require("./lib/operator/publication-recovery").createPublicationRecovery({ ledger, config, log });
 publicationRecovery.tick().catch(e => log(`publication recovery: ${e.message}`));
 setInterval(() => publicationRecovery.tick().catch(e => log(`publication recovery: ${e.message}`)), 60000).unref();
@@ -1140,7 +1144,7 @@ updateTick();
 setInterval(updateTick, 20000).unref();
 const desktop = require("./lib/operator/desktop").createDesktopGateway({ mcp, readTools: JSON.parse(env.KEIR_DESKTOP_READ_TOOLS || "{}"), projects: () => { const file = env.KEIR_PROJECTS_MANIFEST; if (!file) return config.repositories; const entries = JSON.parse(fs.readFileSync(file, "utf8")).entries; // Only real repositories: git, a remote, not the infra/data/dormant "misc" category.
   return Object.fromEntries(Object.entries(entries).filter(([, project]) => project.git && project.remote && project.category !== "misc").map(([name, project]) => [name, project.path])); }, audit: tool => ledger.audit("desktop_tool", { tool }) });
-const appServer = createAppServer({ app: appChannel, sessionExchangeUrl: env.KEIR_APP_SESSION_EXCHANGE_URL || "http://127.0.0.1:9788/api/auth/native-session", agentRoutes: async (...args) => (await desktop.route(...args)) ?? (await appPush.route(...args)) ?? (await appQuestions.route(...args)) ?? (await appComputer.route(...args)) ?? appAgent.route(...args), artifactsDir: path.join(config.stateDir, "artifacts"), log,
+const appServer = createAppServer({ app: appChannel, sessionExchangeUrl: env.KEIR_APP_SESSION_EXCHANGE_URL || "http://127.0.0.1:9788/api/auth/native-session", agentRoutes: async (...args) => (await desktop.route(...args)) ?? (await appPush.route(...args)) ?? (await appQuestions.route(...args)) ?? (await appComputer.route(...args)) ?? (await ticketSupervision.route(...args)) ?? appAgent.route(...args), artifactsDir: path.join(config.stateDir, "artifacts"), log,
   authenticate: createAuthenticator({ config, checkUrl: env.KEIR_APP_AUTH_URL || "http://127.0.0.1:9788/api/auth/admin-check" }) });
 appServer.listen(positive("KEIR_APP_PORT", 9768), "127.0.0.1", () => log("Keir app channel started"));
 const appPush = createAppPush({ ledger, log, apns: createApns({ teamId: env.KEIR_APNS_TEAM_ID, keyId: env.KEIR_APNS_KEY_ID, keyFile: env.KEIR_APNS_KEY_FILE, topic: env.KEIR_APNS_TOPIC }) });

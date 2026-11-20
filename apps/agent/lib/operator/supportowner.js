@@ -26,7 +26,8 @@ function createSupportOwner({ ledger, now = () => Date.now() }) {
   // looking at 1522") while Keir keeps the rest of the desk, and vice versa.
   function deferred(job) {
     const perTicket = job?.ticket ? d.supportOwner?.tickets?.[job.ticket] : undefined;
-    if (perTicket) return perTicket !== "keir";
+    // The owner's supervised worker is the ticket's coordinator, not a deferral.
+    if (perTicket) return perTicket !== "keir" && !require("./supporttakeover").activeWorker(d, job);
     return owner() !== "keir";
   }
 

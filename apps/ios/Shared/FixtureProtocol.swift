@@ -303,6 +303,14 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/auth/native-session": value = ["token": String(repeating: "a", count: 64), "expiresAt": Date().addingTimeInterval(30 * 86400).timeIntervalSince1970 * 1000]
         case "/api/keir/app/questions/123456abcdef": value = Self.keir.answerChoices()
         case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
+        case "/api/keir/app/tickets/1564/supervision", "/api/keir/app/tickets/1001/supervision", "/api/keir/app/tickets/1575/supervision", "/api/keir/app/tickets/1651/supervision":
+            // Ticket supervision: GET shows Support Keir; any accepted write returns the supervised view.
+            let taken = request.httpMethod == "POST"
+            let view: [String: Any] = ["ticket": 1001, "revision": "fixture-rev", "state": taken ? "supervised" : "support", "owner": taken ? "keir-worker:fixtureworker" : "keir",
+                "label": taken ? "Your personal Keir is working this ticket" : "Support Keir is working this ticket", "canTake": !taken, "takeBlockers": [] as [Any],
+                "canMessage": taken, "canHandback": taken, "directions": [] as [Any], "sessions": [] as [Any],
+                "worker": taken ? ["id": "fixtureworker", "state": "queued", "status": "Reading the ticket and transferred evidence", "nextAction": "Confirm the payroll allocation", "receipts": [] as [Any], "outbox": [] as [Any], "updatedAt": Date().timeIntervalSince1970 * 1000] as [String: Any] as Any : NSNull() as Any]
+            value = taken ? ["ok": true, "op": (bodyObject()?["op"] as? String) ?? "take", "duplicate": false, "receipt": [:] as [String: Any], "supervision": view] : view
         case "/api/keir/app/controls": value = Self.keir.controls(bodyObject())
         case "/api/keir/app/models": value = Self.keir.models(bodyObject()?["selection"] as? String)
         case "/api/keir/app/computer": value = ["computers": [] as [Any]]

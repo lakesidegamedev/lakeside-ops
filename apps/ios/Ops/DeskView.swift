@@ -83,6 +83,8 @@ struct TicketDetail: View {
                     Hairline()
                 }
                 OwnerDirectionButton(title: "Reply or give direction", context: "Ticket #\(ticket["number"].string)")
+                TicketSupervisionPanel(number: ticket["number"].string)
+                Hairline()
                 ForEach(detail["tasks"].array.filter { $0["canOpen"].bool }, id: \.["id"].string) { task in
                     NavigationLink("Open task: \(task["summary"].string.nonempty ?? task["state"].string)") { TaskDetail(id: task["id"].string) }
                 }
