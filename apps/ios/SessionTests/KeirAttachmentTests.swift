@@ -10,6 +10,10 @@ import LakesideCore
     }
     func testThreadDraftsAndAttachmentOnlySend() async throws {
         let session = session(), files = ChatAttachments(keir: true), store = KeirStore()
+        // An ordinary legacy support thread: the account is known to have no private supervisor.
+        session.profile = .object(["email": .string("agent@example.test"), "ownerSupervisor": .bool(false)])
+        await store.ensureHome(session)
+        XCTAssertTrue(store.homeResolved)
         await files.add(Data("evidence".utf8), name: "notes.txt", mime: "text/plain", session: session)
         XCTAssertEqual(files.items.count, 1)
         let payload = files.payload
@@ -24,6 +28,20 @@ import LakesideCore
         files.sent(payload, in: "main")
         files.scope = "main"
         XCTAssertTrue(files.items.isEmpty)
+    }
+    func testPrivateSupervisorRefusesAttachmentsInsteadOfDroppingOrRerouting() async throws {
+        let session = session(), files = ChatAttachments(keir: true), store = KeirStore()
+        session.profile = .object(["email": .string("owner@example.test"), "ownerSupervisor": .bool(true)])
+        await store.ensureHome(session)
+        XCTAssertTrue(store.isSupervisor)
+        await files.add(Data("evidence".utf8), name: "notes.txt", mime: "text/plain", session: session, in: KeirStore.supervisorThread)
+        files.scope = KeirStore.supervisorThread
+        let sent = await store.send("with a file", session, attachments: files.payload)
+        XCTAssertFalse(sent)
+        XCTAssertEqual(store.thread, KeirStore.supervisorThread)
+        XCTAssertNotNil(store.error)
+        XCTAssertEqual(files.items.count, 1, "the attachment stays in the draft")
+        XCTAssertTrue(store.messages.isEmpty)
     }
     func testUploadCapturedForOldThreadCannotLeakIntoNewDraft() async {
         let session = session(), files = ChatAttachments(keir: true)
