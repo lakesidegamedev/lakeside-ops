@@ -410,6 +410,7 @@ private struct TicketDecisionInline: View {
     @EnvironmentObject private var ops: OpsStore
     let decision: JSONValue
     var changed: () async -> Void
+    @Environment(\.dynamicTypeSize) private var textSize
     @State private var outcome: String?
     @State private var failure: String?
     @State private var busy = false
@@ -429,10 +430,9 @@ private struct TicketDecisionInline: View {
                 let question = OpsText.scrub(decision["question"].string)
                 if !question.isEmpty && question != headline { Text(question).font(.callout).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true) }
                 if let failure { Text(failure).font(.caption).foregroundStyle(OpsTheme.warn) }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) { buttons }
-                    VStack(spacing: 8) { buttons }
-                }.disabled(busy)
+                let layout = options.count > 2 || textSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                layout { buttons }.disabled(busy)
             }
         }
     }

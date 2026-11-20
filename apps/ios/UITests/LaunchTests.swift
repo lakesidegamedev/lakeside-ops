@@ -957,9 +957,13 @@ final class LaunchTests: XCTestCase {
         openRow(app, "Budget screen shows zero funding")
         XCTAssertTrue(find(app, "Budget screen shows zero funding").waitForExistence(timeout: 10))
         XCTAssertTrue(find(app, "Choose payroll behavior").exists)
-        XCTAssertTrue(app.buttons["ticket-decision-1"].exists)
-        XCTAssertTrue(app.buttons["ticket-decision-2"].exists)
-        capturePage("Ticket 1001")
+        capture(app, "\(theme) Ticket 1001 top")
+        let capacity = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "ticket-decision-1", "Capacity")).firstMatch
+        XCTAssertTrue(reveal(app, capacity, swipes: 3), "The capacity choice is available inside the ticket")
+        let filled = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "ticket-decision-2", "Filled jobs")).firstMatch
+        XCTAssertTrue(filled.exists, "The filled-jobs choice appears next to capacity")
+        for _ in 0..<6 { app.swipeUp() }
+        capture(app, "\(theme) Ticket 1001 bottom")
         let take = app.buttons["supervision-take"]
         for _ in 0..<6 where !take.isHittable { app.swipeUp() }
         XCTAssertTrue(take.isHittable)
