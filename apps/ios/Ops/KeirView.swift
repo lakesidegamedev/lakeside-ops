@@ -39,20 +39,13 @@ struct KeirView: View {
                                       suggest: suggestFollowUp)
                         }
                         DecisionAnswerReceipt()
-                        if AttentionCenter.shared.count > 0 {
-                            VStack(alignment: .leading, spacing: 10) {
-                                SectionLabel(text: AttentionCenter.label, count: AttentionCenter.shared.count, identifier: "keir-attention-count")
-                                AttentionStack(limit: 2, panels: keir.questions)
-                                if AttentionCenter.shared.count > 2 {
-                                    Button("See all \(AttentionCenter.shared.count)") { router.activityFilter = "all"; router.tab = .activity }
-                                        .font(.callout.weight(.semibold))
-                                        .accessibilityIdentifier("keir-attention-all")
-                                }
-                            }
-                        }
-                        if keir.thread == "main", (keir.team["open"].number ?? 0) > 0 { KeirWorkingNow(team: keir.team) }
                         if keir.messages.isEmpty && keir.thread == "watches" { Text("When a watch is met, Keir reports it here.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.top, 24) }
                         ForEach(keir.messages, id: \.["id"].string) { KeirMessage(message: $0).transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)) }
+                        ForEach(threadDecisions, id: \.["id"].string) { DecisionCard(decision: $0) }
+                        ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) { KeirQuestions(panel: $0) }
+                        if keir.thread == "main", !keir.messages.isEmpty, (keir.team["open"].number ?? 0) > 0 {
+                            KeirWorkingNow(team: keir.team)
+                        }
                         ForEach(keir.tasks.filter { $0["computer"] != .null }, id: \.["id"].string) { task in
                             NavigationLink { KeirComputerScreen(taskId: task["id"].string) } label: {
                                 Label("\(task["computer"]["title"].string.nonempty ?? "Keir's computer") · View or take control", systemImage: "desktopcomputer").font(.callout)
@@ -182,9 +175,16 @@ struct KeirView: View {
         if sheet == nil { presentingSheet = false }
     }
 
+    // The thread response contains its own tasks and messages. Studio-wide
+    // approvals stay accessible from Inbox without displacing this conversation.
+    private var threadDecisions: [JSONValue] {
+        let jobs = Set(keir.tasks.map { $0["id"].string } + keir.messages.map { $0["jobId"].string })
+        return ops.decisions.filter { !$0["jobId"].string.isEmpty && jobs.contains($0["jobId"].string) }
+    }
+
     private var runtimeStrip: some View {
         HStack(spacing: 12) {
-            if presence != .ready {
+            if presence != .ready && presence != .approval {
                 Button { router.tab = .activity } label: { KeirPresence(state: presence, level: voice.level) }.buttonStyle(.plain)
             }
             Spacer(minLength: 0)
@@ -208,7 +208,7 @@ struct KeirView: View {
                 .accessibilityLabel("Autonomy mode is on. Keir can act without asking for supported owner actions. Double tap to turn it off.")
                 .accessibilityIdentifier("keir-yolo-banner")
             }
-        }.padding(.horizontal, 18).padding(.vertical, presence == .ready && !keir.yolo ? 0 : 8)
+        }.padding(.horizontal, 18).padding(.vertical, (presence == .ready || presence == .approval) && !keir.yolo ? 0 : 8)
     }
 
     /// Where the conversation points to the rest of the app. Every count comes
@@ -218,13 +218,7 @@ struct KeirView: View {
     private var contextChips: [ContextChip] {
         var chips: [ContextChip] = []
         let waiting = AttentionCenter.shared.count
-        if waiting > 0 { chips.append(ContextChip(id: "attention", icon: "hand.raised.fill", text: "\(waiting) need you", tone: OpsTheme.warn, filter: "all")) }
-        let tickets = Int(ops.kpis["openTickets"].number ?? 0)
-        if session.profile["mode"].string != "standalone", tickets > 0 {
-            chips.append(ContextChip(id: "tickets", icon: "tray.full", text: tickets == 1 ? "1 open ticket" : "\(tickets) open tickets", tone: OpsTheme.sky, filter: "all"))
-        }
-        let running = keir.live.count
-        if running > 0 { chips.append(ContextChip(id: "running", icon: "gearshape.2.fill", text: running == 1 ? "1 running" : "\(running) running", tone: OpsTheme.mint, filter: "working")) }
+        if waiting > 0 { chips.append(ContextChip(id: "attention", icon: "hand.raised.fill", text: waiting == 1 ? "1 needs you" : "\(waiting) need you", tone: OpsTheme.warn, filter: "all")) }
         return chips
     }
 

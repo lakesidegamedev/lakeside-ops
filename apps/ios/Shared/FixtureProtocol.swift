@@ -84,7 +84,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         let lock = NSLock()
         var messages: [[String: Any]] = [
             ["seq": 1, "id": "app-1", "role": "owner", "text": "How did the last turn go?", "at": 1792020000000],
-            ["seq": 2, "id": "app-2", "role": "keir", "text": "Turn 202 ran clean in 41s. One warning: index fund settlement for one corporation, already tracked in an issue.", "at": 1792020060000]]
+            ["seq": 2, "id": "app-2", "role": "keir", "jobId": "abcdef012345", "text": "Turn 202 ran clean in 41s. One warning: index fund settlement for one corporation, already tracked in an issue.", "at": 1792020060000]]
         var choiceState = "pending"
         var modelSelection = "auto"
         var stopped = false
@@ -110,7 +110,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             }
             return controlValue
         }
-        var decisions: [[String: Any]] = [["id": "abcdefabcdef", "question": "Merge PR #201 into development? Checks are green.", "tldr": "Merge #201 to development", "at": 1792020000000, "ticket": NSNull(), "signoff": false]]
+        var decisions: [[String: Any]] = [["id": "abcdefabcdef", "jobId": "abcdef012345", "question": "Merge PR #201 into development? Checks are green.", "tldr": "Merge #201 to development", "at": 1792020000000, "ticket": NSNull(), "signoff": false]]
         func thread(after: Int) -> [String: Any] {
             lock.lock(); defer { lock.unlock() }
             var view: [String: Any] = ["cursor": messages.count, "version": "v\(messages.count)-\(choiceState)", "messages": messages.filter { ($0["seq"] as? Int ?? 0) > after }, "tasks": [] as [Any], "working": false]

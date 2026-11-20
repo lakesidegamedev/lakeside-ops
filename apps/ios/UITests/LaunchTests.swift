@@ -372,8 +372,9 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(digits(opsButton.label), feedCount, "Feed and Ops disagree on the count")
         XCTAssertEqual(app.staticTexts["ops-attention-count"].label, feedCount)
         go(app, "Keir")
-        XCTAssertTrue(app.staticTexts["keir-attention-count"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["keir-attention-count"].label, feedCount, "Keir and Feed disagree on the count")
+        let chip = app.buttons["keir-chip-attention"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        XCTAssertEqual(digits(chip.label), feedCount, "The Inbox shortcut and Feed disagree on the count")
         capture(app, "Keir attention count matches")
     }
 
@@ -749,6 +750,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["keir-start-voice"].waitForExistence(timeout: 15))
         let ticket = app.buttons["keir-start-ticket"]
         XCTAssertTrue(ticket.waitForExistence(timeout: 15), "a ticket with no recorded reply is offered")
+        XCTAssertFalse(app.buttons["decision-approve"].exists, "An unrelated studio approval belongs in Inbox")
         XCTAssertTrue(ticket.label.contains("1001"))
         XCTAssertTrue(find(app, "No Discord reply recorded").exists)
         capture(app, "Keir personal iPhone start")
