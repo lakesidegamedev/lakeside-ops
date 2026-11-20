@@ -94,6 +94,12 @@ if [[ ! -d $dir ]]; then
     git -C "$(git -C "$repo" rev-parse --show-toplevel)" archive "$sha:apps/cli" | tar -x -C "$build/apps/cli"
     git -C "$(git -C "$repo" rev-parse --show-toplevel)" archive "$sha:apps/cli" headless bin/activation.cjs provider-routes.js | tar -x -C "$tmp/cli-runtime"
   fi
+  # Validate owner approval pushes against the web writer from the same commit.
+  # Only the agent directory is promoted into the immutable runtime.
+  attention=apps/web/keir-supervisor/attention.js
+  if [[ $prefix == apps/agent/ ]] && git -C "$repo" cat-file -e "$sha:$attention" 2>/dev/null; then
+    git -C "$(git -C "$repo" rev-parse --show-toplevel)" archive "$sha" "$attention" | tar -x -C "$build"
+  fi
   (cd "$tmp" && npm ci --silent --no-audit --no-fund)
   (cd "$tmp" && npm test >/dev/null 2>&1) || { echo "refusing: tests fail in the built release ($tmp kept for inspection)" >&2; exit 1; }
   version=$(node -p "require('$tmp/package.json').version")

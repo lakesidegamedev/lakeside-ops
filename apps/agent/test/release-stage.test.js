@@ -23,8 +23,10 @@ test("monorepo release staging ships the headless runtime and preserves the live
   fs.writeFileSync(path.join(cli, "headless/runtime.js"), "module.exports = {};\n");
   fs.writeFileSync(path.join(cli, "provider-routes.js"), "module.exports = {};\n");
   fs.writeFileSync(path.join(cli, "bin/activation.cjs"), "// fixture\n");
+  fs.mkdirSync(path.join(repo, "apps/web/keir-supervisor"));
+  fs.writeFileSync(path.join(repo, "apps/web/keir-supervisor/attention.js"), "module.exports = { contract: 1 };");
   fs.writeFileSync(path.join(repo, "apps/web/tenant-only.txt"), "Must not ship in an agent release");
-  fs.writeFileSync(path.join(agent, "package.json"), JSON.stringify({ name: "keir-release-fixture", version: "1.2.3", scripts: { test: "node -e \"if(require('../cli/bench/test-fixture.json').answer!==42)process.exit(1);require('node:fs').writeFileSync('tested', 'yes')\"" } }));
+  fs.writeFileSync(path.join(agent, "package.json"), JSON.stringify({ name: "keir-release-fixture", version: "1.2.3", scripts: { test: "node -e \"if(require('../web/keir-supervisor/attention').contract!==1||require('../cli/bench/test-fixture.json').answer!==42)process.exit(1);require('node:fs').writeFileSync('tested', 'yes')\"" } }));
   fs.writeFileSync(path.join(agent, "package-lock.json"), JSON.stringify({ name: "keir-release-fixture", version: "1.2.3", lockfileVersion: 3, packages: { "": { name: "keir-release-fixture", version: "1.2.3" } } }));
   fs.writeFileSync(path.join(agent, "rust/Cargo.toml"), '[workspace.package]\nversion = "1.2.3"\n');
   fs.copyFileSync(path.join(__dirname, "../deploy/release.sh"), path.join(agent, "deploy/release.sh"));
