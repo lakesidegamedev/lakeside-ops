@@ -37,16 +37,16 @@ final class KeirGamesUITests: XCTestCase {
     /// The sheet is a Form: rows below the fold are not built, so they are
     /// absent from the hierarchy until scrolled to. Drag inside the sheet, up to
     /// reach the questions at the bottom or down to return to the game list,
-    /// until `element` is on screen.
+    /// until `element` is fully on screen. Going down, a row that is built but
+    /// still scrolled under the navigation bar counts as not yet reached: a tap
+    /// there is swallowed by the bar and the choice never changes.
     @discardableResult
-    private func reveal(_ app: XCUIApplication, _ element: @autoclosure () -> XCUIElement, down: Bool = false, attempts: Int = 6) -> XCUIElement {
+    private func reveal(_ app: XCUIApplication, _ element: @autoclosure () -> XCUIElement, down: Bool = false, attempts: Int = 8) -> XCUIElement {
         let window = app.windows.firstMatch
+        let bar = app.navigationBars.firstMatch
         for _ in 0..<attempts {
             let current = element()
-            // Going down, stop as soon as the row is built: a further drag at
-            // the top of the sheet would pull the sheet closed, and tap scrolls
-            // a built row the rest of the way.
-            if current.exists && (down || current.isHittable) { return current }
+            if current.exists && current.isHittable && (!down || !bar.exists || current.frame.minY >= bar.frame.maxY) { return current }
             let low = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
             let high = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
             if down { high.press(forDuration: 0.05, thenDragTo: low) } else { low.press(forDuration: 0.05, thenDragTo: high) }
@@ -101,8 +101,10 @@ final class KeirGamesUITests: XCTestCase {
         app.buttons["keir-game-ahd"].tap()
         XCTAssertTrue(find(app, "engine · engine_health").exists)
         XCTAssertTrue(reveal(app, app.buttons["keir-game-ask-tickets"]).waitForExistence(timeout: 5), "A House Divided offers a ticket question")
-        reveal(app, app.buttons["keir-game-grand-century"], down: true).tap()
-        XCTAssertTrue(find(app, "grand-century · gc_status").exists)
+        let grandCentury = reveal(app, app.buttons["keir-game-grand-century"], down: true)
+        XCTAssertTrue(grandCentury.isHittable, "the game list is back on screen after scrolling to the questions")
+        grandCentury.tap()
+        XCTAssertTrue(find(app, "grand-century · gc_status").exists, "the choice moved to Grand Century")
         XCTAssertTrue(reveal(app, app.buttons["keir-game-ask-health"]).waitForExistence(timeout: 5))
         scrollToEnd(app)
         XCTAssertFalse(app.buttons["keir-game-ask-tickets"].exists)
