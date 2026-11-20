@@ -121,6 +121,7 @@ private final class ReliabilityTransport: URLProtocol, @unchecked Sendable {
         await fulfillment(of: [finished], timeout: 5)
         XCTAssertEqual(OpsServices.shared.router.tab, .keir)
         XCTAssertEqual(OpsServices.shared.router.supervisorProposal, "p_0123456789abcdef")
+        XCTAssertEqual(OpsServices.shared.router.destination, .proposal("p_0123456789abcdef"))
         XCTAssertEqual(OpsServices.shared.keir.thread, KeirStore.supervisorThread)
         // A malformed id is never routed to, and an alert action never answers anything.
         OpsServices.shared.router.reset()

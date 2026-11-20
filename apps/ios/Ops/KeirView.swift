@@ -42,7 +42,7 @@ struct KeirView: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
                     else if keir.messages.isEmpty && keir.personalHome && keir.supervisor.setup == nil {
-                        KeirStart(ticket: keir.isSupervisor ? nil : waitingTickets.first, supervisor: keir.isSupervisor, draftEmpty: draftIsEmpty,
+                        KeirStart(ticket: waitingTickets.first, supervisor: keir.isSupervisor, draftEmpty: draftIsEmpty,
                                   speak: { voice.stop(); composing = false; voiceMode = true },
                                   suggest: suggestFollowUp)
                     }

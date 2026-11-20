@@ -59,6 +59,7 @@ struct OpsDestinationView: View {
                 switch destination {
                 case .task(let id): TaskDetail(id: id)
                 case .decision(let id): DecisionReview(id: id)
+                case .proposal(let id): KeirNotifiedProposal(id: id, keir: OpsServices.shared.keir)
                 case .ticket(let ticket): TicketDetail(ticket: ticket)
                 case .alerts: OpsAttentionView()
                 }

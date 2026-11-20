@@ -33,7 +33,7 @@ import LakesideCore
     /// that exact proposal in private Keir; the approve or reject card there is
     /// what decides, through the authenticated request. Alerts never approve.
     @Published var supervisorProposal: String?
-    func openSupervisorProposal(_ id: String) { tab = .keir; supervisorProposal = id }
+    func openSupervisorProposal(_ id: String) { tab = .keir; supervisorProposal = id; destination = .proposal(id) }
     func openDecisionTask(_ decision: JSONValue) {
         if decision["canOpenTask"] == .bool(false), decision["ticket"] != .null { tab = .activity; destination = .ticket(.object(["number": decision["ticket"]])) }
         else { openTask(decision["jobId"].string) }
@@ -42,8 +42,8 @@ import LakesideCore
 }
 
 enum OpsDestination: Identifiable, Equatable {
-    case task(String), decision(String), ticket(JSONValue), alerts
-    var id: String { switch self { case .task(let id): return "task-" + id; case .decision(let id): return "decision-" + id; case .ticket(let ticket): return "ticket-" + ticket["number"].string; case .alerts: return "alerts" } }
+    case task(String), decision(String), proposal(String), ticket(JSONValue), alerts
+    var id: String { switch self { case .task(let id): return "task-" + id; case .decision(let id): return "decision-" + id; case .ticket(let ticket): return "ticket-" + ticket["number"].string; case .proposal(let id): return "proposal-" + id; case .alerts: return "alerts" } }
 }
 
 /// The three places the app lives: the conversation, the inbox (tickets,

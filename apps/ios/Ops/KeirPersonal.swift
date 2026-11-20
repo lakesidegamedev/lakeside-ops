@@ -103,7 +103,7 @@ struct KeirStart: View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Text("Hi, it's Keir.").font(.title2.weight(.semibold)).foregroundStyle(OpsTheme.ink)
-                Text(supervisor ? "Your private conversation. Ask me to look into code and I'll ask before publishing anything."
+                Text(supervisor ? "Ask about a ticket, check on a game, or work on Keir together."
                                 : "Ask about tickets, turns or anything in the studio.")
                     .font(.callout).foregroundStyle(OpsTheme.muted).multilineTextAlignment(.center)
             }

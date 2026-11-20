@@ -213,3 +213,50 @@ struct KeirSupervisorPlusMenu: View {
             .accessibilityIdentifier("supervisor-plus")
     }
 }
+
+/// A notification can outlive its proposal. Always fetch the exact record
+/// before displaying the authenticated decision controls.
+struct KeirNotifiedProposal: View {
+    let id: String
+    @ObservedObject var keir: KeirStore
+    @EnvironmentObject private var session: AppSession
+    @State private var selected: KeirProposal?
+    @State private var issue: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if let selected {
+                    if selected.isPending {
+                        KeirProposalCard(proposal: selected, deciding: keir.supervisor.deciding == id,
+                                         locked: keir.supervisor.deciding != nil, note: keir.supervisor.decisionNotes[id]) { approve in
+                            Task {
+                                await keir.decide(selected, approve: approve, session)
+                                await load()
+                            }
+                        }
+                    } else {
+                        KeirProposalResult(proposal: selected)
+                    }
+                } else if let issue {
+                    Text(issue)
+                    Button("Check again") { Task { await load() } }
+                } else { ProgressView() }
+            }.padding()
+        }.navigationTitle("Keir approval")
+        .task(id: id) { await load() }
+    }
+
+    private func load() async {
+        do {
+            let result = try await session.get("/api/keir/supervisor/proposals")
+            guard !Task.isCancelled else { return }
+            selected = result["proposals"].array.compactMap(KeirProposal.init).first { $0.id == id }
+            issue = selected == nil ? "This approval is no longer available." : nil
+        } catch {
+            guard !Task.isCancelled else { return }
+            selected = nil
+            issue = error.displayMessage
+        }
+    }
+}
