@@ -93,6 +93,8 @@ enum KeirTicketFollowUp {
 /// counts the header already shows.
 struct KeirStart: View {
     let ticket: JSONValue?
+    /// The private conversation: no support tickets or studio counts here.
+    var supervisor = false
     let draftEmpty: Bool
     let speak: () -> Void
     let suggest: (JSONValue) -> Void
@@ -101,7 +103,8 @@ struct KeirStart: View {
         VStack(spacing: 22) {
             VStack(spacing: 6) {
                 Text("Hi, it's Keir.").font(.title2.weight(.semibold)).foregroundStyle(OpsTheme.ink)
-                Text("Ask about tickets, turns or anything in the studio.")
+                Text(supervisor ? "Your private conversation. Ask me to look into code and I'll ask before publishing anything."
+                                : "Ask about tickets, turns or anything in the studio.")
                     .font(.callout).foregroundStyle(OpsTheme.muted).multilineTextAlignment(.center)
             }
             .accessibilityElement(children: .combine)
