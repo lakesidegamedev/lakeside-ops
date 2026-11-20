@@ -863,7 +863,7 @@ final class LaunchTests: XCTestCase {
     func testCriticScreens() {
         let app = launch(appearance: "dark", ["--uitest-eight-screens", "--uitest-reset-resume"])
         XCTAssertTrue(composer(app).waitForExistence(timeout: 12))
-        XCTAssertTrue(find(app, "What is Keir waiting on now?", timeout: 5).exists)
+        XCTAssertTrue(find(app, "What needs my attention?", timeout: 5).exists)
         app.swipeDown()
         capture(app, "OLED Chat top")
 
