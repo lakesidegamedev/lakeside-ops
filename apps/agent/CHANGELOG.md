@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.1.1 (2026-11-20)
+
 ### For users
 
 - After you receive an answer in a ticket, a second Keir job can wait for your reply without asking you the same thing or sending a closing reminder.
