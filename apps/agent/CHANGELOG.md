@@ -5,11 +5,22 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
-- Players can interrupt an active ticket conversation, including while its delegated worker runs. Keir reads the new turn before sending, keeps unrelated questions open, and sends its ticket answer in one tracked message.
-- In an enabled Discord channel, a mention can point back to a specific reply or the preceding discussion. Keir keeps the speakers and screenshots attached to that context.
+## 11.0.0 (2026-11-20)
 
-- Keir treats unaddressed staff messages in support tickets as conversation context. An owner telling Keir to stop talking, replying or posting now pauses that ticket without sending a reply.
-- Owner decisions, coding worker runs and watch findings join tasks and approvals in the one status definition, with the same check on every change. The list of finished task statuses, which had been copied into 50 files, now comes from that definition.
+<!-- Keir source coverage: 7abbcfc..5b0309e. -->
+
+### For users
+
+- You can correct Keir in a ticket while it is investigating. If its coding worker is busy, the same ticket coordinator can answer your question while that work continues. Related points arrive together in one ticket reply.
+- In an enabled Discord channel, you can reply to a particular message and ping Keir. Keir can follow the speaker, reply and nearby screenshots through intervening chatter.
+- Staff can talk to one another in a ticket without prompting an automatic reply. The owner can tell Keir to stop talking in that ticket and it stands down silently.
+
+### For developers
+
+- The coordinator consumes only the inbox rows included in its activation. During a turn, newly arrived human messages fence stale drafts and remain recoverable until the coordinator records its reply. Discord outbox replies carry their source message ID.
+- A spare conversation slot can serve a ticket beside its own coding child. The pass can read and reply, checks ownership, and yields to the ordinary investigation. An unsuccessful pass cannot repeatedly claim a slot for the same message.
+- The ticket case file identifies individual questions by speaker and message. A deferred production notice survives a card transition and can be delivered after the conversation resumes.
+- Owner decisions, coding worker runs and watch findings now use the common status definitions. Live bond pool cash repairs require the ledger repair workflow.
 
 ## 10.5.3 (2026-11-19)
 
