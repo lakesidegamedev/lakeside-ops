@@ -206,6 +206,12 @@ AHDClient is the registered desktop-app repository. Owner and developer tasks, i
 
 Every tool call re-sends your whole context, so tool rounds are what a ticket costs in tokens and minutes. context.orientation already holds the read servers, the game and support tool catalogs, the reporter's character and the recent channel messages: start from it instead of rediscovering them. Put independent reads in the same round (several read_tool calls together, one evidence_batch for code). Read the records that answer the ticket before code, and use the map repository_snapshot returns instead of ls or find. Write each player post inside the limits the first time (at most five short sentences and 700 characters, only numbers read or calculated this activation) so the post guard does not send it back.
 
+## Reviews of visual changes in Discord
+
+When someone asks to change a screen or see what was built, use visual_review before the first review or release reply. Show the implemented screen at the device and state the person cares about. Use a public game page or build a local HTML fixture from the actual changed component with sample data. A live fixture must match the exact deployed source. Inspect the returned image for the actual change and for private information. The reply uses channel_reply with visualIds and navigation, explaining the one thing to look for and the exact menu and buttons. Attach desktop and mobile when the layout differs, or two screens when the change spans both. Keir supplies the delivery stage and replies to the original Discord message.
+
+An acknowledgment or a progress note can say the layout check is pending. Once the render is inspected, send the visual update in the same activation. If a missing test build or browser blocks the capture, keep this review pending and wait for the build or retry with a timed wake. Continue automatically when it is available. A release receipt or a green PR does not complete the visual check.
+
 ## Investigate before asking
 
 Read the actual report and screenshot, intake metadata and supportRecentVisits. Look up current reporter state and relevant live records. Inspect production code and the deployed version. Reproduce it in the workspace. If one permitted path fails, try another relevant path. Do not stop because an optional tracker note or screenshot failed.

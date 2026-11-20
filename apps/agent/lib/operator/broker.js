@@ -298,7 +298,8 @@ function mapSnapshotScopeCheck(args) {
 // Without them a finding filed "please run this query" handoffs that nobody
 // claimed overnight (MNM wind-up, unpaid income tax, 2026-10-16).
 // Keir's own tools and github actions that models keep sending through read_tool with a guessed server.
-const NATIVE_NOT_READ = new Set(["turn_status", "sector_builds", "team_activity", "reporter_state", "check_draft", "player_trail", "resolve_reporter", "request_log", "past_ticket", "similar_reports", "ticket_history", "recent_changes", "source_history", "recall", "ask", "view_page", "view_attachment"]);
+const visualReview = require("./visual-review");
+const NATIVE_NOT_READ = new Set(["visual_review", "turn_status", "sector_builds", "team_activity", "reporter_state", "check_draft", "player_trail", "resolve_reporter", "request_log", "past_ticket", "similar_reports", "ticket_history", "recent_changes", "source_history", "recall", "ask", "view_page", "view_attachment"]);
 const GITHUB_ACTION_NAMES = new Set(["deployed", "where", "status", "ci_failures", "ci_runs", "issues", "history", "watch", "review", "pr_diff"]);
 // A refusal that names the way out. The bare "read tool is outside support scope" was repeated up to 13 times per
 // ticket because nothing in it told the model which call to make instead.
@@ -542,7 +543,7 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null, renderVisual = require("./pageview").render, renderFixture = visualReview.fixtureRender }) {
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -2163,7 +2164,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       throw e;
     }
-    if (name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
+    if (name === "visual_review" && input.action === "capture" || name === "read_tool" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "") || name === "ticket_record" && input.op === "read" || name === "evidence_batch" && input.queries?.some(q => q.op !== "catalog")) job.activationFreshRead = true;
     // Review 2026-11-01 (ticket 1742): an empty lookup asked the wrong way
     // became "nothing is signed". Empty reads are remembered so a claim that
     // something does not exist needs a second, differently shaped read.
@@ -2212,6 +2213,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (["channel_reply", "progress_update", "status_card", "support_action", "finish"].includes(name)) knowledge.requireCurrentTicketRecord(ledger, job);
     musePolicy.guard(ledger, config, job, name, input);
     const publicReply = job.replyChannel !== "app" && Boolean(job.ticket || job.source?.channelName) && (name === "channel_reply" || name === "progress_update" || name === "support_action" && input.tool === "support_public_update");
+    const replyText = name === "support_action" ? input.args?.message : input.message;
+    if (publicReply && !input.visualIds && visualReview.shouldAttach(job, replyText || "")) {
+      throw new Error("Complete the visual check and attach the reviewed renders with channel_reply. If still pending, say so and continue verification.");
+    }
     if (publicReply && job.activationInternalWake && !job.activationFreshRead)
       throw new Error("This activation was woken internally without a new human request. Do not repeat earlier findings. Read current evidence for a changed result, or finish quietly.");
     if (name === "release_efficiency") {
@@ -2267,11 +2272,33 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!config.roleSnapshot || !["watchkeeper", "engineering"].includes(require("./roles").roleOf(job, ledger.data.jobs))) throw new Error("Operator role state is restricted to observer and engineering tasks");
       return config.roleSnapshot();
     }
-    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)
+    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "visual_review", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)
       && !(name === "execute_action" && (() => { const x = ledger.data.actions?.[input.action]; return x && x.jobId === job.id && x.kind === "heal" && x.state === "approved" && x.approvedBy === config.ownerId; })())) throw new Error("finding tasks never post in Discord or execute privileged actions");
     if (job.prMention && !prMention.PR_MENTION_TOOLS.includes(name)) throw new Error("A PR review task only reads the pull request and the code, and posts one review comment on it");
     if (job.codingParent && !childTools(job).includes(name)) throw new Error(job.investigation ? "Investigators only read: code in the snapshot, live game state, history and past tickets. The worker handles fixes, publication and communication." : "Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.");
     if (name === "recent_changes") return capabilities.recentChanges({ days: input.days, query: input.query, path: input.path });
+    if (name === "visual_review") {
+      if (job.role === "player" || job.codingParent || job.internalProbe || !(job.ticket || ownerDirected(job) || developerTask(job))) {
+        throw new Error("UI review needs an authenticated staff request or the assigned support task.");
+      }
+      const options = { discord, config, ledger, signal, sandbox, assertActive: active, renderPage: renderVisual, renderFixture,
+        liveFixture: async (task) => {
+          if (task.repository !== "AHDGame" || !task.repositoryRef?.commit) return false;
+          const status = await sandbox.run(task.id, "cd repo && git rev-parse HEAD && git status --porcelain --untracked-files=all", signal);
+          const webSha = await probe("web", signal);
+          return status.code === 0 && !status.truncated && status.output.trim() === webSha && Boolean(webSha?.startsWith(task.repositoryRef.commit));
+        },
+      };
+      if (input.action === "look") return visualReview.look(config.stateDir, job, input.id);
+      if (job.ticket) await supportAuthority(job, undefined, { decisionNotice: true });
+      if (input.action === "plan") {
+        const state = await visualReview.begin(job, input, options);
+        ledger.save();
+        return { pending: state.pending, originalMessage: state.origin.messageId };
+      }
+      if (input.action !== "capture") throw new Error("unknown UI review action");
+      return visualReview.capture(job, input, options);
+    }
     if (name === "view_page") {
       if (job.role === "player") throw new Error("players cannot render pages through Keir");
       const r = await require("./pageview").render(input);
@@ -2668,9 +2695,21 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "check_draft") return draftCheck(job, input);
     if (name === "channel_reply") {
       if (job.kind === "ticket" && isModerationChannel(ledger, job.channelId || job.replyChannel)) throw new Error("This is a moderation ticket. Moderators handle it; Keir does not reply in it. Finish without acting.");
+      if (typeof input.message !== "string") throw new Error("invalid player text");
+      const preview = input.visualIds ? visualReview.prepare(job, input.visualIds, input.navigation, input.message) : null;
+      const previous = preview && d.outbox[preview.key];
+      if (previous) {
+        if (previous.skipped) throw new Error("The earlier visual delivery did not complete. Inspect its receipt before trying again.");
+        job.visualReview.pending = false;
+        ledger.save();
+        return { queued: !previous.deliveredAt, posted: Boolean(previous.messageIds?.length), messageId: previous.messageIds?.[0] };
+      }
+      if (preview && (job.role === "player" || job.internalProbe || job.codingParent)) throw new Error("Only a staff or support task may publish a UI review");
+      if (preview) job.replyChannel ||= preview.origin.channelId;
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
+      if (!publicReply && !preview && visualReview.shouldAttach(job, input.message)) throw new Error("Complete the visual check and attach the reviewed screenshots to this update. If it is still pending, say so plainly and continue verification.");
       if (require("./toolmarkup").leaked(input.message)) throw new Error("This message contains tool-call markup. Call the tool through the tool interface instead of writing it out, then reply with the result.");
-      let message = publicText(input.message);
+      let message = publicText(preview?.message || input.message);
       if (job.replyChannel !== "app" && Boolean(job.ticket || job.source?.channelName) && /\bintake\s+persisted|\b(?:support|ticket['’]s own)\s+task\b|receipt and intake card|intake card delivered/i.test(message))
         throw new Error("Public ticket acknowledgements should give the ticket link in one short sentence. Keep intake bookkeeping and task handoffs private.");
       require("./advicerouting").guard(job, d, message);
@@ -2690,7 +2729,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // A ticket channel belongs to the player, whoever asked. Player-register
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
-        await guardTicketPost(job, ticketNo, message);
+        if (preview) await supportAuthority(job, undefined, { decisionNotice: true });
+        // The visual stage is generated from the browser evidence. Apply all
+        // ticket checks to the rest of the copy, including its navigation.
+        const checked = preview ? message.replace(/^(?:Live|In testing)\.\s*/, "") : message;
+        await guardTicketPost(job, ticketNo, checked);
         message = softenSettingClaims(job, ticketNo, softenAccountClaims(job, ticketNo, softenBugClaims(job, ticketNo, softenUnreadClaims(job, ticketNo, message))));
         message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
@@ -2703,7 +2746,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             throw new Error(`Not posted: the ticket already points at ${t?.reporter?.corporationName ? `${t.reporter.corporationName} and ` : ""}these pages: ${known.join(", ")}. Check them before asking the player which one or for a link. If none of them is it, post the question again and it goes out.`);
           }
         }
-        if (job.kind !== "conversation") {
+        if (!preview && job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
           // Keir 8.4.1: a reply goes out as a few short messages in order, one update to every
           // guard above and to the caps below. The first is the tracked update; the rest follow it.
@@ -2737,9 +2780,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         job.appReplies = [...sent, { at: now(), text: message.slice(0, 2000) }].slice(-5); job.appRepeats = 0; job.lastPublishedAt = now();
       }
-      const key = `channel-reply:${job.id}:${hash(message)}`;
-      if (ticketNo) recordTicketPost(job, ticketNo, message);
-      ledger.notify(key, `channel:${job.id}`, message);
+      const key = preview?.key || `channel-reply:${job.id}:${hash(message)}`;
+      if (ticketNo && !preview) recordTicketPost(job, ticketNo, message);
+      if (preview) {
+        const { origin, previews, stage } = preview;
+        ledger.notify(key, `channel:${job.id}`, message, { visualReview: { origin, previews, stage, ticket: ticketNo || null } });
+        job.visualReview.pending = false;
+      } else ledger.notify(key, `channel:${job.id}`, message);
       job.channelReplyQueued = true; job.channelRepliedAt = now(); ledger.save();
       return { queued: true, delivery: "durable channel outbox" };
     }
@@ -2988,8 +3035,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     if (name === "ticket_history") {
       if (!job.ticket) throw new Error("task has no ticket");
-      const rows = await discord("GET", `/channels/${job.channelId}/messages?limit=50`);
-      const claimant = rows.map((m) => ticketClaim(m, config, d.channels[job.channelId]?.claimReleasedAt)).find(Boolean);
+      if (input.before && !snowflake(input.before)) throw new Error("before must be a Discord message ID");
+      const rows = await discord("GET", `/channels/${job.channelId}/messages?limit=50${input.before ? `&before=${input.before}` : ""}`);
+      const claimant = !input.before && rows.map((m) => ticketClaim(m, config, d.channels[job.channelId]?.claimReleasedAt)).find(Boolean);
       if (claimant) d.channels[job.channelId] = { ...d.channels[job.channelId], claimedBy: claimant };
       // Keir 9.0.2 (ticket 1829): only the player's own messages count as the player writing. A staff or owner message
       // ("their account should be linked, is it not?") re-armed the unanswered-player rule and the "no confirmed answer"
@@ -4496,6 +4544,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       ledger.save(); return { saved: true };
     }
     if (name === "finish") {
+      if (input.state === "done" && job.visualReview?.pending) throw new Error("The requested visual check is pending. Complete it and post the image, or finish waiting with a timed retry.");
       if (input.needsOwner) { const hk = require("./prhousekeeping").housekeepingRequest(input.summary); if (hk) throw new Error(require("./prhousekeeping").INSTRUCTION(hk)); }
       if (input.needsOwner && !job.ownerMuseBlocker && !d.channels?.[job.channelId]?.claimedBy && !appQuestions?.list(job.appThread||"main").some(q=>q.jobId===job.id&&q.state==="pending") && !Object.values(d.decisions||{}).some(x=>x.jobId===job.id&&x.state==="pending")) throw new Error("Prepare a readable owner request first: use github merge/promote with explanation for an action, or present_choices/raise_to_developers with named policy options. A technical finish summary is not an approval request.");
       if (require("./toolmarkup").hasToolMarkup(input.summary)) throw new Error("Tool-call markup is not a completion summary. Call tools through their interface and preserve the last verified conclusion.");
@@ -4979,7 +5028,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, recordTicketPost, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),
