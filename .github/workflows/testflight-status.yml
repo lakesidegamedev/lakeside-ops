@@ -3,6 +3,14 @@ name: TestFlight status
 on:
   workflow_dispatch:
     inputs:
+      expected_build:
+        description: Verify this exact build is available to an internal group with testers
+        type: string
+        default: ''
+      expected_version:
+        description: Marketing version of the expected build
+        type: string
+        default: ''
       wait_minutes:
         description: Wait up to this long for processing to finish
         type: number
@@ -24,6 +32,8 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          EXPECTED_BUILD: ${{ inputs.expected_build }}
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
           WAIT_MINUTES: ${{ inputs.wait_minutes }}
         run: |
           umask 077
