@@ -84,8 +84,12 @@ test("two ordinary progress sentences with no promise are never sufficient to cl
 });
 
 test("an existing local answer mark still closes after the grace", async () => {
-  const f = setup({ at: ANSWER_AT + 61 * MIN });
+  const f = setup();
   f.coordinator.resolutionReadyAt = ANSWER_AT;
+  await assert.rejects(f.resolve(), /already has the final answer.*Wait silently/);
+  assert.equal(f.job.closeReadyAt, ANSWER_AT + 60 * MIN);
+  assert.equal(posts(f), 0);
+  f.set(ANSWER_AT + 61 * MIN);
   await f.resolve();
   assert.equal(resolves(f), 1);
 });

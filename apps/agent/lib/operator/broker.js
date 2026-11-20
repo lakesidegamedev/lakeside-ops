@@ -4354,7 +4354,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         // The task wakes when the grace ends, not on a long reply wait (ticket 1755 was due to
         // close two hours after its fix and slept nine).
-        if (!answerAt || now() - answerAt < config.closeGraceMs) { if (answerAt) job.closeReadyAt = answerAt + config.closeGraceMs; throw new Error("give the player the final answer and wait for the closure grace period"); }
+        if (!answerAt) throw new Error("give the player the final answer and wait for the closure grace period");
+        if (now() - answerAt < config.closeGraceMs) {
+          job.closeReadyAt = answerAt + config.closeGraceMs;
+          throw new Error("The player already has the final answer. Wait silently for the closure grace period or a new player reply.");
+        }
         // Review 2026-10-19: 1610 resolved one minute after "live", 1611 52
         // minutes after (the player's deliveries had fallen), 1630 before the
         // change shipped. After a fix goes live the player gets a turn to see
