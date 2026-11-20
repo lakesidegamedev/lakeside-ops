@@ -166,7 +166,9 @@ struct OpsSettings: View {
                 }
                 Section {
                     LabeledContent("Signed in as", value: session.profile["email"].string.hasPrefix("discord_") ? "Owner" : session.profile["email"].string)
-                    Button("Sign out", role: .destructive) { confirmSignOut = true }
+                    Button(role: .destructive) { confirmSignOut = true } label: {
+                        Text("Sign out").foregroundStyle(OpsTheme.danger)
+                    }
                 } header: { SectionLabel(text: "Account") }
             }
             .scrollContentBackground(.hidden).background(OpsTheme.background)

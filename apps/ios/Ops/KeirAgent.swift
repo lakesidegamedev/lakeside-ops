@@ -289,7 +289,7 @@ struct ActivityView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .inboxRow(card: true)
                 }
-            } header: { SectionLabel(text: AttentionCenter.label, count: visibleOwner.count, identifier: "inbox-attention-count") }
+            } header: { queueHeader(AttentionCenter.label, count: visibleOwner.count, identifier: "inbox-attention-count") }
         }
     }
 
@@ -326,9 +326,15 @@ struct ActivityView: View {
                         .inboxRow()
                         .accessibilityIdentifier("work-row-\(id)")
                     }
-                } header: { SectionLabel(text: title, count: rows.count) }
+                } header: { queueHeader(title, count: rows.count) }
             }
         }
+    }
+
+    private func queueHeader(_ title: String, count: Int, identifier: String? = nil) -> some View {
+        SectionLabel(text: title, count: count, identifier: identifier)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background { OpsTheme.background.padding(.horizontal, -16) }
     }
 
     @ViewBuilder private func destination(_ route: InboxRoute) -> some View {
