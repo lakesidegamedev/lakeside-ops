@@ -394,7 +394,7 @@ private struct KeirApprovalsSheet: View {
                         Text("Proposal \(focus) is no longer listed. It may be older than the newest twenty. Nothing was approved.").font(.callout).foregroundStyle(OpsTheme.muted)
                     }
                     ForEach(shownProposals, id: \.["id"].string) { proposal in
-                        KeirProposalCard(proposal: proposal, result: results[proposal["id"].string], busy: deciding.contains(proposal["id"].string)) { approve in
+                        KeirConversationApprovalCard(proposal: proposal, result: results[proposal["id"].string], busy: deciding.contains(proposal["id"].string)) { approve in
                             Task { await decide(proposal, approve: approve) }
                         }
                     }
@@ -461,7 +461,7 @@ private struct KeirApprovalsSheet: View {
     }
 }
 
-private struct KeirProposalCard: View {
+private struct KeirConversationApprovalCard: View {
     let proposal: JSONValue
     let result: String?
     let busy: Bool
