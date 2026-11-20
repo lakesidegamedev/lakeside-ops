@@ -15,16 +15,20 @@ enum WorkQueuePresentation {
         if !value.isEmpty { return value }
         switch item["state"].string {
         case "running": return "working"
-        case "blocked": return "stuck"
+        case "blocked", "stuck": return "stuck"
+        case "stalled": return "stalled"
+        case "queued": return "queued"
         case "done", "dismissed", "cancelled": return "finished"
         default: return "waiting"
         }
     }
     static func bucket(_ item: JSONValue) -> String {
         let state = state(item)
-        if state == "needs-you" || state == "finished" { return state }
-        if item["timing"]["overdue"].bool || ["stuck", "stalled", "unassigned"].contains(state) { return "stuck" }
-        return state == "working" ? "working" : "waiting"
+        if state == "needs-you" || state == "finished" || state == "stalled" { return state }
+        if item["replyState"]["state"].string == "no_receipt" { return "unanswered" }
+        if ["stuck", "unassigned"].contains(state) { return "stuck" }
+        if state == "working" { return "working" }
+        return ["held", "waiting"].contains(state) ? "held" : "waiting"
     }
     static func matches(_ item: JSONValue, filter: String, search: String, ticket: Bool) -> Bool {
         let text = [item["title"].string, item["number"].string, item["ticket"].string, item["timing"]["reason"].string].joined(separator: " ")
@@ -50,20 +54,21 @@ enum WorkQueuePresentation {
         return ["working": 2, "queued": 3, "waiting": 4, "held": 5, "finished": 6][state(item)] ?? 5
     }
     static func label(_ item: JSONValue) -> String {
-        let s = state(item)
-        if s == "stalled" { return "Stalled" }
-        if item["timing"]["overdue"].bool && !["stuck", "unassigned", "needs-you"].contains(s) { return "Overdue" }
-        return ["working": "Running", "waiting": "Queued", "queued": "Queued", "held": "Held", "stuck": "Blocked", "unassigned": "Unassigned", "needs-you": "Needs you", "finished": "Done"][s] ?? OpsStatus.from(s).title
+        ["stalled": "Stalled", "stuck": "Blocked", "unanswered": "Unanswered", "working": "Running",
+         "waiting": "Queued", "held": "Waiting", "needs-you": "Needs you", "finished": "Done"][bucket(item)] ?? "Unknown"
     }
     static func status(_ item: JSONValue) -> OpsStatus {
-        if state(item) == "stalled" && item["timing"]["reason"].string.localizedCaseInsensitiveContains("aborted") { return .failed }
-        if item["timing"]["overdue"].bool { return .blocked }
-        return state(item) == "waiting" ? .waiting : OpsStatus.from(state(item))
+        switch bucket(item) {
+        case "stalled": return .failed
+        case "stuck", "unanswered", "held": return .blocked
+        case "needs-you": return .waiting
+        case "working": return .running
+        case "finished": return .done
+        default: return .queued
+        }
     }
-    static func color(_ item: JSONValue) -> Color {
-        if state(item) == "unassigned" { return OpsTheme.muted }
-        return status(item).color
-    }
+    static func color(_ item: JSONValue) -> Color { status(item).color }
+
 }
 
 struct WorkTimingView: View {

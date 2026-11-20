@@ -32,12 +32,22 @@ function ticketDetail(data, number, now = Date.now(), config = {}) {
   const current = jobs.find((j) => j.state === "running") || jobs.find((j) => !CLOSED.includes(j.state)) || jobs[0];
   const receipts = jobs.flatMap((j) => Object.entries(j.effects || {}).map(([key, value]) => ({ ...receiptOf(key, value), taskId: j.id }))).sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 40);
   const history = jobs.flatMap((j) => (j.history || []).map((h, i) => ({ id: `${j.id}-${i}`, taskId: j.id, at: h.at, kind: h.kind || h.state || "checkpoint", text: String(h.summary || "").slice(0, 2000) })));
-  for (const [i, post] of (data.ticketPosts?.[number] || []).entries()) history.push({ id: `post-${i}`, at: post.at, kind: "Player update", text: post.text });
+  const posts = data.ticketPosts?.[number] || [];
+  for (const [i, post] of posts.entries()) history.push({ id: `post-${i}`, at: post.at, kind: post.kind === "reply" ? "Player reply" : "Status update", text: post.text });
+  const lastReply = data.lastSubstantive?.[number];
+  if (lastReply && !posts.some(post => post.text === lastReply.text || post.at === lastReply.at)) {
+    history.push({ id: "last-reply", at: lastReply.at, kind: "Player reply", text: lastReply.text });
+  }
   history.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-  return { number, timing: current ? require("./workqueue").workStatus(data, require("./workrecord").rootJob(current, data.jobs), { now, config }) : null, blockers, decisions: decisions.map((x) => require("./appdecision").decisionView(data, x, now)),
-    current: current ? { id: current.id, state: current.state, status: current.liveLog?.at(-1)?.what || card.status || current.summary || null, summary: current.summary || null, updatedAt: current.updatedAt || current.at, plan: current.plan || [] } : null,
+  return { number, retryTaskId: stalledTicketJob(data, number)?.id || null, timing: current ? require("./workqueue").workStatus(data, require("./workrecord").rootJob(current, data.jobs), { now, config }) : null, blockers, decisions: decisions.map((x) => require("./appdecision").decisionView(data, x, now)),
+    current: current ? { id: current.id, state: current.state, status: current.liveLog?.at(-1)?.what || card.status || current.summary || null, summary: current.summary || null, startedAt: current.startedAt || null, updatedAt: current.updatedAt || current.at, plan: current.plan || [] } : null,
     card, receipts, handoffs, history: history.slice(0, 50),
     tasks: jobs.map((j) => ({ id: j.id, canOpen: j.role === "owner", state: j.state, kind: j.kind, summary: j.summary, updatedAt: j.updatedAt || j.at })),
     pullRequests: [...new Set(jobs.flatMap((j) => j.pullRequests || []))], updatedAt: now };
 }
-module.exports = { ticketDetail };
+function stalledTicketJob(data, number) {
+  const job = data.jobs[data.seen?.[`ticket:${number}`]];
+  if (job?.kind !== "ticket" || Number(job.ticket) !== number || job.state !== "blocked") return null;
+  return job.deadlineBlockedAt || /activation aborted/i.test(job.summary || "") ? job : null;
+}
+module.exports = { ticketDetail, stalledTicketJob };

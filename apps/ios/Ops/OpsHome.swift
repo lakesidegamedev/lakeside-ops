@@ -12,13 +12,14 @@ struct OpsHub: View {
     @ObservedObject private var attention = AttentionCenter.shared
     @Environment(\.dynamicTypeSize) private var textSize
 
-    private var broken: Int { ops.servicesDown.filter { $0["current"].string == "major_outage" }.count + ops.redPRs }
-    private var degraded: Int { ops.servicesDown.filter { $0["current"].string == "degraded" }.count }
+    private var broken: Int { issues.filter { ops.serviceState($0) == "Failing" }.count + ops.redPRs }
+    private var degraded: Int { issues.filter { ops.serviceState($0) == "Degraded" }.count }
+    private var issues: [JSONValue] { ops.servicesDown }
     private var openTickets: Int { ops.openTickets.count }
     private var activity: [JSONValue] { ops.tasks + ops.openTickets }
     private var running: Bool { activity.contains { WorkQueuePresentation.bucket($0) == "working" } }
     private var queued: Bool { activity.contains { WorkQueuePresentation.bucket($0) == "waiting" } }
-    private var blockedWork: Int { ops.blocked.count }
+    private var blockedWork: Int { ops.blockedQueueCount }
     private var nowWork: Int { ops.kanban["now"].array.count }
     private var nextWork: Int { ops.kanban["next"].array.count }
 
@@ -27,12 +28,10 @@ struct OpsHub: View {
             LazyVStack(alignment: .leading, spacing: 24) {
                 header
                 summary
-                if !ops.servicesDown.filter({ ["degraded", "major_outage"].contains($0["current"].string) }).isEmpty || blockedWork > 0 { failing }
-                if attention.count > 0 { needsYou }
+                if !issues.isEmpty || ops.redPRs > 0 { failing }
                 queues
                 StarmerWidget()
                 systems
-                keir
             }
             .padding(16)
         }
@@ -49,29 +48,29 @@ struct OpsHub: View {
         // Re-read every 30 seconds so "Updated 1m ago" and a stall are honest
         // even when no refresh lands.
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
-            OpsCard {
-                HStack(alignment: .top, spacing: 12) {
-                    OpsGlyph(icon: overviewIcon, tone: overviewTone, size: 42)
-                    VStack(alignment: .leading, spacing: 7) {
+            VStack(alignment: .leading, spacing: 12) {
+                OpsCard {
+                    HStack(spacing: 12) {
+                        OpsGlyph(icon: overviewIcon, tone: overviewTone, size: 42)
                         Text(headline).font(.opsTitle)
                             .fixedSize(horizontal: false, vertical: true)
                             .accessibilityAddTraits(.isHeader)
-                        OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
-                            .accessibilityIdentifier("ops-heartbeat")
                     }
                 }
+                OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
+                    .accessibilityIdentifier("ops-heartbeat")
             }
         }
     }
 
     private var overviewTone: Color {
         if broken > 0 { return OpsTheme.danger }
-        return degraded > 0 || blockedWork > 0 ? OpsTheme.warning : OpsTheme.accent
+        return degraded > 0 ? OpsTheme.warning : OpsTheme.accent
     }
 
     private var overviewIcon: String {
         if broken > 0 { return "exclamationmark.octagon.fill" }
-        if degraded > 0 || blockedWork > 0 { return "exclamationmark.triangle.fill" }
+        if degraded > 0 { return "exclamationmark.triangle.fill" }
         return "waveform.path.ecg"
     }
 
@@ -81,10 +80,10 @@ struct OpsHub: View {
             Button { router.activityFilter = "needs-you"; router.tab = .activity } label: {
                 OpsSummaryTile(title: "Needs you", count: attention.count, icon: "hand.raised.fill", tone: OpsTheme.warning)
             }
-            NavigationLink { FailedPRsView() } label: {
+            Button { router.activityFilter = "failing"; router.tab = .activity } label: {
                 OpsSummaryTile(title: "Failing checks", count: ops.redPRs, icon: "xmark.circle.fill", tone: OpsTheme.danger)
             }
-            NavigationLink { WorkView(lane: .blocked) } label: {
+            Button { router.activityFilter = "stuck"; router.tab = .activity } label: {
                 OpsSummaryTile(title: "Blocked work", count: blockedWork, icon: "exclamationmark.triangle.fill", tone: OpsTheme.warning)
             }
         }.buttonStyle(.plain)
@@ -94,7 +93,7 @@ struct OpsHub: View {
         if case .unreachable = ops.heartbeat() { return "Ops is unreachable" }
         if broken > 0 { return broken == 1 ? "One thing is failing" : "\(broken) things are failing" }
         if degraded > 0 { return degraded == 1 ? "One service is degraded" : "\(degraded) services are degraded" }
-        if blockedWork > 0 { return blockedWork == 1 ? "One item is blocked" : "\(blockedWork) items are blocked" }
+        if issues.contains(where: { ops.serviceState($0) == "Stale" }) { return "Some checks are out of date" }
         return "Nothing is failing"
     }
 
@@ -130,52 +129,28 @@ struct OpsHub: View {
     private var failing: some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: "Issues", identifier: "ops-failing-count")
-            ForEach(ops.servicesDown.filter { ["degraded", "major_outage"].contains($0["current"].string) }, id: \.["id"].string) { service in
-                let degraded = service["current"].string == "degraded"
+            ForEach(ops.failingPRs, id: \.["number"].string) { pr in
+                Button { router.activityFilter = "failing"; router.tab = .activity } label: {
+                    OpsQueueRow(title: pr["title"].string.nonempty ?? "Pull request #\(pr["number"].string)", detail: "Failing · Checks", status: .failed, icon: "xmark.circle")
+                }
+                Hairline()
+            }
+            ForEach(issues, id: \.["id"].string) { service in
+                let state = ops.serviceState(service)
+                let status: OpsStatus = state == "Failing" ? .failed : state == "Degraded" ? .blocked : .idle
                 NavigationLink { HealthView() } label: {
-                    OpsQueueRow(title: service["name"].string.nonempty ?? "Service", detail: serviceDetail(service), status: degraded ? .blocked : .failed, icon: degraded ? "exclamationmark.triangle" : "exclamationmark.octagon")
+                    let checked = OpsFormat.date(service["lastChecked"]).map(OpsFormat.contextual)
+                    OpsQueueRow(title: service["name"].string.nonempty ?? "Service", detail: [state, checked.map { "Checked " + $0 }].compactMap { $0 }.joined(separator: " · "), status: status, icon: status.icon)
                 }
                 Hairline()
             }
-            ForEach(Array(ops.blocked.prefix(3).enumerated()), id: \.offset) { _, item in
-                NavigationLink { WorkItemDetail(item: item) } label: {
-                    OpsQueueRow(title: OpsText.scrub(item["title"].string.nonempty ?? "Blocked work"), detail: blockedDetail(item), status: .blocked, icon: "exclamationmark.triangle")
-                }
-                Hairline()
-            }
-            if blockedWork > 3 {
-                NavigationLink { WorkView(lane: .blocked) } label: {
-                    OpsQueueRow(title: "All blocked work", detail: "\(blockedWork) items", status: .blocked, icon: "list.bullet")
-                }
+            if issues.contains(where: { ops.serviceState($0) == "Stale" }) {
+                Button { Task { await ops.refresh(session) } } label: {
+                    Label("Re-check services", systemImage: "arrow.clockwise").font(.opsCaption).foregroundStyle(OpsTheme.accent)
+                }.padding(.vertical, 8)
             }
         }
         .buttonStyle(.plain)
-    }
-
-    private func serviceDetail(_ service: JSONValue) -> String {
-        let state = service["current"].string.capitalized
-        let checked = OpsFormat.ago(service["lastChecked"])
-        return checked.isEmpty ? state : "\(state) · checked \(checked)"
-    }
-
-    private func blockedDetail(_ item: JSONValue) -> String {
-        let reason = OpsText.firstSentence(item["stale_reason"].string.nonempty ?? item["progress_summary"].string)
-        let since = OpsFormat.ago(item["updated_at"])
-        return [reason, since.isEmpty ? "" : "since \(since)"].filter { !$0.isEmpty }.joined(separator: " · ")
-    }
-
-    // MARK: Needs you
-
-    private var needsYou: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "ops-attention-count")
-                Button("Review all \(attention.count)") { router.activityFilter = "needs-you"; router.tab = .activity }
-                    .font(.caption.weight(.semibold))
-                    .accessibilityIdentifier("ops-review-attention")
-            }
-            AttentionStack(limit: 3, showEmpty: false)
-        }
     }
 
     // MARK: Queues
@@ -185,10 +160,6 @@ struct OpsHub: View {
             SectionLabel(text: "Queues")
             NavigationLink { WorkView(lane: .now) } label: {
                 OpsQueueRow(title: "Studio work in progress", detail: "\(nowWork)", status: .idle, icon: "rectangle.split.3x1")
-            }
-            Hairline()
-            NavigationLink { WorkView(lane: .blocked) } label: {
-                OpsQueueRow(title: "Blocked", detail: "\(blockedWork)", status: blockedWork > 0 ? .blocked : .idle, icon: "exclamationmark.triangle")
             }
             Hairline()
             NavigationLink { WorkView(lane: .next) } label: {
@@ -260,19 +231,29 @@ struct OpsHub: View {
         return live > 0 ? .running : .queued
     }
 
-    // MARK: Keir surfaces
+}
 
-    private var keir: some View {
+struct KeirMore: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView { destinations.padding(16) }
+                .opsScrollable().opsScreen().navigationTitle("More").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+
+    private var destinations: some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionLabel(text: "Keir")
-            NavigationLink(value: StudioRoute.feed) {
+            NavigationLink { FeedView() } label: {
                 OpsQueueRow(title: "Feed", detail: "Briefing, what Keir did, what is next", status: .idle, icon: "sparkles.rectangle.stack")
             }
-            NavigationLink(value: StudioRoute.goals) {
+            NavigationLink { GoalsView() } label: {
                 OpsQueueRow(title: "Goals", detail: "Milestones and blockers", status: .idle, icon: "flag")
             }
             NavigationLink { KeirMetricsView() } label: {
-                OpsQueueRow(title: "Dashboard", detail: "Execution metrics and monitoring", status: .idle, icon: "chart.bar.xaxis")
+                OpsQueueRow(title: "Execution metrics", detail: "Performance and monitoring", status: .idle, icon: "chart.bar.xaxis")
             }
             NavigationLink { IdeasView() } label: {
                 OpsQueueRow(title: "Ideas", detail: "Triage what Keir found", status: .queued, icon: "lightbulb")

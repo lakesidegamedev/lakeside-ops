@@ -193,13 +193,16 @@ struct AttentionItem: Identifiable {
         return [title, detail, meta].contains { $0.localizedCaseInsensitiveContains(needle) }
     }
 
+    var openedAt: Date? {
+        [decision["at"], work["createdAt"], work["at"], work["updated_at"], work["updatedAt"], work["timing"]["since"]]
+            .compactMap(OpsFormat.date).first
+    }
+
     /// The short word on the card, so a decision never reads like a question.
     var kindLabel: String {
         switch kind {
-        case .decision: return decision["type"].string == "choice" ? "Choose one" : "Approval"
-        case .ticket, .task: return "Decision"
-        case .question: return "Question"
-        case .ownerWork: return "Your call"
+        case .decision: return decision["type"].string == "choice" || decision["type"].string == "question" ? "Decision" : "Approval"
+        case .ticket, .task, .question, .ownerWork: return "Decision"
         }
     }
 }
@@ -312,25 +315,25 @@ struct AttentionRow: View {
             HStack(alignment: .firstTextBaseline) {
                 OpsStatusBadge(status: status, label: item.kindLabel)
                 Spacer(minLength: 8)
-                Text(item.meta).font(.caption2).foregroundStyle(OpsTheme.muted).monospacedDigit()
-                    .lineLimit(1)
+                if let date = item.openedAt {
+                    Text(OpsFormat.ago(date)).font(.opsCaption)
+                        .foregroundStyle(Date().timeIntervalSince(date) >= 7 * 86_400 ? OpsTheme.warning : OpsTheme.muted)
+                }
             }
-            Text(item.title)
-                .font(.opsCardTitle)
-                .foregroundStyle(OpsTheme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            if !item.detail.isEmpty, item.detail != item.title {
-                Text(item.detail)
-                    .font(.caption)
-                    .foregroundStyle(OpsTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.title).font(.opsCardTitle).foregroundStyle(OpsTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let number = item.ticketNumber { Text("Ticket #\(number)").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                    if !item.detail.isEmpty, item.detail != item.title {
+                        Text(item.detail).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                    .foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
             }
-            HStack(spacing: 6) {
-                Text(action).font(.caption.weight(.semibold))
-                Spacer(minLength: 0)
-                Image(systemName: icon == "arrow.right" ? "chevron.right" : icon).font(.caption.weight(.semibold))
-            }
-            .foregroundStyle(OpsTheme.sky)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)

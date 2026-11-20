@@ -117,36 +117,35 @@ struct OpsSettings: View {
     @State private var quiet = QuietHours.load()
     @State private var confirmSignOut = false
 
+    private var pushAvailable: Bool {
+        (status == .authorized || status == .provisional || status == .ephemeral)
+            && (push.lastRegistered != nil || (delivery["registeredDevices"].number ?? 0) > 0)
+    }
+
+    private func refreshNotificationRegistration() {
+        Task {
+            await OpsPushRegistration.request()
+            status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    toggle("replies", "Keir replies", "When Keir answers you in the app.")
-                    toggle("decisions", "Decisions", "Time-sensitive. Approve or reject from the notification.")
-                    toggle("feed", "Morning brief and goal progress", "The daily brief, and milestones Keir finishes.")
-                    toggle("incidents", "Watchkeeper incidents", "Quiet delivery. Turn failures and stalled work.")
-                    LabeledContent("Delivery", value: push.message)
-                    if let registered = push.lastRegistered { Text("Last registered \(OpsFormat.clock(registered))").font(.caption).foregroundStyle(OpsTheme.muted) }
-                    if let error = push.error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn) }
-                    Button("Check notification registration") { Task { await OpsPushRegistration.request(); status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus } }
-                    if delivery != .null {
-                        LabeledContent("Push service", value: delivery["configured"].bool ? "Configured" : "Unavailable")
-                        LabeledContent("Registered devices", value: delivery["registeredDevices"].string)
-                    }
-                    Button("Send a test notification") {
-                        testingDelivery = true
-                        Task {
-                            do {
-                                _ = try await session.post("/api/keir/app/notifications/test", [:])
-                                deliveryMessage = "Apple accepted the test. Check Notification Center for delivery."
-                            } catch { deliveryMessage = error.displayMessage }
-                            testingDelivery = false
+                    if !pushAvailable {
+                        Label("Push notifications are inactive", systemImage: "bell.slash").foregroundStyle(OpsTheme.warning)
+                        Button(status == .denied ? "Open iPhone Settings" : "Enable notifications") {
+                            if status == .denied {
+                                if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                            } else { refreshNotificationRegistration() }
                         }
-                    }.disabled(testingDelivery)
-                    if let deliveryMessage { Text(deliveryMessage).font(.caption).foregroundStyle(OpsTheme.muted) }
-                    if status == .denied {
-                        Button("Turn on notifications in Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
                     }
+                    Group {
+                        toggle("replies", "Keir replies", "When Keir answers you in the app.")
+                        toggle("decisions", "Decisions", "Time-sensitive approvals and decisions.")
+                        toggle("incidents", "Incident alerts", "Turn failures and stalled work.")
+                    }.disabled(!pushAvailable)
                 } header: { SectionLabel(text: "Notifications") }
                 quietSection
                 if session.profile["mode"].string != "standalone" { KeirIdentitySection() }
@@ -164,6 +163,29 @@ struct OpsSettings: View {
                     Text("Keir portrait art derived from an official Prime Minister's Office photograph, licensed under the Open Government Licence v3.0.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section {
+                    DisclosureGroup("Push diagnostics") {
+                        LabeledContent("Delivery", value: push.message)
+                        if let registered = push.lastRegistered {
+                            LabeledContent("Registered", value: OpsFormat.contextual(registered))
+                        }
+                        if delivery != .null {
+                            LabeledContent("Push service", value: delivery["configured"].bool ? "Configured" : "Unavailable")
+                        }
+                        Button("Check notification registration", action: refreshNotificationRegistration)
+                        Button("Send a test notification") {
+                            testingDelivery = true
+                            Task {
+                                do {
+                                    _ = try await session.post("/api/keir/app/notifications/test", [:])
+                                    deliveryMessage = "Test sent. Check Notification Center."
+                                } catch { deliveryMessage = "Could not send the test notification." }
+                                testingDelivery = false
+                            }
+                        }.disabled(testingDelivery || !pushAvailable)
+                        if let deliveryMessage { Text(deliveryMessage).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                    }
+                } header: { SectionLabel(text: "Developer") }
                 Section {
                     LabeledContent("Signed in as", value: session.profile["email"].string.hasPrefix("discord_") ? "Owner" : session.profile["email"].string)
                     Button(role: .destructive) { confirmSignOut = true } label: {

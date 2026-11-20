@@ -148,7 +148,6 @@ struct ActivityView: View {
     @EnvironmentObject private var session: AppSession
     @State private var error: String?
     @State private var search = ""
-    @State private var scope = "tickets"
     @State private var filter = "all"
     @State private var route: InboxRoute?
     @ObservedObject private var attention = AttentionCenter.shared
@@ -156,45 +155,54 @@ struct ActivityView: View {
     /// The queue and the badge read the same ticket list from the shared store.
     private var work: JSONValue { ops.work }
     private var tickets: [JSONValue] { ops.openTickets }
-    private var tasks: [JSONValue] { ops.tasks }
-    private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
-    private var entries: [JSONValue] { showTickets ? tickets : tasks }
     private var trimmedSearch: String { search.trimmingCharacters(in: .whitespaces) }
-
-    /// Chips use the same words as the sections they open. Blocked sits above
-    /// the plain queue states, as it does on Ops.
-    private let filters = [("all", "All"), ("needs-you", AttentionCenter.label), ("stuck", "Blocked"), ("working", "Running"), ("waiting", "Queued"), ("finished", "Done")]
+    private let filters = [("all", "All"), ("needs-you", "Needs you"), ("failing", "Failing checks"),
+                           ("stuck", "Blocked"), ("stalled", "Stalled"), ("unanswered", "Unanswered"),
+                           ("working", "Running"), ("waiting", "Queued"), ("held", "Waiting"), ("finished", "Done")]
 
     // MARK: Rows per filter
 
-    private func queueRows(_ key: String, search: String) -> [JSONValue] {
-        guard key != "needs-you" else { return [] }
-        let held = Set(attention.items.compactMap(\.ticketNumber).map { String($0) })
-        return entries.filter {
-            WorkQueuePresentation.bucket($0) != "needs-you"
-                && (!showTickets || !held.contains($0["number"].string))
-                && WorkQueuePresentation.matches($0, filter: key, search: search, ticket: showTickets)
-        }.sorted { WorkQueuePresentation.rank($0) < WorkQueuePresentation.rank($1) }
+    private struct Entry: Identifiable {
+        let item: JSONValue
+        let ticket: Bool
+        var key: String { item[ticket ? "number" : "id"].string }
+        var id: String { (ticket ? "ticket:" : "task:") + key }
+    }
+    private func queueRows(_ key: String, search: String) -> [Entry] {
+        let entries = ops.queueTickets.map { Entry(item: $0, ticket: true) } + ops.queueTasks.map { Entry(item: $0, ticket: false) }
+        return entries.filter { WorkQueuePresentation.matches($0.item, filter: key, search: search, ticket: $0.ticket) }
+            .sorted { WorkQueuePresentation.rank($0.item) < WorkQueuePresentation.rank($1.item) }
+    }
+    private func failingRows(_ search: String) -> [JSONValue] {
+        ops.failingPRs.filter { search.isEmpty || [$0["title"].string, $0["number"].string].contains { $0.localizedCaseInsensitiveContains(search) } }
     }
     private func ownerRows(_ key: String, search: String) -> [AttentionItem] {
         guard WorkQueuePresentation.showsOwnerItems(filter: key) else { return [] }
         return attention.items.filter { $0.matches(search) }
     }
     private func count(_ key: String) -> Int {
-        queueRows(key, search: "").count + ownerRows(key, search: "").count
+        queueRows(key, search: "").count + ownerRows(key, search: "").count + (["all", "failing"].contains(key) ? failingRows("").count : 0)
     }
 
-    private var visibleQueue: [JSONValue] { queueRows(filter, search: trimmedSearch) }
+    private var visibleQueue: [Entry] { queueRows(filter, search: trimmedSearch) }
     private var visibleOwner: [AttentionItem] { ownerRows(filter, search: trimmedSearch) }
-    private var leadsWithOwnerItems: Bool { WorkQueuePresentation.leadsWithOwnerItems(scope: scope, filter: filter, search: search) }
+    private var visibleFailures: [JSONValue] { ["all", "failing"].contains(filter) ? failingRows(trimmedSearch) : [] }
 
     var body: some View {
         List {
             DecisionAnswerReceipt().listRowBackground(Color.clear).listRowSeparator(.hidden)
-            if leadsWithOwnerItems { ownerSections }
+            ownerSections
+            if !visibleFailures.isEmpty {
+                Section {
+                    ForEach(visibleFailures, id: \.["number"].string) { pr in
+                        if let url = URL(string: pr["url"].string.nonempty ?? pr["html_url"].string), url.scheme == "https" {
+                            Link(destination: url) { failingLabel(pr) }.inboxRow()
+                        } else { failingLabel(pr).inboxRow() }
+                    }
+                } header: { queueHeader("Failing checks", count: visibleFailures.count) }
+            }
             queueSection
-            if !leadsWithOwnerItems { ownerSections }
-            if visibleQueue.isEmpty && visibleOwner.isEmpty {
+            if visibleQueue.isEmpty && visibleOwner.isEmpty && visibleFailures.isEmpty {
                 Text(emptyText).font(.callout).foregroundStyle(OpsTheme.muted)
                     .listRowBackground(Color.clear).listRowSeparator(.hidden)
                     .accessibilityIdentifier("inbox-empty")
@@ -208,7 +216,7 @@ struct ActivityView: View {
         .opsScreen().navigationTitle("Inbox").navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Ticket number or task")
         .navigationDestination(item: $route) { destination($0) }
-        .onChange(of: router.activityFilter) { _, next in filter = next }
+        .onChange(of: router.activityFilter) { _, next in route = nil; filter = next }
         .onAppear { filter = router.activityFilter }
         .refreshable { await load() }
         .task { while !Task.isCancelled { await load(); try? await Task.sleep(for: .seconds(15)) } }
@@ -216,26 +224,18 @@ struct ActivityView: View {
 
     /// One sentence for an empty view, never one per section.
     private var emptyText: String {
-        if showTickets && work["source"]["at"] == .null && filter != "needs-you" { return "Ticket list unavailable. Pull to retry." }
         if !trimmedSearch.isEmpty { return "Nothing matches \u{201C}\(trimmedSearch)\u{201D}." }
         switch filter {
         case "needs-you": return "Nothing needs you."
         case "stuck": return "Nothing is blocked."
         case "working": return "Nothing is running."
         case "waiting": return "Nothing is queued."
-        default: return showTickets ? "No open tickets." : "No tasks."
+        default: return "Nothing in this view."
         }
     }
 
     @ViewBuilder private var queueControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if work["source"]["enabled"].bool {
-                Picker("Work type", selection: $scope) {
-                    Text(work["source"]["at"] == .null ? "Tickets" : "Tickets \(tickets.count)").tag("tickets")
-                    Text("Tasks \(tasks.count)").tag("tasks")
-                }.pickerStyle(.segmented).accessibilityIdentifier("work-queue-scope")
-                .padding(.horizontal, 16)
-            }
             // Edge to edge: chips scroll under the screen edges, starting at
             // the same inset as the rows below.
             ScrollView(.horizontal, showsIndicators: false) {
@@ -250,7 +250,7 @@ struct ActivityView: View {
                 if let error { Label(error, systemImage: "wifi.exclamationmark").font(.caption).foregroundStyle(OpsTheme.warn) }
                 if !work["source"]["error"].string.isEmpty { Text(work["source"]["error"].string).font(.caption).foregroundStyle(OpsTheme.warn) }
                 if work["source"]["limited"].bool { Text("The ticket source is capped at 60 results. This is not a complete list.").font(.caption).foregroundStyle(OpsTheme.warn) }
-                if showTickets, let checked = OpsFormat.date(work["source"]["at"]), Date().timeIntervalSince(checked) > OpsStore.staleAfter {
+                if let checked = OpsFormat.date(work["source"]["at"]), Date().timeIntervalSince(checked) > OpsStore.staleAfter {
                     Text("Ticket list last updated \(OpsFormat.ago(checked)). It may be out of date.").font(.caption).foregroundStyle(OpsTheme.warn)
                 }
             }
@@ -300,35 +300,35 @@ struct ActivityView: View {
         case .question:
             Button { router.tab = .keir } label: { AttentionRow(item: item, action: "Answer in the conversation", icon: "bubble.left") }.buttonStyle(.plain)
         case .ownerWork:
-            Button { route = .attention(item.id) } label: { AttentionRow(item: item, action: "Open work") }.buttonStyle(.plain)
+            Button { route = .attention(item.id) } label: { AttentionRow(item: item, action: "View details") }.buttonStyle(.plain)
         case .task:
             Button { route = .task(item.work["id"].string) } label: { AttentionRow(item: item, action: "Open task") }.buttonStyle(.plain)
         case .ticket:
-            Button { route = .attention(item.id) } label: { AttentionRow(item: item, action: "Open ticket") }.buttonStyle(.plain)
+            InboxTicketDecision(item: item, open: { route = .attention(item.id) }) { await load() }
         }
     }
 
     @ViewBuilder private var queueSection: some View {
         ForEach(filters.dropFirst(), id: \.0) { key, title in
-            let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0) == key }
+            let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0.item) == key }
             if !rows.isEmpty {
                 Section {
-                    ForEach(rows, id: \.[showTickets ? "number" : "id"].string) { item in
-                        let id = item[showTickets ? "number" : "id"].string
-                        Button { route = showTickets ? .ticket(id) : .task(id) } label: {
-                            if showTickets && item["replyState"]["state"].string == "no_receipt" && WorkQueuePresentation.bucket(item) != "needs-you" {
-                                UnansweredRow(ticket: item)
-                            } else {
-                                QueueRow(item: item, ticket: showTickets)
-                            }
+                    ForEach(rows) { row in
+                        Button { route = row.ticket ? .ticket(row.key) : .task(row.key) } label: {
+                            if key == "unanswered" { UnansweredRow(ticket: row.item) }
+                            else { QueueRow(item: row.item, ticket: row.ticket) }
                         }
                         .buttonStyle(.plain)
                         .inboxRow()
-                        .accessibilityIdentifier("work-row-\(id)")
+                        .accessibilityIdentifier("work-row-\(row.key)")
                     }
                 } header: { queueHeader(title, count: rows.count) }
             }
         }
+    }
+
+    private func failingLabel(_ pr: JSONValue) -> some View {
+        OpsQueueRow(title: pr["title"].string, detail: "Failing · #\(pr["number"].string)", status: .failed, icon: "xmark.circle.fill")
     }
 
     private func queueHeader(_ title: String, count: Int, identifier: String? = nil) -> some View {
@@ -353,6 +353,28 @@ struct ActivityView: View {
 
     private func load() async {
         error = await ops.refreshInbox(session)
+    }
+}
+
+private struct InboxTicketDecision: View {
+    @EnvironmentObject private var session: AppSession
+    let item: AttentionItem
+    let open: () -> Void
+    let changed: () async -> Void
+    @State private var choices: [JSONValue] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: open) { AttentionRow(item: item, action: "View ticket") }.buttonStyle(.plain)
+            ForEach(choices, id: \.["id"].string) { choice in
+                TicketDecisionInline(decision: choice, showQuestion: false, changed: changed)
+            }
+        }
+        .task(id: item.id) {
+            guard let number = item.ticketNumber,
+                  let detail = try? await session.get("/api/keir/app/tickets/\(number)") else { return }
+            choices = detail["decisions"].array.filter { $0["type"].string == "choice" && $0["state"].string == "pending" }
+        }
     }
 }
 

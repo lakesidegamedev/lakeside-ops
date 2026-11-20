@@ -269,25 +269,31 @@ struct KeirGamesSheet: View {
                             OpsGlyph(icon: gameIcon(game), tone: game.state == .unsupported ? OpsTheme.neutral : OpsTheme.accent)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(game.name).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
-                                Text(game.state == .unsupported ? game.note : game.scope).font(.caption).foregroundStyle(OpsTheme.muted)
+                                Text(gameSummary(game)).font(.opsCaption).foregroundStyle(OpsTheme.muted).lineLimit(1)
                             }
                             Spacer(minLength: 8)
-                            let selected = model.selected == game.id
-                            Image(systemName: selected ? "checkmark.circle.fill" : "chevron.right")
+                            Image(systemName: "chevron.right")
                                 .font(.callout.weight(.semibold))
-                                .foregroundStyle(selected ? OpsTheme.accent : OpsTheme.neutral)
+                                .foregroundStyle(OpsTheme.neutral)
                                 .accessibilityHidden(true)
                         }.contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityElement(children: .combine)
-                    .accessibilityValue(model.selected == game.id ? "Selected" : "")
+                    .accessibilityValue(model.selected == game.id ? "Viewing" : "")
                     .accessibilityHint("Shows what Keir can read in \(game.name)")
                     .accessibilityIdentifier("keir-game-\(game.id)")
                 }
             }
-        } header: { SectionLabel(text: "Games") } footer: {
-            Text("Keir reads these without changing anything, and sends nothing to players.")
+        } header: { SectionLabel(text: "Games") }
+    }
+
+    private func gameSummary(_ game: KeirGame) -> String {
+        if game.state == .unsupported { return game.note }
+        switch game.id {
+        case "ahd": return "Turns and engine health"
+        case "metroforge": return "Services, releases and city bundles"
+        default: return "Services and releases"
         }
     }
 
@@ -304,26 +310,13 @@ struct KeirGamesSheet: View {
                 KeirGameStateDot(state: .unsupported)
                 Text(game.note.isEmpty ? "Keir has no read connection for this game." : game.note).font(.callout)
             } else {
-                ForEach(game.reads) { read in KeirGameReadRow(read: read) }
+                ForEach(game.reads) { read in KeirGameReadRow(read: read).listRowSeparator(.hidden) }
             }
             if !model.reading, !model.detailFailed, game.state != .unsupported, let checked = game.reads.compactMap(\.checkedAt).max() {
-                Text("Checked \(OpsFormat.clock(checked))").font(.caption).foregroundStyle(OpsTheme.muted)
+                Text("Checked \(OpsFormat.contextual(checked))").font(.caption).foregroundStyle(OpsTheme.muted)
                     .accessibilityIdentifier("keir-game-checked")
             }
         } header: { SectionLabel(text: game.name) }
-        if !model.reading, !model.detailFailed, game.state != .unsupported, !(game.scope.isEmpty && game.withheld.isEmpty) {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    if !game.scope.isEmpty { Text(game.scope) }
-                    if !game.withheld.isEmpty { Text("Not read by Keir").fontWeight(.semibold) }
-                    ForEach(game.withheld, id: \.self) { limit in
-                        Label(limit, systemImage: "lock")
-                    }
-                }
-                .font(.opsCaption)
-                .foregroundStyle(OpsTheme.muted)
-            }
-        }
         if let tickets = game.tickets {
             Section {
                 HStack(spacing: 8) {
@@ -355,6 +348,14 @@ struct KeirGamesSheet: View {
                 if topics.count > 1 { SectionLabel(text: "Ask Keir about \(game.name)") }
             }
         }
+        if !model.reading, !model.detailFailed, !game.withheld.isEmpty {
+            Section {
+                ForEach(game.withheld, id: \.self) { limit in
+                    Label(limit, systemImage: "lock").font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                        .listRowSeparator(.hidden)
+                }
+            } header: { SectionLabel(text: "Not read by Keir") }
+        }
     }
 }
 
@@ -382,10 +383,15 @@ struct KeirGameReadRow: View {
             HStack(spacing: 8) {
                 Text(read.label).font(.opsHeadline)
                 Spacer(minLength: 8)
-                Label(read.state.title, systemImage: read.state.icon)
-                    .font(.opsCaption.weight(.semibold)).foregroundStyle(read.state.color)
+                let stale = read.checkedAt.map { Date().timeIntervalSince($0) >= 86_400 } ?? false
+                let state: KeirGameState = stale ? .unavailable : read.state
+                HStack(spacing: 4) {
+                    Image(systemName: state.icon)
+                    Text(stale ? "Stale" : state.title)
+                }.fixedSize()
+                    .font(.opsCaption.weight(.semibold)).foregroundStyle(state.color)
                     .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(read.state.color.opacity(0.12), in: Capsule())
+                    .background(state.color.opacity(0.12), in: Capsule())
                     .accessibilityIdentifier("keir-game-state")
             }
             ForEach(facts) { fact in

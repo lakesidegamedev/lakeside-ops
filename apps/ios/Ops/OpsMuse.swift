@@ -343,7 +343,6 @@ struct KeirIdentitySection: View {
                 }
             }
         } header: { SectionLabel(text: "Keir") } footer: {
-            Text("Chat is your conversation with Keir. The support desk handles player tickets.").font(.opsCaption).foregroundStyle(OpsTheme.muted)
         }
         .task { if let r = try? await session.get("/api/keir/app/identity") { identity = r } }
     }

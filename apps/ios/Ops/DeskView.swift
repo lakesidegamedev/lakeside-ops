@@ -114,6 +114,8 @@ struct TicketDetail: View {
     @StateObject private var supervision: TicketSupervisionModel
     @State private var detail: JSONValue = .null
     @State private var error: String?
+    @State private var retrying = false
+    @State private var retryNotice: String?
 
     init(ticket: JSONValue) {
         self.ticket = ticket
@@ -125,7 +127,9 @@ struct TicketDetail: View {
         ops.hub["tickets"].array.first(where: { $0["number"] == ticket["number"] })?["replyState"] ?? ticket["replyState"]
     }
     private var card: JSONValue { detail["card"] == .null ? ticket["card"] : detail["card"] }
-    private var timing: JSONValue { detail["timing"] == .null ? ticket["timing"] : detail["timing"] }
+    private var timing: JSONValue {
+        .object(ticket["timing"].object.merging(detail["timing"].object.filter { $0.value != .null }) { _, latest in latest })
+    }
     private var title: String { OpsText.scrub(ticket["title"].string).nonempty ?? "Ticket #\(number)" }
     private var worker: JSONValue { supervision.worker }
     private var current: JSONValue { detail["current"] }
@@ -198,15 +202,14 @@ struct TicketDetail: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.title2.weight(.semibold)).tracking(-0.4).fixedSize(horizontal: false, vertical: true)
-            Text(["#\(number)", ticket["category"].string.capitalized, ticket["createdAt"] == .null ? "" : "opened \(OpsFormat.ago(ticket["createdAt"]))"].filter { !$0.isEmpty }.joined(separator: " · "))
+            Text([ticket["category"].string.capitalized, ticket["createdAt"] == .null ? "" : "Opened \(OpsFormat.ago(ticket["createdAt"]))"].filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.caption).foregroundStyle(OpsTheme.muted)
         }.accessibilityElement(children: .combine)
     }
 
     private var statusSection: some View {
         let expected = OpsFormat.date(timing["expectedDoneAt"])
-        let overdue = status.label == "Overdue" || (status.status != .done && status.status != .failed && (timing["overdue"].bool || (expected.map { $0 <= Date() } ?? false)))
+        let overdue = status.label == "Overdue" || (status.status != .done && (timing["overdue"].bool || (expected.map { $0 <= Date() } ?? false)))
         let started = OpsFormat.ago(worker["startedAt"] == .null ? current["startedAt"] : worker["startedAt"])
         let since = OpsFormat.ago(timing["since"])
         return VStack(alignment: .leading, spacing: 10) {
@@ -214,15 +217,19 @@ struct TicketDetail: View {
             row("Owner") { Text(supervision.state == .null ? "Checking" : supervision.ownerWord).font(.callout) }
             if !started.isEmpty { row("Started") { Text(started).font(.callout) } }
             else if !since.isEmpty { row("Status since") { Text(since).font(.callout) } }
-            row("Estimate") {
-                if overdue {
-                    Label(expected.map { "Overdue, was \(OpsFormat.clock($0))" } ?? "Overdue", systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout).foregroundStyle(OpsTheme.warn)
-                } else {
-                    Text(expected.map { OpsFormat.clock($0) } ?? "Not set").font(.callout)
+            if overdue || expected != nil {
+                row("Estimate") {
+                    if overdue {
+                        Label(expected.map { "Overdue, was \(OpsFormat.contextual($0))" } ?? "Overdue", systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout).foregroundStyle(OpsTheme.warning)
+                    } else if let expected {
+                        Text(OpsFormat.contextual(expected)).font(.callout)
+                    }
                 }
             }
-            row("Deadline") { Text(OpsFormat.date(timing["deadline"]).map { $0.formatted(date: .abbreviated, time: .omitted) + " at " + OpsFormat.clock($0) } ?? "None").font(.callout) }
+            if let deadline = OpsFormat.date(timing["deadline"]) {
+                row("Deadline") { Text(OpsFormat.contextual(deadline) + (Calendar.current.isDateInToday(deadline) ? "" : " · " + OpsFormat.clock(deadline))).font(.callout) }
+            }
         }.accessibilityIdentifier("ticket-status")
     }
 
@@ -249,26 +256,35 @@ struct TicketDetail: View {
         }
     }
 
-    private var workSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionLabel(text: "Keir's work")
-            if !errorLine.isEmpty {
-                Label(errorLine, systemImage: OpsStatus.failed.icon).font(.callout).foregroundStyle(OpsTheme.danger)
-            }
-            let line = TicketPresentation.clean(current["status"].string).nonempty ?? TicketPresentation.clean(worker["status"].string)
-            if !line.isEmpty && line != playerReply && line != TicketPresentation.clean(card["status"].string) && TicketPresentation.errorSentence(line) != errorLine {
-                Text(line).font(.body).textSelection(.enabled)
-            }
-            if current != .null {
-                let updated = OpsFormat.ago(current["updatedAt"])
-                if !updated.isEmpty { Text("Updated \(updated)").font(.caption).foregroundStyle(OpsTheme.muted) }
-            } else if let error {
-                Text(error).font(.callout).foregroundStyle(OpsTheme.warn)
-                Button("Retry ticket activity") { Task { await load() } }
-            } else if detail != .null {
-                Text("Keir has no recorded work on this ticket yet.").font(.callout).foregroundStyle(OpsTheme.muted)
-            } else {
-                Text("Loading Keir's ticket activity").font(.callout).foregroundStyle(OpsTheme.muted)
+    @ViewBuilder private var workSection: some View {
+        let line = TicketPresentation.clean(current["status"].string).nonempty ?? TicketPresentation.clean(worker["status"].string)
+        let progress = line != playerReply && line != TicketPresentation.clean(card["status"].string) && errorLine.isEmpty ? line : ""
+        if !errorLine.isEmpty || !progress.isEmpty || error != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionLabel(text: "Keir's work")
+                if !errorLine.isEmpty {
+                    Label {
+                        Text(errorLine).foregroundStyle(OpsTheme.ink)
+                    } icon: {
+                        Image(systemName: OpsStatus.failed.icon).foregroundStyle(OpsTheme.danger)
+                    }.font(.callout)
+                }
+                if status.label == "Stalled", let task = detail["retryTaskId"].string.nonempty {
+                    Button("Retry") {
+                        retrying = true
+                        Task {
+                            defer { retrying = false }
+                            do {
+                                _ = try await session.post("/api/keir/app/tickets/\(number)/retry", ["taskId": .string(task)])
+                                retryNotice = "Another attempt is queued"
+                                await load()
+                            } catch { retryNotice = error.displayMessage }
+                        }
+                    }.buttonStyle(.bordered).disabled(retrying)
+                }
+                if let retryNotice { Text(retryNotice).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                if !progress.isEmpty { Text(progress).font(.body).textSelection(.enabled) }
+                if let error { Text(error).font(.opsCaption).foregroundStyle(OpsTheme.warning) }
             }
         }
     }
@@ -285,6 +301,10 @@ struct TicketDetail: View {
             if text.isEmpty || text == playerReply { continue }
             items.append((OpsFormat.date(h["at"]) ?? .distantPast, "h\(i)", "circle.fill", OpsTheme.muted, text, h["at"]))
         }
+        if status.label == "Stalled" {
+            let at = current["updatedAt"] == .null ? timing["since"] : current["updatedAt"]
+            items.append((OpsFormat.date(at) ?? .distantPast, "stalled", "circle.fill", OpsTheme.danger, "Attempt stalled", at))
+        }
         return items.sorted { $0.0 > $1.0 }.map { ($0.1, $0.2, $0.3, $0.4, $0.5) }
     }
 
@@ -296,11 +316,10 @@ struct TicketDetail: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         HStack(alignment: .top, spacing: 12) {
-                            OpsGlyph(icon: item.icon, tone: item.color, size: 30)
+                            Circle().fill(item.color).frame(width: 8, height: 8).padding(.top, 9).accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(item.text).font(.opsBody).textSelection(.enabled)
-                                let when = OpsFormat.ago(item.at)
-                                if !when.isEmpty { Text(when).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                                Text(OpsFormat.date(item.at).map(OpsFormat.contextual) ?? "Time unavailable").font(.opsCaption).foregroundStyle(OpsTheme.muted)
                             }.padding(.top, 4)
                         }
                         .padding(.bottom, index == items.count - 1 ? 0 : 15)
@@ -308,7 +327,7 @@ struct TicketDetail: View {
                         .background(alignment: .leading) {
                             if index < items.count - 1 {
                                 Rectangle().fill(OpsTheme.hairline).frame(width: 1)
-                                    .padding(.leading, 14).padding(.top, 30).accessibilityHidden(true)
+                                    .padding(.leading, 3.5).padding(.top, 19).accessibilityHidden(true)
                             }
                         }
                     }
@@ -318,7 +337,7 @@ struct TicketDetail: View {
     }
 
     private var playerReply: String {
-        let update = detail["history"].array.first { $0["kind"].string == "Player update" }
+        let update = detail["history"].array.first { $0["kind"].string == "Player reply" }
         return update?["text"].string.nonempty ?? ""
     }
 
@@ -415,10 +434,11 @@ struct TicketDetail: View {
 /// An open decision. A structured choice with real options answers inline
 /// through the same decision endpoint the decision card uses; anything else
 /// (approvals, choices without options) keeps the full decision card.
-private struct TicketDecisionInline: View {
+struct TicketDecisionInline: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
     let decision: JSONValue
+    var showQuestion = true
     var changed: () async -> Void
     @Environment(\.dynamicTypeSize) private var textSize
     @State private var outcome: String?
@@ -436,7 +456,7 @@ private struct TicketDecisionInline: View {
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 let headline = OpsText.decisionTitle(decision)
-                Text(headline).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                if showQuestion { Text(headline).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true) }
                 let question = OpsText.scrub(decision["question"].string)
                 if !question.isEmpty && question != headline { Text(question).font(.callout).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true) }
                 if let failure { Text(failure).font(.caption).foregroundStyle(OpsTheme.warn) }

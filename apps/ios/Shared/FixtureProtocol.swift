@@ -127,7 +127,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                     "text": "I reviewed the open tickets. I need your payroll decision before I can finish the funding investigation.\n\n- **#1001** I confirmed the payroll calculation and saved the evidence with the ticket. The choice is whether to use funded positions or filled jobs.\n- **#1868** The revenue investigation stopped before it finished. I saved the last result so the investigation can resume without repeating the same checks.\n\nThe latest reply is in Discord. I’ll check the next settled turn for changes to the player’s result.",
                     "queueCard": ["checkedAt": now, "items": [
                         ["number": 1001, "title": "Budget screen shows zero funding", "ownerDecisionPending": true],
-                        ["number": 1868, "title": "Massive drop in revenue turn 77-78", "work": "blocked"],
+                        ["number": 1868, "title": "Massive drop in revenue turn 77-78", "work": "stalled"],
                     ]]]
                 let appended = [ask, answer].filter { ($0["seq"] as? Int ?? 0) > after }
                 view["messages"] = (view["messages"] as? [[String: Any]] ?? []) + appended
@@ -183,6 +183,17 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         func answer(_ id: String) -> [String: Any] { lock.lock(); defer { lock.unlock() }; decisions.removeAll { $0["id"] as? String == id }; return ["id": id, "state": "approve"] }
         func open() -> [[String: Any]] {
             lock.lock(); defer { lock.unlock() }
+            if ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens") {
+                return decisions.map { decision in
+                    var item = decision
+                    item["type"] = "approval"
+                    item["canApprove"] = false
+                    item["canRefresh"] = true
+                    item["checksStatus"] = "Checks need a fresh run"
+                    item["checksAt"] = Date().addingTimeInterval(-36 * 86400).timeIntervalSince1970 * 1000
+                    return item
+                }
+            }
             guard ProcessInfo.processInfo.arguments.contains("--uitest-action-scope") else { return decisions }
             return decisions.map { decision in
                 var item = decision
@@ -293,7 +304,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         func route(_ path: String, method: String, body: [String: Any]) -> (Any, Int) {
             lock.lock(); defer { lock.unlock() }
             let pieces = path.split(separator: "/").map(String.init)
-            guard pieces.count == 6, let n = Int(pieces[4]) else { return refuse(404, "No test fixture for this endpoint") }
+            guard pieces.count == 6, let n = Int(pieces[4]) else { return refuse(404, "This action is unavailable in the simulator") }
             var t = tickets[n] ?? Ticket()
             if method == "GET" {
                 // The worker reads its inbox between polls, as the real tick records.
@@ -420,7 +431,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         let isAsk = url.host?.hasPrefix("ask.") == true
-        var value: Any = ["error": "No test fixture for this endpoint"]
+        var value: Any = ["error": "This action is unavailable in the simulator"]
         var status = 200
         switch url.path {
         case "/api/me":
@@ -447,16 +458,20 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/tickets/1868":
             let hourAgo = Date().addingTimeInterval(-3600).timeIntervalSince1970 * 1000
             value = [
+                "retryTaskId": "ticket-revenue",
                 "current": ["id": "ticket-revenue", "state": "running", "updatedAt": hourAgo,
                             "summary": "activation aborted: no result before the 15-minute turn limit"],
                 "timing": ["state": "stuck", "overdue": true, "since": hourAgo,
-                           "reason": "activation aborted: no result before the 15-minute turn limit"],
-                "receipts": [["key": "reply:revenue", "label": "Explained the deposit network share", "state": "done"]],
+                           "reason": "activation aborted: no result before the 15-minute turn limit",
+                           "expectedDoneAt": hourAgo + 900000, "deadline": Date().addingTimeInterval(7 * 86400).timeIntervalSince1970 * 1000],
+                "history": [["id": "reply-revenue", "kind": "Player reply", "at": hourAgo - 1800000,
+                             "text": "When you activated the bank charter, half of financial sales were reserved for your branch network. I’m checking how that share is set and what happens on the next turn."]],
+                "receipts": [["key": "reply:revenue", "label": "Explained the deposit network share", "state": "done", "at": hourAgo - 1800000]],
             ]
         case "/api/keir/app/tickets/1001" where ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens"):
             value = [
                 "current": ["id": "ticket-task", "state": "blocked", "summary": "Checked the payroll rules."],
-                "decisions": [["id": "abcdefabcdef", "kind": "choice", "type": "choice", "state": "pending",
+                "decisions": [["id": "abcdef123456", "kind": "choice", "type": "choice", "state": "pending",
                                "tldr": "Choose payroll behavior", "question": "Capacity or filled jobs?",
                                "options": [["id": "1", "label": "Capacity"], ["id": "2", "label": "Filled jobs"]]]],
                 "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]],
@@ -471,6 +486,8 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         case "/api/keir/app/messages": value = Self.keir.post(bodyObject()?["text"] as? String ?? "", attachments: bodyObject()?["attachments"] as? [[String: Any]] ?? []); status = 201
         case "/api/keir/app/decisions": value = ["decisions": Self.keir.open()]
         case "/api/keir/app/approvals": value = ["approvals": Self.keir.open()]
+        case "/api/keir/app/decisions/abcdef123456": value = ["id": "abcdef123456", "state": "answered"]
+        case "/api/keir/app/tickets/1868/retry": value = ["taskId": "ticket-revenue", "state": "queued"]
         case "/api/keir/app/decisions/abcdefabcdef": value = Self.keir.answer("abcdefabcdef")
         case "/api/keir/app/alerts": value = ["alerts": [["key": "error:watch-recurring:turn", "kind": "incident", "text": "Turn warning repeated after the fix: index fund settlement for one corporation.", "at": 1792019000000]]]
         case "/api/keir/app/starmer", "/api/keir/app/starmer/refresh": value = OpsFixtures.starmer()
@@ -739,7 +756,8 @@ enum KeirAgentFixtures {
                 }
                 let blocked: [String: Any] = ["number": 1502, "title": "Verify an interrupted action", "status": "open", "timing": stuck,
                                               "createdAt": now - 36 * 86400000, "replyState": ["state": "no_receipt"]]
-                return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue, blocked]]
+                let held: [String: Any] = ["number": 1503, "title": "Verify the release gate", "status": "open", "timing": stuck]
+                return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue, blocked, held]]
             }
             return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": (OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []) + [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]
         case "/api/keir/app/tasks":

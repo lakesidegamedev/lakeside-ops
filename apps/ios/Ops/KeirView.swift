@@ -32,7 +32,7 @@ struct KeirView: View {
     @State private var confirmingYoloOff = false
     @State private var attachPhotos = false
     @State private var attachFiles = false
-    enum KeirSheet: String, Identifiable { case threads, ideas, watches, memory, computer, controls, desk, games; var id: String { rawValue } }
+    enum KeirSheet: String, Identifiable { case threads, ideas, watches, memory, computer, controls, desk, games, more; var id: String { rawValue } }
 
     private var standalone: Bool { session.profile["mode"].string == "standalone" }
 
@@ -47,7 +47,6 @@ struct KeirView: View {
                         KeirStart(ticket: waitingTickets.first, supervisor: keir.isSupervisor, draftEmpty: draftIsEmpty,
                                   suggest: suggestFollowUp)
                     }
-                    DecisionAnswerReceipt()
                     if keir.messages.isEmpty && keir.thread == "watches" {
                         Text("When a watch is met, Keir reports it here.").font(.callout).foregroundStyle(OpsTheme.muted)
                             .frame(maxWidth: .infinity).padding(.top, 48)
@@ -57,12 +56,8 @@ struct KeirView: View {
                         KeirMessage(message: row.message)
                             .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
                     }
-                    ForEach(threadDecisions, id: \.["id"].string) { DecisionCard(decision: $0) }
                     ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) {
                         KeirQuestions(panel: $0).keirObjectCard()
-                    }
-                    if keir.personalHome, !keir.messages.isEmpty, (keir.team["open"].number ?? 0) > 0 {
-                        KeirWorkingNow(team: keir.team)
                     }
                     ForEach(keir.tasks.filter { $0["computer"] != .null }, id: \.["id"].string) { task in
                         NavigationLink { KeirComputerScreen(taskId: task["id"].string) } label: {
@@ -120,6 +115,7 @@ struct KeirView: View {
     @ViewBuilder private var toolsMenu: some View {
         Section {
             Button { presentFromMenu(.threads) } label: { Label("Conversations", systemImage: "bubble.left.and.bubble.right") }
+            Button { presentFromMenu(.more) } label: { Label("More", systemImage: "square.grid.2x2") }
         }
         Section {
             Button { presentFromMenu(.controls) } label: { Label("Controls, providers & voice", systemImage: "slider.horizontal.3") }
@@ -354,6 +350,7 @@ struct KeirView: View {
         .background(KeirChatTheme.canvas.ignoresSafeArea())
         .navigationTitle("Keir").navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(composing ? .hidden : .visible, for: .tabBar)
         .toolbarBackground(OpsTheme.background, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .task(id: "\(scenePhase == .active)|\(keir.thread)|\(connectionAttempt)|\(voiceMode)") { if scenePhase == .active && !voiceMode { await keir.connect(session) } }
@@ -383,6 +380,7 @@ struct KeirView: View {
         .onChange(of: sheet) { _, next in if next != nil { presentingSheet = true } }
         .sheet(item: $sheet, onDismiss: { presentingSheet = false; sheetOnScreen = nil }) { which in
             Group { switch which {
+            case .more: KeirMore()
             case .controls: KeirControls(keir: keir, voice: voice)
             case .threads: KeirThreads(keir: keir)
             case .computer: NavigationStack { KeirComputer().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } } }
@@ -400,14 +398,6 @@ struct KeirView: View {
         voice.stop()
         sheetRequest?.cancel()
         if sheet == nil { presentingSheet = false }
-    }
-
-    // Main and Inbox share the approval list. Side chats show decisions
-    // for their own jobs, while the Inbox badge stays available everywhere.
-    private var threadDecisions: [JSONValue] {
-        if keir.thread == keir.mainThread { return ops.decisions }
-        let jobs = Set(keir.tasks.map { $0["id"].string } + keir.messages.map { $0["jobId"].string })
-        return ops.decisions.filter { !$0["jobId"].string.isEmpty && jobs.contains($0["jobId"].string) }
     }
 
     private func handleShortcut() {
@@ -670,53 +660,12 @@ private struct KeirMessage: View {
 private struct KeirQueueSnapshot: View {
     let value: JSONValue
 
-    private struct Segment: Identifiable {
-        let title: String
-        let tone: Color
-        let count: Int
-        var id: String { title }
-    }
-
     private var rows: [JSONValue] { value["items"].array }
-
-    private var segments: [Segment] {
-        let states = Dictionary(grouping: rows, by: status)
-        return [
-            Segment(title: "Needs you", tone: OpsTheme.warning, count: states[.waiting]?.count ?? 0),
-            Segment(title: "Running", tone: OpsTheme.mint, count: states[.running]?.count ?? 0),
-            Segment(title: "Blocked", tone: OpsTheme.warn, count: states[.blocked]?.count ?? 0),
-            Segment(title: "Queued or waiting", tone: OpsTheme.accent, count: states[.queued]?.count ?? 0),
-            Segment(title: "Other", tone: OpsTheme.neutral, count: (states[.idle]?.count ?? 0) + (states[.done]?.count ?? 0) + (states[.failed]?.count ?? 0)),
-        ].filter { $0.count > 0 }
-    }
-
-    private var distribution: some View {
-        let segments = segments
-        return VStack(alignment: .leading, spacing: 8) {
-            GeometryReader { proxy in
-                let gap: CGFloat = 3
-                let width = max(0, proxy.size.width - gap * CGFloat(max(0, segments.count - 1)))
-                HStack(spacing: gap) {
-                    ForEach(segments) { segment in
-                        Capsule().fill(segment.tone).frame(width: width * CGFloat(segment.count) / CGFloat(rows.count))
-                    }
-                }
-            }.frame(height: 7).accessibilityHidden(true)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)], spacing: 6) {
-                ForEach(segments) { segment in
-                    HStack(spacing: 5) {
-                        Circle().fill(segment.tone).frame(width: 6, height: 6).accessibilityHidden(true)
-                        Text(segment.count.formatted()).monospacedDigit().fontWeight(.semibold)
-                        Text(segment.title).foregroundStyle(OpsTheme.muted)
-                    }.font(.opsCaption).accessibilityElement(children: .combine)
-                }
-            }
-        }
-    }
 
     private func status(_ row: JSONValue) -> OpsStatus {
         if row["ownerDecisionPending"].bool { return .waiting }
         if row["implementationHeld"].bool { return .blocked }
+        if row["work"].string == "stalled" { return .failed }
         return OpsStatus.from(row["work"].string)
     }
 
@@ -731,6 +680,7 @@ private struct KeirQueueSnapshot: View {
         if let next = OpsFormat.date(row["nextCheckAt"]) {
             return "Next check " + next.formatted(date: .abbreviated, time: .omitted) + " at " + OpsFormat.clock(next)
         }
+        if row["work"].string == "stalled" { return "Stalled" }
         if row["work"].string == "waiting" { return "Waiting" }
         if row["work"].string.isEmpty { return "Work status unavailable" }
         return status(row).title
@@ -740,10 +690,9 @@ private struct KeirQueueSnapshot: View {
         OpsCard {
             HStack(spacing: 10) {
                 OpsGlyph(icon: "tray.full.fill")
-                SectionLabel(text: "Support queue")
+                SectionLabel(text: "Tickets")
             }
             if rows.isEmpty { Text("No open tickets").font(.opsBody) }
-            else { distribution }
             ForEach(rows, id: \.["number"].string) { ticket in
                 Hairline()
                 NavigationLink {
@@ -752,8 +701,8 @@ private struct KeirQueueSnapshot: View {
                     HStack(alignment: .center, spacing: 11) {
                         OpsGlyph(icon: status(ticket).icon, tone: status(ticket).color, size: 30)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("#\(ticket["number"].string) \(ticket["title"].string)").font(.opsHeadline)
-                            Text(label(ticket)).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                            Text(ticket["title"].string).font(.opsHeadline)
+                            Text("#\(ticket["number"].string) · \(label(ticket))").font(.opsCaption).foregroundStyle(status(ticket).color)
                         }
                         Spacer(minLength: 4)
                         Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted)
@@ -763,7 +712,7 @@ private struct KeirQueueSnapshot: View {
             }
             if value["possiblyMore"].bool { Text("More tickets may be open.").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
             if let checked = OpsFormat.date(value["checkedAt"]) {
-                Text("Checked " + checked.formatted(date: .abbreviated, time: .omitted) + " at " + OpsFormat.clock(checked))
+                Text("Checked " + OpsFormat.contextual(checked))
                     .font(.opsCaption).foregroundStyle(OpsTheme.muted)
             }
         }.accessibilityIdentifier("keir-chat-support-queue")
@@ -799,6 +748,11 @@ struct DecisionCard: View {
     @State private var explaining = false
     @State private var note = ""
     @State private var busy = false
+    private var question: String { OpsText.scrub(decision["question"].string) }
+    private var detail: String {
+        if let status = decision["checksStatus"].string.nonempty { return status }
+        return OpsText.decisionBody(question, title: OpsText.decisionTitle(decision))
+    }
     var body: some View {
         Group {
         if let outcome {
@@ -810,21 +764,30 @@ struct DecisionCard: View {
         else {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                OpsStatusBadge(status: .waiting, label: decision["type"].string == "choice" ? "Choose one" : "Approval", symbol: decision["type"].string == "choice" ? "list.bullet.circle" : "checkmark.seal")
-                if let n = decision["ticket"].number { Text("Ticket \(Int(n))").font(.caption).foregroundStyle(OpsTheme.muted) }
+                OpsStatusBadge(status: .waiting, label: ["choice", "question"].contains(decision["type"].string) ? "Decision" : "Approval", symbol: decision["type"].string == "choice" ? "list.bullet.circle" : "checkmark.seal")
                 Spacer()
-                Text(OpsFormat.ago(decision["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
+                if let date = OpsFormat.date(decision["at"]) {
+                    Text(OpsFormat.ago(date)).font(.opsCaption)
+                        .foregroundStyle(Date().timeIntervalSince(date) >= 7 * 86_400 ? OpsTheme.warning : OpsTheme.muted)
+                }
             }
-            if !decision["review"]["title"].string.isEmpty {
-                Text(decision["review"]["title"].string).font(.headline)
-            }
-            Text(OpsText.decisionTitle(decision)).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
-            let question = OpsText.scrub(decision["question"].string)
-            let detail = OpsText.decisionBody(question, title: OpsText.decisionTitle(decision))
-            if !detail.isEmpty {
-                Text(detail).font(.callout).foregroundStyle(decision["tldr"].string.isEmpty ? OpsTheme.ink : OpsTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Button { router.openDecisionTask(decision) } label: {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(OpsText.decisionTitle(decision)).font(.opsCardTitle).fixedSize(horizontal: false, vertical: true)
+                        if let n = decision["ticket"].number { Text("Ticket #\(Int(n))").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                        if !detail.isEmpty { Text(detail).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                        if let checked = OpsFormat.date(decision["checksAt"]) {
+                            Text("Checks last ran · " + OpsFormat.contextual(checked)).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    if !decision["jobId"].string.isEmpty {
+                        Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
+                            .accessibilityHidden(true)
+                    }
+                }.contentShape(Rectangle())
+            }.buttonStyle(.plain).disabled(decision["jobId"].string.isEmpty)
             if decision["type"].string != "choice" && decision["review"]["scope"] != .null {
                 Text(decision["review"]["scope"].pretty).font(.caption.monospaced()).textSelection(.enabled)
             }
@@ -861,11 +824,10 @@ struct DecisionCard: View {
                 VStack(spacing: 8) { decisionButtons }
             }.buttonStyle(.plain).disabled(busy || decision["canAnswer"] == .bool(false))
             }
-            if decision["canRefresh"].bool { Button("Request a fresh proposal") { act("refresh") }.disabled(busy) }
+            if decision["canRefresh"].bool { Button(decision["checksStatus"].string == "Checks need a fresh run" ? "Request fresh checks" : "Request a fresh proposal") { act("refresh") }.disabled(busy) }
             if decision["canAnswer"] == .bool(false) {
                 OwnerDirectionButton(title: "Ask Keir to recover this work", context: "Decision \(decision["id"].string) for task \(decision["jobId"].string): \(decision["question"].string)")
             }
-            if !decision["jobId"].string.isEmpty { Button("Open task and result") { router.openDecisionTask(decision) } }
         }
         .keirObjectCard()
         }

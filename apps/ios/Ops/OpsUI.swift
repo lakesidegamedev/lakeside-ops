@@ -128,8 +128,16 @@ enum OpsFormat {
         formatter.setLocalizedDateFormatFromTemplate("hma")
         return formatter.string(from: date)
     }
+    static func contextual(_ date: Date) -> String {
+        let calendar = Calendar.autoupdatingCurrent
+        if calendar.isDateInToday(date) { return clock(date) }
+        if calendar.isDateInYesterday(date) { return "Yesterday " + clock(date) }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
     static func date(_ value: JSONValue) -> Date? {
-        if let ms = value.number, ms > 1_000_000_000_000 { return Date(timeIntervalSince1970: ms / 1000) }
+        if let timestamp = value.number, timestamp > 1_000_000_000 {
+            return Date(timeIntervalSince1970: timestamp > 1_000_000_000_000 ? timestamp / 1000 : timestamp)
+        }
         let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return iso.date(from: value.string) ?? ISO8601DateFormatter().date(from: value.string)
     }

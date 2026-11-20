@@ -35,7 +35,7 @@ final class TicketSupervisionModel: ObservableObject {
     /// Compact owner name: Keir, or the worker the owner supervises.
     var ownerWord: String {
         switch state["state"].string {
-        case "supervised": return "Supervised worker"
+        case "supervised": return "Keir"
         case "held": return "Held"
         case "ended": return "Ended"
         default: return "Keir"
@@ -165,10 +165,9 @@ struct TicketDirectionComposer: View {
     @ObservedObject var model: TicketSupervisionModel
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Guides the worker. Approvals still come to you.").font(.caption2).foregroundStyle(OpsTheme.muted).lineLimit(1)
                 .padding(.horizontal, 16)
             KeirComposerPill { EmptyView() } field: {
-                TextField("Message the worker", text: $model.draft, axis: .vertical).lineLimit(1...5)
+                TextField("Message Keir", text: $model.draft, axis: .vertical).lineLimit(1...5)
                     .padding(.leading, 14)
                     .accessibilityIdentifier("supervision-direction")
             } trailing: {
@@ -197,8 +196,8 @@ enum SupervisionAction: String, Identifiable {
     }
     var detail: String {
         switch self {
-        case .take: return "The support desk stops and its queued replies are withdrawn. The supervised worker becomes the only voice on this ticket until you hand it back. Staff claims still win."
-        case .handback: return "The supervised worker stops at once and anything it had queued is withdrawn. The support desk gets its notes and next step."
+        case .take: return "The support desk stops and its queued replies are withdrawn. Keir handles this ticket under your direction until you hand it back. Staff can still claim it."
+        case .handback: return "The takeover session stops and its queued replies are withdrawn. The support desk gets its notes and next step."
         case .message: return ""
         }
     }
@@ -211,7 +210,7 @@ struct SupervisedWorkerSummary: View {
     let active: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SectionLabel(text: active ? "Supervised worker" : "Last worker")
+            SectionLabel(text: active ? "Takeover session" : "Previous takeover")
             ForEach(Array(worker["receipts"].array.prefix(4).enumerated()), id: \.offset) { _, receipt in
                 Label("\(receipt["label"].string) · \(OpsFormat.ago(receipt["at"]))", systemImage: receipt["state"].string == "done" ? "checkmark.circle" : "clock")
                     .font(.caption).foregroundStyle(receipt["state"].string == "done" ? OpsTheme.mint : OpsTheme.warn)

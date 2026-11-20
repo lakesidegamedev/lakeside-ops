@@ -882,13 +882,13 @@ final class LaunchTests: XCTestCase {
         let blocked = app.buttons["work-filter-stuck"]
         XCTAssertTrue(blocked.waitForExistence(timeout: 8))
         capture(app, "OLED Inbox all top")
-        blocked.tap()
+        goToFilter(app, "work-filter-stalled")
         let ticket = app.buttons["work-row-1868"]
         if reveal(app, ticket, swipes: 4) {
             ticket.tap()
             XCTAssertTrue(find(app, "Massive drop in revenue", timeout: 8).exists)
             capture(app, "OLED Ticket 1868 top")
-        } else { XCTFail("Ticket #1868 is missing from Blocked") }
+        } else { XCTFail("Ticket #1868 is missing from Stalled") }
 
         go(app, "Keir")
         openTool(app, "Connected games")
@@ -898,6 +898,17 @@ final class LaunchTests: XCTestCase {
             XCTAssertTrue(find(app, "Preview site", timeout: 8).exists)
             capture(app, "OLED Connected games top")
         }
+    }
+
+    private func goToFilter(_ app: XCUIApplication, _ identifier: String) {
+        let chip = app.buttons[identifier]
+        for _ in 0..<4 where !chip.isHittable {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.18))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.18, dy: 0.18))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        XCTAssertTrue(chip.isHittable)
+        if chip.isHittable { chip.tap() }
     }
 
     func testReviewScreensInLight() { captureReviewScreens("light", "Light") }
@@ -954,6 +965,9 @@ final class LaunchTests: XCTestCase {
         blocked.tap()
         capturePage("Inbox blocked", scrolls: 3)
         for _ in 0..<6 { app.swipeDown() }
+        go(app, "Ops")
+        go(app, "Activity")
+        goToFilter(app, "work-filter-stalled")
         openRow(app, "Massive drop in revenue turn 77-78", swipes: 6)
         XCTAssertTrue(find(app, "Massive drop in revenue turn").waitForExistence(timeout: 10))
         capturePage("Ticket 1868")

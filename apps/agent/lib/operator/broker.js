@@ -3376,15 +3376,52 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           return {needsExplanation:true,approvalRequired:false,reviewedHead:copy.headOf(args),destination:args.to||"development",evidence,
             instruction:"Nothing was sent for approval. Read these source changes, then call the same github action with explanation: reviewedHead exactly as returned, change (the problem and fix in ordinary language), impact (who notices and how), risk (verified risk or uncertainty). Cover every change in this version. No file paths, formulas, PR numbers, staging/development or developer jargon. Continue preparing now; do not wait for the owner or invent a recommendation."};
         }
+        let checksAt;
+        if (["merge", "merge-set"].includes(args.action)) {
+          const targets = args.prs || [args];
+          const verified = [];
+          for (const target of targets) {
+            const pr = await api([`repos/${repo}/pulls/${target.number}`]);
+            if (pr.head?.sha !== target.head || pr.state !== "open") {
+              return { approvalRequired: false, checksReady: false, nextMove: "Review the current open pull request and its exact head." };
+            }
+            const { runs, result } = await inspectChecks(pr);
+            const times = runs.map(run => Date.parse(run.completed_at));
+            const at = times.length && times.every(Number.isFinite) ? Math.min(...times) : null;
+            const fresh = require("./appdecision").mergeChecksFresh({ checksAt: at }, now());
+            const refresh = job.mergeCheckRefresh;
+            if (!fresh && refresh?.repository === repo && refresh.heads.includes(target.head)) {
+              refresh.rerun ||= [];
+              const workflowRuns = new Set(runs.map(run => /\/actions\/runs\/(\d+)/.exec(run.details_url || "")?.[1]).filter(Boolean));
+              for (const id of workflowRuns) {
+                if (refresh.rerun.includes(id)) continue;
+                const run = await api([`repos/${repo}/actions/runs/${id}`]).catch(() => null);
+                if (run?.head_sha !== target.head || run.status !== "completed") continue;
+                await api(["-X", "POST", `repos/${repo}/actions/runs/${id}/rerun`]);
+                refresh.rerun.push(id); ledger.save();
+              }
+            }
+            if (!result.ready || result.pending.length || !fresh) {
+              return { approvalRequired: false, checksReady: false, ...result,
+                nextMove: "Wait for a fresh successful check run on the exact pull request head before asking for approval." };
+            }
+            verified.push(at);
+          }
+          checksAt = Math.min(...verified);
+        }
         const human=copy.explanation(value,args);
         if(existing?.state==="pending" && (!existing.explanation || !liveQuestion)) {
           for(const old of Object.values(d.decisions||{})) if(old.actionId===existing.id && old.state==="pending") {old.state="withdrawn";old.withdrawnReason="Needs a plain-language explanation";}
           existing.explanation=human;
+          if (checksAt) existing.checksAt = checksAt;
           const decision=openDecision(ledger,config,{jobId:job.id,actionId:existing.id,question:"Review this change",signoff:true});
           if(existing.ownerMuse) existing.ownerMuseDecision=decision.id;
           ledger.save();return {action:existing.id,decision:decision.id,state:"pending"};
         }
-        return request(job,"github",args,reason,human);
+        const proposal = await request(job,"github",args,reason,human);
+        const action = d.actions[proposal.action];
+        if (action && checksAt) { action.checksAt = checksAt; ledger.save(); }
+        return proposal;
       }
       const scopedOwner = musePolicy.origin(d, job).scoped;
       let scopedConsent = null;
@@ -3399,7 +3436,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (pr && pr.base?.ref !== to) throw new Error("This PR targets an unexpected branch");
         const args = { repository: repo, action: input.action, head, base, to, ...(pr ? {number:Number(input.number)} : {from}) };
         const asked = await requestGithubApproval(args, "Exact owner GitHub operation");
-        if (asked.needsExplanation) return asked;
+        if (asked.needsExplanation || asked.checksReady === false) return asked;
         if (asked.state !== "approved") return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
         scopedConsent = d.actions[asked.action];
         musePolicy.validate(d, config, job, scopedConsent, now(), true);
@@ -3810,7 +3847,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         return out;
       }
-      async function gate(pr) {
+      async function gate(pr) { return (await inspectChecks(pr)).result; }
+      async function inspectChecks(pr) {
         const runs = (await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`])).check_runs || [];
         const pending = runs.filter((r) => r.status !== "completed").map((r) => r.name);
         const failed = require("./github").redChecks(runs).map((r) => `${r.name}: ${r.conclusion}`);
@@ -3820,9 +3858,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           for (const check of required.failed) if (!failed.some((f) => f.startsWith(`${check}:`))) failed.push(`${check}: ${required.detail[check]}`);
         }
         const qualification = failed.length ? { qualified: false } : await require("./qualification").promotionQualification({ api, pr, runs, repository: repo });
-        return { checks: runs.length, pending, failed, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
+        return { runs, result: { checks: runs.length, pending, failed, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
           ...(qualification.qualified ? { qualification } : {}),
-          ready: runs.length > 0 && (!pending.length || qualification.qualified) && !failed.length && pr.mergeable === true };
+          ready: runs.length > 0 && (!pending.length || qualification.qualified) && !failed.length && pr.mergeable === true } };
       }
       async function mergeWhenGreen(number, method, expectBase) {
         let pr = await api([`repos/${repo}/pulls/${number}`]);

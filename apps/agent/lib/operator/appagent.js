@@ -148,6 +148,29 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
     ledger.audit("app_retry", { job: j.id }); ledger.save(); drain();
     return { state: j.state };
   }
+  function retryTicket(number, taskId) {
+    const job = require("./apptickets").stalledTicketJob(d, number);
+    if (!job || job.id !== taskId) throw err(409, "This ticket no longer has the same stalled attempt. Refresh the ticket.");
+    const channel = d.channels?.[job.channelId];
+    const status = d.ticketRecords?.[number]?.status;
+    const deadline = now() + config.taskLifetimeMs;
+    const hold = require("./admission").hold({ ...job, deadline }, { now: now(), supportDeferred: config.supportDeferred, claimedBy: () => channel?.claimedBy });
+    if (d.paused || job.appPaused || require("./ticketpause").pauseFor(d, job) ||
+        require("./supporttakeover").held(d, job) || hold || job.channelClosed || job.resolved ||
+        ["closed", "resolved", "merged"].includes(status) || ["incident", "moderation", "investigation"].includes(channel?.category)) {
+      throw err(409, "This ticket is held. Review its current owner and state before retrying.");
+    }
+    const pendingApproval = Object.values(d.actions || {}).some(action => action.jobId === job.id && action.state === "pending") ||
+      Object.values(d.decisions || {}).some(decision => decision.jobId === job.id && decision.state === "pending");
+    if (pendingApproval || uncertainOutcome(job)) throw err(409, "Review the pending decision or action outcome before retrying.");
+    (job.inbox ||= []).push({ role: "owner", authorId: config.ownerId, at: new Date(now()).toISOString(),
+      content: "The owner asked to retry this stalled ticket. Continue from its last verified checkpoint and check current facts before acting." });
+    (job.history ||= []).push({ at: new Date(now()).toISOString(), kind: "retry", summary: "Owner queued another attempt." });
+    job.state = "queued"; job.wakeAt = 0; job.queuedAt = now(); job.updatedAt = now(); job.deadline = deadline;
+    delete job.deadlineBlockedAt; delete job.waitingFor; delete job.deadlineExtensions;
+    ledger.audit("app_ticket_retry", { ticket: number, job: job.id, actor: config.ownerId }); ledger.save(); drain();
+    return { state: job.state, taskId: job.id };
+  }
   function pause(taskId, resume = false) {
     const j = d.jobs[String(taskId || "")];
     if (!isAppJob(j) || j.role !== "owner" || CLOSED.includes(j.state)) throw err(404, "unknown active app task");
@@ -273,6 +296,8 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
     if (m && method === "POST") return updateThread(m[1], body);
     const ticketMatch = /^\/tickets\/(\d{1,7})$/.exec(path);
     if (ticketMatch && method === "GET") return require("./apptickets").ticketDetail(d, Number(ticketMatch[1]), now(), config);
+    const ticketRetry = /^\/tickets\/(\d{1,7})\/retry$/.exec(path);
+    if (ticketRetry && method === "POST") return retryTicket(Number(ticketRetry[1]), body.taskId);
     // Connected games: fixed read-only catalogue (appgames.js). Owner-only, never writes.
     const games = await require("./appgames").createGames({ mcp }).route(path, method);
     if (games !== undefined) return games;

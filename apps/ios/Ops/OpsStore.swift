@@ -35,11 +35,29 @@ import LakesideCore
     var kpis: JSONValue { hub["kpis"] }
     var servicesDown: [JSONValue] { services.filter { !["operational", ""].contains($0["current"].string) } }
     /// Open pull requests with failing checks, exactly the list Failed checks shows.
-    /// Falls back to the server count only when the hub sent no PR list.
     var failingPRs: [JSONValue] { hub["prs"].array.filter { $0["state"].string == "OPEN" && $0["ci"].string == "red" } }
-    var redPRs: Int { hub["prs"] == .null ? Int(kpis["prsRed"].number ?? 0) : failingPRs.count }
+    var redPRs: Int { failingPRs.count }
     /// Exactly the rows the Blocked work lane lists.
     var blocked: [JSONValue] { kanban["blocked"].array }
+    var queueTickets: [JSONValue] {
+        let represented = Set(AttentionCenter.shared.items.compactMap(\.ticketNumber).map { String($0) })
+        return openTickets.filter { !represented.contains($0["number"].string) && WorkQueuePresentation.bucket($0) != "needs-you" }
+    }
+    var queueTasks: [JSONValue] {
+        tasks.filter { WorkQueuePresentation.bucket($0) != "needs-you" }
+    }
+    var blockedQueueCount: Int {
+        (queueTickets + queueTasks).filter { WorkQueuePresentation.bucket($0) == "stuck" }.count
+    }
+    func serviceState(_ service: JSONValue, now: Date = Date()) -> String {
+        guard let checked = OpsFormat.date(service["lastChecked"]), now.timeIntervalSince(checked) < 86_400 else { return "Stale" }
+        switch service["current"].string {
+        case "operational": return "Operational"
+        case "degraded": return "Degraded"
+        case "major_outage": return "Failing"
+        default: return "Unknown"
+        }
+    }
     var needsOwner: [JSONValue] { kanban["needs_owner"].array }
     /// The support queue owns membership and timing. The hub adds delivery
     /// receipts and ticket detail metadata for the matching records.
@@ -103,8 +121,8 @@ import LakesideCore
         case .connecting: return "Connecting to Ops."
         case .unreachable: return "Ops could not be reached. Pull to retry."
         case .fresh(let at):
-            let partial = failedPanels.isEmpty ? "" : " \(Self.list(failedPanels)) did not refresh."
-            return "Updated \(OpsFormat.ago(at)).\(partial)"
+            let partial = failedPanels.isEmpty ? "" : " · \(Self.list(failedPanels)) did not refresh"
+            return "Updated \(OpsFormat.ago(at))\(partial)"
         case .stalled(let at):
             return "Updates stalled. Last good data is from \(OpsFormat.ago(at)), so counts may be out of date."
         }
