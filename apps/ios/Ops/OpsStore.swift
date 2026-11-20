@@ -247,6 +247,10 @@ import LakesideCore
     func send(_ text: String, _ session: AppSession, voice: Bool = false, attachments: JSONValue = .array([])) async -> Bool {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (!body.isEmpty || !attachments.array.isEmpty), !sending else { return false }
+        if isSupervisor, session.profile["ownerSupervisorReady"] == .bool(false) {
+            error = session.profile["ownerSupervisorIssue"].string.nonempty ?? "Private Keir is offline. Your draft is still here."
+            return false
+        }
         let epoch = generation
         sending = true; defer { if epoch == generation { sending = false } }
         let selected = thread, mode = voice ? "new" : sendMode, target = voice ? nil : steeringTask

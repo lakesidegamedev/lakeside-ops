@@ -47,6 +47,7 @@ async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, g
 
     const sup = getSupervisor();
     if (!sup.configured) return reply(503, { error: "The private supervisor is not set up on this server.", configured: false, missing: sup.missing });
+    await sup.ready;
     const s = sup.instance;
     const route = pathname.slice("/api/keir/supervisor".length);
     if (route === "/status" && req.method === "GET") return reply(200, await sup.status());
@@ -125,4 +126,26 @@ function createSupervisorHost({ env = process.env, log = (m) => console.log(m), 
   return { get: build };
 }
 
-module.exports = { handleKeirSupervisorRoute, createSupervisorHost, ownerIdentity, sameOrigin };
+async function supervisorProfile(session, host, env = process.env) {
+  if (session.role !== "admin" || String(session.email || "").toLowerCase() !== ownerIdentity(env) || !env.KEIR_SUPERVISOR_DIR) {
+    return { ownerSupervisor: false };
+  }
+  // Keep the private destination selected even in an outage. The phone can
+  // explain what failed without routing a private maintenance message elsewhere.
+  let issue = "The private supervisor could not start.";
+  try {
+    const sup = host.get();
+    if (!sup.configured) issue = "The private supervisor configuration is incomplete.";
+    else {
+      await sup.ready;
+      const { executor, sandbox } = await sup.status();
+      if (!sup.instance.owner) issue = "The private supervisor is waiting for its runner.";
+      else if (!executor.available) issue = executor.reason;
+      else if (!sandbox.available) issue = sandbox.reason;
+      else return { ownerSupervisor: true, ownerSupervisorReady: true };
+    }
+  } catch { /* an unavailable supervisor must not break sign-in */ }
+  return { ownerSupervisor: true, ownerSupervisorReady: false, ownerSupervisorIssue: issue };
+}
+
+module.exports = { handleKeirSupervisorRoute, createSupervisorHost, ownerIdentity, sameOrigin, supervisorProfile };

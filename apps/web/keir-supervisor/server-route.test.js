@@ -41,7 +41,10 @@ async function boot(t, extraEnv) {
 
 test("real server: owner-only supervisor routes work with the support operator down", { timeout: 90000 }, async (t) => {
   const { req, home } = await boot(t, (h) => ({ KEIR_SUPERVISOR_DIR: path.join(h, "supervisor") }));
-  assert.equal((await (await req("/api/me", { who: "owner" })).json()).ownerSupervisor, true);
+  const ownerProfile = await (await req("/api/me", { who: "owner" })).json();
+  assert.equal(ownerProfile.ownerSupervisor, true);
+  assert.equal(ownerProfile.ownerSupervisorReady, false);
+  assert.match(ownerProfile.ownerSupervisorIssue, /CLI not installed/);
   assert.equal((await (await req("/api/me", { who: "staff" })).json()).ownerSupervisor, false);
   assert.equal((await req("/api/keir/supervisor/thread")).status, 401);
   assert.equal((await req("/api/keir/supervisor/thread", { who: "staff" })).status, 403);

@@ -3630,7 +3630,7 @@ const WIKI_EXPORT_CACHE_MS = 10 * 60 * 1000;
 
 // Built on first use, or at boot when configured so a job that was running
 // when the server stopped resumes without waiting for the owner's next poll.
-const { handleKeirSupervisorRoute, createSupervisorHost, ownerIdentity: supervisorOwnerIdentity } = require("./keir-supervisor/routes");
+const { handleKeirSupervisorRoute, createSupervisorHost, supervisorProfile } = require("./keir-supervisor/routes");
 const keirSupervisorHost = createSupervisorHost();
 if (process.env.KEIR_SUPERVISOR_DIR) keirSupervisorHost.get();
 
@@ -8293,8 +8293,8 @@ loadDeadLetters();
     const session = await resolveSession(req);
     if (req.opsAuthUnavailable) return json(res, 503, { error: "Sign-in verification is temporarily unavailable" });
     if (!session) return json(res, 401, { error: "Unauthorized" });
-    const ownerSupervisor = session.role === "admin" && String(session.email || "").toLowerCase() === supervisorOwnerIdentity() && Boolean(process.env.KEIR_SUPERVISOR_DIR);
-    return json(res, 200, { email: session.email, role: session.role, ownerSupervisor });
+    const supervisor = await supervisorProfile(session, keirSupervisorHost);
+    return json(res, 200, { email: session.email, role: session.role, ...supervisor });
   }
 
   // POST /api/code-context — engineering-oriented codebase retrieval. Returns the
