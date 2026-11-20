@@ -431,6 +431,23 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             }
         case "/api/auth/native-session": value = ["token": String(repeating: "a", count: 64), "expiresAt": Date().addingTimeInterval(30 * 86400).timeIntervalSince1970 * 1000]
         case "/api/keir/app/questions/123456abcdef": value = Self.keir.answerChoices()
+        case "/api/keir/app/tickets/1868":
+            let hourAgo = Date().addingTimeInterval(-3600).timeIntervalSince1970 * 1000
+            value = [
+                "current": ["id": "ticket-revenue", "state": "running", "updatedAt": hourAgo,
+                            "summary": "activation aborted: no result before the 15-minute turn limit"],
+                "timing": ["state": "stuck", "overdue": true, "since": hourAgo,
+                           "reason": "activation aborted: no result before the 15-minute turn limit"],
+                "receipts": [["key": "reply:revenue", "label": "Explained the deposit network share", "state": "done"]],
+            ]
+        case "/api/keir/app/tickets/1001" where ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens"):
+            value = [
+                "current": ["id": "ticket-task", "state": "blocked", "summary": "Checked the payroll rules."],
+                "decisions": [["id": "abcdefabcdef", "kind": "choice", "type": "choice", "state": "pending",
+                               "title": "Choose payroll behavior", "question": "Capacity or filled jobs?",
+                               "options": [["id": "capacity", "label": "Capacity"], ["id": "filled", "label": "Filled jobs"]]]],
+                "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]],
+            ]
         case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
         case "/api/keir/app/tickets/1564/supervision", "/api/keir/app/tickets/1001/supervision", "/api/keir/app/tickets/1575/supervision", "/api/keir/app/tickets/1651/supervision":
             (value, status) = Self.supervision.route(url.path, method: request.httpMethod ?? "GET", body: bodyObject() ?? [:])

@@ -859,6 +859,73 @@ final class LaunchTests: XCTestCase {
         return app
     }
 
+    func testReviewScreensInLight() { captureReviewScreens("light", "Light") }
+    func testReviewScreensInOLED() { captureReviewScreens("dark", "OLED") }
+
+    private func captureReviewScreens(_ appearance: String, _ theme: String) {
+        let app = launch(appearance: appearance, ["--uitest-eight-screens", "--uitest-reset-resume"])
+        func capturePage(_ title: String, scrolls: Int = 6) {
+            capture(app, "\(theme) \(title) top")
+            for _ in 0..<scrolls { app.swipeUp() }
+            capture(app, "\(theme) \(title) bottom")
+        }
+        let composer = composer(app)
+        XCTAssertTrue(composer.waitForExistence(timeout: 15))
+        for _ in 0..<5 { app.swipeDown() }
+        capturePage("Chat")
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        capture(app, "\(theme) Chat keyboard")
+        app.swipeDown()
+
+        go(app, "Ops")
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 10))
+        capturePage("Ops")
+        app.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 10))
+        capturePage("Settings")
+        app.buttons["Done"].tap()
+
+        go(app, "Activity")
+        let blocked = app.buttons["work-filter-stuck"]
+        XCTAssertTrue(blocked.waitForExistence(timeout: 10))
+        capturePage("Inbox all")
+        for _ in 0..<6 where !blocked.isHittable { app.swipeDown() }
+        blocked.tap()
+        capturePage("Inbox blocked", scrolls: 3)
+        for _ in 0..<6 { app.swipeDown() }
+        openRow(app, "Massive drop in revenue turn 77-78", swipes: 6)
+        XCTAssertTrue(find(app, "Massive drop in revenue turn").waitForExistence(timeout: 10))
+        capturePage("Ticket 1868")
+
+        go(app, "Ops")
+        openRow(app, "Support desk")
+        openRow(app, "Budget screen shows zero funding")
+        XCTAssertTrue(find(app, "Budget screen shows zero funding").waitForExistence(timeout: 10))
+        XCTAssertTrue(find(app, "Choose payroll behavior").exists)
+        capturePage("Ticket 1001")
+        let take = app.buttons["supervision-take"]
+        for _ in 0..<6 where !take.isHittable { app.swipeUp() }
+        XCTAssertTrue(take.isHittable)
+        take.tap()
+        app.buttons["Take this ticket from the support desk"].tap()
+        let direction = app.textFields["supervision-direction"].exists ? app.textFields["supervision-direction"] : app.textViews["supervision-direction"]
+        XCTAssertTrue(direction.waitForExistence(timeout: 10))
+        direction.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(direction.frame.maxY, keyboard.frame.minY)
+        capture(app, "\(theme) Ticket 1001 keyboard")
+        app.swipeDown()
+
+        go(app, "Keir")
+        chooseFromMenu(app, "keir-tools", "Connected games", until: { app.navigationBars["Connected games"].exists })
+        XCTAssertTrue(app.buttons["keir-game-metroforge"].waitForExistence(timeout: 10))
+        app.buttons["keir-game-metroforge"].tap()
+        XCTAssertTrue(find(app, "Preview site").exists)
+        capturePage("Connected games")
+    }
+
     /// The chat on a phone in both themes: a conversation with history, the two
     /// menus, the theme setting, the empty start, the inbox and large text.
     /// Every screen is kept as a test attachment for review. "dark" is the
