@@ -2299,6 +2299,70 @@ test("staff conversation in a claimed ticket remains silent until an explicit Ke
   assert.equal(Object.keys(f.ledger.data.jobs).length, 1, "explicit staff requests still work");
 });
 
+test("staff conversation in an unclaimed ticket stays context after a recent Keir reply", () => {
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1556" }, recorded = [];
+  const g = createGateway({ ...f, conversation: {
+    record(_channel, message) { recorded.push(message.content); },
+    lastAssistantAt() { return 4999; },
+  } });
+  const ticket = running(f, { kind: "ticket", role: "support", ticket: 1556, channelId: ch.id });
+  f.ledger.data.seen["ticket:1556"] = ticket.id;
+  ticket.state = "waiting";
+  f.ledger.data.conversations[ch.id] = { actorId: f.config.ownerId, until: 999999 };
+  const opener = f.msg("I understand what you are saying", "666666666666666673");
+  opener.mentions = [{ id: "888888888888888888" }];
+  const details = f.msg("Last time I set healthcare demand by hand.", "666666666666666674");
+  const question = f.msg("Why was the demand higher then?", "666666666666666675");
+  const discussion = f.msg("Keir already explained that part.", "666666666666666676");
+  discussion.mentions = [];
+  for (const message of [opener, details, question, discussion]) g.ingest(ch, message);
+  assert.deepEqual(recorded, [opener, details, question, discussion].map(message => message.content));
+  assert.equal(ticket.staffActiveUntil, 5000 + 10 * 60000);
+  assert.equal(ticket.wakeAt, ticket.staffActiveUntil);
+  assert.equal(ticket.inbox?.length || 0, 0);
+  assert.equal(Object.keys(f.ledger.data.classify || {}).length, 0);
+  const staleVerdict = f.msg("How does that work?", "666666666666666678");
+  f.ledger.data.classify = { [staleVerdict.id]: { channel: ch, message: staleVerdict } };
+  g.ingest(ch, staleVerdict, { classified: true });
+  assert.equal(Object.keys(f.ledger.data.classify).length, 0);
+  assert.equal(Object.keys(f.ledger.data.jobs).length, 1);
+  assert.equal(Object.keys(f.ledger.data.outbox).length, 0);
+
+  const direct = f.msg("Where did this number come from?", "666666666666666677");
+  direct.referenced_message = { author: { id: f.config.botId } };
+  g.ingest(ch, direct);
+  assert.equal(Object.keys(f.ledger.data.jobs).length, 2);
+});
+
+test("an owner telling Keir to stop talking pauses just that ticket without a reply", async () => {
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1556" };
+  const job = running(f, { kind: "command", role: "owner", ticket: 1556, channelId: ch.id });
+  const other = f.ledger.createJob("other-ticket", { kind: "ticket", role: "support", ticket: 1557, channelId: "777777777777777777" });
+  other.state = "running";
+  const data = f.ledger.data;
+  const { suppressOutbox } = require("../lib/operator/supporttakeover");
+  data.outbox.prior = { destination: `channel:${job.id}`, content: "An older answer" };
+  const g = createGateway({ ...f, drain() {
+    for (const [key, entry] of Object.entries(data.outbox)) suppressOutbox(f.ledger, key, entry, 5000);
+  } });
+  const control = f.msg(`<@${f.config.botId}> stop talking`, "666666666666666673");
+  control.mentions = [{ id: f.config.botId }];
+  g.ingest(ch, f.msg("Please stop talking", "666666666666666670"));
+  assert.equal(data.ticketPauses?.[1556], undefined);
+
+  g.ingest(ch, control);
+  assert.equal(job.state, "paused");
+  assert.equal(other.state, "running");
+  assert.equal(data.paused, false);
+  assert.equal(data.ticketPauses[1556].messageId, control.id);
+  assert.deepEqual(Object.keys(data.outbox), ["prior"]);
+  assert.equal(data.outbox.prior.suppressedByTakeover.ticket, 1556);
+  await assert.rejects(f.broker.tool(job, "channel_reply", { message: "I heard you." }), /paused/i);
+  g.ingest(ch, f.msg("Keir resume", "666666666666666674"));
+  assert.equal(data.ticketPauses[1556], undefined);
+  assert.equal(data.outbox.prior.suppressedByTakeover.ticket, 1556);
+});
+
 test("a newly adopted staff explanation waits for the staff hold instead of starting immediately", () => {
   const { pickForLanes } = require("../lib/operator/lanes");
   const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1556" }, g = createGateway(f);
