@@ -23,9 +23,9 @@ async function prepare({ ledger, job, config = {}, now = Date.now() }) {
 }
 
 // Move the continuity keys to the front of the context (JSON key order is prompt order). In place, so every holder of
-// `context` sees it. Case file first, shift log second, everything else after.
+// `context` sees it. The current question precedes the case history.
 function promote(context) {
-  const first = ["ticketCaseFile", "shiftLog"].filter((k) => context[k] !== undefined);
+  const first = ["currentTurn", "ticketCaseFile", "shiftLog"].filter((k) => context[k] !== undefined);
   if (!first.length) return context;
   const entries = Object.entries(context);
   for (const [k] of entries) delete context[k];

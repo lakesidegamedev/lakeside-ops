@@ -543,7 +543,7 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -2756,7 +2756,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         if (job.kind !== "conversation") {
           // Substantive updates are sent and attached to the ticket record.
-          const args = { kind: "ticket", number: ticketNo, message: message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
+          const args = { kind: "ticket", number: ticketNo, message, deliver: true, update_kind: "progress", delivery_mode: "reply" };
           const sent = await effect(job, `ticket-update:${hash(args)}`, () => mcp.call("support", "support_public_update", args, true, signal), { kind: "reply", ticket: ticketNo, text: message });
           const delivery = sent.delivery;
           const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
