@@ -509,6 +509,16 @@ async function main() {
       });
 
     server.tool(
+      "support_record_visual_reply",
+      "Record an already-delivered Keir UI screenshot reply on the ticket after verifying the Discord message. Does not send a message.",
+      { number: z.number().int().positive(), channelId: z.string(), messageId: z.string(), replyTo: z.string(), stage: z.enum(["live", "testing"]) },
+      async (input) => {
+        if (!auth?.scopes?.write) return errorResult("write scope required");
+        try { return jsonResult(await require("./support-visual-receipt").recordVisualReply(Tickets, input)); }
+        catch (error) { return errorResult(error.message); }
+      });
+
+    server.tool(
       "support_notify_ops_findings",
       "Post ticket-repair findings to Discord #operations with \"PR on the way\" (WRITE-scoped). Call once immediately before opening the development PR. Never posts to ticket channels. Idempotent per ticket.",
       {

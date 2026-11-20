@@ -62,4 +62,4 @@ async function render(input, { run = (cmd, args, opts) => exec(cmd, args, opts).
     image: { data: out.png, media_type: "image/png" } };
 }
 
-module.exports = { render, options, DEVICES };
+module.exports = { render, options, DEVICES, publicPage: (url) => PAGE.test(url) };

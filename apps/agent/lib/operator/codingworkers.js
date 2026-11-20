@@ -209,6 +209,11 @@ function createCodingWorkers({
     const run = s.runs[id] = { id, ticket, jobId: job.id, card: cardId, changeClass: dec.changeClass, title: String(title).slice(0, 200), detail: String(detail || "").slice(0, 5000), issue,
       state: "queued", attempt: 1, mode: "build", short: sid, branch: `fix/keir-${sid}`, worktree: `${WORKTREE_ROOT}/keir-${sid}`,
       report: path.join(dir, `${id}.report.md`), log: path.join(dir, `${id}.log`), createdAt: now(), history: [], errors: 0 };
+    if (dec.changeClass === "display") {
+      job.visualReviewExpected = true;
+      delete job.visualReviewStage;
+      if (job.visualReview) job.visualReview.pending = true;
+    }
     note(run, "queued"); audit("coding_worker_queued", { run: id, ticket, card: cardId });
     ledger.save();
     await launchIfAble(run);
@@ -481,12 +486,17 @@ function createCodingWorkers({
     }
     const job = jobOf(run);
     if (job) {
+      if (run.changeClass === "display") {
+        job.visualReviewExpected = true;
+        job.visualReviewStage = "live";
+        if (job.visualReview) job.visualReview.pending = true;
+      }
       (job.releaseEvidence ||= {})[run.mergeSha ? run.mergeSha.slice(0, 10) : run.mainSha.slice(0, 10)] = { at: now(), development: true, staging: true, main: true, repository: "AHDGame", turnWorker: run.worker === true, source: "coding-workers" };
       (job.pullRequests ||= []).push(`https://github.com/${REPO}/pull/${run.pr}`);
     }
     run.state = "done"; run.endedAt = now(); note(run, "live");
     audit("coding_worker_live", { run: run.id, pr: run.pr, main: run.mainSha });
-    tellTicket(run, `The fix for this ticket is live: PR #${run.pr} is merged and both the web and the turn worker run main ${tail(run.mainSha, 10)}. Verified by Keir's coding worker run ${run.id}. Tell the player briefly that it is live now. If the fix changes numbers, re-check them after the next turn and report what you find.`);
+    tellTicket(run, `The fix for this ticket is live: PR #${run.pr} is merged and both the web and the turn worker run main ${tail(run.mainSha, 10)}. Verified by Keir's coding worker run ${run.id}. ${run.changeClass === "display" ? "Render and inspect the changed UI with visual_review before the player-facing release reply. Attach it with channel_reply and the exact navigation path. If the render is pending, continue verification without waiting for the player." : "Tell the player briefly that it is live now. If the fix changes numbers, re-check them after the next turn and report what you find."}`);
     await card(run, `Live: PR #${run.pr} deployed on web and the turn worker (${tail(run.mainSha, 10)}).`, "completed", { evidence_url: `https://github.com/${REPO}/pull/${run.pr}` });
   }
 

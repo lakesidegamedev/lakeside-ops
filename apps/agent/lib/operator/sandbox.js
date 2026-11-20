@@ -2,6 +2,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { randomBytes } = require("node:crypto");
 
 // Read-only dependency mirrors, kept current by bin/keir-deps-refresh.sh.
 const DEPS = { AHDGame: "/root/projects/AHDGame/worktrees/keir-deps/node_modules", AHDClient: "/root/projects/AHDClient/node_modules" };
@@ -89,20 +90,20 @@ function createSandbox(root) {
   // write it to a file outside the repository and read it back in base64
   // chunks, so a reviewable fix is never shrunk to fit a tool (ticket 1514
   // spent four rounds compressing its House fix below the window).
-  const CAPTURE = "/workspace/.keir-capture";
-  async function capture(id, command, signal, { maxBytes = 2 * 1024 * 1024, chunk = 15000 } = {}) {
-    const head = await run(id, `{ ${command} ; } > ${CAPTURE}; s=$?; echo "keir-capture $s $(wc -c < ${CAPTURE})"`, signal);
+  async function capture(id, command, signal, { maxBytes = 2 * 1024 * 1024, chunk = 15000, computer = false } = {}) {
+    const capturePath = computer ? `/workspace/.keir-capture-${randomBytes(8).toString("hex")}` : "/workspace/.keir-capture";
+    const head = await run(id, `{ ${command} ; } > ${capturePath}; s=$?; echo "keir-capture $s $(wc -c < ${capturePath})"`, signal, { computer });
     const m = /keir-capture (\d+) (\d+)\s*$/.exec(head.output || "");
     if (!m) throw new Error("output capture failed");
     const code = Number(m[1]), size = Number(m[2]);
-    if (size > maxBytes) { await run(id, `rm -f ${CAPTURE}`, signal); return { code, output: "", truncated: true, size }; }
+    if (size > maxBytes) { await run(id, `rm -f ${capturePath}`, signal); return { code, output: "", truncated: true, size }; }
     const parts = [];
     for (let off = 0; off < size; off += chunk) {
-      const r = await run(id, `tail -c +${off + 1} ${CAPTURE} | head -c ${chunk} | base64 -w0`, signal);
+      const r = await run(id, `tail -c +${off + 1} ${capturePath} | head -c ${chunk} | base64 -w0`, signal);
       if (r.code !== 0 || r.truncated) throw new Error("output capture read failed");
       parts.push(Buffer.from(r.output.trim(), "base64"));
     }
-    await run(id, `rm -f ${CAPTURE}`, signal);
+    await run(id, `rm -f ${capturePath}`, signal);
     const buf = Buffer.concat(parts);
     if (buf.length !== size) throw new Error("output capture size mismatch");
     return { code, output: buf.toString("utf8"), truncated: false, size };

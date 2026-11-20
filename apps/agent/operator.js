@@ -571,6 +571,54 @@ async function flushOutbox() {
         dmId = await ensureDm(recipient);
         clean = recipient === config.ownerId ? ownerText(entry.content) : redactSecrets(entry.content);
       }
+      if (entry.visualReview) {
+        if (!channelJob) throw new Error("visual replies require their verified source channel");
+        const { origin, stage, ticket } = entry.visualReview;
+        const components = answerFeedback.components(key, entry, channelJob);
+        const ensureCurrent = () => {
+          killSwitch.assertClear("UI review delivery");
+          require("./lib/operator/supporttakeover").assertCanAct(ledger.data, channelJob);
+          if (ledger.data.control?.stopped) throw new Error("operator stopped");
+          if (ticket && (config.supportDeferred(channelJob) || require("./lib/operator/ticketstate").endedReason(ledger.data, ticket, channelJob))) {
+            throw new Error("ticket is closed or assigned to another coordinator");
+          }
+        };
+        if (!entry.visualReceipt && ticket) {
+          ensureCurrent();
+          const current = await mcp.call("support", "support_get", { kind: "ticket", number: ticket }, false);
+          if (current?.conversation?.channelId !== dmId || current.mergedInto || ["closed", "resolved", "rejected"].includes(current.status)
+              || ["investigation", "moderation"].includes(current.category)) throw new Error("ticket no longer has this active support channel");
+          const messages = await discord("GET", `/channels/${dmId}/messages?limit=100`);
+          const claim = messages.map(m => ticketClaim(m, config, ledger.data.channels[dmId]?.claimReleasedAt)).find(Boolean)
+            || ledger.data.channels[dmId]?.claimedBy;
+          if (claim && claim !== channelJob.actorId) throw new Error("staff owns this ticket");
+        }
+        const sent = await require("./lib/operator/visual-review").send(channelJob, entry, {
+          discord, config, ledger, components, assertCanSend: ensureCurrent,
+        });
+        if (ticket) {
+          const receipt = await mcp.call("support", "support_record_visual_reply", { number: ticket, channelId: dmId, messageId: sent.messageId, replyTo: origin.messageId, stage }, true);
+          if (!receipt?.posted || receipt.messageId !== sent.messageId) throw new Error("support did not record the threaded screenshot receipt");
+          broker.recordTicketPost(channelJob, ticket, clean);
+          channelJob.lastPublishedAt = Date.now();
+          const ticketTask = ledger.data.jobs[ledger.data.seen[`ticket:${ticket}`]];
+          if (ticketTask) ticketTask.lastPublishedAt = channelJob.lastPublishedAt;
+        }
+        entry.deliveredAt = Date.now();
+        ledger.save();
+        events.append("delivery", { taskId: taskIdOf(channelJob, ledger.data.jobs), attemptId: channelJob.id, ticket,
+          key, destination: "channel", messageIds: entry.messageIds, chunks: 1, chars: clean.length, attachments: sent.attachments.length });
+        conversation.record({ id: dmId }, { id: sent.messageId, content: clean, attachments: sent.attachments,
+          message_reference: { message_id: origin.messageId }, author: { id: config.botId, bot: true, username: "Keir" }, timestamp: sent.timestamp || new Date().toISOString() });
+        const progress = channelJob.progressMessageId;
+        if (progress) {
+          delete channelJob.progressMessageId;
+          ledger.save();
+          discord("DELETE", `/channels/${dmId}/messages/${progress}`).catch(() => {});
+        }
+        if (components) await answerFeedback.delivered(dmId, sent.messageId, channelJob);
+        continue;
+      }
       // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
       const text = clean.replace(/[\u2013\u2014]/g, ",");
       const chunks = channelJob && !entry.files?.length && !entry.components ? splitReply(text).flatMap((c) => chunkMessage(c)) : chunkMessage(text);
@@ -600,6 +648,13 @@ async function flushOutbox() {
         discord("DELETE", `/channels/${dmId}/messages/${id}`).catch(() => {});
       }
     } catch (e) {
+      if (e.code === "VISUAL_DELIVERY_UNCERTAIN") {
+        entry.deliveredAt = Date.now();
+        entry.skipped = "uncertain visual delivery";
+        ledger.notify(`delivery:visual:${entry.id}`, "owner", e.message);
+        ledger.save();
+        continue;
+      }
       entry.attempts++; entry.retryAt = Date.now() + Math.min(3600000, 30000 * 2 ** Math.min(7, entry.attempts)); entry.error = redactSecrets(e.message); ledger.save(); log(`owner delivery retry: ${e.message}`);
     }
   }
