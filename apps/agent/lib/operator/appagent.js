@@ -160,13 +160,19 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
         ["closed", "resolved", "merged"].includes(status) || ["incident", "moderation", "investigation"].includes(channel?.category)) {
       throw err(409, "This ticket is held. Review its current owner and state before retrying.");
     }
-    const pendingApproval = Object.values(d.actions || {}).some(action => action.jobId === job.id && action.state === "pending") ||
-      Object.values(d.decisions || {}).some(decision => decision.jobId === job.id && decision.state === "pending");
-    if (pendingApproval || uncertainOutcome(job)) throw err(409, "Review the pending decision or action outcome before retrying.");
+    const family = Object.values(d.jobs).filter(candidate => require("./workrecord").rootJob(candidate, d.jobs).id === job.id);
+    const ids = new Set(family.map(member => member.id));
+    const pendingApproval = Object.values(d.actions || {}).some(action => ids.has(action.jobId) && ["pending", "executing", "uncertain"].includes(action.state)) ||
+      Object.values(d.decisions || {}).some(decision => ids.has(decision.jobId) && decision.state === "pending");
+    if (pendingApproval || family.some(member => member.state === "running" ||
+      Object.values(member.effects || {}).some(effect => ["started", "executing", "uncertain"].includes(effect.state)))) {
+      throw err(409, "Review the active attempt, pending decision or action outcome before retrying.");
+    }
     (job.inbox ||= []).push({ role: "owner", authorId: config.ownerId, at: new Date(now()).toISOString(),
       content: "The owner asked to retry this stalled ticket. Continue from its last verified checkpoint and check current facts before acting." });
     (job.history ||= []).push({ at: new Date(now()).toISOString(), kind: "retry", summary: "Owner queued another attempt." });
     job.state = "queued"; job.wakeAt = 0; job.queuedAt = now(); job.updatedAt = now(); job.deadline = deadline;
+    job.summary = "Another attempt is queued.";
     delete job.deadlineBlockedAt; delete job.waitingFor; delete job.deadlineExtensions;
     ledger.audit("app_ticket_retry", { ticket: number, job: job.id, actor: config.ownerId }); ledger.save(); drain();
     return { state: job.state, taskId: job.id };

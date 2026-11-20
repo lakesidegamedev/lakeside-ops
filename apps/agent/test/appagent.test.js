@@ -141,3 +141,24 @@ test("all decision surfaces expose the same exact action scope", () => {
   ledger.data.actions.action1.expiresAt = clock.t - 1;
   assert.equal(app.pendingDecisions()[0].canApprove, false);
 });
+
+test("ticket retry queues the same stalled coordinator once and preserves receipts", async () => {
+  const { ledger, agent } = setup();
+  const job = ledger.createJob("ticket:1868", { ticket: 1868, channelId: "ticket-channel", kind: "ticket", role: "support" });
+  job.state = "blocked";
+  job.summary = "activation aborted: no result";
+  const receipt = { state: "done", result: { messageId: "already-delivered" } };
+  job.effects = { "reply:one": receipt };
+  ledger.data.channels["ticket-channel"] = { claimedBy: "staff" };
+  const post = id => agent.route("/tickets/1868/retry", "POST", { taskId: id });
+  await assert.rejects(post(job.id), { status: 409 });
+  delete ledger.data.channels["ticket-channel"].claimedBy;
+  job.effects["heal:unknown"] = { state: "started" };
+  await assert.rejects(post(job.id), { status: 409 });
+  delete job.effects["heal:unknown"];
+  await assert.rejects(post("different-attempt"), { status: 409 });
+  assert.deepEqual(await post(job.id), { state: "queued", taskId: job.id });
+  await assert.rejects(post(job.id), { status: 409 });
+  assert.equal(job.effects["reply:one"], receipt);
+  assert.equal(job.inbox.length, 1);
+});
