@@ -131,11 +131,9 @@ struct ActivityView: View {
     private var tickets: [JSONValue] { work["tickets"].array }
     private var awaitingFirstReply: [JSONValue] {
         guard session.profile["mode"].string != "standalone", scope == "tickets", filter == "all" else { return [] }
-        return ops.hub["tickets"].array.filter { row in
-            row["replyState"]["state"].string == "no_receipt" &&
-            !["closed", "resolved", "duplicate", "merged", "archived", "wontfix"].contains(row["status"].string) &&
-            (search.isEmpty || row["title"].string.localizedCaseInsensitiveContains(search) || row["number"].string == search.trimmingCharacters(in: CharacterSet(charactersIn: "#")))
-        }.sorted { ($0["createdAt"].number ?? 0) < ($1["createdAt"].number ?? 0) }
+        return KeirTicketFollowUp.waiting(in: ops.hub).filter {
+            search.isEmpty || $0["title"].string.localizedCaseInsensitiveContains(search) || $0["number"].string == search.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        }
     }
     private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
     private var entries: [JSONValue] { showTickets ? tickets : tasks }

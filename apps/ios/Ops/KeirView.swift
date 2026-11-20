@@ -46,7 +46,11 @@ struct KeirView: View {
                         }
                         if keir.thread == "main", (keir.team["open"].number ?? 0) > 0 { KeirWorkingNow(team: keir.team) }
                         if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
-                        else if keir.messages.isEmpty && keir.thread == "main" { KeirEmpty { draft = $0; composing = true } }
+                        else if keir.messages.isEmpty && keir.thread == "main" {
+                            KeirStart(ticket: waitingTickets.first, draftEmpty: draftIsEmpty,
+                                      speak: { voice.stop(); composing = false; voiceMode = true },
+                                      suggest: suggestFollowUp)
+                        }
                         if keir.messages.isEmpty && keir.thread == "watches" { Text("When a watch is met, Keir reports it here.").font(.callout).foregroundStyle(OpsTheme.muted).padding(.top, 24) }
                         ForEach(keir.messages, id: \.["id"].string) { KeirMessage(message: $0).transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)) }
                         ForEach(keir.tasks.filter { $0["computer"] != .null }, id: \.["id"].string) { task in
@@ -148,6 +152,7 @@ struct KeirView: View {
         .sensoryFeedback(.warning, trigger: presence == .approval) { _, needed in needed }
         .onChange(of: keir.stopped) { _, stopped in if stopped { voice.stop() } }
         .onChange(of: spokenReplies) { _, enabled in if !enabled { voice.stopSpeaking() } }
+        .onChange(of: draft) { _, text in if keir.thread == "main", !text.isEmpty { keir.holdRestore() } }
         .onChange(of: voice.transcript) { _, text in
             draft = [voiceDraft, text].filter { !$0.isEmpty }.joined(separator: " ")
         }
@@ -324,6 +329,19 @@ struct KeirView: View {
         if keir.sending { return .thinking }
         return keir.working ? .working : .ready
     }
+    /// Tickets with no recorded Discord reply. Never offered in standalone mode,
+    /// which has no studio desk.
+    private var waitingTickets: [JSONValue] {
+        session.profile["mode"].string == "standalone" ? [] : KeirTicketFollowUp.waiting(in: ops.hub)
+    }
+    private var draftIsEmpty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// Fills the composer for the owner to edit. It never sends, and never
+    /// replaces something already typed.
+    private func suggestFollowUp(_ ticket: JSONValue) {
+        guard draftIsEmpty else { return }
+        draft = KeirTicketFollowUp.prompt(for: ticket)
+        composing = true
+    }
     private var stopsInstead: Bool { keir.working && attachments.items.isEmpty && draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     @ViewBuilder private var modelPicker: some View {
         if keir.controls["supported"].bool {
@@ -353,6 +371,7 @@ struct KeirView: View {
         HStack(spacing: 12) {
             modelPicker
             Spacer(minLength: 4)
+            KeirTicketMenu(tickets: waitingTickets, draftEmpty: draftIsEmpty, suggest: suggestFollowUp)
             if !keir.live.isEmpty || !keir.backgroundTasks.isEmpty {
                 Button { router.tab = .activity } label: {
                     Label(AttentionCenter.shared.count > 0 ? AttentionCenter.shared.shortSummary : "\(keir.live.count + keir.backgroundTasks.count) tasks", systemImage: AttentionCenter.shared.count > 0 ? "hand.raised" : "list.bullet")
@@ -402,25 +421,6 @@ struct KeirView: View {
         .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(OpsTheme.hairline))
         .padding(.horizontal, 12).padding(.bottom, 8)
         }
-    }
-}
-
-private struct KeirEmpty: View {
-    let pick: (String) -> Void
-    private let prompts = ["What needs my attention right now?", "How did the last turn go?", "Which PRs are waiting on me?", "Promote development to production"]
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Keir").font(.opsHero).tracking(-1)
-            Text("Owner channel. Anything you ask here carries your authority, the same as a DM.").font(.callout).foregroundStyle(OpsTheme.muted)
-            VStack(spacing: 0) {
-                ForEach(prompts, id: \.self) { prompt in
-                    Button { pick(prompt) } label: {
-                        HStack { Text(prompt).font(.callout); Spacer(); Image(systemName: "arrow.up.left").font(.caption) }.padding(.vertical, 12)
-                    }.buttonStyle(.plain)
-                    Hairline()
-                }
-            }
-        }.padding(.top, 24)
     }
 }
 

@@ -92,7 +92,22 @@ import LakesideCore
     @Published var controls: JSONValue = .null
     @Published var controlling = false
     private var generation = UUID()
+
+    /// Which account's last conversation to reopen. See `KeirResume`.
+    var resume: KeirResume
+    private(set) var resumeScope: String?
+    private var restoredScope: String?
+    /// True once the owner, or a notification they opened, picked a thread.
+    /// A late restore must never override that choice.
+    private var threadChosen = false
+    /// The owner started typing on the main thread; moving them would hide it.
+    private var restoreHeld = false
+    func holdRestore() { restoreHeld = true }
+
+    init(resume: KeirResume = KeirResume()) { self.resume = resume }
+
     func reset() {
+        resume.clear(); resumeScope = nil; restoredScope = nil; threadChosen = false; restoreHeld = false
         generation = UUID(); messages = []; tasks = []; backgroundTasks = []; questions = []; team = .null
         threads = []; thread = "main"; connected = false; working = false; sending = false; queued = 0
         models = []; modelSelection = "auto"; selectingModel = false; controls = .null; controlling = false
@@ -222,11 +237,52 @@ import LakesideCore
         } catch { if generation == epoch { self.error = error.displayMessage }; return false }
     }
 
-    /// Switches the visible thread; the connection loop restarts on the new one.
+    /// Switches the visible thread because the owner (or a notification they
+    /// opened) asked for it; the connection loop restarts on the new one.
     func select(_ id: String) {
-        guard id != thread else { return }
+        threadChosen = true
+        guard id != thread else { persistThread(); return }
+        switchThread(id)
+        persistThread()
+    }
+    private func switchThread(_ id: String) {
         steeringTask = nil; sendMode = "new"; modelSelection = "auto"
         connected = false; models = []; controls = .null; thread = id; questions = []; messages = []; tasks = []; cursor = 0; version = ""; queued = 0; working = false
+    }
+
+    /// Binds the store to the signed-in account. Until this is known nothing is
+    /// saved or restored.
+    func bindAccount(_ scope: String?) {
+        guard scope != resumeScope else { return }
+        resumeScope = scope; restoredScope = nil
+        if scope != nil, threadChosen { persistThread() }
+    }
+    private func persistThread() {
+        guard let scope = resumeScope else { return }
+        let system = threads.first { $0["id"].string == thread }?["system"].bool ?? false
+        if thread == "main" || thread == "watches" || system { resume.clear() } else { resume.save(thread, scope: scope) }
+    }
+
+    /// Reopens the last private conversation after a cold start. The saved id is
+    /// checked against the live thread listing, and every step after the network
+    /// read re-checks that nothing changed: the owner picked a thread, the
+    /// account changed, or the owner signed out. `listing` exists for tests.
+    func resumeLastThread(_ session: AppSession, listing: (@MainActor () async -> [JSONValue]?)? = nil) async {
+        guard let scope = resumeScope, restoredScope != scope else { return }
+        guard !threadChosen, !restoreHeld, thread == "main" else { restoredScope = scope; return }
+        guard let saved = resume.saved(for: scope) else {
+            resume.clear()   // nothing for this account; never keep another account's entry
+            restoredScope = scope; return
+        }
+        let epoch = generation
+        let list: [JSONValue]?
+        if let listing { list = await listing() } else { list = await fetchThreads(session) }
+        // A failed read keeps the saved id and leaves the next attempt open.
+        guard let list else { return }
+        guard generation == epoch, resumeScope == scope, !threadChosen, !restoreHeld, thread == "main" else { return }
+        restoredScope = scope
+        threads = list
+        if KeirResume.legitimate(saved, in: list) { switchThread(saved) } else { resume.clear() }
     }
     func loadModels(_ session: AppSession) async {
         let selected = thread, epoch = generation
@@ -254,9 +310,14 @@ import LakesideCore
     }
     var modelLabel: String { models.first { $0["id"].string == modelSelection }?["label"].string ?? "Auto" }
 
-    func loadThreads(_ session: AppSession) async {
+    /// The thread listing, or nil when it could not be read or the account changed meanwhile.
+    private func fetchThreads(_ session: AppSession) async -> [JSONValue]? {
         let epoch = generation
-        if let list = try? await session.get("/api/keir/app/threads"), generation == epoch { threads = list["threads"].array }
+        guard let list = try? await session.get("/api/keir/app/threads"), generation == epoch else { return nil }
+        return list["threads"].array
+    }
+    func loadThreads(_ session: AppSession) async {
+        if let list = await fetchThreads(session) { threads = list }
     }
     func newThread(_ title: String, _ session: AppSession) async {
         let epoch = generation

@@ -114,6 +114,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         func thread(after: Int) -> [String: Any] {
             lock.lock(); defer { lock.unlock() }
             var view: [String: Any] = ["cursor": messages.count, "version": "v\(messages.count)-\(choiceState)", "messages": messages.filter { ($0["seq"] as? Int ?? 0) > after }, "tasks": [] as [Any], "working": false]
+            if ProcessInfo.processInfo.arguments.contains("--uitest-empty-keir") { view["messages"] = [] as [Any]; view["cursor"] = 0 }
             if ProcessInfo.processInfo.arguments.contains("--uitest-rich-controls") {
                 view["tasks"] = [["id": "abcdef012345", "title": "Investigate payroll", "state": "running"], ["id": "abcdef012346", "title": "Check technology upgrades", "state": "running"]]
                 view["working"] = true
@@ -551,6 +552,8 @@ enum KeirAgentFixtures {
             let main: [String: Any] = ["id": "main", "title": "Keir", "system": false, "at": 1792020110000.0, "preview": "Two PRs are waiting on you: #201 and #202.", "working": false]
             let watches: [String: Any] = ["id": "watches", "title": "Watches", "system": true, "at": 0, "working": false]
             let side: [String: Any] = ["id": "c0ffee00", "title": "Bond market", "system": false, "at": 1792010000000.0, "preview": "Spread is back inside the band.", "working": false]
+            // Simulates a conversation that was archived elsewhere between launches.
+            if ProcessInfo.processInfo.arguments.contains("--uitest-resume-archived") { return ["threads": [main, watches]] }
             return ["threads": [main, side, watches]]
         case "/api/keir/app/work":
             let now = Date().timeIntervalSince1970 * 1000

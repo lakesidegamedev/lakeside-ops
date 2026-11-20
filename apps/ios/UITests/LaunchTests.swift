@@ -691,4 +691,101 @@ final class LaunchTests: XCTestCase {
         capture(app, "Exact decision scope in Activity")
     }
 
+
+    // MARK: Personal start and resume
+
+    private func composer(_ app: XCUIApplication) -> XCUIElement {
+        app.textFields["keir-composer"].exists ? app.textFields["keir-composer"] : app.textViews["keir-composer"]
+    }
+    private func waitForThreadTitle(_ app: XCUIApplication, _ title: String, file: StaticString = #filePath, line: UInt = #line) {
+        let button = app.buttons["keir-threads"]
+        XCTAssertTrue(button.waitForExistence(timeout: 15), file: file, line: line)
+        expectation(for: NSPredicate(format: "label CONTAINS %@", title), evaluatedWith: button)
+        waitForExpectations(timeout: 15)
+    }
+    private func launchFresh(_ extra: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"] + extra; app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Conversation"].waitForExistence(timeout: 15))
+        return app
+    }
+    private func openBondMarket(_ app: XCUIApplication) {
+        let threads = app.buttons["keir-threads"]
+        XCTAssertTrue(threads.waitForExistence(timeout: 10))
+        for _ in 0..<3 { if threads.isHittable { break }; sleep(1) }
+        threads.tap()
+        let row = find(app, "Bond market")
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        waitForThreadTitle(app, "Bond market")
+    }
+
+    func testKeirReopensTheLastPrivateConversationAfterForceQuit() {
+        var app = launchFresh(["--uitest-reset-resume"])
+        waitForThreadTitle(app, "Keir")
+        openBondMarket(app)
+        sleep(1)
+        app.terminate()
+        app = launchFresh()
+        waitForThreadTitle(app, "Bond market")
+    }
+
+    func testResumeForgetsAThreadThatIsNoLongerListed() {
+        var app = launchFresh(["--uitest-reset-resume"])
+        openBondMarket(app)
+        sleep(1)
+        app.terminate()
+        app = launchFresh(["--uitest-resume-archived"])
+        waitForThreadTitle(app, "Keir")
+        XCTAssertFalse(app.buttons["keir-threads"].label.contains("Bond market"))
+        sleep(1)
+        app.terminate()
+        // The unlisted thread was forgotten, not just hidden: it stays gone when it is listed again.
+        app = launchFresh()
+        waitForThreadTitle(app, "Keir")
+        XCTAssertFalse(app.buttons["keir-threads"].label.contains("Bond market"))
+    }
+
+    func testEmptyConversationOffersVoiceAndAnEditableTicketFollowUp() {
+        let app = launchFresh(["--uitest-empty-keir", "--uitest-reset-resume"])
+        XCTAssertTrue(app.buttons["keir-start-voice"].waitForExistence(timeout: 15))
+        let ticket = app.buttons["keir-start-ticket"]
+        XCTAssertTrue(ticket.waitForExistence(timeout: 15), "a ticket with no recorded reply is offered")
+        XCTAssertTrue(ticket.label.contains("1001"))
+        XCTAssertTrue(find(app, "A reply may still have gone out elsewhere").exists, "the wording claims only what the receipts show")
+        ticket.tap()
+        let box = composer(app)
+        XCTAssertTrue(box.waitForExistence(timeout: 5))
+        let draft = box.value as? String ?? ""
+        XCTAssertTrue(draft.contains("Ticket #1001"), "the suggestion lands in the composer: \(draft)")
+        XCTAssertTrue(draft.contains("Don't message the player"))
+        XCTAssertTrue(app.buttons["keir-start-voice"].exists, "nothing was sent")
+        app.buttons["keir-start-voice"].tap()
+        XCTAssertTrue(app.staticTexts["Keir voice"].waitForExistence(timeout: 5), "the invitation opens the existing voice mode")
+        app.buttons["End voice mode"].tap()
+    }
+
+    func testTicketSuggestionNeverReplacesATypedDraft() {
+        let app = launchFresh(["--uitest-empty-keir", "--uitest-reset-resume"])
+        let ticket = app.buttons["keir-start-ticket"]
+        XCTAssertTrue(ticket.waitForExistence(timeout: 15))
+        let box = composer(app)
+        XCTAssertTrue(box.waitForExistence(timeout: 5)); box.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { box.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap() }
+        app.typeText("My own words")
+        XCTAssertFalse(ticket.isEnabled, "a typed draft is protected")
+        XCTAssertEqual(composer(app).value as? String, "My own words")
+    }
+
+    func testTicketFollowUpStaysReachableInAConversationWithHistory() {
+        let app = launchFresh()
+        XCTAssertTrue(find(app, "How did the last turn go?").waitForExistence(timeout: 10))
+        let menu = app.buttons["keir-ticket-followup"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 15))
+        menu.tap()
+        let item = find(app, "#1001")
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
+        let draft = composer(app).value as? String ?? ""
+        XCTAssertTrue(draft.contains("Ticket #1001"))
+        XCTAssertTrue(find(app, "How did the last turn go?").exists, "nothing was sent")
+    }
+
 }
