@@ -29,6 +29,7 @@ const { registerFleetTools } = require("./fleet-tools");
 const { registerReportTools, buildReportServer } = require("./report-publish-server");
 const { createCompanyStore, registerCompanyTools } = require("./company-tools");
 const { createTrackerStore, registerTrackerTools } = require("./tracker-tools");
+const { registerSupportEvidenceTools } = require("./support-evidence");
 const { summarizeEntry } = require("../ollama-summarize");
 const fs = require("fs");
 const path = require("path");
@@ -475,6 +476,7 @@ async function main() {
     registerReportTools(server, auth);
     registerCompanyTools(server, { auth, store: companyStore });
     registerTrackerTools(server, { auth, store: trackerStore });
+    registerSupportEvidenceTools(server, { jsonResult });
 
     return server;
   }

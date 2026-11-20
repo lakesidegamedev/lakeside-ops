@@ -76,7 +76,9 @@ const ticketShape = (t) => ({
   supportRecentVisits: t.supportRecentVisits || [], description: t.description, reporter: t.reporter || t.discordDisplayName || t.discordUsername || null,
   images: t.imageUrls || [], tags: t.tags || [], messages: (t.messages || []).map((m) => (typeof m === "string" ? m : m.content || m.text)).filter(Boolean),
   statusHistory: t.statusHistory || [], createdAt: t.createdAt, updatedAt: t.updatedAt, fixSessionId: t.fixSessionId || null,
-  trackerItemId: t.trackerItemId || null, copyRefusals: t.copyRefusals || [], resolution: t.resolution || null, publicUpdates: t.publicUpdates || [], receiptUrl: t.category === "investigation" ? null : ticketPublicUrl(t.ticketNumber), notificationPolicy: { progressDeliveryDefault: false, receiptLinkKinds: ["opening", "resolution"] }, contextRequest: t.contextRequest || null,
+  trackerItemId: t.trackerItemId || null, copyRefusals: t.copyRefusals || [], resolution: t.resolution || null, publicUpdates: t.publicUpdates || [],
+  // Keir 11.1: what Discord stored for each evidence chart on a reply (ids and status only, no links).
+  evidenceDeliveries: (t.evidenceDeliveries || []).map((e) => ({ presentation: e.presentation, updateKey: e.updateKey, status: e.status, reason: e.receipt?.reason || null, messageId: e.receipt?.messageId || null, attachmentId: e.receipt?.attachmentId || null, at: e.receipt?.at || e.at || null })), receiptUrl: t.category === "investigation" ? null : ticketPublicUrl(t.ticketNumber), notificationPolicy: { progressDeliveryDefault: false, receiptLinkKinds: ["opening", "resolution"] }, contextRequest: t.contextRequest || null,
   intake: t.intake ? {
     cardMessageId: t.intake.cardMessageId || null,
     receiptUrl: t.intake.receiptUrl || null,
@@ -262,6 +264,7 @@ async function main() {
       {
         number: z.number().int(),
         status: z.enum(["resolved", "closed"]).optional().default("resolved"),
+        ticket_only: z.boolean().optional().describe("Keep the detailed resolution in the private ticket conversation."),
         message: z.string().min(1).max(5000).describe("plain-language summary the player can understand"),
         actions: z.array(z.string().min(1).max(500)).max(12).optional().default([]).describe("specific player-facing actions completed"),
         followUp: z.string().max(2000).optional().describe("what the player should do next, if anything"),
@@ -272,7 +275,7 @@ async function main() {
           evidence: z.string().min(1).max(1000).describe("Evidence for resolution credit, such as a job, fix or verified answer"),
         }).optional().describe("Credit the resolver when closing on its behalf. Existing credit is preserved when omitted."),
       },
-      async ({ number, status, message, actions, followUp, source, attribution }) => {
+      async ({ number, status, message, actions, followUp, source, attribution, ticket_only }) => {
         if (!auth || auth.scopes?.write !== true) return errorResult("write scope required — this token is read-only");
         const key = { ticketNumber: number };
         const existing = await Tickets.findOne(key);
@@ -298,13 +301,19 @@ async function main() {
           return jsonResult({ ok: true, kind: "ticket", number, status, receipt: prior, receiptKept: true, notification: { status: "not_requested", reason: "the player already has the resolution receipt" } });
         }
         const proposed = normalizeResolution({ message, actions, followUp, source }, { by: auth.name || "agent", now });
-        const receipt = nextResolutionVersion(existing.resolution, proposed);
+        const privateReply = require("../ticket-private-reply");
+        const narrow = privateReply.isNarrowed({ ticket: existing, ticketOnly: ticket_only });
+        const deliveryReceipt = nextResolutionVersion(existing.resolution, proposed);
+        const receipt = narrow
+          ? { ...deliveryReceipt, message: privateReply.genericMessage("resolution"), actions: [], followUp: null }
+          : deliveryReceipt;
         const sameResolution = prior && prior.receiptId === receipt.receiptId && existing.status === status;
         const update = {
           $set: {
             status,
             updatedAt: now,
             resolution: receipt,
+            ...(narrow ? { "privateEvidence.at": existing.privateEvidence?.at || now } : {}),
             ...(status === "closed" ? { closedAt: now, closedBy: auth.name || "agent" } : { resolvedAt: now, resolvedBy: auth.name || "agent" }),
           },
         };
@@ -355,7 +364,7 @@ async function main() {
           update,
           correctionOptions
         );
-        const notification = await maybePostTicketResolution(db, { ticketNumber: number, resolution: receipt, by: auth.name || "agent" });
+        const notification = await maybePostTicketResolution(db, { ticketNumber: number, resolution: deliveryReceipt, by: auth.name || "agent" });
         const refreshed = await Tickets.findOne(key);
         return jsonResult({
           ok: true,
@@ -438,10 +447,14 @@ async function main() {
         number: z.number().int(),
         update_kind: z.enum(["development", "heal", "production", "progress", "context"]).default("progress"),
         delivery_mode: z.enum(["card", "reply"]).optional().default("reply"),
+        ticket_only: z.boolean().optional().describe("Narrowing only. The exact text goes to the reporter's channel; the public receipt gets generic status text. Set by Keir's broker after a private reporter read. A server without this field drops it silently, so callers must check the schema first. Once used, every later update on the ticket is ticket-only."),
         message: z.string().min(1).max(1400),
         deliver: z.boolean().optional().default(false),
+        evidence: z.string().regex(/^[a-f0-9]{32}$/).optional().describe("Set by Keir's broker only: a chart or report link staged for this ticket's reply. Verified against the ticket and the evidence store; attached to the reply's first message."),
+        update_key: z.string().regex(/^keir-[a-f0-9]{24}$/).optional().describe("Set by Keir's broker only: a stable key for an answer bound to staged evidence, so a retried call reuses the same update instead of posting twice."),
+        reply_to: z.string().regex(/^\d{16,20}$/).optional().describe("Set by Keir's broker only: the request this reply answers. Used only after it is verified as a human message in this ticket's channel."),
       },
-      async ({ kind, number, update_kind, message: rawMessage, deliver, delivery_mode }) => {
+      async ({ kind, number, update_kind, message: rawMessage, deliver, delivery_mode, evidence, ticket_only, update_key, reply_to }) => {
         if (!auth || auth.scopes?.write !== true) return errorResult("write scope required — this token is read-only");
         // Discord and the receipt show text literally, so an escaped "&#39;" must never be stored.
         const message = decodeHtmlEntities(rawMessage);
@@ -465,19 +478,29 @@ async function main() {
           }
         }
         const now = new Date();
-        const updateKey = `${update_kind}:${Date.now()}`;
+        // Keir 11.1: stable for a broker-staged evidence answer, fresh otherwise.
+        const updateKey = require("../ticket-evidence-attach").supportUpdateKey(update_kind, update_key);
+        // A staged private chart implies ticket-only even without the option.
+        const narrow = require("../ticket-private-reply").isNarrowed({ ticket: existing, ticketOnly: ticket_only === true || Boolean(evidence) });
         const receiptUrl = existing.category === "investigation" ? null : ticketPublicUrl(number);
         // Delivered updates are inserted by maybePostTicketChannelUpdate, which
         // claims the key itself. Pre-inserting a "pending" entry here made it
         // read our own claim as a concurrent send and skip the post.
         // "not_requested" stays out of the retry loop, which re-sends "skipped".
         if (!deliver) {
+          const exact = String(message).trim().slice(0, 1400);
+          if (narrow) {
+            const pr = require("../ticket-private-reply");
+            await pr.savePrivateReply(db, existing, { key: updateKey, kind: update_kind, text: exact, deliveryMode: delivery_mode, now });
+            await pr.markTicket(col, existing, now);
+          }
           await col.updateOne(key, {
             $push: {
               publicUpdates: {
                 key: updateKey,
                 kind: update_kind,
-                message: String(message).trim().slice(0, 1400),
+                message: narrow ? require("../ticket-private-reply").genericMessage(update_kind) : exact,
+                ...(narrow ? { ticketOnly: true } : {}),
                 at: now,
                 receiptUrl: receiptUrl || null,
                 delivery: { status: "not_requested" },
@@ -492,9 +515,12 @@ async function main() {
             ticketNumber: number,
             key: updateKey,
             kind: update_kind,
+            ...(narrow ? { ticketOnly: true } : {}),
             deliveryMode: delivery_mode,
             message,
             receiptUrl,
+            ...(evidence ? { evidence } : {}),
+            ...(reply_to && delivery_mode === "reply" ? { replyTo: reply_to } : {}),
           });
         }
         return jsonResult({
@@ -504,6 +530,7 @@ async function main() {
           updateKey,
           update_kind,
           delivered: deliver,
+          ...(narrow ? { ticketOnly: true } : {}),
           delivery: deliveryResult,
         });
       });
@@ -576,6 +603,12 @@ async function main() {
     findMember: findGuildMemberByUsername,
     verifySession: createSessionVerifier(),
     checkStanding: createStandingCheck(db),
+  });
+  // Keir 11.1 evidence report and tracker pages (lakesidegames.net/support/evidence/<id>, proxied by Caddy).
+  require("./evidence-pages").registerEvidencePages(app, {
+    verifySession: createSessionVerifier(),
+    ...require("./evidence-pages").createDbLookups(db),
+    staffDiscordIds: (process.env.EVIDENCE_STAFF_DISCORD_IDS || [process.env.KEIR_OWNER_ID, process.env.KEIR_SUPPORT_DELEGATES].filter(Boolean).join(",")).split(",").map((s) => s.trim()).filter((s) => /^\d{5,30}$/.test(s)),
   });
 }
 function jsonResult(o) { return { content: [{ type: "text", text: JSON.stringify(o, null, 2) }] }; }

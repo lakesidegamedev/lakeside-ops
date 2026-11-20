@@ -184,7 +184,8 @@ function publicTimeline(ticket) {
     add({
       label: publicUpdateLabel(kind),
       at: update.at || update.createdAt,
-      detail: update.message,
+      // A ticket-only update never shows its stored text on the public page.
+      detail: update.ticketOnly === true ? require("./ticket-private-reply").genericMessage(kind) : update.message,
       kind,
     });
   }

@@ -117,6 +117,14 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       }
       d.seen[key] = "ticket-control"; ledger.save(); drain(); return;
     }
+    // Keir 11.1: "no need to keep updating here you can close" from the owner or staff, addressed to Keir.
+    const stopUpdates = !historical && !summonTask && nTicket && role !== "player" && controlAddress ? require("./ticketpause").parseStopUpdates(controlText) : null;
+    if (stopUpdates) {
+      const key = `discord:${message.id}`;
+      if (d.seen[key]) return;
+      require("./ticketpause").applyStopUpdates(ledger, channel.id, nTicket, stopUpdates, s, now());
+      d.seen[key] = "ticket-stop-updates"; delete d.classify?.[message.id]; ledger.save(); drain(); return;
+    }
     if (nTicket && d.channels[channel.id]?.keirPaused) {
       d.seen[`discord:${message.id}`] = "owner-ticket-pause";
       delete d.classify?.[message.id]; ledger.save(); return;

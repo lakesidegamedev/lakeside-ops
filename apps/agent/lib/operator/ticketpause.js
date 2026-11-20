@@ -1,5 +1,9 @@
 "use strict";
+const { AsyncLocalStorage } = require("node:async_hooks");
 const { JOB_TERMINAL } = require("./machines");
+// The close exception lives only in this async scope: never on a job or the ledger, so a save, a reload or a parallel
+// request cannot carry it. It names the exact job and the exact permission receipt it was granted under.
+const closeScope = new AsyncLocalStorage();
 // An owner pause is authority, not a model's promise to check back later.
 const CLOSED = new Set(JOB_TERMINAL);
 function pauseFor(data, job) {
@@ -39,8 +43,48 @@ function setPause(ledger, channelId, ticket, paused, source, at) {
   ledger.audit(paused ? "ticket_paused" : "ticket_resumed", { ticket, channelId, actor: source.authorId, message: source.messageId });
   ledger.save();
 }
+// Keir 11.1: an owner can silence updates while permitting closure. A later status
+// post still went out. Settling a ticket and silencing updates are different asks. This recognises only a whole short
+// message that tells Keir to stop updating, optionally with permission to close. It is called only for an owner or staff
+// message addressed to Keir, so a player explaining or quoting such words never reaches it.
+const LEAD = "(?:(?:ok(?:ay)?|thanks?|thank you|hi|hey)[,.!\\s]+)*(?:please\\s+)?";
+const STOP = "(?:no need to (?:keep )?(?:updat\\w*|post\\w*|send\\w*|status)(?: updates?)?|no more (?:status )?updates?|(?:you can |please |do not |don'?t )?(?:stop|quit) (?:updating|posting updates|sending updates|the updates)|(?:do not|don'?t) (?:keep )?(?:updat\\w*|post\\w* updates?|send\\w* updates?))";
+const WHERE = "(?:\\s+(?:here|in here|in this ticket|on this ticket|on this|anymore|any more|any longer|for now|now|please|thanks|thank you))*";
+const CLOSE = "(?:you (?:can|may|could) (?:go ahead and )?(?:close|resolve)(?: (?:it|this|this ticket|the ticket|this one))?|feel free to (?:close|resolve)(?: (?:it|this|this ticket|the ticket))?|(?:go ahead and |please )?(?:close|resolve) (?:it|this|this ticket|the ticket)(?: (?:if|when) (?:you (?:want|like)|appropriate))?)";
+const STOP_RE = new RegExp(`^${LEAD}${STOP}${WHERE}(?:[\\s,.;:!-]+(?:and |so )?(${CLOSE})${WHERE})?[.!\\s]*$`, "i");
+function parseStopUpdates(text) {
+  const t = String(text || "").trim();
+  if (!t || t.length > 160 || /\?/.test(t)) return null;
+  const m = STOP_RE.exec(t);
+  return m ? { closePermission: Boolean(m[1]) } : null;
+}
+// Idempotent. A repeat message, or a replayed one, changes nothing. A later message that adds close permission to an
+// existing stop records only the permission.
+function applyStopUpdates(ledger, channelId, ticket, parsed, source, at) {
+  const data = ledger.data, existing = data.channels?.[channelId]?.keirPaused;
+  if (existing && existing.messageId === source.messageId) return false;
+  if (!existing) setPause(ledger, channelId, ticket, true, source, at);
+  const pause = data.channels[channelId].keirPaused;
+  if (!pause.stopUpdates) pause.stopUpdates = { by: source.authorId, messageId: source.messageId, at };
+  if (parsed.closePermission && !pause.closePermission) {
+    pause.closePermission = { by: source.authorId, messageId: source.messageId, at };
+    ledger.audit("ticket_close_permission", { ticket, channelId, actor: source.authorId, message: source.messageId });
+  }
+  ledger.save();
+  return !existing;
+}
+// Runs fn (the closer's authority read and support_resolve only) with the exception for this job and the pause's
+// current close-permission receipt. No permission on the pause means no scope, so the pause holds as usual.
+function runAsCloser(data, job, fn) {
+  const permission = pauseFor(data, job)?.closePermission;
+  if (!permission) return fn();
+  return closeScope.run({ jobId: job.id, receipt: permission.messageId }, fn);
+}
 function assertCanAct(data, job) {
   const pause = pauseFor(data, job);
+  // Only the deterministic closer, and only under explicit close permission, may resolve a silenced ticket.
+  const scope = closeScope.getStore();
+  if (pause && pause.closePermission && scope && scope.jobId === job.id && scope.receipt === pause.closePermission.messageId) return;
   if (pause) throw Object.assign(new Error(`Ticket ${pause.ticket} is paused by the owner. Stop until an explicit resume.`), { code: "TICKET_OWNER_PAUSED" });
 }
-module.exports = { pauseFor, setPause, assertCanAct };
+module.exports = { runAsCloser, pauseFor, setPause, assertCanAct, parseStopUpdates, applyStopUpdates };

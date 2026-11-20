@@ -14,8 +14,8 @@ function setup(over = {}) {
   const calls = [];
   const handler = over.call || (async () => ({ ok: true, id: "card-9", hits: [], delivery: { posted: true, delivery: { status: "posted" } } }));
   const mcp = {
-    servers: () => ["support", "ops-knowledge"],
-    list: async () => ["support_public_update", "support_resolve", "support_get", "code_search"].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })),
+    servers: () => over.servers || ["support", "ops-knowledge"],
+    list: async () => ["support_public_update", "support_resolve", "support_get", "code_search", ...(over.listed || [])].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })),
     call: async (...a) => { calls.push(a); return handler(...a); },
   };
   let clock = 10 * 3600000;

@@ -2363,6 +2363,56 @@ test("an owner telling Keir to stop talking pauses just that ticket without a re
   assert.equal(data.outbox.prior.suppressedByTakeover.ticket, 1556);
 });
 
+const STOP_WITH_CLOSE_PERMISSION = "no need to keep updating here you can close";
+test("owner telling Keir to stop updating silences the ticket, once, and keeps close permission", async () => {
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-9206" };
+  const job = running(f, { kind: "ticket", role: "owner", ticket: 9206, channelId: ch.id });
+  const data = f.ledger.data;
+  const { suppressOutbox } = require("../lib/operator/supporttakeover");
+  data.outbox.queued = { destination: `channel:${job.id}`, content: "Chemical market status" };
+  const g = createGateway({ ...f, drain() { for (const [k, e] of Object.entries(data.outbox)) suppressOutbox(f.ledger, k, e, 5000); } });
+  const m = f.msg(STOP_WITH_CLOSE_PERMISSION, "666666666666666801");
+  m.referenced_message = { author: { id: f.config.botId } };
+  g.ingest(ch, m);
+  assert.equal(job.state, "paused");
+  assert.equal(data.ticketPauses[9206].stopUpdates.messageId, m.id);
+  assert.equal(data.ticketPauses[9206].closePermission.by, f.config.ownerId);
+  assert.ok(data.outbox.queued.suppressedByTakeover, "queued status is suppressed");
+  await assert.rejects(f.broker.tool(job, "channel_reply", { message: "status" }), /paused/i);
+  // repeat and historical replay change nothing
+  const at = data.ticketPauses[9206].at, audits = JSON.stringify(data.ticketPauses[9206]);
+  g.ingest(ch, m);
+  g.ingest(ch, { ...m, id: "666666666666666802" }, { historical: true });
+  g.ingest(ch, { ...f.msg(STOP_WITH_CLOSE_PERMISSION, "666666666666666803"), referenced_message: m.referenced_message });
+  assert.equal(JSON.stringify(data.ticketPauses[9206]), audits);
+  assert.equal(data.ticketPauses[9206].at, at);
+});
+
+test("stop-updates wording without close permission silences but grants no close", () => {
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-9206" };
+  const job = running(f, { kind: "ticket", role: "owner", ticket: 9206, channelId: ch.id });
+  const g = createGateway(f);
+  g.ingest(ch, f.msg("Keir, please stop updating here", "666666666666666811"));
+  assert.equal(job.state, "paused");
+  assert.equal(f.ledger.data.ticketPauses[9206].closePermission, undefined);
+});
+
+test("stop-updates is ignored from players, unaddressed, questions and explanations", () => {
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-9206" };
+  const job = running(f, { kind: "ticket", role: "owner", ticket: 9206, channelId: ch.id });
+  const g = createGateway(f);
+  const player = "888888888888888888";
+  const aimed = (t, id, who) => ({ ...f.msg(t, id, who), mentions: [{ id: f.config.botId }] });
+  g.ingest(ch, aimed(STOP_WITH_CLOSE_PERMISSION, "666666666666666821", player));
+  g.ingest(ch, f.msg(STOP_WITH_CLOSE_PERMISSION, "666666666666666822"));
+  g.ingest(ch, aimed("is there no need to keep updating here?", "666666666666666823"));
+  g.ingest(ch, aimed("the market page says no need to keep updating prices, so I stopped updating", "666666666666666824"));
+  g.ingest(ch, aimed("no need to update the recipe here, close the loop on prices", "666666666666666825"));
+  g.ingest(ch, f.msg("Keir stop updating the chemical prices table", "666666666666666826"));
+  assert.equal(f.ledger.data.ticketPauses?.[9206], undefined);
+  assert.notEqual(job.state, "paused");
+});
+
 test("a newly adopted staff explanation waits for the staff hold instead of starting immediately", () => {
   const { pickForLanes } = require("../lib/operator/lanes");
   const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1556" }, g = createGateway(f);

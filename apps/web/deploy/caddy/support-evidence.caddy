@@ -1,0 +1,13 @@
+# Import in the player account site's block, alongside the support intake route.
+handle /support/evidence/* {
+	header {
+		Cache-Control "private, no-store"
+		Referrer-Policy "no-referrer"
+		X-Robots-Tag "noindex, nofollow"
+	}
+	@read_evidence method GET HEAD
+	route {
+		reverse_proxy @read_evidence 127.0.0.1:19735
+		respond 405
+	}
+}

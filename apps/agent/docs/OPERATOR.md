@@ -99,6 +99,16 @@ Main conversation and worker activations use `codex exec` on the owner's ChatGPT
 - Requeue a stuck task: stop the service, set the job `state` to `queued` and add an inbox note, start. Never edit a `started` effect without confirming the remote outcome.
 - Never remove `AHDGame/worktrees/keir-deps`; it is locked on purpose.
 
+## Evidence pages (11.1)
+
+`present_evidence` attaches a chart to Keir's next Discord answer and, for dense data or a tracker, writes a dated page that the support service serves at `/support/evidence/<id>` (apps/web/mcp/evidence-pages.js).
+
+- Off by default. Keir writes no page and posts no page link until `EVIDENCE_PUBLIC_BASE` in `/etc/keir-operator.env` names the plain https origin whose `/support/evidence/*` route is live (Caddy to the support service). Until then it answers with the inline chart, or in words, and refuses trackers with a reason the model passes on.
+- `EVIDENCE_PAGES_DIR` (default `/var/lib/lakeside-evidence`) must be the same directory for `keir-operator.service` and `ahd-support-mcp.service`. Keir creates it on first use; both units run as root.
+- Audience. Every page opened from a ticket, trackers and one-off reports alike, is private to that ticket, even for public market data. Keir pins it at creation to the ticket's original reporter from the support service's own ticket row (`support_get`: ticket `createdAt` and the character in `reporter.profileUrl`), never from the actor or model arguments. No linked reporter character means no page. Only a one-off market report from a public ping is a public page; its files carry no ticket, reporter, task or channel.
+- Viewing. The support service rechecks on every request that the live ticket is still the pinned one, the viewer is its current reporter, and the pinned character belongs to the viewer's own account. Staff Discord ids (`EVIDENCE_STAFF_DISCORD_IDS`, default the owner and support delegates) are a separate path.
+- Files are written once, atomically, and never rewritten. A tracker takes no snapshot at or after the deadline in its `meta.json`, whatever the ledger says. An archive whose `archived.json` write fails stays ended and pending (`archivePending` on the presentation) and the 60 s sweep retries it. Archived snapshots remain available under their original access rules.
+
 Runbook and incident history: ops-knowledge `keir-operator-runbook`, `postmortem-2026-10-11-keir-operator-unreliable`.
 
 ## Conversation archive

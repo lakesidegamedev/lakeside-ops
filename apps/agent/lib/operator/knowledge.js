@@ -45,12 +45,35 @@ function supported(n, evidence) {
   });
 }
 
-/** Figures in a draft that nothing read this activation supports. */
-function unsupportedNumbers(text, evidence) {
+const DOWN = /\b(?:fell|fall|falls|fallen|falling|drop|drops|dropped|dropping|decline[ds]?|declining|decrease[ds]?|decreasing|down|lower|shrank|shrunk|shrink(?:s|ing)?|contract(?:ed|s|ion)?|slid|slipped|dipped|lost|loss)\b/i;
+const UP = /\b(?:rose|rise[sn]?|rising|grew|grow[sn]?|growth|increase[ds]?|increasing|up|higher|gain(?:ed|s)?|climbed|jumped)\b/i;
+const sentenceAround = (text, at) => {
+  const start = Math.max(text.lastIndexOf(".", at - 1) + 1, text.lastIndexOf("\n", at - 1) + 1);
+  const rest = text.slice(at).search(/[.\n](?:\s|$)/);
+  return text.slice(start, rest < 0 ? text.length : at + rest);
+};
+/** A written percentage backed by a typed signed fact: same size (rounding allowed), and a decrease reads as one. */
+function percentFact(n, text, facts) {
+  const at = text.indexOf(n.raw);
+  const tail = text.slice(at + n.raw.length, at + n.raw.length + 12);
+  if (!n.percent && !/^\s*(?:percent|per cent|percentage points?)\b/i.test(tail)) return false;
+  if (n.value < 0) return false;
+  const near = sentenceAround(text, at);
+  return facts.some((f) => {
+    if (f.kind !== "percent" || !(f.value < 0)) return false;           // positive figures already match the raw read
+    if (Math.abs(Math.abs(f.value) - n.value) / Math.max(Math.abs(f.value), 1e-9) > 0.01) return false;
+    return DOWN.test(near) && !UP.test(near);                            // never turn a decrease into an increase
+  });
+}
+
+/** Figures in a draft that nothing read this activation supports. `facts` are typed facts from verified reads (typedfacts.js). */
+function unsupportedNumbers(text, evidence, facts = []) {
   const t = String(text || "");
+  const amounts = facts.filter((f) => f.kind === "amount").map((f) => f.value);
+  const pool = amounts.length ? [...evidence, ...amounts] : evidence;
   // A percentage of a fraction that was read ("6.7%" for operatingMargin 0.067) is that figure
   // (KBX4 2026-11-02: refused, so the reply was reworded around a number the player needed).
-  return numbersIn(t).filter((n) => checkable(n, t) && !supported(n, evidence) && !(n.percent && supported({ ...n, value: n.value / 100 }, evidence))).map((n) => n.raw);
+  return numbersIn(t).filter((n) => checkable(n, t) && !supported(n, pool) && !(n.percent && supported({ ...n, value: n.value / 100 }, pool)) && !percentFact(n, t, facts)).map((n) => n.raw);
 }
 
 /** A model-registered calculation over evidence numbers; returns the result. */
