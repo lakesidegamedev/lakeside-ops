@@ -1038,7 +1038,10 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["add-attachment"].waitForExistence(timeout: 15))
         capture(app, "Keir personal iPhone conversation")
         // Ticket drafts sit in the composer's "+" menu once there is history.
-        chooseFromMenu(app, "add-attachment", "Ticket follow-ups")
+        // The submenu tap can be dropped while the "+" menu is still animating
+        // (CI log: the entry was tapped and #1001 never appeared). Choose again
+        // until the tickets are listed.
+        chooseFromMenu(app, "add-attachment", "Ticket follow-ups", until: { find(app, "#1001", timeout: 1).exists })
         let item = find(app, "#1001")
         XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
         let draft = composer(app).value as? String ?? ""
