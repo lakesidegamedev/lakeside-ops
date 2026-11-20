@@ -15,13 +15,13 @@ struct SessionGate<Content: View>: View {
                         BrandHero(surface: session.surface)
                         if let error = session.error { FailureBanner(message: error) }
                         Button { login = true } label: {
-                            HStack { Text(session.surface == .ops && session.surface.host != "ops.lakesidegames.net" ? "Sign in to Keir" : "Sign in to Lakeside").fontWeight(.semibold); Spacer(); Image(systemName: "arrow.right") }
+                            HStack { Text(session.surface == .ops ? "Sign in to Keir" : "Sign in to Lakeside").fontWeight(.semibold); Spacer(); Image(systemName: "arrow.right") }
                                 .padding(18).foregroundStyle(Brand.onAccent).background(Brand.sky, in: RoundedRectangle(cornerRadius: 16))
                         }.accessibilityIdentifier("sign-in")
                         VStack(alignment: .leading, spacing: 14) {
-                            Label(session.surface == .ask ? "Answers grounded in live code" : session.surface == .hub ? "One assistant, persistent memory" : "Live service health", systemImage: session.surface == .ask ? "curlybraces" : "waveform.path.ecg")
-                            Label(session.surface == .ask ? "Citations you can follow" : "Agent conversations and controls", systemImage: session.surface == .ask ? "doc.text" : "terminal")
-                            Label(session.surface == .ask ? "Your game's current state" : "Your projects, wherever you are", systemImage: session.surface == .ask ? "bolt" : "folder")
+                            Label(session.surface == .ask ? "Answers grounded in live code" : session.surface == .hub ? "One assistant, persistent memory" : "A conversation with Keir", systemImage: session.surface == .ask ? "curlybraces" : "waveform.path.ecg")
+                            Label(session.surface == .ask ? "Citations you can follow" : "Tickets, decisions and work in one inbox", systemImage: session.surface == .ask ? "doc.text" : "terminal")
+                            Label(session.surface == .ask ? "Your game's current state" : "Studio operations, wherever you are", systemImage: session.surface == .ask ? "bolt" : "folder")
                         }.font(.callout).foregroundStyle(.secondary)
                         Text(session.surface == .ops && session.surface.host != "ops.lakesidegames.net" ? "Use the owner account for your Keir installation." : "Use your existing Lakeside account.").font(.footnote).foregroundStyle(.secondary)
                     }.padding(28).padding(.top, 28).frame(maxWidth: 560)

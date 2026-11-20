@@ -21,30 +21,51 @@ struct OpsRoot: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var settings = false
 
-    var body: some View {
+    private var standalone: Bool { session.profile["mode"].string == "standalone" }
+
+    /// Conversation is the landing place. The inbox holds tickets, decisions and
+    /// work that needs a person. Ops holds the studio's systems, the briefing and
+    /// goals. On iPad (iOS 18 and later) the same three become a sidebar.
+    private var tabs: some View {
         TabView(selection: $router.tab) {
             NavigationStack { KeirView(keir: OpsServices.shared.keir).toolbar { settingsButton } }
-                .tabItem { Label("Keir", systemImage: "bubble.left.and.text.bubble.right") }.tag(OpsTab.keir)
-            if session.profile["mode"].string != "standalone" {
-            NavigationStack { FeedView().toolbar { settingsButton } }
-                .tabItem { Label("Feed", systemImage: "sparkles.rectangle.stack") }.tag(OpsTab.feed)
-            NavigationStack { GoalsView().toolbar { ToolbarItem(placement: .topBarLeading) { settingsButton } } }
-                .tabItem { Label("Goals", systemImage: "flag") }.tag(OpsTab.goals)
-            }
+                .tabItem { Label("Conversation", systemImage: "bubble.left.and.text.bubble.right") }.tag(OpsTab.keir)
             NavigationStack { ActivityView().toolbar { settingsButton } }
-                .tabItem { Label("Activity", systemImage: "list.bullet.rectangle") }.tag(OpsTab.activity)
+                .tabItem { Label("Inbox", systemImage: "tray.full") }.tag(OpsTab.activity)
                 .badge(ops.attention)
-            if session.profile["mode"].string != "standalone" {
-            NavigationStack { OpsHub().toolbar { settingsButton } }
+            if !standalone {
+                NavigationStack(path: $router.studioPath) {
+                    OpsHub().toolbar { settingsButton }
+                        .navigationDestination(for: StudioRoute.self) { route in
+                            switch route {
+                            case .feed: FeedView()
+                            case .goals: GoalsView()
+                            }
+                        }
+                }
                 .tabItem { Label("Ops", systemImage: "square.grid.2x2") }.tag(OpsTab.ops)
             }
         }
+    }
+
+    @ViewBuilder private var adaptiveTabs: some View {
+        if #available(iOS 18.0, *) { tabs.tabViewStyle(.sidebarAdaptable) } else { tabs }
+    }
+
+    var body: some View {
+        adaptiveTabs
         .tint(OpsTheme.sky)
         .toolbarBackground(.bar, for: .tabBar).toolbarBackground(.visible, for: .tabBar)
         .onOpenURL { url in
             guard url.scheme == "lakesideops", url.host == "keir" else { return }
             let view = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value
-            router.tab = view == "activity" ? .activity : view == "ops" ? .ops : .keir
+            switch view {
+            case "activity", "inbox": router.tab = .activity
+            case "ops": router.tab = .ops
+            case "feed": router.open(.feed)
+            case "goals": router.open(.goals)
+            default: router.tab = .keir
+            }
             router.openKeirControls = view == "controls"
             router.openKeirVoice = view == "voice"
         }

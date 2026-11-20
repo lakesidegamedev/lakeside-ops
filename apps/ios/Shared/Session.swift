@@ -5,7 +5,7 @@ import LakesideCore
 
 enum Surface {
     case ask, ops, hub
-    var title: String { self == .ask ? "Lakeside Ask" : "Lakeside Ops" }
+    var title: String { self == .ask ? "Lakeside Ask" : "Keir" }
     var host: String { base.host ?? "invalid.invalid" }
     /// Endpoint.url rejects anything that is not https, so the unreachable
     /// fallback fails closed instead of crashing.

@@ -28,6 +28,7 @@ struct KeirView: View {
     private var content: some View {
         VStack(spacing: 0) {
             runtimeStrip
+            contextBar
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
@@ -61,6 +62,7 @@ struct KeirView: View {
                         }
                         Color.clear.frame(height: 1).id("end")
                     }.padding(.horizontal, 16).padding(.vertical, 16)
+                        .frame(maxWidth: 760, alignment: .leading).frame(maxWidth: .infinity)
                         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: keir.messages.count)
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -200,6 +202,45 @@ struct KeirView: View {
                 .accessibilityIdentifier("keir-yolo-banner")
             }
         }.padding(.horizontal, 18).padding(.vertical, presence == .ready && !keir.yolo ? 0 : 8)
+    }
+
+    /// Where the conversation points to the rest of the app. Every count comes
+    /// from data the app already loads: the shared attention model, the open
+    /// ticket count from the hub, and Keir's live tasks. Nothing is shown at zero.
+    private struct ContextChip: Identifiable { let id: String; let icon: String; let text: String; let tone: Color; let filter: String }
+    private var contextChips: [ContextChip] {
+        var chips: [ContextChip] = []
+        let waiting = AttentionCenter.shared.count
+        if waiting > 0 { chips.append(ContextChip(id: "attention", icon: "hand.raised.fill", text: "\(waiting) need you", tone: OpsTheme.warn, filter: "all")) }
+        let tickets = Int(ops.kpis["openTickets"].number ?? 0)
+        if session.profile["mode"].string != "standalone", tickets > 0 {
+            chips.append(ContextChip(id: "tickets", icon: "tray.full", text: tickets == 1 ? "1 open ticket" : "\(tickets) open tickets", tone: OpsTheme.sky, filter: "all"))
+        }
+        let running = keir.live.count
+        if running > 0 { chips.append(ContextChip(id: "running", icon: "gearshape.2.fill", text: running == 1 ? "1 running" : "\(running) running", tone: OpsTheme.mint, filter: "working")) }
+        return chips
+    }
+
+    @ViewBuilder private var contextBar: some View {
+        let chips = contextChips
+        if !chips.isEmpty && keir.thread == "main" {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(chips) { chip in
+                        Button { router.activityFilter = chip.filter; router.tab = .activity } label: {
+                            Label(chip.text, systemImage: chip.icon)
+                                .font(.footnote.weight(.semibold))
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .background(chip.tone.opacity(0.14), in: Capsule())
+                                .foregroundStyle(chip.tone)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(chip.text). Open inbox")
+                        .accessibilityIdentifier("keir-chip-\(chip.id)")
+                    }
+                }.padding(.horizontal, 16).padding(.vertical, 6)
+            }.accessibilityIdentifier("keir-context-bar")
+        }
     }
 
     private func handleShortcut() {
