@@ -318,7 +318,7 @@ async function buildHubState({ now = Date.now(), kanban = null, run = execFileAs
 
   const [prsRaw, support, incidents] = await Promise.all([
     cached("prs", 60000, () => keirPullRequests(run), backgroundSources ? { initial: null } : {}),
-    cached("support", 60000, () => mcpCall("support", "support_list", { kind: "ticket", limit: 60 }, { fetchImpl, configPath: paths.mcp }), backgroundSources ? { initial: null } : {}),
+    cached("support", 60000, () => mcpCall("support", "support_list", { kind: "ticket", limit: 60, includeReplyState: true }, { fetchImpl, configPath: paths.mcp }), backgroundSources ? { initial: null } : {}),
     cached("incidents", 60000, () => incidentList({ fetchImpl, configPath: paths.mcp }), backgroundSources ? { initial: null } : {}),
   ]);
   const prs = Array.isArray(prsRaw) ? prsRaw.map((p) => {
@@ -357,7 +357,7 @@ async function buildHubState({ now = Date.now(), kanban = null, run = execFileAs
     const card = d.statusCards?.[t.number];
     const tagJob = tj.find((j) => j.tags);
     return {
-      number: t.number, title: t.title, status: t.status, category: t.category, mergedInto: t.mergedInto ?? null, hasImage: t.hasImage, createdAt: Date.parse(t.createdAt) || null,
+      number: t.number, title: t.title, status: t.status, category: t.category, replyState: t.replyState || null, mergedInto: t.mergedInto ?? null, hasImage: t.hasImage, createdAt: Date.parse(t.createdAt) || null,
       card: card ? { status: card.status || "", at: card.at || null, items: (card.items || []).map((i) => ({ name: i.name, stage: i.stage, blocked: Boolean(i.blocked), note: i.note || "" })) } : null,
       active: active ? { id: active.id, state: active.state, runner: active.provider?.runner || null, via: active.provider?.via || "node", wakeAt: active.wakeAt || null } : null,
       prs: prs.filter((p) => p.ticket === t.number).map((p) => p.number),

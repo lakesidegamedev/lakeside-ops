@@ -12,6 +12,7 @@ const { createServer } = require("../packages/mcp-server");
 const store = require("../knowledge-store");
 const tokens = require("../agent-tokens");
 const merge = require("./support-tracker");
+const { ticketReplyState } = require("../ticket-reply-status");
 const { syncTerminalTicketTracker } = require("./support-terminal");
 const { maybePostOpsFindings, maybePostOpsHealRequest, maybePostTicketResolution, maybePostTicketChannelUpdate, decodeHtmlEntities, ticketPublicUrl } = require("../ticket-ship-notify");
 const {
@@ -139,13 +140,14 @@ async function main() {
 
     server.tool("support_list", "List support tickets and/or player suggestions, filterable by status/tag/category. Returns summaries (number, title, status, tags, whether it has a screenshot).",
       { kind: z.enum(["ticket", "suggestion", "all"]).optional().default("all"), status: z.string().optional(), tag: z.string().optional(),
+        includeReplyState: z.boolean().optional().describe("Include the first recorded Discord reply in the current ticket channel."),
         category: z.string().optional(), openOnly: z.boolean().optional().default(false), limit: z.number().int().min(1).max(60).optional().default(25) },
-      async ({ kind, status, tag, category, openOnly, limit }) => {
+      async ({ kind, status, tag, category, openOnly, includeReplyState, limit }) => {
         const out = [];
         const q = {}; if (status) q.status = status; if (tag) q.tags = tag; if (category) q.category = category;
         if (kind !== "suggestion") {
           const tq = { ...q, category: category && category !== "investigation" ? category : { $ne: "investigation" } }; if (category === "investigation") tq._id = { $exists: false }; if (openOnly) Object.assign(tq, OPEN_TICKET);
-          (await Tickets.find(tq).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: s.kind, number: s.number, title: s.title, status: s.status, category: s.category, tags: s.tags, hasImage: s.images.length > 0, createdAt: s.createdAt }); });
+          (await Tickets.find(tq).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: s.kind, number: s.number, title: s.title, status: s.status, category: s.category, tags: s.tags, hasImage: s.images.length > 0, createdAt: s.createdAt, ...(includeReplyState ? { replyState: ticketReplyState(t) } : {}) }); });
         }
         if (kind !== "ticket") {
           const sq = { ...q }; if (openOnly) sq.status = { $nin: ["closed", "resolved", "rejected", "done", "completed"] };
