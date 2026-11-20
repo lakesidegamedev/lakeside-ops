@@ -11,7 +11,8 @@ struct OpsHub: View {
     @EnvironmentObject private var router: OpsRouter
     @ObservedObject private var attention = AttentionCenter.shared
 
-    private var broken: Int { ops.servicesDown.count + ops.redPRs }
+    private var broken: Int { ops.servicesDown.filter { $0["current"].string == "major_outage" }.count + ops.redPRs }
+    private var degraded: Int { ops.servicesDown.filter { $0["current"].string == "degraded" }.count }
     private var openTickets: Int { ops.openTickets.count }
     private var activity: [JSONValue] { ops.tasks + ops.openTickets }
     private var running: Bool { activity.contains { WorkQueuePresentation.bucket($0) == "working" } }
@@ -24,7 +25,7 @@ struct OpsHub: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 header
-                if broken > 0 || blockedWork > 0 { failing }
+                if broken > 0 || degraded > 0 || blockedWork > 0 { failing }
                 needsYou
                 queues
                 StarmerWidget()
@@ -48,7 +49,7 @@ struct OpsHub: View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
             VStack(alignment: .leading, spacing: 10) {
                 Text(headline).font(.opsTitle)
-                    .foregroundStyle(broken > 0 ? OpsTheme.danger : blockedWork > 0 ? OpsTheme.warn : OpsTheme.ink)
+                    .foregroundStyle(broken > 0 ? OpsTheme.danger : (degraded > 0 || blockedWork > 0) ? OpsTheme.warn : OpsTheme.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                 OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
@@ -60,6 +61,7 @@ struct OpsHub: View {
     private var headline: String {
         if case .unreachable = ops.heartbeat() { return "Ops is unreachable" }
         if broken > 0 { return broken == 1 ? "One thing is failing" : "\(broken) things are failing" }
+        if degraded > 0 { return degraded == 1 ? "One service is degraded" : "\(degraded) services are degraded" }
         if blockedWork > 0 { return blockedWork == 1 ? "One item is blocked" : "\(blockedWork) items are blocked" }
         if attention.count > 0 { return attention.summary }
         return "Nothing is failing"
@@ -96,10 +98,11 @@ struct OpsHub: View {
 
     private var failing: some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionLabel(text: "Failing and blocked", count: broken + blockedWork, identifier: "ops-failing-count")
-            ForEach(ops.servicesDown, id: \.["id"].string) { service in
+            SectionLabel(text: "Issues", identifier: "ops-failing-count")
+            ForEach(ops.servicesDown.filter { ["degraded", "major_outage"].contains($0["current"].string) }, id: \.["id"].string) { service in
+                let degraded = service["current"].string == "degraded"
                 NavigationLink { HealthView() } label: {
-                    OpsQueueRow(title: service["name"].string.nonempty ?? "Service", detail: serviceDetail(service), status: .failed, icon: "exclamationmark.octagon")
+                    OpsQueueRow(title: service["name"].string.nonempty ?? "Service", detail: serviceDetail(service), status: degraded ? .blocked : .failed, icon: degraded ? "exclamationmark.triangle" : "exclamationmark.octagon")
                 }
                 Hairline()
             }

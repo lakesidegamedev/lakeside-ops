@@ -458,7 +458,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 "current": ["id": "ticket-task", "state": "blocked", "summary": "Checked the payroll rules."],
                 "decisions": [["id": "abcdefabcdef", "kind": "choice", "type": "choice", "state": "pending",
                                "tldr": "Choose payroll behavior", "question": "Capacity or filled jobs?",
-                               "options": [["id": "capacity", "label": "Capacity"], ["id": "filled", "label": "Filled jobs"]]]],
+                               "options": [["id": "1", "label": "Capacity"], ["id": "2", "label": "Filled jobs"]]]],
                 "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]],
             ]
         case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
@@ -730,8 +730,15 @@ enum KeirAgentFixtures {
                     "active": ["state": "running", "updatedAt": now - 3600000,
                                "summary": "activation aborted: no result before the 15-minute turn limit"],
                 ]
-                let sample = OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []
-                let blocked: [String: Any] = ["number": 1502, "title": "Verify an interrupted action", "status": "open", "timing": stuck]
+                let sample = (OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []).map { ticket -> [String: Any] in
+                    guard ticket["number"] as? Int == 1001 else { return ticket }
+                    var held = ticket
+                    held["decisionPending"] = true
+                    held["timing"] = ["state": "needs-you", "reason": "Choose payroll behavior"]
+                    return held
+                }
+                let blocked: [String: Any] = ["number": 1502, "title": "Verify an interrupted action", "status": "open", "timing": stuck,
+                                              "createdAt": now - 36 * 86400000, "replyState": ["state": "no_receipt"]]
                 return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue, blocked]]
             }
             return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": (OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []) + [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]

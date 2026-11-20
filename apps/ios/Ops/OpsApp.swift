@@ -126,7 +126,7 @@ struct OpsSettings: View {
                     toggle("feed", "Morning brief and goal progress", "The daily brief, and milestones Keir finishes.")
                     toggle("incidents", "Watchkeeper incidents", "Quiet delivery. Turn failures and stalled work.")
                     LabeledContent("Delivery", value: push.message)
-                    if let registered = push.lastRegistered { Text("Last registered \(registered.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(OpsTheme.muted) }
+                    if let registered = push.lastRegistered { Text("Last registered \(OpsFormat.clock(registered))").font(.caption).foregroundStyle(OpsTheme.muted) }
                     if let error = push.error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn) }
                     Button("Check notification registration") { Task { await OpsPushRegistration.request(); status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus } }
                     if delivery != .null {
@@ -174,7 +174,7 @@ struct OpsSettings: View {
             .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .confirmationDialog("Sign out of Keir on this iPhone?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            .alert("Sign out of Keir on this iPhone?", isPresented: $confirmSignOut) {
                 Button("Sign out", role: .destructive) { Task { await session.signOut(); dismiss() } }
                 Button("Cancel", role: .cancel) {}
             }

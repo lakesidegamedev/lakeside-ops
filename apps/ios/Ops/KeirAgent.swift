@@ -142,7 +142,8 @@ struct ActivityView: View {
         guard key != "needs-you" else { return [] }
         let held = Set(attention.items.compactMap(\.ticketNumber).map { String($0) })
         return entries.filter {
-            (!showTickets || !held.contains($0["number"].string))
+            WorkQueuePresentation.bucket($0) != "needs-you"
+                && (!showTickets || !held.contains($0["number"].string))
                 && WorkQueuePresentation.matches($0, filter: key, search: search, ticket: showTickets)
         }.sorted { WorkQueuePresentation.rank($0) < WorkQueuePresentation.rank($1) }
     }
@@ -271,6 +272,8 @@ struct ActivityView: View {
             Button { router.tab = .keir } label: { AttentionRow(item: item, action: "Answer in the conversation", icon: "bubble.left") }.buttonStyle(.plain)
         case .ownerWork:
             Button { route = .attention(item.id) } label: { AttentionRow(item: item, action: "Open work") }.buttonStyle(.plain)
+        case .task:
+            Button { route = .task(item.work["id"].string) } label: { AttentionRow(item: item, action: "Open task") }.buttonStyle(.plain)
         case .ticket:
             Button { route = .attention(item.id) } label: { AttentionRow(item: item, action: "Open ticket") }.buttonStyle(.plain)
         }

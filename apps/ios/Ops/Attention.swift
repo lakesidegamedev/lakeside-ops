@@ -15,6 +15,7 @@ final class AttentionCenter: ObservableObject {
     @Published private var questions: [JSONValue] = []
     @Published private var ownerWork: [JSONValue] = []
     @Published private var heldTickets: [JSONValue] = []
+    @Published private var heldTasks: [JSONValue] = []
     /// Rebuilt only when an input changes. Views read this instead of
     /// re-scrubbing every ticket on each body evaluation.
     @Published private(set) var items: [AttentionItem] = []
@@ -23,10 +24,11 @@ final class AttentionCenter: ObservableObject {
 
     /// `tickets` is every ticket the app knows about (hub and work queue). Only
     /// the ones waiting on an owner decision are kept.
-    func setWork(decisions: [JSONValue], ownerWork: [JSONValue], tickets: [JSONValue] = []) {
+    func setWork(decisions: [JSONValue], ownerWork: [JSONValue], tickets: [JSONValue] = [], tasks: [JSONValue] = []) {
         self.decisions = decisions
         self.ownerWork = ownerWork
         self.heldTickets = tickets.filter { Self.waitsOnDecision($0) }
+        self.heldTasks = tasks.filter { WorkQueuePresentation.state($0) == "needs-you" }
         rebuild()
     }
 
@@ -36,7 +38,7 @@ final class AttentionCenter: ObservableObject {
     }
 
     func reset() {
-        decisions = []; questions = []; ownerWork = []; heldTickets = []; items = []
+        decisions = []; questions = []; ownerWork = []; heldTickets = []; heldTasks = []; items = []
     }
 
     /// A ticket held on the owner: the server says a decision is pending, or
@@ -129,12 +131,29 @@ final class AttentionCenter: ObservableObject {
             ))
         }
 
+        let representedTasks = Set((decisions + questions).compactMap { $0["jobId"].string.nonempty })
+        for task in heldTasks {
+            let number = Self.ticketNumber(task["ticket"])
+            let taskID = task["id"].string
+            guard !taskID.isEmpty, !representedTasks.contains(taskID),
+                  !(number.map { tickets.contains($0) } ?? false),
+                  seen.insert("task:" + taskID).inserted else { continue }
+            if let number { tickets.insert(number) }
+            rows.append(AttentionItem(
+                id: "task:" + taskID, kind: .task,
+                title: OpsText.scrub(task["title"].string.nonempty ?? "Task needs a decision"),
+                detail: OpsText.scrub(task["timing"]["reason"].string),
+                meta: OpsFormat.ago(task["updatedAt"]),
+                ticket: task["ticket"], decision: .null, work: task
+            ))
+        }
+
         return rows
     }
 
     /// Decisions are counted once each, plus tickets held on a decision that
     /// has no decision row of its own.
-    var decisionCount: Int { items.filter { $0.kind == .decision || $0.kind == .ticket }.count }
+    var decisionCount: Int { items.filter { [.decision, .ticket, .task].contains($0.kind) }.count }
 
     var count: Int { items.count }
 
@@ -178,7 +197,7 @@ struct AttentionItem: Identifiable {
     var kindLabel: String {
         switch kind {
         case .decision: return decision["type"].string == "choice" ? "Choose one" : "Approval"
-        case .ticket: return "Decision"
+        case .ticket, .task: return "Decision"
         case .question: return "Question"
         case .ownerWork: return "Your call"
         }
@@ -186,7 +205,7 @@ struct AttentionItem: Identifiable {
 }
 
 enum AttentionKind: Equatable {
-    case decision, question, ownerWork, ticket
+    case decision, question, ownerWork, ticket, task
 }
 
 /// The one stack rendered by Ops, Feed, the Inbox and the Keir briefing.
@@ -249,6 +268,11 @@ struct AttentionCard: View {
                 WorkItemDetail(item: item.work)
             } label: {
                 AttentionRow(item: item, status: .waiting, action: "Open work")
+            }
+            .buttonStyle(.plain)
+        case .task:
+            NavigationLink { TaskDetail(id: item.work["id"].string) } label: {
+                AttentionRow(item: item, action: "Open task")
             }
             .buttonStyle(.plain)
         case .ticket:

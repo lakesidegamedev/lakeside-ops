@@ -149,7 +149,7 @@ import LakesideCore
     }
 
     private func rebuildAttention() {
-        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: needsOwner, tickets: openTickets)
+        AttentionCenter.shared.setWork(decisions: decisions, ownerWork: needsOwner, tickets: openTickets, tasks: tasks)
         UNBadge.set(attention)
     }
 

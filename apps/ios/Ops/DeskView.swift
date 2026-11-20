@@ -78,6 +78,7 @@ enum TicketPresentation {
         if blocked || base == .blocked { return (.blocked, "Blocked") }
         let expected = OpsFormat.date(timing["expectedDoneAt"])
         if timing["overdue"].bool || (expected.map { $0 <= now } ?? false) { return (.blocked, "Overdue") }
+        if lowered == "waiting" || lowered == "held" { return (.waiting, "Waiting") }
         switch base {
         case .running: return (.running, "Running")
         case .queued: return (.queued, "Queued")
@@ -204,10 +205,12 @@ struct TicketDetail: View {
         let expected = OpsFormat.date(timing["expectedDoneAt"])
         let overdue = status.label == "Overdue" || (status.status != .done && status.status != .failed && (timing["overdue"].bool || (expected.map { $0 <= Date() } ?? false)))
         let started = OpsFormat.ago(worker["startedAt"] == .null ? current["startedAt"] : worker["startedAt"])
+        let since = OpsFormat.ago(timing["since"])
         return VStack(alignment: .leading, spacing: 10) {
             row("Status") { OpsStatusBadge(status: status.status, label: status.label, compact: true) }
             row("Owner") { Text(supervision.state == .null ? "Checking" : supervision.ownerWord).font(.callout) }
-            row("Started") { Text(started.nonempty ?? "Not started").font(.callout) }
+            if !started.isEmpty { row("Started") { Text(started).font(.callout) } }
+            else if !since.isEmpty { row("Status since") { Text(since).font(.callout) } }
             row("Estimate") {
                 if overdue {
                     Label(expected.map { "Overdue, was \(OpsFormat.clock($0))" } ?? "Overdue", systemImage: "exclamationmark.triangle.fill")
@@ -250,7 +253,7 @@ struct TicketDetail: View {
                 Label(errorLine, systemImage: OpsStatus.failed.icon).font(.callout).foregroundStyle(OpsTheme.danger)
             }
             let line = TicketPresentation.clean(current["status"].string).nonempty ?? TicketPresentation.clean(worker["status"].string)
-            if !line.isEmpty && TicketPresentation.errorSentence(line) != errorLine {
+            if !line.isEmpty && line != playerReply && line != TicketPresentation.clean(card["status"].string) && TicketPresentation.errorSentence(line) != errorLine {
                 Text(line).font(.body).textSelection(.enabled)
             }
             if current != .null {
@@ -276,7 +279,7 @@ struct TicketDetail: View {
         }
         for (i, h) in detail["history"].array.enumerated() {
             let text = TicketPresentation.clean(h["text"].string)
-            if text.isEmpty { continue }
+            if text.isEmpty || text == playerReply { continue }
             items.append((OpsFormat.date(h["at"]) ?? .distantPast, "h\(i)", "circle.fill", OpsTheme.muted, text, h["at"]))
         }
         return items.sorted { $0.0 > $1.0 }.map { ($0.1, $0.2, $0.3, $0.4, $0.5) }
@@ -301,13 +304,20 @@ struct TicketDetail: View {
         }
     }
 
+    private var playerReply: String {
+        let update = detail["history"].array.first { $0["kind"].string == "Player update" }
+        return update?["text"].string.nonempty ?? ""
+    }
+
     @ViewBuilder private var replySection: some View {
-        let reply = TicketPresentation.clean(card["status"].string)
+        let reply = playerReply
+        let summary = TicketPresentation.clean(card["status"].string)
         let delivery = replyState["state"].string
-        if !reply.isEmpty || delivery == "delivered" || delivery == "no_receipt" {
+        if !reply.isEmpty || !summary.isEmpty || delivery == "delivered" || delivery == "no_receipt" {
             VStack(alignment: .leading, spacing: 8) {
                 SectionLabel(text: "Player-facing reply")
-                if !reply.isEmpty { Text(reply).font(.body).textSelection(.enabled) }
+                if !reply.isEmpty { NativeMarkdown(text: reply).textSelection(.enabled) }
+                else if !summary.isEmpty { Text(summary).font(.body).textSelection(.enabled) }
                 if delivery == "delivered" {
                     if let url = URL(string: replyState["url"].string), url.scheme == "https", url.host == "discord.com" {
                         Link(destination: url) { Label("View in Discord", systemImage: "arrow.up.right.square") }.font(.callout)
@@ -368,7 +378,7 @@ struct TicketDetail: View {
                         SectionLabel(text: "Owner instructions")
                         ForEach(detail["handoffs"].array, id: \.["id"].string) { handoff in
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(handoff["status"].string).font(.callout.weight(.semibold))
+                                Text(handoff["status"].string.replacingOccurrences(of: "Support " + "Keir", with: "the support desk")).font(.callout.weight(.semibold))
                                 Text("Delivered \(OpsFormat.ago(handoff["at"]))").font(.caption).foregroundStyle(OpsTheme.muted)
                                 if handoff["incorporatedAt"] != .null {
                                     Text("Read by the support desk \(OpsFormat.ago(handoff["incorporatedAt"]))").font(.caption).foregroundStyle(OpsTheme.muted)

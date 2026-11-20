@@ -875,7 +875,9 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<5 { app.swipeDown() }
         capturePage("Chat")
         composer.tap()
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let chatKeyboard = app.keyboards.firstMatch
+        XCTAssertTrue(chatKeyboard.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(composer.frame.maxY, chatKeyboard.frame.minY)
         capture(app, "\(theme) Chat keyboard")
         app.swipeDown()
 
@@ -905,6 +907,8 @@ final class LaunchTests: XCTestCase {
         openRow(app, "Budget screen shows zero funding")
         XCTAssertTrue(find(app, "Budget screen shows zero funding").waitForExistence(timeout: 10))
         XCTAssertTrue(find(app, "Choose payroll behavior").exists)
+        XCTAssertTrue(app.buttons["ticket-decision-1"].exists)
+        XCTAssertTrue(app.buttons["ticket-decision-2"].exists)
         capturePage("Ticket 1001")
         let take = app.buttons["supervision-take"]
         for _ in 0..<6 where !take.isHittable { app.swipeUp() }
@@ -924,7 +928,7 @@ final class LaunchTests: XCTestCase {
         chooseFromMenu(app, "keir-tools", "Connected games", until: { app.navigationBars["Connected games"].exists })
         XCTAssertTrue(app.buttons["keir-game-metroforge"].waitForExistence(timeout: 10))
         app.buttons["keir-game-metroforge"].tap()
-        XCTAssertTrue(find(app, "Preview site").exists)
+        XCTAssertTrue(find(app, "Preview site").waitForExistence(timeout: 10))
         capturePage("Connected games")
     }
 

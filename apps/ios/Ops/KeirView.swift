@@ -350,6 +350,8 @@ struct KeirView: View {
         .background(KeirChatTheme.canvas.ignoresSafeArea())
         .navigationTitle("Keir").navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .navigationBar)
+        .toolbarBackground(OpsTheme.background, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .task(id: "\(scenePhase == .active)|\(keir.thread)|\(connectionAttempt)|\(voiceMode)") { if scenePhase == .active && !voiceMode { await keir.connect(session) } }
         .task { await keir.loadThreads(session) }
         .task(id: keir.thread) { await keir.loadModels(session); await keir.loadControls(session) }
@@ -790,7 +792,6 @@ struct DecisionCard: View {
                 Text("Your choice gives direction. Actions needing permission get a separate approval.").font(.caption).foregroundStyle(OpsTheme.muted)
                 Button("Ask a question or give another answer") { explaining = true }.disabled(busy)
             } else {
-            Text("Approve authorizes this operation. Decline prevents it. Asking a question gives no approval.").font(.caption).foregroundStyle(OpsTheme.muted)
             // Decline on the left, approve on the right, both full capsules: the
             // same shape an approval sheet uses, with reply one tap away.
             ViewThatFits(in: .horizontal) {

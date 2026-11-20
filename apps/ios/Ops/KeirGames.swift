@@ -306,6 +306,7 @@ struct KeirGamesSheet: View {
             Section {
                 VStack(alignment: .leading, spacing: 6) {
                     if !game.scope.isEmpty { Text(game.scope) }
+                    if !game.withheld.isEmpty { Text("Not read by Keir").fontWeight(.semibold) }
                     ForEach(game.withheld, id: \.self) { limit in
                         Label(limit, systemImage: "lock")
                     }
@@ -320,8 +321,9 @@ struct KeirGamesSheet: View {
                     KeirGameStateDot(state: tickets.state, label: tickets.state == .available ? "Through the Inbox" : nil)
                     Text(tickets.state == .available ? "Through the Inbox" : tickets.state.title).font(.callout)
                 }
-                Text(tickets.note).font(.callout).foregroundStyle(OpsTheme.muted)
-            } header: { SectionLabel(text: "Tickets and pings") }
+            } header: { SectionLabel(text: "Tickets and pings") } footer: {
+                Text(tickets.note).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+            }
         }
         let topics = KeirGameDraft.topics(for: game)
         if !topics.isEmpty, !model.reading {
@@ -364,7 +366,7 @@ struct KeirGameReadRow: View {
     let read: KeirGameRead
     /// The count is redundant when the names are listed beside it.
     private var facts: [KeirGameFact] {
-        read.facts.contains { $0.label == "Names" } ? read.facts.filter { $0.label != "Bundles" } : read.facts
+        read.facts.filter { $0.label != "Bundles" }
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {

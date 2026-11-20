@@ -58,7 +58,7 @@ enum WorkQueuePresentation {
     static func status(_ item: JSONValue) -> OpsStatus {
         if state(item) == "stalled" && item["timing"]["reason"].string.localizedCaseInsensitiveContains("aborted") { return .failed }
         if item["timing"]["overdue"].bool { return .blocked }
-        return OpsStatus.from(state(item))
+        return state(item) == "waiting" ? .waiting : OpsStatus.from(state(item))
     }
     static func color(_ item: JSONValue) -> Color {
         if state(item) == "unassigned" { return OpsTheme.muted }
