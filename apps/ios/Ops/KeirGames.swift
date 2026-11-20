@@ -239,6 +239,9 @@ struct KeirGamesSheet: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .task { await model.load(session) }
         }
+        // Contain, so the sheet's id does not replace the ids of the game rows,
+        // reads and questions inside it.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("keir-games-sheet")
     }
 
