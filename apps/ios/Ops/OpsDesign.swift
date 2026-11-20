@@ -112,6 +112,21 @@ struct OpsStatusBadge: View {
 
 // MARK: - Surfaces
 
+struct OpsGlyph: View {
+    let icon: String
+    var tone: Color = OpsTheme.accent
+    var size: CGFloat = 34
+
+    var body: some View {
+        Image(systemName: icon)
+            .font(.callout.weight(.semibold))
+            .foregroundStyle(tone)
+            .frame(width: size, height: size)
+            .background(tone.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            .accessibilityHidden(true)
+    }
+}
+
 struct OpsCard<Content: View>: View {
     var padding: CGFloat = 16
     @ViewBuilder var content: () -> Content

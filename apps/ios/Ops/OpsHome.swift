@@ -10,6 +10,7 @@ struct OpsHub: View {
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
     @ObservedObject private var attention = AttentionCenter.shared
+    @Environment(\.dynamicTypeSize) private var textSize
 
     private var broken: Int { ops.servicesDown.filter { $0["current"].string == "major_outage" }.count + ops.redPRs }
     private var degraded: Int { ops.servicesDown.filter { $0["current"].string == "degraded" }.count }
@@ -25,8 +26,9 @@ struct OpsHub: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 header
-                if broken > 0 || degraded > 0 || blockedWork > 0 { failing }
-                needsYou
+                summary
+                if !ops.servicesDown.filter({ ["degraded", "major_outage"].contains($0["current"].string) }).isEmpty || blockedWork > 0 { failing }
+                if attention.count > 0 { needsYou }
                 queues
                 StarmerWidget()
                 systems
@@ -47,15 +49,45 @@ struct OpsHub: View {
         // Re-read every 30 seconds so "Updated 1m ago" and a stall are honest
         // even when no refresh lands.
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
-            VStack(alignment: .leading, spacing: 10) {
-                Text(headline).font(.opsTitle)
-                    .foregroundStyle(broken > 0 ? OpsTheme.danger : (degraded > 0 || blockedWork > 0) ? OpsTheme.warn : OpsTheme.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-                OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
-                    .accessibilityIdentifier("ops-heartbeat")
+            OpsCard {
+                HStack(alignment: .top, spacing: 12) {
+                    OpsGlyph(icon: overviewIcon, tone: overviewTone, size: 42)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(headline).font(.opsTitle)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
+                            .accessibilityIdentifier("ops-heartbeat")
+                    }
+                }
             }
         }
+    }
+
+    private var overviewTone: Color {
+        if broken > 0 { return OpsTheme.danger }
+        return degraded > 0 || blockedWork > 0 ? OpsTheme.warning : OpsTheme.accent
+    }
+
+    private var overviewIcon: String {
+        if broken > 0 { return "exclamationmark.octagon.fill" }
+        if degraded > 0 || blockedWork > 0 { return "exclamationmark.triangle.fill" }
+        return "waveform.path.ecg"
+    }
+
+    private var summary: some View {
+        let columns = textSize.isAccessibilitySize ? 1 : 3
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
+            Button { router.activityFilter = "needs-you"; router.tab = .activity } label: {
+                OpsSummaryTile(title: "Needs you", count: attention.count, icon: "hand.raised.fill", tone: OpsTheme.warning)
+            }
+            NavigationLink { FailedPRsView() } label: {
+                OpsSummaryTile(title: "Failing checks", count: ops.redPRs, icon: "xmark.circle.fill", tone: OpsTheme.danger)
+            }
+            NavigationLink { WorkView(lane: .blocked) } label: {
+                OpsSummaryTile(title: "Blocked work", count: blockedWork, icon: "exclamationmark.triangle.fill", tone: OpsTheme.warning)
+            }
+        }.buttonStyle(.plain)
     }
 
     private var headline: String {
@@ -63,7 +95,6 @@ struct OpsHub: View {
         if broken > 0 { return broken == 1 ? "One thing is failing" : "\(broken) things are failing" }
         if degraded > 0 { return degraded == 1 ? "One service is degraded" : "\(degraded) services are degraded" }
         if blockedWork > 0 { return blockedWork == 1 ? "One item is blocked" : "\(blockedWork) items are blocked" }
-        if attention.count > 0 { return attention.summary }
         return "Nothing is failing"
     }
 
@@ -106,12 +137,6 @@ struct OpsHub: View {
                 }
                 Hairline()
             }
-            if ops.redPRs > 0 {
-                NavigationLink { FailedPRsView() } label: {
-                    OpsQueueRow(title: "Failing checks", detail: ops.redPRs == 1 ? "1 open pull request" : "\(ops.redPRs) open pull requests", status: .failed, icon: "arrow.triangle.pull")
-                }
-                Hairline()
-            }
             ForEach(Array(ops.blocked.prefix(3).enumerated()), id: \.offset) { _, item in
                 NavigationLink { WorkItemDetail(item: item) } label: {
                     OpsQueueRow(title: OpsText.scrub(item["title"].string.nonempty ?? "Blocked work"), detail: blockedDetail(item), status: .blocked, icon: "exclamationmark.triangle")
@@ -143,18 +168,13 @@ struct OpsHub: View {
 
     private var needsYou: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if attention.count == 0 {
-                Text("Nothing needs you.").font(.caption).foregroundStyle(OpsTheme.muted)
-                    .accessibilityIdentifier("ops-attention-count")
-            } else {
-                HStack(alignment: .firstTextBaseline) {
-                    SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "ops-attention-count")
-                    Button("Review all \(attention.count)") { router.activityFilter = "needs-you"; router.tab = .activity }
-                        .font(.caption.weight(.semibold))
-                        .accessibilityIdentifier("ops-review-attention")
-                }
-                AttentionStack(limit: 3, showEmpty: false)
+            HStack(alignment: .firstTextBaseline) {
+                SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "ops-attention-count")
+                Button("Review all \(attention.count)") { router.activityFilter = "needs-you"; router.tab = .activity }
+                    .font(.caption.weight(.semibold))
+                    .accessibilityIdentifier("ops-review-attention")
             }
+            AttentionStack(limit: 3, showEmpty: false)
         }
     }
 
@@ -270,6 +290,33 @@ struct OpsHub: View {
                 OpsQueueRow(title: "Upcoming", detail: "What Keir does next", status: .idle, icon: "calendar")
             }
         }
+    }
+}
+
+private struct OpsSummaryTile: View {
+    let title: String
+    let count: Int
+    let icon: String
+    let tone: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 4) {
+                OpsGlyph(icon: icon, tone: count > 0 ? tone : OpsTheme.neutral, size: 28)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+            }
+            Text(count.formatted()).font(.opsTitle.monospacedDigit()).foregroundStyle(OpsTheme.ink)
+            Text(title).font(.opsCaption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
+                .lineLimit(2).frame(minHeight: 28, alignment: .topLeading)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 102, alignment: .topLeading)
+        .background(OpsTheme.surface, in: RoundedRectangle(cornerRadius: 15))
+        .overlay(RoundedRectangle(cornerRadius: 15).strokeBorder(OpsTheme.hairline))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title), \(count)")
     }
 }
 

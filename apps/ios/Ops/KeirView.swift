@@ -670,6 +670,50 @@ private struct KeirMessage: View {
 private struct KeirQueueSnapshot: View {
     let value: JSONValue
 
+    private struct Segment: Identifiable {
+        let title: String
+        let tone: Color
+        let count: Int
+        var id: String { title }
+    }
+
+    private var rows: [JSONValue] { value["items"].array }
+
+    private var segments: [Segment] {
+        let states = Dictionary(grouping: rows, by: status)
+        return [
+            Segment(title: "Needs you", tone: OpsTheme.warning, count: states[.waiting]?.count ?? 0),
+            Segment(title: "Running", tone: OpsTheme.mint, count: states[.running]?.count ?? 0),
+            Segment(title: "Blocked", tone: OpsTheme.warn, count: states[.blocked]?.count ?? 0),
+            Segment(title: "Queued or waiting", tone: OpsTheme.accent, count: states[.queued]?.count ?? 0),
+            Segment(title: "Other", tone: OpsTheme.neutral, count: (states[.idle]?.count ?? 0) + (states[.done]?.count ?? 0) + (states[.failed]?.count ?? 0)),
+        ].filter { $0.count > 0 }
+    }
+
+    private var distribution: some View {
+        let segments = segments
+        return VStack(alignment: .leading, spacing: 8) {
+            GeometryReader { proxy in
+                let gap: CGFloat = 3
+                let width = max(0, proxy.size.width - gap * CGFloat(max(0, segments.count - 1)))
+                HStack(spacing: gap) {
+                    ForEach(segments) { segment in
+                        Capsule().fill(segment.tone).frame(width: width * CGFloat(segment.count) / CGFloat(rows.count))
+                    }
+                }
+            }.frame(height: 7).accessibilityHidden(true)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), alignment: .leading)], spacing: 6) {
+                ForEach(segments) { segment in
+                    HStack(spacing: 5) {
+                        Circle().fill(segment.tone).frame(width: 6, height: 6).accessibilityHidden(true)
+                        Text(segment.count.formatted()).monospacedDigit().fontWeight(.semibold)
+                        Text(segment.title).foregroundStyle(OpsTheme.muted)
+                    }.font(.opsCaption).accessibilityElement(children: .combine)
+                }
+            }
+        }
+    }
+
     private func status(_ row: JSONValue) -> OpsStatus {
         if row["ownerDecisionPending"].bool { return .waiting }
         if row["implementationHeld"].bool { return .blocked }
@@ -694,16 +738,28 @@ private struct KeirQueueSnapshot: View {
 
     var body: some View {
         OpsCard {
-            SectionLabel(text: "Support queue")
-            if value["items"].array.isEmpty { Text("No open tickets").font(.opsBody) }
-            ForEach(value["items"].array, id: \.["number"].string) { ticket in
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("#\(ticket["number"].string) \(ticket["title"].string)").font(.opsHeadline)
-                    HStack(spacing: 7) {
-                        Circle().fill(status(ticket).color).frame(width: 7, height: 7).accessibilityHidden(true)
-                        Text(label(ticket)).font(.opsSecondary)
-                    }.foregroundStyle(OpsTheme.muted)
-                }
+            HStack(spacing: 10) {
+                OpsGlyph(icon: "tray.full.fill")
+                SectionLabel(text: "Support queue")
+            }
+            if rows.isEmpty { Text("No open tickets").font(.opsBody) }
+            else { distribution }
+            ForEach(rows, id: \.["number"].string) { ticket in
+                Hairline()
+                NavigationLink {
+                    TicketDetail(ticket: ticket)
+                } label: {
+                    HStack(alignment: .center, spacing: 11) {
+                        OpsGlyph(icon: status(ticket).icon, tone: status(ticket).color, size: 30)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("#\(ticket["number"].string) \(ticket["title"].string)").font(.opsHeadline)
+                            Text(label(ticket)).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted)
+                            .accessibilityHidden(true)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).foregroundStyle(OpsTheme.ink)
             }
             if value["possiblyMore"].bool { Text("More tickets may be open.").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
             if let checked = OpsFormat.date(value["checkedAt"]) {
@@ -712,6 +768,7 @@ private struct KeirQueueSnapshot: View {
             }
         }.accessibilityIdentifier("keir-chat-support-queue")
     }
+
 }
 
 private struct KeirChart: View {

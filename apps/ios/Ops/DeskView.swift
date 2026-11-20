@@ -293,13 +293,23 @@ struct TicketDetail: View {
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 SectionLabel(text: "Timeline")
-                ForEach(items, id: \.id) { item in
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: item.icon).font(.caption).foregroundStyle(item.color).frame(width: 18).padding(.top, 3).accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.text).font(.callout).textSelection(.enabled)
-                            let when = OpsFormat.ago(item.at)
-                            if !when.isEmpty { Text(when).font(.caption).foregroundStyle(OpsTheme.muted) }
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        HStack(alignment: .top, spacing: 12) {
+                            OpsGlyph(icon: item.icon, tone: item.color, size: 30)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(item.text).font(.opsBody).textSelection(.enabled)
+                                let when = OpsFormat.ago(item.at)
+                                if !when.isEmpty { Text(when).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                            }.padding(.top, 4)
+                        }
+                        .padding(.bottom, index == items.count - 1 ? 0 : 15)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(alignment: .leading) {
+                            if index < items.count - 1 {
+                                Rectangle().fill(OpsTheme.hairline).frame(width: 1)
+                                    .padding(.leading, 14).padding(.top, 30).accessibilityHidden(true)
+                            }
                         }
                     }
                 }

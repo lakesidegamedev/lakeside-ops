@@ -866,6 +866,9 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(find(app, "What needs my attention?", timeout: 5).exists)
         app.swipeDown()
         capture(app, "OLED Chat top")
+        for _ in 0..<3 { app.swipeUp() }
+        XCTAssertTrue(find(app, "Support queue", timeout: 6).exists)
+        capture(app, "OLED Chat bottom")
 
         go(app, "Ops")
         XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 8))

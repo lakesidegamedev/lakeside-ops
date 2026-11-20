@@ -73,7 +73,6 @@ struct KeirGame: Equatable, Identifiable {
 
     /// Tickets exist for one game only. The sheet and the question topics both follow this, never the name.
     var ticketsSupported: Bool { tickets?.state == .available }
-    /// Tools Keir may read for this game, named for the question draft.
 }
 
 enum KeirGames {
@@ -244,6 +243,15 @@ struct KeirGamesSheet: View {
         .accessibilityIdentifier("keir-games-sheet")
     }
 
+    private func gameIcon(_ game: KeirGame) -> String {
+        switch game.id {
+        case "ahd": return "building.columns.fill"
+        case "metroforge": return "tram.fill"
+        case "grand-century": return "globe.europe.africa.fill"
+        default: return "gamecontroller.fill"
+        }
+    }
+
     @ViewBuilder private var gamesSection: some View {
         Section {
             if model.phase == .failed {
@@ -257,13 +265,18 @@ struct KeirGamesSheet: View {
             } else {
                 ForEach(model.games) { game in
                     Button { Task { await model.choose(game.id, session) } } label: {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
+                            OpsGlyph(icon: gameIcon(game), tone: game.state == .unsupported ? OpsTheme.neutral : OpsTheme.accent)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(game.name).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
                                 Text(game.state == .unsupported ? game.note : game.scope).font(.caption).foregroundStyle(OpsTheme.muted)
                             }
                             Spacer(minLength: 8)
-                            if model.selected == game.id { Image(systemName: "checkmark").foregroundStyle(OpsTheme.sky).accessibilityHidden(true) }
+                            let selected = model.selected == game.id
+                            Image(systemName: selected ? "checkmark.circle.fill" : "chevron.right")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(selected ? OpsTheme.accent : OpsTheme.neutral)
+                                .accessibilityHidden(true)
                         }.contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -367,10 +380,13 @@ struct KeirGameReadRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                KeirGameStateDot(state: read.state)
-                Text(read.label).font(.callout.weight(.semibold))
+                Text(read.label).font(.opsHeadline)
                 Spacer(minLength: 8)
-                if read.state != .live { Text(read.state.title).font(.caption).foregroundStyle(OpsTheme.muted) }
+                Label(read.state.title, systemImage: read.state.icon)
+                    .font(.opsCaption.weight(.semibold)).foregroundStyle(read.state.color)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(read.state.color.opacity(0.12), in: Capsule())
+                    .accessibilityIdentifier("keir-game-state")
             }
             ForEach(facts) { fact in
                 LabeledContent {
