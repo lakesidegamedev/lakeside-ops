@@ -2279,7 +2279,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     conversationTurn.check(job);
     if (name === "finish" && conversationTurn.owes(job))
-      throw new Error("A Discord question arrived during this investigation. Answer it before finishing this turn.");
+      throw new Error("This person is still waiting for your answer in Discord. Send it with channel_reply before finishing. A private finish summary does not reach them.");
     if (name === "present_choices") {
       if (job.role !== "owner") throw new Error("Owner task required for choices");
       if (job.replyChannel === "app") {
