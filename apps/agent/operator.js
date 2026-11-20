@@ -840,17 +840,18 @@ function drain() {
     if (active[lane]) continue;
     supportOwner.incorporateFor(job);
     const stopTyping = presence.begin(job.replyChannel);
-    const controller = new AbortController(), startedAt = Date.now(); active[lane] = { job, controller, startedAt };
-    const deadline = setTimeout(() => controller.abort(), laneTimeoutMs(lane, config.maxTurnMs));
-    agent.run(job, controller.signal, { replyOnly }).catch((e) => {
-      if (!controller.signal.aborted && !stopping) failures?.exception(e, "activation");
-      const out = lifecycle.onRunError(job, e, { now: Date.now(), aborted: controller.signal.aborted, stopping, paused: d.paused, startedAt,
-        supportDeferred: (j) => config.supportDeferred(j), staffHeld, claimedBy: (id) => d.channels[id]?.claimedBy,
-        pauseFor: (j) => require("./lib/operator/ticketpause").pauseFor(d, j), staffActiveUntil: (j) => rootJob(j, d.jobs).staffActiveUntil || 0, redact: redactSecrets });
-      if (!out) return;
-      lifecycle.applyEffects(ledger, out.effects);
-      ledger.save();
-    }).finally(() => { broker.codingComplete?.(job); clearTimeout(deadline); stopTyping(); active[lane] = null; });
+    require("./lib/operator/activationslot").startActivation({ lane, job, active, timeoutMs: laneTimeoutMs(lane, config.maxTurnMs),
+      run: (signal) => agent.run(job, signal, { replyOnly }),
+      settle: (e, { aborted, timedOut, startedAt }) => {
+        if ((!aborted || timedOut) && !stopping) failures?.exception(e, "activation");
+        const out = lifecycle.onRunError(job, e, { now: Date.now(), aborted, timedOut, stopping, paused: d.paused, startedAt,
+          supportDeferred: (j) => config.supportDeferred(j), staffHeld, claimedBy: (id) => d.channels[id]?.claimedBy,
+          pauseFor: (j) => require("./lib/operator/ticketpause").pauseFor(d, j), staffActiveUntil: (j) => rootJob(j, d.jobs).staffActiveUntil || 0, redact: redactSecrets });
+        if (!out) return;
+        lifecycle.applyEffects(ledger, out.effects);
+        ledger.save();
+      },
+      after: () => { broker.codingComplete?.(job); stopTyping(); } });
   }
 }
 

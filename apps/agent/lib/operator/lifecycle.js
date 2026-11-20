@@ -35,8 +35,9 @@ const { JOB_TERMINAL } = require("./machines");
 //                             a claim or directive never gets here: it stays held and the
 //                             owner is told once (held-deadline:<job>), nothing is posted
 // Run end (onRunError): abort for a pause -> paused; abort for a stop, hold or claim
-//   with no write started -> waiting; transient or provider failure -> waiting (see
-//   recovery.js); anything else -> blocked + owner notice.
+//   with no write started -> waiting; a ticket run cut off by its lane deadline
+//   before any write or post -> one retry; transient or provider failure -> waiting
+//   (see recovery.js); anything else -> blocked + owner notice.
 // Scan: a ticket whose channel Discord reports gone (404) -> done; a ticket with no
 //   channel whose support record is closed -> done; an open ticket channel with no
 //   task -> a new queued ticket job (adoption).
@@ -157,6 +158,12 @@ function wakeStep(j, ctx) {
 // claimedBy(channelId), pauseFor(job), staffActiveUntil(job), redact(text) }.
 // Returns null when the run already settled the job (nothing to record or save),
 // else { effects } and the caller saves.
+const DEADLINE_RETRIES = 1;
+// Anything this activation wrote or posted: a retry could repeat it.
+function wroteSince(job, startedAt) {
+  const posted = typeof job.lastPublishedAt === "number" ? job.lastPublishedAt : Date.parse(job.lastPublishedAt || "") || 0;
+  return posted >= startedAt || Object.values(job.effects || {}).some((x) => (x?.at || 0) >= startedAt || ["started", "executing", "uncertain"].includes(x?.state));
+}
 function onRunError(job, e, ctx) {
   // A self-recovery park sets "waiting" or "blocked" before aborting: not an error.
   if (["done", "cancelled", "queued", "paused"].includes(job.state) || (["waiting", "blocked"].includes(job.state) && /^Self-recovery:/.test(job.summary || ""))) return null;
@@ -168,6 +175,17 @@ function onRunError(job, e, ctx) {
   // A stop counts even when the abort arrived as the CLI child dying
   // before the grace period aborted the controller.
   else if ((ctx.aborted || ctx.stopping) && (ctx.paused || ctx.supportDeferred(job) || ctx.stopping || ctx.staffHeld(job) || (job.kind === "ticket" && job.role !== "owner" && ctx.claimedBy(job.channelId))) && !startedHere) { job.state = "waiting"; job.wakeAt = Math.max(ctx.now + 60000, ctx.staffActiveUntil(job)); }
+  // Keir 11.1.1: a ticket activation its lane deadline cut off before it wrote
+  // or posted anything gets one fresh retry. The 2026-11-20 first reply hung in
+  // provider start-up for the full turn limit and was blocked with the player
+  // unanswered. A stop, pause or staff hold is handled above and wins; a second
+  // timeout, or one after any write or post, still blocks and tells the owner.
+  else if (ctx.timedOut && job.kind === "ticket" && job.ticket && !job.codingParent && !(job.deadlineRetries >= DEADLINE_RETRIES) && !wroteSince(job, ctx.startedAt)) {
+    job.deadlineRetries = (job.deadlineRetries || 0) + 1;
+    job.state = "waiting"; job.wakeAt = ctx.now + 60000;
+    job.summary = "The model run hit its turn limit before it wrote or posted anything. Retrying once with a fresh run; nothing external was started.";
+    effects.push(audit("deadline_retry", { job: job.id, ticket: job.ticket, attempt: job.deadlineRetries }));
+  }
   else if (require("./recovery").retryReadFailure(job, e, ctx.now)) {
     effects.push(audit("transient_retry", { job: job.id, attempt: job.transientFailures, emptyWaits: job.emptyWaits }));
     // One owner alert an hour while the provider answers with nothing.

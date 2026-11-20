@@ -7,11 +7,15 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ### For users
 
+- If a ticket run stalls before Keir sends a reply or takes an external action, Keir can try once more automatically.
+
 - Questions about national GDP, market sales and prices, your shops' sales and profit, and your action points are answered from the measure you asked about, not a nearby one. If a figure is not recorded, Keir says so instead of estimating.
 - A simple "where do I find this" question, a stop or a thanks gets one short answer with no chart, report or extra update.
 - When the numbers over several turns are the answer (market history, your shops' results, your action points), Keir can attach one chart to its answer in your ticket. Long tables get a dated page, linked under the chart; your own ticket's page needs you signed in at lakesidegames.net with the account linked to your Discord. Keir can keep that page updated for up to 24 hours when coming turns may change the answer. It never posts those updates in the channel, and stops on request, at ticket close or when staff take over. Every page opened from a ticket is private to the player who opened it, even when it shows public market data, and stays private if the ticket is later reassigned. If your ticket has no linked game account, Keir answers with the chart alone and does not offer updates.
 
 ### For developers
+
+- The scheduler distinguishes a lane deadline from an owner stop or staff takeover. A ticket can retry one deadline after a minute if no writes or posts occurred. A second deadline alerts the owner.
 
 - `support_evidence_lookup` (ops-knowledge) is in support read scope and a player ping may call it, and nothing else in ops-knowledge. `evidencelookup.js` builds its arguments (scrubbed question, country and commodity only, the live gamestate tool list instead of the model's hint) and turns an unlisted read into a stated gap. Quick turns on easily confused measures get a pointer to it; navigation, thanks and stop get none.
 - Reporter-bound reads inject `ticket` and `character` in every role (owner, developer in a public room, player, finding) and every inherited child; no role chooses the identity.
