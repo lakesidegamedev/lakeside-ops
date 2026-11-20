@@ -624,6 +624,70 @@ final class LaunchTests: XCTestCase {
         capture(app, "Ticket blockers and Keir work")
     }
 
+    /// Take, direct and hand back one ticket through the stateful supervision
+    /// fixture. A half-typed direction left when the ticket is handed back must
+    /// not ride along with the next take to a new worker.
+    func testTicketSupervisionTakeDirectAndHandBack() {
+        let app = launch()
+        go(app, "Ops"); openRow(app, "Support desk")
+        let ticket = find(app, "Budget screen shows zero funding")
+        XCTAssertTrue(ticket.waitForExistence(timeout: 10)); ticket.tap()
+        func button(_ id: String) -> XCUIElement {
+            let element = app.buttons[id]
+            XCTAssertTrue(element.waitForExistence(timeout: 10), "\(id) is offered")
+            if !element.isHittable { app.swipeUp() }
+            return element
+        }
+        func confirm(_ title: String) {
+            let action = app.buttons[title]
+            XCTAssertTrue(action.waitForExistence(timeout: 5), "confirmation offers \(title)")
+            action.tap()
+        }
+        func directionField() -> XCUIElement {
+            app.textFields["supervision-direction"].exists ? app.textFields["supervision-direction"] : app.textViews["supervision-direction"]
+        }
+        func type(_ text: String) {
+            let field = directionField()
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            if !field.isHittable { app.swipeUp() }
+            field.tap()
+            if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { field.tap() }
+            field.typeText(text)
+        }
+
+        XCTAssertTrue(find(app, "Support Keir is working this ticket").waitForExistence(timeout: 10))
+        button("supervision-take").tap()
+        confirm("Take this ticket from Support Keir")
+        XCTAssertTrue(find(app, "Your personal Keir is working this ticket").waitForExistence(timeout: 10))
+        XCTAssertTrue(button("supervision-handback").exists)
+        XCTAssertFalse(app.buttons["supervision-take"].exists, "one session at a time")
+
+        type("Ask which turn the budget went to zero")
+        app.buttons["Send direction"].tap()
+        XCTAssertTrue(find(app, "Ask which turn the budget went to zero").waitForExistence(timeout: 10), "the direction is listed for this worker")
+        XCTAssertFalse((directionField().value as? String ?? "").contains("Ask which turn"), "a sent direction leaves the box")
+        capture(app, "Ticket supervised with a direction")
+
+        // Start a direction, then hand the ticket back without sending it.
+        type("Half written note")
+        button("supervision-handback").tap()
+        confirm("Hand this ticket back to Support Keir")
+        XCTAssertTrue(find(app, "Support Keir is working this ticket").waitForExistence(timeout: 10))
+        XCTAssertFalse(directionField().exists, "no direction box without a worker")
+        XCTAssertFalse(app.buttons["supervision-handback"].exists)
+        XCTAssertTrue(find(app, "Last worker").exists, "the retired worker stays visible as history")
+
+        // Taking it again starts a clean session: the unsent note went nowhere.
+        button("supervision-take").tap()
+        confirm("Take this ticket from Support Keir")
+        XCTAssertTrue(find(app, "Your personal Keir is working this ticket").waitForExistence(timeout: 10))
+        XCTAssertTrue(directionField().waitForExistence(timeout: 5))
+        XCTAssertFalse((directionField().value as? String ?? "").contains("Half written note"), "the draft was discarded at hand back")
+        XCTAssertFalse(find(app, "Half written note", timeout: 2).exists, "the unsent draft never reached the new worker")
+        XCTAssertFalse(find(app, "Ask which turn the budget went to zero", timeout: 2).exists, "the earlier worker's directions are not shown as this worker's")
+        capture(app, "Ticket taken again cleanly")
+    }
+
     func testComputerInputUncertaintyInspectionAndClose() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-computer"]; app.launch()
         XCTAssertTrue(app.buttons["keir-tools"].waitForExistence(timeout: 15))
