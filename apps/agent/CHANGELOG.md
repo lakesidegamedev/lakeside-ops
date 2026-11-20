@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- Staff can say `@Keir stand down until pinged` in a ticket. Keir waits until someone in that channel directly tags it again.
+
 ## 11.1.1 (2026-11-20)
 
 ### For users

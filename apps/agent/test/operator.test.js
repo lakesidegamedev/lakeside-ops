@@ -2438,6 +2438,78 @@ test("a message naming Keir is not pushed back by later unaddressed staff chatte
   assert.equal(job.wakeAt, due, "unaddressed staff chatter keeps the addressed wake");
 });
 
+test("a ticket waiting for a ping wakes only on a newer direct mention in that ticket", () => {
+  const { createSupportOwner } = require("../lib/operator/supportowner");
+  const { held, AWAITING_PING } = require("../lib/operator/supporttakeover");
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1860" }, g = createGateway(f);
+  const player = "888888888888888888";
+  const owner = createSupportOwner(f);
+  const job = f.ledger.createJob("ticket:1860", { kind: "ticket", ticket: 1860, channelId: ch.id, state: "waiting" });
+  const data = f.ledger.data;
+  data.actions.approved = { jobId: job.id, state: "approved" };
+  data.outbox.old = { destination: `channel:${job.id}`, content: "An outdated update" };
+  owner.setTicketOwner(1860, AWAITING_PING, "admin");
+  assert.equal(held(data, job)?.owner, AWAITING_PING);
+  assert.ok(data.outbox.old.suppressedByTakeover);
+
+  const at = new Date(f.now() + 100).toISOString();
+  const ping = (id, author = player) => ({ ...f.msg(`<@${f.config.botId}>`, id, author), timestamp: at, mentions: [{ id: f.config.botId }] });
+  const cases = [
+    [f.msg("The issue is still happening.", "666666666666666693", player)],
+    [{ ...ping("666666666666666694"), content: "Keir, can you help?" }],
+    [{ ...ping("666666666666666695"), content: "Can you help?", referenced_message: { author: { id: f.config.botId } } }],
+    [{ ...ping("666666666666666696"), timestamp: new Date(f.now() - 100).toISOString() }],
+    [ping("666666666666666697"), { historical: true }],
+    [{ ...ping("666666666666666698"), author: { id: player, bot: true } }],
+    [ping("666666666666666699"), { summonTask: { actor: player, content: `<@${f.config.botId}>` } }],
+    [ping("666666666666666700"), undefined, { ...ch, id: "777777777777777777", name: "ticket-bug-fixture-1861" }],
+  ];
+  for (const [message, options, channel = ch] of cases) g.ingest(channel, message, options);
+  assert.equal(held(data, job)?.owner, AWAITING_PING);
+  assert.equal(job.inbox?.length || 0, 0);
+
+  const direct = ping("666666666666666701");
+  g.ingest(ch, direct);
+  assert.equal(held(data, job), null);
+  assert.equal(job.inbox[0].role, "player");
+  assert.equal(job.inbox[0].messageId, direct.id);
+  assert.equal(job.addressedPending, true);
+  assert.equal(data.actions.approved.state, "withdrawn");
+  assert.ok(data.outbox.old.suppressedByTakeover);
+
+  owner.setTicketOwner(1860, AWAITING_PING, "admin");
+  g.ingest(ch, direct);
+  assert.equal(held(data, job)?.owner, AWAITING_PING, "replaying a ping cannot lift a new hold");
+});
+
+test("staff can set a stand-down in the ticket, and a direct ping preserves the caller's usual role", () => {
+  for (const role of ["support", "moderator"]) {
+    const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1860" };
+    const moderator = "888888888888888887", player = "888888888888888888";
+    const g = createGateway({ ...f, conversation: { record() {}, isModerator: id => id === moderator } });
+    const command = "Keir stand down until pinged";
+    g.ingest(ch, f.msg(command, "666666666666666693", player));
+    assert.equal(f.ledger.data.supportOwner?.tickets?.[1860], undefined);
+    g.ingest(ch, f.msg(command, "666666666666666694", f.config.staffIds[0]));
+    assert.equal(f.ledger.data.supportOwner.tickets[1860], "awaiting-ping");
+    const id = "666666666666666695";
+    g.ingest(ch, {
+      ...f.msg(`<@${f.config.botId}> what changed?`, id, role === "support" ? f.config.staffIds[0] : moderator),
+      timestamp: new Date(f.now() + 100).toISOString(), mentions: [{ id: f.config.botId }],
+    });
+    const job = f.ledger.data.jobs[f.ledger.data.seen[`discord:${id}`]];
+    assert.equal(f.ledger.data.supportOwner.tickets[1860], "keir");
+    assert.equal((role === "support" ? job.source : job.inbox.find(message => message.messageId === id)).role, role);
+  }
+});
+
+test("a direct ping leaves a separate staff takeover in place", () => {
+  const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1860" }, g = createGateway(f);
+  require("../lib/operator/supportowner").createSupportOwner(f).setTicketOwner(1860, "staff", "admin");
+  g.ingest(ch, { ...f.msg(`<@${f.config.botId}> can you help?`), mentions: [{ id: f.config.botId }] });
+  assert.equal(f.ledger.data.supportOwner.tickets[1860], "staff");
+});
+
 test("stop withdraws queued replies, approvals and descendants, preserving receipts and unrelated tickets", () => {
   const f = fixture(), ch = { ...f.ch, name: "ticket-bug-fixture-1556" }, g = createGateway(f);
   const parent = running(f, { kind: "ticket", role: "support", ticket: 1556, channelId: ch.id });

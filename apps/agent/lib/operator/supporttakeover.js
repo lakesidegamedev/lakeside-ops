@@ -21,6 +21,7 @@ const ticketOf = (data, job) => ticketsOf(data, job)[0] || null;
 // fenced on its ticket even after the ticket is back with Support Keir, so a
 // late completion cannot post or act.
 const WORKER_PREFIX = "keir-worker:";
+const AWAITING_PING = "awaiting-ping";
 function workerOf(data, job) {
   const seen = new Set();
   while (job && !seen.has(job.id)) {
@@ -61,7 +62,11 @@ function held(data, job) {
 function assertCanAct(data, job) {
   require("./ticketpause").assertCanAct(data, job);
   const hold = held(data, job);
-  if (hold) throw Object.assign(new Error(`Ticket ${hold.ticket} is owned by ${hold.owner}; Keir must stand down until an explicit handback.`), { code: "TICKET_TAKEOVER_HELD" });
+  if (!hold) return;
+  const message = hold.owner === AWAITING_PING
+    ? `Ticket ${hold.ticket} is waiting for a direct Discord ping. Keir must stand down.`
+    : `Ticket ${hold.ticket} is owned by ${hold.owner}; Keir must stand down until an explicit handback.`;
+  throw Object.assign(new Error(message), { code: "TICKET_TAKEOVER_HELD" });
 }
 function suppressOutbox(ledger, key, entry, at) {
   if (entry.suppressedByTakeover || entry.deliveredAt) return true;
@@ -99,4 +104,4 @@ function record(ledger, ticket, owner, by, options, at) {
   }
   return receipt;
 }
-module.exports = { ticketOf, ticketsOf, held, assertCanAct, suppressOutbox, record, workerOf, activeWorker, publisher, WORKER_PREFIX };
+module.exports = { ticketOf, ticketsOf, held, assertCanAct, suppressOutbox, record, workerOf, activeWorker, publisher, ownerOf, WORKER_PREFIX, AWAITING_PING };
