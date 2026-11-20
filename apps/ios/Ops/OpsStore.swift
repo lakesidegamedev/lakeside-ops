@@ -46,6 +46,10 @@ import LakesideCore
     var queueTasks: [JSONValue] {
         tasks.filter { WorkQueuePresentation.bucket($0) != "needs-you" }
     }
+    /// Queue rows in one Inbox bucket, counted exactly as the Inbox chip counts them.
+    func queueCount(_ bucket: String) -> Int {
+        (queueTickets + queueTasks).filter { WorkQueuePresentation.bucket($0) == bucket }.count
+    }
     var blockedQueueCount: Int {
         (queueTickets + queueTasks).filter { WorkQueuePresentation.bucket($0) == "stuck" }.count
     }
