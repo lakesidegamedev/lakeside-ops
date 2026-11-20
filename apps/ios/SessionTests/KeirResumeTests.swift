@@ -206,6 +206,77 @@ import LakesideCore
         XCTAssertEqual(reopened.thread, "c0ffee00")
     }
 
+    // MARK: Cold start with a failed first read
+
+    /// The first launch after a force-quit read the listing while the
+    /// connection was still failing. The conversation loop recovered on its
+    /// own; the restore must too, without waiting for the next foreground.
+    func testAFailedFirstReadAtLaunchStillLandsOnTheSavedThread() async {
+        store(owner).select("c0ffee00")
+        let reopened = store(owner)
+        var reads = 0, pauses: [Double] = []
+        await reopened.resumeLastThreadWhileOpen(session(), listing: {
+            reads += 1
+            return reads == 1 ? nil : [self.row("main"), self.row("c0ffee00")]
+        }, pause: { pauses.append($0) })
+        XCTAssertEqual(reopened.thread, "c0ffee00")
+        XCTAssertEqual(reads, 2)
+        XCTAssertEqual(pauses, [1])
+        // Settled: a later foreground does not read or move anything again.
+        let again = await reopened.resumeLastThread(session()) { reads += 1; return nil }
+        XCTAssertFalse(again); XCTAssertEqual(reads, 2)
+    }
+
+    func testRetriesAreBoundedAndKeepTheSavedThreadForTheNextForeground() async {
+        store(owner).select("c0ffee00")
+        let reopened = store(owner)
+        var reads = 0, pauses: [Double] = []
+        await reopened.resumeLastThreadWhileOpen(session(), listing: { reads += 1; return nil }, pause: { pauses.append($0) })
+        XCTAssertEqual(reads, KeirStore.resumeAttempts)
+        XCTAssertEqual(pauses, [1, 2, 4, 8], "no wait after the last attempt")
+        XCTAssertEqual(reopened.thread, "main")
+        XCTAssertEqual(reopened.resume.saved(for: owner), "c0ffee00")
+        await reopened.resumeLastThread(session()) { return [self.row("main"), self.row("c0ffee00")] }
+        XCTAssertEqual(reopened.thread, "c0ffee00")
+    }
+
+    func testPickingAThreadDuringTheRetryWaitEndsTheRestore() async {
+        store(owner).select("c0ffee00")
+        let reopened = store(owner)
+        var reads = 0
+        await reopened.resumeLastThreadWhileOpen(session(), listing: {
+            reads += 1
+            return reads == 1 ? nil : [self.row("main"), self.row("c0ffee00"), self.row("beadfeed")]
+        }, pause: { [weak reopened] _ in reopened?.select("beadfeed") })
+        XCTAssertEqual(reopened.thread, "beadfeed")
+        XCTAssertEqual(reads, 1, "no read after the owner chose")
+    }
+
+    func testTypingOrSigningOutDuringTheRetryWaitRestoresNothing() async {
+        store(owner).select("c0ffee00")
+        let typing = store(owner)
+        await typing.resumeLastThreadWhileOpen(session(), listing: { nil }, pause: { [weak typing] _ in typing?.holdRestore() })
+        XCTAssertEqual(typing.thread, "main")
+        XCTAssertEqual(typing.resume.saved(for: owner), "c0ffee00")
+
+        let signingOut = store(owner)
+        var reads = 0
+        await signingOut.resumeLastThreadWhileOpen(session(), listing: { reads += 1; return reads == 1 ? nil : [self.row("main"), self.row("c0ffee00")] },
+                                                   pause: { [weak signingOut] _ in signingOut?.reset() })
+        XCTAssertEqual(signingOut.thread, "main")
+        XCTAssertEqual(reads, 1)
+        XCTAssertNil(defaults.dictionary(forKey: KeirResume.defaultsKey))
+    }
+
+    func testACancelledLaunchTaskStopsRetrying() async {
+        store(owner).select("c0ffee00")
+        let reopened = store(owner)
+        var reads = 0
+        await reopened.resumeLastThreadWhileOpen(session(), listing: { reads += 1; return nil }, pause: { _ in throw CancellationError() })
+        XCTAssertEqual(reads, 1)
+        XCTAssertEqual(reopened.resume.saved(for: owner), "c0ffee00")
+    }
+
     // MARK: Ticket follow-up
 
     private func ticket(_ number: Int, status: String = "open", reply: String = "no_receipt", created: Double = 1, title: String = "Budget") -> JSONValue {

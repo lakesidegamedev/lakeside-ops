@@ -363,23 +363,45 @@ import LakesideCore
     /// checked against the live thread listing, and every step after the network
     /// read re-checks that nothing changed: the owner picked a thread, the
     /// account changed, or the owner signed out. `listing` exists for tests.
-    func resumeLastThread(_ session: AppSession, listing: (@MainActor () async -> [JSONValue]?)? = nil) async {
-        guard let scope = resumeScope, restoredScope != scope else { return }
-        guard !threadChosen, !restoreHeld, personalHome else { restoredScope = scope; return }
+    /// Returns true only when the listing could not be read and the restore is
+    /// still open, so the caller may try again.
+    @discardableResult
+    func resumeLastThread(_ session: AppSession, listing: (@MainActor () async -> [JSONValue]?)? = nil) async -> Bool {
+        guard let scope = resumeScope, restoredScope != scope else { return false }
+        guard !threadChosen, !restoreHeld, personalHome else { restoredScope = scope; return false }
         guard let saved = resume.saved(for: scope) else {
             resume.clear()   // nothing for this account; never keep another account's entry
-            restoredScope = scope; return
+            restoredScope = scope; return false
         }
         let epoch = generation
         let list: [JSONValue]?
         if let listing { list = await listing() } else { list = await fetchThreads(session) }
         // A failed read keeps the saved id and leaves the next attempt open.
-        guard let list else { return }
-        guard generation == epoch, resumeScope == scope, !threadChosen, !restoreHeld, personalHome else { return }
+        guard let list else { return true }
+        guard generation == epoch, resumeScope == scope, !threadChosen, !restoreHeld, personalHome else { return false }
         restoredScope = scope
         threads = list
         if KeirResume.legitimate(saved, in: list) { switchThread(saved) } else { resume.clear() }
+        return false
     }
+
+    /// The cold-start restore. A first launch after a force-quit often meets a
+    /// failed first read while the connection comes up; the conversation loop
+    /// retries on its own, so the restore retries too instead of waiting for
+    /// the next foreground. Each attempt re-checks every guard, so a thread the
+    /// owner picked, a draft, a sign-out or an account change ends it. Bounded
+    /// to the same short backoff as the connection; after that the next
+    /// foreground tries again.
+    func resumeLastThreadWhileOpen(_ session: AppSession, listing: (@MainActor () async -> [JSONValue]?)? = nil,
+                                   pause: @MainActor (Double) async throws -> Void = { try await Task.sleep(for: .seconds($0)) }) async {
+        var delay = 1.0
+        for attempt in 1...Self.resumeAttempts {
+            guard await resumeLastThread(session, listing: listing), !Task.isCancelled, attempt < Self.resumeAttempts else { return }
+            do { try await pause(delay) } catch { return }
+            delay *= 2
+        }
+    }
+    static let resumeAttempts = 5
     func loadModels(_ session: AppSession) async {
         guard !isSupervisor else { return }
         let selected = thread, epoch = generation

@@ -73,8 +73,8 @@ struct OpsRoot: View {
         .sheet(isPresented: $router.showSettings) { OpsSettings() }
         .sheet(item: $router.destination) { OpsDestinationView(destination: $0) }
         .task { await OpsPushRegistration.request() }
-        // Reopen the last private conversation once the account is known, and
-        // retry on foreground if the first thread read failed.
+        // Reopen the last private conversation once the account is known. A
+        // failed thread read is retried briefly, then again on foreground.
         .task(id: "\(KeirResume.scope(profile: session.profile, server: Surface.ops.base) ?? "")|\(session.profile["ownerSupervisor"].bool)|\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
             let keir = OpsServices.shared.keir
@@ -82,7 +82,7 @@ struct OpsRoot: View {
             // Decide the home conversation from the profile before anything
             // is resumed, sent or read from Support Keir.
             await keir.ensureHome(session)
-            await keir.resumeLastThread(session)
+            await keir.resumeLastThreadWhileOpen(session)
         }
         .task(id: scenePhase == .active) {
             if scenePhase == .active { await session.refreshProfile() }
