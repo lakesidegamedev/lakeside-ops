@@ -7,9 +7,10 @@ enum OpsTheme {
     static let background = Brand.background
     static let surface = Brand.surface
     static let raised = Brand.raised
-    static let hairline = Brand.adaptive(0x1e2c3a, 0xdde3ea)
+    static let hairline = Brand.adaptive(0x262628, 0xe1e4e9)
     static let ink = Brand.ink
-    static let muted = Brand.adaptive(0x7d8fa0, 0x5b6876)
+    // 6.7:1 on true black and 5.4:1 on the light canvas.
+    static let muted = Brand.adaptive(0x8e8e93, 0x5b6470)
     static let sky = Brand.sky
     static let mint = Brand.mint
     static let warn = Brand.adaptive(0xe3ba88, 0xb26a12)

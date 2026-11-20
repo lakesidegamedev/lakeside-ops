@@ -4,19 +4,28 @@ The Lakeside Games studio app for iPhone and iPad, shown on the Home Screen as
 Keir (bundle ID `net.lakesidegames.ops`, unchanged). Native SwiftUI, iOS 17 and
 later.
 
-Three places, in this order:
+Three places, in this order, on a quiet dock at the bottom (the native tab
+bar):
 
-- **Conversation**: the landing screen. A private thread with Keir, the
-  studio's operator, with live task status, decisions you can approve or reject
-  and charts. Chips under the title show what needs you, open tickets and
-  running work, and open the inbox.
-  An empty conversation opens on a quiet start: Keir, a "Talk to Keir" button
-  (the existing voice mode) and, when the studio has a ticket with no recorded
-  Discord reply, one editable follow-up draft. The same suggestion stays in a
-  small ticket menu beside the composer. Nothing is sent automatically and a
-  typed draft is never replaced. After a force-quit the app reopens the last
-  private thread, checked against the live thread list; only the thread id and
-  a one-way account fingerprint are stored.
+- **Chat**: the landing screen, a private thread with Keir, the studio's
+  operator. Keir sits at the top centre, animated by what he is doing
+  (listening, talking, thinking, working, asleep when stopped); tap him for
+  your conversations. Under his name, small capsules appear only when true:
+  running work, what needs you (both open the inbox) and autonomy. The
+  timeline is the screen: your messages on the right, Keir's on the left,
+  with work, decisions, questions and files shown inline as rounded objects.
+  One pill composer sits at the bottom: "+" holds attachments, ticket
+  follow-up drafts, message routing and the model; the microphone dictates
+  and becomes send once there is text. Keir's menu at the top left holds
+  conversations, controls, spoken replies, computer history, the support
+  desk, settings and Stop or Start Keir. Voice mode is the button at the top
+  right.
+  An empty conversation opens on a quiet start: a welcome line, a "Talk to
+  Keir" button (the existing voice mode) and, when the studio has a ticket
+  with no recorded Discord reply, one editable follow-up draft. Nothing is
+  sent automatically and a typed draft is never replaced. After a force-quit
+  the app reopens the last private thread, checked against the live thread
+  list; only the thread id and a one-way account fingerprint are stored.
 - **Connected games** (Keir tools menu, studio mode only): pick A House Divided,
   MetroForge or Grand Century and see what Keir can genuinely read there. Each
   read shows whether it is live, unavailable or unsupported, the values returned,
@@ -35,7 +44,12 @@ Three places, in this order:
   on the lock screen, and quiet incident alerts.
 
 On iPad with iOS 18 the three places become a sidebar; on iOS 17 they stay a
-tab bar. Conversation and inbox content keeps a readable width on large screens.
+tab bar. Chat and inbox content keeps a readable width on large screens.
+
+**Appearance**: System (the default), Light, or OLED black, in Settings. OLED
+black is a true black background with slightly raised greys for bubbles and
+cards. A dark theme chosen in an earlier version is kept and becomes OLED
+black.
 
 The app talks only to `ops.lakesidegames.net` with the signed-in staff session.
 Credentials stay in the device Keychain, requests are pinned to HTTPS and never
