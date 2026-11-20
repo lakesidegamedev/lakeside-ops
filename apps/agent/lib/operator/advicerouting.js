@@ -28,7 +28,7 @@ function adviceQuestion(text) {
     /\b(?:how (?:can|do|should) i|help me)\b[\s\S]{0,100}\b(?:profit|make money|invest)\b/i.test(t);
 }
 function latestInput(job) {
-  return [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system")].filter(Boolean).at(-1);
+  return [job.source, ...[...(job.requestInbox || []), ...(job.inbox || [])].filter(m => m && m.role !== "system" && !m.codingResult && !m.investigationResult && !m.directiveId)].filter(Boolean).at(-1);
 }
 function bugFollowup(job) {
   const latest = latestInput(job);

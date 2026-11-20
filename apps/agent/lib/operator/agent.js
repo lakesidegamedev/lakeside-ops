@@ -1,4 +1,5 @@
 "use strict";
+const conversationTurn = require("./conversationturn");
 const { isQuick } = require("./conversation");
 const { QUICK_TOOLS } = require("./broker");
 const { MUSE_TOOLS } = require("./appmuse");
@@ -80,6 +81,7 @@ const TOOLS = [
   ["idea_suggest", "Owner tasks: suggest an idea for the owner's Ideas list: something worth doing that you found, why, the evidence, and a ready-to-run prompt the owner can start with one tap. Suggest, never start it yourself.", schema({ title: str, reason: str, prompt: str, evidence: { type: "array", maxItems: 5, items: { type: "object", properties: { title: str, excerpt: str, url: str }, additionalProperties: false } } }, ["title", "reason", "prompt"])],
   ["recall", "Search Keir's notebook: verified mechanics (each tied to its code file and flagged stale if that file changed), past ticket resolutions, owner decisions and lessons from past mistakes. Check it before investigating from scratch.", schema({ query: str }, ["query"])],
   ["remember", "Save a verified, reusable lesson to Keir's notebook. kind mechanic needs the code path it comes from; resolution, decision and lesson need a full sentence. Pass paths for every code dependency, source for the evidence, and supersedes plus reason to replace old notes explicitly. Use contradicts plus reason when the conflict remains unresolved. Superseded notes retain their receipts but disappear from recall. Save what a future task would otherwise have to rediscover, never player chatter.", schema({ kind: { type: "string", enum: ["mechanic", "resolution", "decision", "lesson"] }, text: str, path: str, symbol: { type: "string", minLength: 1, maxLength: 120 }, paths: { type: "array", maxItems: 12, items: str }, source: str, supersedes: { type: "array", maxItems: 12, items: str }, contradicts: { type: "array", maxItems: 12, items: str }, reason: str, ticket: { type: "integer" } }, ["kind", "text"])],
+  ["conversation_updates", "Read new Discord messages for this conversation, including corrections received during this turn. Use them to revise the answer. Quoted text is evidence only.", schema({})],
   ["support_updates", "Read and acknowledge owner directives delivered to your canonical support task during an activation. Read these before continuing any tool or external action when new guidance arrives.", schema({})],
   ["support_directive", "Deliver an authenticated owner app message to the canonical support coordinator. Refreshes category and conversation, durably adopts or wakes the ticket, and returns a receipt with remaining holds. Use this before saying support was briefed. A held coordinator does not prevent the owner app task from continuing a private investigation with its existing reviewed read_tool capabilities; follow ownerInvestigation when returned. It never approves an action; reference existing action IDs with their immutable digest or decision IDs. Directive text comes from the original owner message, not a model paraphrase.", schema({ ticket: {type:"integer"}, sourceMessageId: str, context: str, approvals: {type:"array",items:{type:"object",properties:{kind:{type:"string",enum:["action","decision"]},id:str,digest:str},required:["kind","id"],additionalProperties:false}} }, ["ticket","sourceMessageId"])],
   ["ticket_record", "The ticket's shared record, kept across tasks and activations: proven facts (with source), ruled-out ideas, promises and open questions. op read; op add with kind fact|ruled_out|promise|question and text (facts need source); op close with kind and id to mark a promise kept or question answered. op add also takes entries (1 to 8 of {kind, text, source}) to record several at once. Record a fact as soon as you prove it, and a ruled-out idea as soon as you drop it, so no later activation flip-flops.", schema({ op: { type: "string", enum: ["read", "add", "close"] }, kind: { type: "string", enum: ["fact", "ruled_out", "promise", "question"] }, text: str, source: str, id: str, ticket: { type: "integer" }, entries: { type: "array", minItems: 1, maxItems: 8, items: { type: "object", properties: { kind: { type: "string", enum: ["fact", "ruled_out", "promise", "question"] }, text: str, source: str }, required: ["kind", "text"] } } }, ["op"])],
@@ -364,7 +366,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   // KEIR_EFFECT_GUARD=0 turns off the shell effect guard (on by default since 2026-10-19).
   const toolServer = createToolServer({ broker, normalizeImage, effectGuard: config.effectGuard !== false });
   const cwd = path.join(config.stateDir, "claude-cwd"); fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
-  async function run(job, signal) {
+  async function run(job, signal, { replyOnly = false } = {}) {
+    if (replyOnly) {
+      conversationTurn.foreground.add(job);
+      job.foregroundAttempt = (job.inbox || []).filter(m => conversationTurn.human(job, m)).at(-1)?.messageId;
+    }
     // A wake ends the previous reply gate, even if this activation aborts.
     delete job.waitingFor;
     const ownerMuse = musePolicy.origin(ledger.data, job);
@@ -393,7 +399,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     job.activationAt = [...(job.activationAt || []), job.startedAt].slice(-12);
     delete job.appSteering;
     // Keir 10.1.3: a bug ticket shows its progress card within seconds, before the ~20s preflight and the model run.
-    if (job.kind === "ticket" && job.activationCount === 1 && broker.instantCard) {
+    if (!replyOnly && job.kind === "ticket" && job.activationCount === 1 && broker.instantCard) {
       try { await Promise.race([broker.instantCard(job), new Promise((r) => setTimeout(r, 10000))]); }
       catch (e) { ledger.audit("instant_card_failed", { job: job.id, error: String(e.message).slice(0, 200) }); }
     }
@@ -419,7 +425,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // Keir 4.0 incidents: a new report that is clearly the same problem as an
     // open incident joins it before any model runs (moved ahead of routing in Keir 10,
     // so the router sees the incident candidates).
-    if (job.kind === "ticket" && job.ticket && !job.incidentChecked && !job.internalProbe && broker.incidentPrecheck) {
+    if (!replyOnly && job.kind === "ticket" && job.ticket && !job.incidentChecked && !job.internalProbe && broker.incidentPrecheck) {
       job.incidentChecked = true;
       try {
         const r = await broker.incidentPrecheck(job, signal);
@@ -467,7 +473,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     const delta = wakeNow ? caseFileMod.whatChanged(ledger, job) : null;
     const laneMoved = Boolean(laneDef && (job.activationCount <= 1 || (job.laneAt || 0) >= (job.lastRunStartedAt || Infinity) || Date.now() - (job.prevActivationAt || 0) > 6 * 3600000));
     const discover = !ticketCompact || laneMoved;
-    const requestInbox = [...(job.requestInbox || []), ...(job.inbox || [])].slice(-20);
+    const activationInbox = (job.inbox || []).filter(row => !replyOnly || conversationTurn.human(job, row));
+    if (conversationTurn.eligible(job)) conversationTurn.begin(job, activationInbox);
+    const requestInbox = conversationTurn.distinct([...(job.requestInbox || []), ...activationInbox]).slice(-20);
     const internalWake = row => row.role === "system" || row.investigationResult || row.codingResult;
     job.activationInternalWake = Boolean(job.lastPublishedAt && requestInbox.length && requestInbox.every(internalWake) &&
       (Date.parse(job.source?.at || "") || 0) <= job.lastPublishedAt);
@@ -476,9 +484,19 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     const context = { ...(delta ? { whatChanged: (({ messages = [], ...rest }) => ({ ...rest, newMessages: messages.length, ...(Object.keys(rest).length <= 1 && !messages.length ? { nothingNew: "No new player message or result since your last run. Do not repeat earlier posts; act only if something above needs it." } : {}), instruction: "This wake is about what changed. Start from it; the case file has the rest." }))(delta) } : {}), taskId: job.id, kind: job.kind, authority: job.role, replyInChannel: Boolean(job.replyChannel), availableReadServers: broker.servers?.(job), ticket: job.ticket, ticketCategory: job.ticket ? (ledger.data.channels?.[job.channelId || job.replyChannel]?.category || null) : undefined, ticketReceipts: Object.values(job.openedTickets || {}), summary: job.summary, source: job.source,
       ...(job.replyChannel === "app" ? { surface: "The owner's private Keir app on their phone, not Discord. Nobody else can read it. Talk directly and conversationally. Use present_choices for owner questions rather than A/B/C prose. Use native markdown tables and mermaid xy/pie charts for comparisons, or chart for sourced graphs. Use computer for visual work and artifact_save for durable reports. channel_reply posts into the app; progress_update is a specific short status. Other tasks run concurrently; stay focused on this task and thread." } : {}),
       ownerApp: light ? undefined : broker.appContext?.(job), sharedConversation: light ? undefined : broker.context?.(job), ticketWork: light ? undefined : broker.ticketWork?.(job), publicWorkInChannel: light ? undefined : broker.progress?.(job), lane: quick ? "quick" : "worker",
-      needsAcknowledgement: Boolean(job.needsAck && !job.progressMessageId), playerUpdateOverdue: job.kind === "ticket" && !job.resolutionReadyAt && Date.now() - (job.lastPublishedAt || job.at || 0) > 2 * 3600000 ? "The player has not heard from you in over two hours. Post a one-line ticket update now (where the fix is: being built, in testing on dev, on sandbox, live on the main server), then continue." : undefined, previousActivations: ticketCompact ? undefined : (job.history || []).slice(-10), repositorySnapshot: job.repositoryRef, pullRequests: job.pullRequests, inbox: freshInbox, legacyTicketEvidence: quick || ticketCompact ? undefined : job.legacyTicket, approvedActions: quick ? [] : Object.values(ledger.data.actions).filter((a) => a.jobId === job.id && ["approved", "rejected"].includes(a.state)).map((a) => ({ id: a.id, kind: a.kind, args: a.args, state: a.state })) };
+      needsAcknowledgement: Boolean(job.needsAck && !job.progressMessageId), playerUpdateOverdue: job.kind === "ticket" && !job.lastPublishedAt && !job.resolutionReadyAt && Date.now() - (job.lastPublishedAt || job.at || 0) > 2 * 3600000 ? "The player is waiting for a first answer. Answer their actual question with what you can verify, including anything they need to do." : undefined, previousActivations: ticketCompact ? undefined : (job.history || []).slice(-10), repositorySnapshot: job.repositoryRef, pullRequests: job.pullRequests, inbox: freshInbox, legacyTicketEvidence: quick || ticketCompact ? undefined : job.legacyTicket, approvedActions: quick ? [] : Object.values(ledger.data.actions).filter((a) => a.jobId === job.id && ["approved", "rejected"].includes(a.state)).map((a) => ({ id: a.id, kind: a.kind, args: a.args, state: a.state })) };
+    const current = activationInbox.filter(m => conversationTurn.human(job, m)).at(-1) ||
+      (job.activationCount === 1 && conversationTurn.human(job, job.source) ? job.source : null);
+    if (current) context.currentTurn = {
+      messageId: current.messageId, speaker: current.author, replyTo: current.replyTo, text: current.content?.slice(0, 1600),
+      instruction: "Answer what this person wants to know or change. A question about what the product recommends can be feedback on the product itself. Use earlier messages to resolve references. Mention other work only if it changes this answer. If something remains to check, tell the person whose move it is."
+    };
     if (ticketRetry && job.ticketStepLimits >= 2) {
       context.stepLimitRecovery = "Take one concrete step from the last saved checkpoint. Skip reads that already gave the same answer, then checkpoint or finish.";
+    }
+    if (replyOnly) {
+      context.foreground = "A delegated worker is still running. Answer the person who just wrote from this ticket. Use the existing evidence, acknowledge any correction, and leave outstanding investigation with the coordinator. Finish waiting after delivery.";
+      context.ticketWork = broker.ticketWork?.(job);
     }
     const voiceContext = require("./voiceturn").context(ledger.data, job);
     if (voiceContext) {
@@ -501,7 +519,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // offered to the model as a candidate.
 
     // Keir 9 (feature B): an earlier ticket on the same problem with a checked, undisputed answer rides in as context.
-    if (job.kind === "ticket" && job.ticket && job.role !== "player" && !job.internalProbe && broker.sharedAnswerPrecheck) {
+    if (!replyOnly && job.kind === "ticket" && job.ticket && job.role !== "player" && !job.internalProbe && broker.sharedAnswerPrecheck) {
       try { if (await broker.sharedAnswerPrecheck(job, signal)) context.sharedAnswer = broker.sharedAnswerContext?.(job.ticket); }
       catch (e) { ledger.audit("shared_answer_failed", { job: job.id, ticket: job.ticket, error: String(e.message).slice(0, 200) }); }
     }
@@ -511,7 +529,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     context.capabilityQuestion = chatContext.capabilityGuidance(job, quick);
     // Keir 7: the read tools that match this request, schemas included, so the
     // first call can be the read itself. Coding children work in a snapshot.
-    if (!job.codingParent && !job.voiceMode && broker.readyReads && discover) {
+    if (!replyOnly && !job.codingParent && !job.voiceMode && broker.readyReads && discover) {
       try {
         let ready = await Promise.race([broker.readyReads(job), new Promise((resolve) => setTimeout(() => resolve([]), 4000))]);
         // Keir 10: only the read tools in this lane's tool groups.
@@ -521,7 +539,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       } catch {}
       mark("readyReads");
     }
-    if (recentImages.length && !job.voiceMode && job.role !== "player") {
+    if (recentImages.length && !job.voiceMode) {
       context.recentImages = { images: recentImages, instruction: "Open relevant screenshots with view_attachment {index, messageId} before answering or delegating. For a mockup, give the implementer the visual details you verified." };
     }
     if (quick && !job.ticket && !job.codingParent && !job.voiceMode && job.role !== "player") {
@@ -551,15 +569,15 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // Keir 7: a ticket that only asks how the game works is answered by Ask
     // Keir before any model runs. Anything else, or an answer Ask's own checks
     // doubt, continues below with the fast lane's draft as a starting point.
-    if (fastLane) {
+    if (!replyOnly && fastLane) {
       const fast = await fastLane.attempt(job, signal).catch((e) => ({ handled: false, reason: String(e.message).slice(0, 160) }));
-      if (fast.handled) { job.requestInbox = requestInbox; job.inbox = []; delete job.addressedPending; ledger.save(); return; }
+      if (fast.handled) { conversationTurn.consume(job, activationInbox, requestInbox); ledger.save(); return; }
       if (fast.draft) context.fastLaneDraft = { draft: fast.draft, reason: fast.reason, instruction: "Ask Keir drafted this answer before you started, but it was not posted for the reason given. Check it against current evidence; reuse what holds and fix or drop what does not." };
       mark("fastLane");
     }
     // KBX2 orientation: the broker runs the discovery reads a support activation
     // otherwise spends its first rounds on (KEIR_ORIENTATION=0 turns it off).
-    if (config.orientation !== false && job.kind === "ticket" && job.ticket && job.role !== "player" && !quick && !compact && !job.codingParent && discover) {
+    if (!replyOnly && config.orientation !== false && job.kind === "ticket" && job.ticket && job.role !== "player" && !quick && !compact && !job.codingParent && discover) {
       mark("context");
       context.orientation = await require("./orientation").orient((name, input) => broker.tool(job, name, input, signal), { ...(ticketCompact && laneDef.readServers ? { servers: laneDef.readServers, maxServers: 3 } : {}), ...(job.lane === "outage" ? { skipReporter: true } : {}) });
       if (ticketCompact) for (const [k, v] of Object.entries(context.orientation.tools || {})) context.orientation.tools[k] = v.slice(0, 24);
@@ -567,7 +585,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       if (context.orientation.timings) preflightParts.orientationSteps = context.orientation.timings;
     }
     // Keir 10 evidence pack: the reads this lane nearly always needs, gathered in parallel before the model runs.
-    if (laneDef && discover && job.kind === "ticket" && job.ticket && config.evidencePack !== false) {
+    if (!replyOnly && laneDef && discover && job.kind === "ticket" && job.ticket && config.evidencePack !== false) {
       try {
         const parse = (v) => { if (typeof v === "string") { try { return JSON.parse(v); } catch { return v; } } return v; };
         const pack = await require("./evidencepack").build({ lane: job.lane, question: require("./ticketlanes").textOf(job),
@@ -600,7 +618,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       : job.kind === "ticket" && job.ticket && !job.codingParent ? (() => { const tr = require("./ticketrecall"), reads = ledger.data.ticketLearn?.[String(job.ticket)]?.reads || []; return broker.notebook.recallForTicket(tr.queryFor({ texts: recallTexts, reads }), { ticket: job.ticket, player: recallPlayer, job: job.id, accept: tr.relevantTo({ texts: recallTexts, reads }) }); })()
       : !compact ? broker.notebook.recall(recallTexts.join(" "), { ticket: job.ticket, k: 6, player: recallPlayer, job: job.id, via: "context" }) : undefined;
     mark("context");
-    if (!quick && config.knowledgePreparation && !(ticketCompact && !discover)) context.knowledge = await require("./knowledge-context").prepareKnowledgeContext(job,
+    if (!replyOnly && !quick && config.knowledgePreparation && !(ticketCompact && !discover)) context.knowledge = await require("./knowledge-context").prepareKnowledgeContext(job,
       (input, readSignal) => broker.tool(job, "read_tool", input, readSignal), config.knowledgePreparation, signal);
     // Internal evidence wakes the task without creating a player reply debt.
     // Repair old clocks only when the retained source proves their origin;
@@ -614,17 +632,17 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     const retainedHumanTime = (at) => internalTimes.has(at) && !humanTimes.includes(at) ? 0 : at || 0;
     job.lastPlayerAt = retainedHumanTime(job.lastPlayerAt);
     job.observedPlayerAt = Math.max(job.lastPlayerAt, retainedHumanTime(job.observedPlayerAt), ...humanTimes);
-    job.requestInbox = requestInbox; job.inbox = []; delete job.addressedPending; ledger.save();
+    conversationTurn.consume(job, activationInbox, requestInbox); ledger.save();
     context.operatorRole = roleOf(job, ledger.data.jobs);
     context.priorInvestigation = ticketCompact ? undefined : require("./investigation-memory").context(ledger, job, config.stateDir);
     context.evidenceReceipts = (job.evidenceBatches || []).slice(-6);
     // Keir 10 (W3): when Ask is failing, say so instead of letting a redirect through.
     try { broker.askHealthRefresh?.(); const askNote = require("./advicerouting").askNote(); if (askNote) context.askStatus = askNote; } catch {}
     const permitted = (t) => { try { roleGuard(job, t.name, {}, ledger.data.jobs); return true; } catch { return ["read_tools", "read_tool", "github", "raise_to_developers"].includes(t.name) && roleOf(job, ledger.data.jobs) === "engineering" || ["read_tools", "read_tool"].includes(t.name) && roleOf(job, ledger.data.jobs) === "watchkeeper"; } };
-    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (!job.codingParent || childTools(job).includes(t.name)) && (!job.prMention || PR_MENTION_TOOLS.includes(t.name)) && (!quick || QUICK_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app") && (t.name !== "present_choices" || job.role === "owner") && permitted(t) && require("./w3tools").createVisible(job, t.name));
-    if (contextProfile === "focused") {
+    const tools = TOOLS.filter((t) => (!replyOnly || conversationTurn.foregroundTools.has(t.name)) && (t.name !== "conversation_updates" || conversationTurn.eligible(job)) && (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (!job.codingParent || childTools(job).includes(t.name)) && (!job.prMention || PR_MENTION_TOOLS.includes(t.name)) && (!quick || QUICK_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app") && (t.name !== "present_choices" || job.role === "owner") && permitted(t) && require("./w3tools").createVisible(job, t.name));
+    if (contextProfile === "focused" || ticketCompact && freshInbox.some(m => m.replyTo)) {
       const conversation = broker.context?.(job);
-      context.sharedConversation = conversation ? { ...conversation, messages: (conversation.messages || []).slice(-6).map(m => ({ role: m.role, text: String(m.text || m.content || "").slice(0, 1000), at: m.at })) } : undefined;
+      context.sharedConversation = conversation ? { ...conversation, messages: require("./conversation").focusedMessages(conversation.messages || [], freshInbox.filter(m => m.messageId).at(-1) || job.source) } : undefined;
     }
     // Lean context (2026-10-18): trimmed brief, skill digests, deferred rare tool schemas.
     const skills = require("./skills"), skillLane = skills.laneOf(job, quick), controls = require("./appcontrols");
@@ -649,7 +667,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     mark("toolServer");
     let result;
     const beforeRun = ticketRetry ? recoveryFingerprint(job) : null;
-    const nudge = !quick && setTimeout(() => { if (job.progressMessageId && !job.progressAt) broker.tool(job, "progress_update", { message: "Still on it. This one needs a closer look, I'll reply here when it's done." }, signal).catch(() => {}); }, 150000);
+    const nudge = !replyOnly && !quick && setTimeout(() => { if (job.progressMessageId && !job.progressAt) broker.tool(job, "progress_update", { message: "Still on it. This one needs a closer look, I'll reply here when it's done." }, signal).catch(() => {}); }, 150000);
     // An app thread must never look abandoned. While this activation runs, keep a
     // specific, changing line under the answer the owner is waiting on.
     const liveness = !quick && job.replyChannel === "app" ? setInterval(() => {
@@ -724,6 +742,14 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // Keir 8: a provider that ran out of quota or is rate limiting is skipped for a while and the job
     // moves to the fallback route, instead of every job retrying the dead route (OpenCode Go, 2026-11-03).
     if (result.is_error && result.subtype !== "error_max_turns" && switchOnUsageLimit(job, String(result.result || result.subtype || ""))) { ledger.save(); return; }
+    if (replyOnly && job.state === "running") {
+      // Unanswered human messages remain in the durable inbox across retries.
+      job.state = "waiting";
+      job.wakeAt = Date.now() + 30000;
+      job.debounceWake = true;
+      ledger.save();
+      return;
+    }
     if (result.is_error && result.subtype !== "error_max_turns") throw new Error("model request failed: " + redactSecrets(String(result.result || result.subtype || "unknown error")).slice(0, 600));
     // 2026-10-19 03:00-07:00 ET: Claude runs returned "success" in about a
     // second with zero tokens and no tool call. Each looked like a finished
@@ -844,9 +870,9 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   // session is the same loopback endpoint a Claude activation gets, bound to
   // the job, a named tool subset and the caller's abort signal.
   function openToolSession(job, names, signal) {
-    const tools = TOOLS.filter((t) => (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (t.name !== "present_choices" || job.role === "owner") && names.includes(t.name) && (!job.codingParent || childTools(job).includes(t.name)) && (!job.prMention || PR_MENTION_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app"));
+    const tools = TOOLS.filter((t) => (t.name !== "conversation_updates" || conversationTurn.eligible(job)) && (!["edit_verify","finish_patch"].includes(t.name) || Boolean(job.codingContract) && !job.investigation && job.role !== "player" && (t.name !== "finish_patch" || job.codingContract.allowCompleteOnPass === true)) && (t.name !== "present_choices" || job.role === "owner") && names.includes(t.name) && (!job.codingParent || childTools(job).includes(t.name)) && (!job.prMention || PR_MENTION_TOOLS.includes(t.name)) && (!["ticket_performance", "release_efficiency"].includes(t.name) || job.role === "owner") && (job.role !== "player" || t.name !== "handoff") && (!MUSE_TOOLS.includes(t.name) || job.role === "owner") && (!["owner_updates", "computer"].includes(t.name) || job.role === "owner" && job.replyChannel === "app"));
     return toolServer.open(job, tools, signal);
   }
-  return { run, canRun: () => true, openToolSession };
+  return { run: (job, signal, options) => run(job, signal, options).finally(() => conversationTurn.end(job)), canRun: () => true, openToolSession };
 }
 module.exports = { MUSE_NOTE, STEP_LIMIT_TEXT, emptyActivation, usageRecord, createAgent, normalizeImage, TOOLS, TOOL_NOTE, rustLaneAllowed, routeForVision };

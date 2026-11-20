@@ -69,3 +69,20 @@ test("a card with several fixes, an answered fix and a blocked fix are left to t
   assert.equal((await f.broker.advanceCardStage(123, "No such fix", "tested", {})).advanced, false);
   assert.equal((await f.broker.advanceCardStage(999, "x", "tested", {})).reason, "no card");
 });
+
+test("a human interruption defers the live notice and the stage tick delivers it once after the reply", async () => {
+  const f = await setup();
+  f.job.releaseEvidence = { patch: { development: true, staging: true, main: true } };
+  f.job.inbox = [{ messageId: "m", authorId: "p", channelId: f.job.channelId, role: "player" }];
+  await f.broker.stageTick();
+  const card = f.ledger.data.statusCards[123];
+  assert.equal(card.pendingLiveNotice.names.length, 1);
+  assert.equal(card.liveNotified?.length || 0, 0);
+  f.job.inbox = [];
+  f.job.state = "waiting";
+  await f.broker.stageTick();
+  assert.equal(card.pendingLiveNotice, undefined);
+  assert.equal(card.liveNotified.length, 1);
+  await f.broker.stageTick();
+  assert.equal(f.ledger.data.audit.filter(a => a.kind === "live_notice").length, 1);
+});

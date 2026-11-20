@@ -103,7 +103,7 @@ function get(d, ticket, { create = false } = {}) {
 }
 
 // Record what the player asked. Returns true when a new item was added. Thin or signal-free text is not an ask.
-function addAsked(c, text, at) {
+function addAsked(c, text, at, origin = {}) {
   const full = String(text || "").replace(/\s+/g, " ").trim().slice(0, 600);
   const correction = SCOPE_CORRECTION.test(full);
   const focus = full.replace(SCOPE_CORRECTION, "").replace(/^[.!?,:\s]+/, "");
@@ -112,8 +112,8 @@ function addAsked(c, text, at) {
   if (w.length < 2) return false;
   c.asked ||= [];
   const key = clip(full, 80);
-  if (c.asked.some((x) => clip(x.text, 80) === key)) return false;
-  c.asked.push({ at, text: clip(full, 220), w, answeredAt: null, ...(correction ? { correction: true } : {}) });
+  if (c.asked.some((x) => origin.messageId && x.messageId ? x.messageId === origin.messageId : clip(x.text, 80) === key)) return false;
+  c.asked.push({ at, ...origin, text: clip(full, 220), w, answeredAt: null, ...(correction ? { correction: true } : {}) });
   if (correction) c.askedRefusals = 0;
   return true;
 }
@@ -176,12 +176,16 @@ function recordPost(d, job, message, { now = Date.now(), card = false } = {}) {
     }
     for (const p of kept) c.promises.push({ ...p, w: [...(readClaim(p.text.replace(PROMISE, " ")) || { words: new Set() }).words].slice(0, 12) });
     for (const s of sentences) if (s.endsWith("?") && s.length > 8 && !c.questions.some((q) => !q.closedAt && q.by === "keir" && clip(q.text, 50) === clip(s, 50))) c.questions.push({ at: now, by: "keir", text: clip(s, 150) });
-    // A substantive post answers the player's questions asked before it.
-    if (made.length) for (const q of c.questions) if (q.by === "player" && !q.closedAt && q.at < now) q.closedAt = now;
-    // A substantive post that addresses an open asked item answers it. A post that touches no asked item answers none.
-    if (made.length && c.asked?.length) {
-      const postWords = new Set(made.flatMap((m) => [...m.claim.words]));
-      for (const a of c.asked) if (!a.answeredAt && a.at <= now && addresses(postWords, a)) { a.answeredAt = now; a.answeredBy = clip(made[0].s, 80); }
+    for (const q of c.questions) {
+      if (q.by !== "player" || q.closedAt || q.at > now) continue;
+      const words = subjectWords(q.text.replace(/^(?:where|what|who|why|when|how)\b/i, ""));
+      const answered = made.some(m => words.size === 1 ? m.claim.words.has([...words][0]) : addresses(m.claim.words, { w: words }));
+      if (answered) q.closedAt = now;
+    }
+    for (const ask of c.asked || []) {
+      if (ask.answeredAt || ask.at > now) continue;
+      const answer = made.find(m => addresses(m.claim.words, ask));
+      if (answer) { ask.answeredAt = now; ask.answeredBy = clip(answer.s, 80); }
     }
     c.touchedAt = now;
     trim(c);
@@ -200,7 +204,7 @@ function syncActivation(d, job, { now = Date.now(), ownerId = null, botId = null
     const src = job.source;
     if (src && src.role !== "owner" && src.role !== "support" && src.authorId !== botId && !(ownerId && src.authorId === ownerId)) {
       const head = [src.content, ...(src.embeds || []).map((e) => [e?.title, e?.description].filter(Boolean).join(". "))].filter(Boolean).join(". ");
-      addAsked(c, head, Date.parse(src.at || "") || now);
+      addAsked(c, head, Date.parse(src.at || "") || now, { messageId: src.messageId, authorId: src.authorId });
     }
     for (const m of rows) {
       if (!m || m.role === "assistant" || m.authorId === botId || m.investigationResult || m.codingResult) continue;
@@ -214,8 +218,9 @@ function syncActivation(d, job, { now = Date.now(), ownerId = null, botId = null
         if (!c.staff.some((x) => x.who === who && clip(x.text, 80) === clip(text, 80))) c.staff.push({ at: at || now, who, text: clip(text, 200) });
         if (FIXING.test(text)) c.fix = { ...(c.fix || {}), who: isOwner ? "the owner" : "staff", stage: c.fix?.stage || "being worked on", said: clip(text, 100), at: at || now };
       } else if (m.role === "player" || (!staff && m.role !== "system")) {
-        addAsked(c, text, at || now);
-        for (const s of sentencesOf(text)) if (s.endsWith("?") && s.length > 8 && !c.questions.some((q) => q.by === "player" && clip(q.text, 50) === clip(s, 50))) c.questions.push({ at: at || now, by: "player", text: clip(s, 150) });
+        const origin = { messageId: m.messageId || m.id, authorId: m.authorId };
+        addAsked(c, text, at || now, origin);
+        for (const s of sentencesOf(text)) if (s.endsWith("?") && s.length > 8 && !c.questions.some((q) => q.by === "player" && (!q.messageId || !origin.messageId || q.messageId === origin.messageId) && clip(q.text, 50) === clip(s, 50))) c.questions.push({ at: at || now, ...origin, by: "player", text: clip(s, 150) });
       }
     }
     // Fix status from the ledger: developers' cards, Keir's own coding work, pull requests.

@@ -579,9 +579,14 @@ async function flushOutbox() {
         if (channelJob && i > 0) await new Promise((r) => setTimeout(r, replyGapMs));
         if (ledger.data.control?.stopped && !entry.controlResponse) continue outboxEntries;
         if (require("./lib/operator/supporttakeover").suppressOutbox(ledger, key, entry, Date.now())) continue outboxEntries;
+        if (entry.answerTo && require("./lib/operator/conversationturn").superseded(channelJob, entry)) {
+          entry.skipped = "superseded by a newer Discord turn"; entry.deliveredAt = Date.now();
+          ledger.audit("outbox_superseded", { key, job: channelJob.id, deliveredChunks: entry.deliveredChunks || 0 });
+          ledger.save(); continue outboxEntries;
+        }
         const files = i === 0 ? entry.files || [] : [];
         // Answers thread under the request that asked for them.
-        const reference = channelJob && i === 0 && !key.startsWith("ack:") && snowflake(channelJob.source?.messageId) ? { message_reference: { message_id: channelJob.source.messageId, fail_if_not_exists: false } } : {};
+        const reference = channelJob && i === 0 && !key.startsWith("ack:") && snowflake(entry.answerTo || channelJob.source?.messageId) ? { message_reference: { message_id: entry.answerTo || channelJob.source.messageId, fail_if_not_exists: false } } : {};
         const sent = await discord("POST", `/channels/${dmId}/messages`, { content: chunks[i], allowed_mentions: { parse: [] }, nonce: `${entry.id}-${i}`, enforce_nonce: true, ...reference,
           ...(lastRow && i === chunks.length - 1 ? { components: lastRow } : {}),
           ...(files.length ? { attachments: files.map((f, id) => ({ id, filename: f.name })) } : {}) }, files);
@@ -813,13 +818,13 @@ function drain() {
   unreadWatchdog(d, now, staffHeld);
   const picks = pickForLanes(Object.values(d.jobs).filter((j) => !broker.supportDirectiveHeld(j)), active, { now,
     supportDeferred: (j) => config.supportDeferred(j) || config.engineeringEnabled && j.kind === "finding" && !j.operatorRole && Object.values(d.watch?.findings || {}).some((f) => f.jobId === j.id && !f.correlatedWith), claimedBy: (channelId) => d.channels[channelId]?.claimedBy });
-  for (const { lane, job } of picks) {
+  for (const { lane, job, replyOnly } of picks) {
     if (active[lane]) continue;
     supportOwner.incorporateFor(job);
     const stopTyping = presence.begin(job.replyChannel);
     const controller = new AbortController(), startedAt = Date.now(); active[lane] = { job, controller, startedAt };
     const deadline = setTimeout(() => controller.abort(), laneTimeoutMs(lane, config.maxTurnMs));
-    agent.run(job, controller.signal).catch((e) => {
+    agent.run(job, controller.signal, { replyOnly }).catch((e) => {
       if (!controller.signal.aborted && !stopping) failures?.exception(e, "activation");
       const out = lifecycle.onRunError(job, e, { now: Date.now(), aborted: controller.signal.aborted, stopping, paused: d.paused, startedAt,
         supportDeferred: (j) => config.supportDeferred(j), staffHeld, claimedBy: (id) => d.channels[id]?.claimedBy,
