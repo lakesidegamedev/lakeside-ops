@@ -3,9 +3,13 @@
 Keir: the A House Divided Discord operator, support desk and /summon bridge.
 New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/release.sh`.
 
-## Unreleased
+## 11.1.0 (2026-11-20)
 
 ### For users
+
+- The owner’s Keir iPhone app can show actionable support approvals alongside the existing Discord notifications. Quiet hours apply to each device. When quiet hours end, the app alerts you only for decisions that still need an answer.
+- Connected games shows the A House Divided turn and engine, MetroForge services and city bundles, and Grand Century site and release health. Each card identifies its source and when Keir checked it.
+
 
 - If a ticket run stalls before Keir sends a reply or takes an external action, Keir can try once more automatically.
 
@@ -14,6 +18,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - When the numbers over several turns are the answer (market history, your shops' results, your action points), Keir can attach one chart to its answer in your ticket. Long tables get a dated page, linked under the chart; your own ticket's page needs you signed in at lakesidegames.net with the account linked to your Discord. Keir can keep that page updated for up to 24 hours when coming turns may change the answer. It never posts those updates in the channel, and stops on request, at ticket close or when staff take over. Every page opened from a ticket is private to the player who opened it, even when it shows public market data, and stays private if the ticket is later reassigned. If your ticket has no linked game account, Keir answers with the chart alone and does not offer updates.
 
 ### For developers
+
+- The owner app serves a fixed catalogue of game reads through the tool broker. Quiet hours use a device time zone and persist delayed approval notifications across restarts.
+
 
 - The scheduler distinguishes a lane deadline from an owner stop or staff takeover. A ticket can retry one deadline after a minute if no writes or posts occurred. A second deadline alerts the owner.
 
