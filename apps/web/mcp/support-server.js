@@ -26,7 +26,7 @@ const { registerReopen } = require("./support-reopen");
 const { registerInvestigations } = require("./support-investigations");
 
 const { registerCreateSuggestion } = require("./support-create-suggestion");
-const { registerCreateTicket, createSupportTicket, findGuildMemberByUsername } = require("./support-create-ticket");
+const { registerCreateTicket, createSupportTicket, findGuildMemberByUsername, GUILD_ID } = require("./support-create-ticket");
 const { registerWebIntake, createSessionVerifier, createStandingCheck } = require("./support-web-intake");
 const { registerMerge } = require("./support-merge");
 const { isSuggestionDone, requestSuggestionAnnouncement } = require("./support-suggestion-announce");
@@ -147,7 +147,7 @@ async function main() {
         const q = {}; if (status) q.status = status; if (tag) q.tags = tag; if (category) q.category = category;
         if (kind !== "suggestion") {
           const tq = { ...q, category: category && category !== "investigation" ? category : { $ne: "investigation" } }; if (category === "investigation") tq._id = { $exists: false }; if (openOnly) Object.assign(tq, OPEN_TICKET);
-          (await Tickets.find(tq).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: s.kind, number: s.number, title: s.title, status: s.status, category: s.category, tags: s.tags, hasImage: s.images.length > 0, createdAt: s.createdAt, ...(includeReplyState ? { replyState: ticketReplyState(t) } : {}) }); });
+          (await Tickets.find(tq).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: s.kind, number: s.number, title: s.title, status: s.status, category: s.category, tags: s.tags, hasImage: s.images.length > 0, createdAt: s.createdAt, ...(includeReplyState ? { replyState: ticketReplyState(t, GUILD_ID) } : {}) }); });
         }
         if (kind !== "ticket") {
           const sq = { ...q }; if (openOnly) sq.status = { $nin: ["closed", "resolved", "rejected", "done", "completed"] };

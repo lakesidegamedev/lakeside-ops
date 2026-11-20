@@ -18,3 +18,11 @@ test("an earlier opening's answer does not clear a reopened ticket", () => {
   assert.deepEqual(ticketReplyState({ ...ticket, publicUpdates: [update], reopenRequest: { state: "complete", completedAt: "2026-10-20" } }), { state: "no_receipt" });
   assert.equal(ticketReplyState({ ...ticket, discordChannelId: null }), null);
 });
+
+test("links to the earliest posted reply even when updates are out of order", () => {
+  const guild = "4".repeat(18);
+  const later = { ...update, delivery: { ...update.delivery, messageId: "5".repeat(18), postedAt: "2026-10-15T00:10:00Z" } };
+  const row = { ...ticket, publicUpdates: [later, update] };
+  assert.equal(ticketReplyState(row, guild).url, `https://discord.com/channels/${guild}/${room}/${id}`);
+  assert.equal(ticketReplyState(row, "unknown").url, undefined);
+});

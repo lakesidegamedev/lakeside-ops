@@ -89,7 +89,11 @@ struct TicketDetail: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(ticket["title"].string).font(.title2.weight(.semibold)).tracking(-0.4)
                     if replyState["state"].string == "delivered" {
-                        Label("Reply delivered to Discord", systemImage: "checkmark.bubble").font(.callout).foregroundStyle(OpsTheme.mint)
+                        if let url = URL(string: replyState["url"].string), url.scheme == "https", url.host == "discord.com" {
+                            Link(destination: url) { Label("View reply in Discord", systemImage: "arrow.up.right.square") }.font(.callout)
+                        } else {
+                            Label("Reply delivered to Discord", systemImage: "checkmark.bubble").font(.callout).foregroundStyle(OpsTheme.mint)
+                        }
                     } else if replyState["state"].string == "no_receipt" {
                         Label("No Discord reply receipt", systemImage: "bubble.left").font(.callout).foregroundStyle(OpsTheme.warn)
                     }
