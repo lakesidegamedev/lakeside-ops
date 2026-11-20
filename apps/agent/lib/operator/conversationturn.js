@@ -18,7 +18,13 @@ function human(job, row) {
     (job.kind === "ticket" || row.authorId === job.actorId);
 }
 function begin(job, snapshot) {
-  active.set(job, { captured: new Set(snapshot), owed: new Set(foreground.has(job) ? snapshot : []), revision: 0 });
+  const owed = new Set(foreground.has(job) ? snapshot : []);
+  if (job.kind === "conversation") {
+    const current = snapshot.filter(row => human(job, row)).at(-1) || (job.activationCount === 1 ? job.source : null);
+    if (current && (current.replyTo || current.mentioned || current.contextMessageId || current.contextSinceMessageIds?.length) &&
+        (current.content?.includes("?") || current.contextMessageId || current.contextSinceMessageIds?.length)) owed.add(current);
+  }
+  active.set(job, { captured: new Set(snapshot), owed, revision: 0 });
 }
 function consume(job, rows, history) {
   const used = new Set(rows);

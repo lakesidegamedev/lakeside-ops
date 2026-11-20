@@ -70,3 +70,13 @@ test("reply-only turns can read new owner directives before answering", async ()
   assert.deepEqual(await f.broker.tool(f.job, "support_updates", {}), [directive]);
   assert.deepEqual(f.job.inbox, []);
 });
+
+test("a direct Discord question cannot be answered only in a private finish summary", async () => {
+  const f = setup();
+  const s = { ...msg("asked", f.job.channelId), content: "Where?", replyTo: "prior" };
+  Object.assign(f.job, { kind: "conversation", role: "player", ticket: null, actorId: s.authorId, source: s, activationCount: 1 });
+  turn.begin(f.job, []);
+  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Answered the question." }), /channel_reply/);
+  await f.broker.tool(f.job, "channel_reply", { message: "I meant the second menu." });
+  assert.equal(turn.owes(f.job), false);
+});
