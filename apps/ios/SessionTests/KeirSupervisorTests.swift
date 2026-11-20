@@ -157,9 +157,11 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         let session = session()
         let keir = await opened(session, connect: false)
         fixture.mode = .notOwner          // the write is refused once
-        XCTAssertFalse(await keir.send("retry me", session))
+        let firstAccepted = await keir.send("retry me", session)
+        XCTAssertFalse(firstAccepted)
         fixture.mode = .normal
-        XCTAssertTrue(await keir.send("retry me", session))
+        let retryAccepted = await keir.send("retry me", session)
+        XCTAssertTrue(retryAccepted)
         XCTAssertEqual(fixture.clientIds.count, 2)
         XCTAssertEqual(Set(fixture.clientIds).count, 1, "the retry carries the same clientId")
         XCTAssertTrue(fixture.clientIds[0].hasPrefix("ios-"))
@@ -171,7 +173,8 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         let session = session()
         let keir = await opened(session)
         _ = await eventually { keir.connected }
-        XCTAssertTrue(await keir.send("Look at the build", session))
+        let accepted = await keir.send("Look at the build", session)
+        XCTAssertTrue(accepted)
         let running = await eventually { keir.supervisorLiveJob != nil }
         XCTAssertTrue(running)
         XCTAssertEqual(keir.live.count, 1)
@@ -242,7 +245,8 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         let session = session()
         let keir = await opened(session)
         _ = await eventually { keir.supervisor.pending.count == 1 }
-        XCTAssertTrue(await keir.send("yes, go ahead and approve it", session))
+        let chatAccepted = await keir.send("yes, go ahead and approve it", session)
+        XCTAssertTrue(chatAccepted)
         XCTAssertTrue(fixture.decisions.isEmpty)
         XCTAssertFalse(fixture.requests.contains { $0.hasPrefix("POST /api/keir/supervisor/proposals/") })
         XCTAssertEqual(keir.supervisor.pending.count, 1)
@@ -285,12 +289,14 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         let keir = store(scope: nil)
         XCTAssertFalse(keir.homeResolved)
         XCTAssertEqual(keir.thread, "main", "main is a placeholder until the account is known")
-        XCTAssertFalse(await keir.send("private note for Keir", session))
+        let beforeProfile = await keir.send("private note for Keir", session)
+        XCTAssertFalse(beforeProfile)
         XCTAssertNotNil(keir.error)
 
         await keir.ensureHome(session)
         XCTAssertFalse(keir.homeResolved, "an unreadable profile never defaults to Support Keir")
-        XCTAssertFalse(await keir.send("private note for Keir", session))
+        let afterAccountSwitch = await keir.send("private note for Keir", session)
+        XCTAssertFalse(afterAccountSwitch)
         XCTAssertFalse(fixture.requests.contains { $0.hasPrefix("POST") })
         XCTAssertEqual(OperatorOfflineProtocol.operatorRequests, [], "and never reached Support Keir")
 
@@ -311,7 +317,8 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         let session = session()
         let keir = await opened(session)
         _ = await eventually { keir.connected }
-        XCTAssertTrue(await keir.send("owner only", session))
+        let accepted = await keir.send("owner only", session)
+        XCTAssertTrue(accepted)
         XCTAssertEqual(keir.messages.first?["text"].string, "owner only")
         tasks.forEach { $0.cancel() }; tasks = []
 
@@ -323,7 +330,8 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertTrue(keir.supervisor.proposals.isEmpty)
 
         let posts = fixture.requests.filter { $0.hasPrefix("POST") }.count
-        XCTAssertFalse(await keir.send("meant for the owner's private chat", session))
+        let afterLogout = await keir.send("meant for the owner's private chat", session)
+        XCTAssertFalse(afterLogout)
         XCTAssertEqual(fixture.requests.filter { $0.hasPrefix("POST") }.count, posts)
         XCTAssertEqual(OperatorOfflineProtocol.operatorRequests, [], "not handed to Support Keir either")
     }
@@ -423,7 +431,8 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertTrue(keir.connected, "the server is reachable, so this is not 'reconnecting'")
         XCTAssertNil(keir.error)
         XCTAssertEqual(KeirSupervisor.Setup.notConfigured.message, "Private supervisor is not set up on this server")
-        XCTAssertFalse(await keir.send("anyone there?", session))
+        let offlineAccepted = await keir.send("anyone there?", session)
+        XCTAssertFalse(offlineAccepted)
         XCTAssertFalse(fixture.requests.contains { $0.hasPrefix("POST") }, "nothing is sent to a server that has no supervisor")
     }
 
