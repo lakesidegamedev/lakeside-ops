@@ -2,7 +2,8 @@ import SwiftUI
 import LakesideCore
 
 /// The Ops widget: an animated 8-bit Keir Starmer, a fresh line from Keir every
-/// thirty minutes, and a swipe to what he is working on. The portrait is drawn
+/// thirty minutes, and a second face with what he is working on (one button or
+/// a horizontal swipe flips it). The portrait is drawn
 /// in code, pixel by pixel, so it ships with no image assets and animates in
 /// the same palette as the rest of Ops.
 struct StarmerWidget: View {
@@ -12,6 +13,8 @@ struct StarmerWidget: View {
     @State private var busy = false
     @State private var error: String?
     @State private var changedAt: Date?
+    /// The last periodic read failed; the line on screen is older than it looks.
+    @State private var readFailed = false
 
     private var message: String {
         line["text"].string.nonempty ?? "Keir is settling in. The first line lands shortly."
@@ -47,7 +50,7 @@ struct StarmerWidget: View {
                     .accessibilityHidden(!showWork)
             }
             .animation(.snappy(duration: 0.25), value: showWork)
-            .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
             footer
         }
         .padding(14)
@@ -85,18 +88,12 @@ struct StarmerWidget: View {
 
     // MARK: Header
 
+    /// The line is periodic, not live: no pulsing live badge. Its age is stated
+    /// in a sentence under the line instead.
     private var header: some View {
         HStack(spacing: 8) {
-            Text("KEIR").font(.system(size: 11, weight: .bold)).tracking(1.4).foregroundStyle(OpsTheme.muted)
-            TimelineView(.periodic(from: .now, by: 0.8)) { timeline in
-                let on = Int(timeline.date.timeIntervalSinceReferenceDate * 1.25) % 2 == 0
-                HStack(spacing: 4) {
-                    Circle().fill(OpsTheme.mint.opacity(on ? 1 : 0.35)).frame(width: 6, height: 6)
-                    Text("LIVE").font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(OpsTheme.mint.opacity(on ? 1 : 0.5))
-                }
-            }
+            Text("KEIR").opsSectionHeader()
             Spacer()
-            if let error { Text(error).font(.caption2).foregroundStyle(OpsTheme.warn).lineLimit(1) }
             Button {
                 Task { await refresh() }
             } label: {
@@ -115,7 +112,7 @@ struct StarmerWidget: View {
     private var messageFace: some View {
         HStack(alignment: .top, spacing: 14) {
             KeirPortrait(busy: busy, waiting: waiting, lineAt: lineDate, changedAt: changedAt, error: error != nil, size: .medium, forced: forcedState)
-                .frame(width: 96, height: 96)
+                .frame(width: 72, height: 72)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 8) {
                 Text(message)
@@ -124,17 +121,26 @@ struct StarmerWidget: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .lineLimit(5)
                     .accessibilityIdentifier("ops-starmer-line")
-                Text(sinceLine)
+                // Re-read each minute so the stated age never freezes.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in Text(sinceLine) }
                     .font(.caption2)
-                    .foregroundStyle(OpsTheme.muted)
+                    .foregroundStyle(readFailed || error != nil ? OpsTheme.warn : OpsTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("ops-starmer-age")
             }
             Spacer(minLength: 0)
         }
     }
 
     private var sinceLine: String {
-        guard line["at"].number != nil else { return "A new line every thirty minutes" }
-        return "New line every thirty minutes · \(OpsFormat.ago(line["at"]))"
+        if error != nil { return "A new line could not be fetched. The line above is unchanged." }
+        guard line["at"].number != nil else {
+            return readFailed ? "Keir's line could not load. The app tries again every two minutes." : "Keir writes a new line every thirty minutes."
+        }
+        let age = OpsFormat.ago(line["at"])
+        let when = age == "now" ? "just now" : age
+        if readFailed { return "Could not check for a newer line. This one was written \(when)." }
+        return "Written \(when). Keir writes a new line every thirty minutes."
     }
 
     // MARK: Work face
@@ -142,7 +148,7 @@ struct StarmerWidget: View {
     private var workFace: some View {
         HStack(alignment: .top, spacing: 14) {
             KeirPortrait(waiting: waiting, lineAt: lineDate, size: .small)
-                .frame(width: 72, height: 72)
+                .frame(width: 54, height: 54)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 7) {
                 Text(workHeadline)
@@ -184,27 +190,24 @@ struct StarmerWidget: View {
 
     // MARK: Footer
 
+    /// One control flips the card. The swipe still works but is not taught on
+    /// screen.
     private var footer: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 5) {
-                Circle().fill(showWork ? OpsTheme.muted : OpsTheme.sky).frame(width: 5, height: 5)
-                Circle().fill(showWork ? OpsTheme.sky : OpsTheme.muted).frame(width: 5, height: 5)
+        Button {
+            withAnimation(.snappy(duration: 0.25)) { showWork.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Text(showWork ? "Back to Keir's line" : "What Keir is working on")
+                Image(systemName: "chevron.right").accessibilityHidden(true)
             }
-            .accessibilityHidden(true)
-            Text(showWork ? "What he is working on" : "Swipe for what he is working on")
-                .font(.caption2).foregroundStyle(OpsTheme.muted)
-            Spacer()
-            Button {
-                withAnimation(.snappy(duration: 0.25)) { showWork.toggle() }
-            } label: {
-                Image(systemName: showWork ? "text.bubble" : "list.bullet")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(OpsTheme.sky)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(showWork ? "Show Keir's line" : "Show what Keir is working on")
-            .accessibilityIdentifier("ops-starmer-flip")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(OpsTheme.sky)
+            .frame(minHeight: 32)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(showWork ? "Show Keir's line" : "Show what Keir is working on")
+        .accessibilityIdentifier("ops-starmer-flip")
     }
 
     // MARK: Data
@@ -224,12 +227,14 @@ struct StarmerWidget: View {
     }
 
     private func load() async {
-        if let value = try? await session.get("/api/keir/app/starmer") {
-            if value["text"].string != line["text"].string { changedAt = Date() }
-            cache(value)
-            withAnimation(.snappy(duration: 0.25)) { line = value }
-            error = nil
+        guard let value = try? await session.get("/api/keir/app/starmer") else {
+            if !Task.isCancelled { readFailed = true }
+            return
         }
+        if value["text"].string != line["text"].string { changedAt = Date() }
+        cache(value)
+        withAnimation(.snappy(duration: 0.25)) { line = value }
+        error = nil; readFailed = false
     }
 
     private func refresh() async {
@@ -241,7 +246,7 @@ struct StarmerWidget: View {
             if value["text"].string != line["text"].string { changedAt = Date() }
             cache(value)
             withAnimation(.snappy(duration: 0.25)) { line = value }
-            error = nil
+            error = nil; readFailed = false
         } catch {
             self.error = error.displayMessage
         }

@@ -305,7 +305,8 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(find(app, "Bond coupon ledger").waitForExistence(timeout: 10))
         XCTAssertTrue(find(app, "Read the check result").exists)
         XCTAssertTrue(find(app, "Check in").exists)
-        XCTAssertTrue(find(app, "Completion time not established").exists)
+        // A compact row says nothing about completion when there is no estimate.
+        XCTAssertFalse(find(app, "Completion time not established", timeout: 1).exists)
         capture(app, "Ticket queue with timed wait and next milestone")
     }
 
