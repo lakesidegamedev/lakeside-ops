@@ -11,6 +11,7 @@ struct KeirView: View {
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
     @ObservedObject var keir: KeirStore
+    @ObservedObject private var attention = AttentionCenter.shared
     @State private var draft = ""
     @StateObject private var attachments = ChatAttachments(keir: true)
     @StateObject private var voice = KeirVoice()
@@ -105,10 +106,10 @@ struct KeirView: View {
 
     private var header: some View {
         KeirHeader(title: keir.threadTitle, presence: headerPresence, level: voice.level, sprite: sprite,
-                   attention: AttentionCenter.shared.count, workCount: keir.isSupervisor ? 0 : keir.live.count + keir.backgroundTasks.count,
+                   attention: attention.count, workCount: keir.isSupervisor ? 0 : keir.live.count + keir.backgroundTasks.count,
                    yolo: keir.yolo, disabled: presentingSheet,
                    openThreads: { sheet = .threads },
-                   openInbox: { router.activityFilter = "all"; router.tab = .activity },
+                   openInbox: { router.activityFilter = "needs-you"; router.tab = .activity },
                    reviewAutonomy: { confirmingYoloOff = true }) {
             toolsMenu
         }
@@ -127,6 +128,9 @@ struct KeirView: View {
                 Button { presentFromMenu(.games) } label: { Label("Connected games", systemImage: "gamecontroller") }.accessibilityIdentifier("keir-games-menu")
                 Button { presentFromMenu(.computer) } label: { Label("Computer history", systemImage: "desktopcomputer") }
                 Button { presentFromMenu(.desk) } label: { Label("Support desk", systemImage: "lifepreserver") }
+                if keir.supervisorAvailable && keir.thread != "main" {
+                    Button { keir.select("main") } label: { Label("Support conversation", systemImage: "tray") }
+                }
             }
         }
         if keir.controls["supported"].bool {
@@ -401,6 +405,7 @@ struct KeirView: View {
     // The thread response contains its own tasks and messages. Studio-wide
     // approvals stay accessible from Inbox without displacing this conversation.
     private var threadDecisions: [JSONValue] {
+        if keir.thread == keir.mainThread { return ops.decisions }
         let jobs = Set(keir.tasks.map { $0["id"].string } + keir.messages.map { $0["jobId"].string })
         return ops.decisions.filter { !$0["jobId"].string.isEmpty && jobs.contains($0["jobId"].string) }
     }
@@ -495,7 +500,7 @@ struct KeirView: View {
         if voice.listening { return .listening }
         if voice.speaking { return .speaking }
         if voice.preparingSpeech { return .thinking }
-        if AttentionCenter.shared.count > 0 { return .approval }
+        if attention.count > 0 { return .approval }
         if keir.sending { return .thinking }
         return keir.working ? .working : .ready
     }

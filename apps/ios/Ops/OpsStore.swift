@@ -14,7 +14,7 @@ import LakesideCore
     /// Keir's ticket work queue (`/api/keir/app/work`). Shared so the Inbox
     /// badge, Ops and the Inbox list read the same tickets.
     @Published var work: JSONValue = .null
-    @Published var tasks: [JSONValue] = []
+    @Published private var taskRows: [JSONValue] = []
     @Published var answerReceipt: JSONValue = .null
     /// The last refresh that reached the server at all.
     @Published var updated: Date?
@@ -29,7 +29,7 @@ import LakesideCore
     private var generation = UUID()
     func reset() {
         generation = UUID(); services = []; hub = .null; kanban = .null; host = .null; scheduler = .null
-        decisions = []; alerts = []; work = .null; tasks = []; answerReceipt = .null; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
+        decisions = []; alerts = []; work = .null; taskRows = []; answerReceipt = .null; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
         AttentionCenter.shared.reset()
     }
     var kpis: JSONValue { hub["kpis"] }
@@ -49,10 +49,28 @@ import LakesideCore
         let metadata = Dictionary(hubTickets.map { ($0["number"].string, $0.object) }, uniquingKeysWith: { first, _ in first })
         let numbers = Set(queue.map { $0["number"].string })
         let fallback = work["source"]["complete"].bool ? [] : hubTickets.filter { !numbers.contains($0["number"].string) }
+        let workers = Dictionary(runningWorkers.filter { !$0["ticket"].string.isEmpty }.map { ($0["ticket"].string, $0) }, uniquingKeysWith: { first, second in
+            (OpsFormat.date(first["startedAt"]) ?? .distantPast) >= (OpsFormat.date(second["startedAt"]) ?? .distantPast) ? first : second
+        })
         return (queue.map { row in
-            JSONValue.object((metadata[row["number"].string] ?? [:]).merging(row.object, uniquingKeysWith: { _, current in current }))
+            let number = row["number"].string
+            var fields = (metadata[number] ?? [:]).merging(row.object, uniquingKeysWith: { _, current in current })
+            if let worker = workers[number], row["timing"]["state"].string == "working" { fields["active"] = worker }
+            return JSONValue.object(fields)
         } + fallback).filter { KeirTicketFollowUp.isOpen($0) }
     }
+    private var runningWorkers: [JSONValue] { hub["workers"].array.filter { $0["state"].string == "running" } }
+
+    /// The task feed carries state. Running worker records add start times to
+    /// jobs whose last progress happened during an earlier run.
+    var tasks: [JSONValue] {
+        let workers = Dictionary(runningWorkers.map { ($0["id"].string, $0) }, uniquingKeysWith: { first, _ in first })
+        return taskRows.map { task in
+            guard let worker = workers[task["id"].string] else { return task }
+            return .object(task.object.merging(["active": worker], uniquingKeysWith: { _, current in current }))
+        }
+    }
+
     /// The count on the Inbox tab badge: only things the owner can act on now.
     var attention: Int { AttentionCenter.shared.count }
 
@@ -120,7 +138,7 @@ import LakesideCore
         if let d { decisions = d["decisions"].array }
         if let a { alerts = a["alerts"].array }
         if let w { work = w }
-        if let t { tasks = t["tasks"].array }
+        if let t { taskRows = t["tasks"].array }
         rebuildAttention()
         let names = ["Service status", "Keir activity", "Work board", "Scheduler", "Decisions", "Alerts", "Ticket queue", "Tasks"]
         failedPanels = zip(names, [s, k, b, h, d, a, w, t]).filter { $0.1 == nil }.map { $0.0 }
@@ -139,7 +157,7 @@ import LakesideCore
         guard generation == epoch else { return nil }
         if let d { decisions = d["decisions"].array }
         if let w { work = w }
-        if let t { tasks = t["tasks"].array }
+        if let t { taskRows = t["tasks"].array }
         if t != nil, w != nil { activityUpdated = Date() }
         rebuildAttention()
         if d == nil { return "Decisions could not refresh. Pull to retry." }
@@ -540,17 +558,24 @@ import LakesideCore
         do { let made = try await session.post("/api/keir/app/threads", ["title": .string(title)]); guard epoch == generation else { return }; await loadThreads(session); select(made["id"].string) }
         catch { if epoch == generation { self.error = error.displayMessage } }
     }
-    var conversationRows: [JSONValue] {
-        guard supervisorAvailable else { return threads }
-        let home = JSONValue.object(["id": .string(Self.supervisorThread), "title": .string("Keir"), "system": .bool(true), "preview": .string("Your private conversation")])
-        let others = threads.map { row -> JSONValue in
-            guard row["id"].string == "main" else { return row }
-            var fields = row.object; fields["title"] = .string("Support desk")
-            return .object(fields)
-        }
-        return [home] + others
+    var mainThread: String { supervisorAvailable ? Self.supervisorThread : "main" }
+    var sideChats: [JSONValue] { threads.filter { !$0["system"].bool && $0["id"].string != "main" } }
+    var systemChats: [JSONValue] { threads.filter { $0["system"].bool && $0["id"].string != "main" } }
+
+    var threadTitle: String {
+        if thread == mainThread { return "Keir" }
+        if thread == "main" { return "Support desk" }
+        return threads.first { $0["id"].string == thread }?["title"].string ?? "Keir"
     }
-    var threadTitle: String { conversationRows.first { $0["id"].string == thread }?["title"].string ?? (thread == "watches" ? "Watches" : "Keir") }
+
+    func removeSideChat(_ id: String, _ session: AppSession) async throws {
+        guard sideChats.contains(where: { $0["id"].string == id }) else { return }
+        let epoch = generation
+        _ = try await session.post("/api/keir/app/threads/\(id)", ["archived": .bool(true)])
+        guard epoch == generation else { return }
+        threads.removeAll { $0["id"].string == id }
+        if thread == id { select(mainThread) }
+    }
 
     private var observedStart: [String: Date] = [:]
 

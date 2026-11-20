@@ -48,7 +48,7 @@ struct KeirControls: View {
                             }.accessibilityIdentifier("keir-route-\(lane)")
 
                         }
-                        Text("Conversation answers your messages. Coordination manages tasks; coding and investigation have their own overrides. Cursor Auto chooses its model and effort. Other routes use Jev for effort. Changes apply at the next activation.").font(.caption).foregroundStyle(.secondary)
+                        Text("Conversation answers your messages. Coordination manages tasks; coding and investigation have their own overrides. Cursor Auto chooses its model and effort. Other routes use Jev for effort. Changes apply at the next run.").font(.caption).foregroundStyle(.secondary)
                     } header: { Text("Providers · this conversation") }
                     Section {
                         Picker("Work type", selection: $lane) { ForEach(lanes, id: \.self) { Text($0.capitalized).tag($0) } }
@@ -151,11 +151,11 @@ struct KeirTaskProviders: View {
                         } label: { LabeledContent(lane.capitalized, value: KeirProviderName.label(routes[lane]?.string ?? "inherit", options: controls["options"][lane].array)) }
 
                     }
-                    Text("Overrides apply to future activations of this task and its delegated work.").font(.caption).foregroundStyle(.secondary)
+                    Text("Overrides apply to future runs of this task and its delegated work.").font(.caption).foregroundStyle(.secondary)
                 } header: { Text("Task providers") }
                 if let error { Text(error).foregroundStyle(OpsTheme.warn) }
             }.disabled(busy || controls == .null).navigationTitle("Task providers").navigationBarTitleDisplayMode(.inline)
-                .toolbar { Button("Done") { dismiss() } }
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
                 .task {
                     routes = task["overrides"]["routes"].object
                     do { controls = try await session.get("/api/keir/app/controls", query: ["thread": task["thread"].string]) }
@@ -211,7 +211,7 @@ struct KeirProviderPicker: View {
                     Text("Cursor Auto chooses the model and reasoning effort for this route.").font(.caption).foregroundStyle(.secondary)
                 } else {
                     Label("Automatic · Jev", systemImage: "brain")
-                    Text("Jev chooses the effort needed for each activation. Selecting a model does not pin effort.").font(.caption).foregroundStyle(.secondary)
+                    Text("Jev chooses the effort needed for each run. Selecting a model does not pin effort.").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }.navigationTitle(lane.capitalized).navigationBarTitleDisplayMode(.inline)

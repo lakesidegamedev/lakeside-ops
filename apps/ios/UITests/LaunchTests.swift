@@ -860,15 +860,55 @@ final class LaunchTests: XCTestCase {
         return app
     }
 
+    func testCriticScreens() {
+        let app = launch(appearance: "dark", ["--uitest-eight-screens", "--uitest-reset-resume"])
+        XCTAssertTrue(composer(app).waitForExistence(timeout: 12))
+        XCTAssertTrue(find(app, "What is Keir waiting on now?", timeout: 5).exists)
+        app.swipeDown()
+        capture(app, "OLED Chat top")
+
+        go(app, "Ops")
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 8))
+        XCTAssertTrue(find(app, "Failing checks", timeout: 5).exists)
+        capture(app, "OLED Ops top")
+
+        go(app, "Activity")
+        let blocked = app.buttons["work-filter-stuck"]
+        XCTAssertTrue(blocked.waitForExistence(timeout: 8))
+        capture(app, "OLED Inbox all top")
+        blocked.tap()
+        let ticket = app.buttons["work-row-1868"]
+        if reveal(app, ticket, swipes: 4) {
+            ticket.tap()
+            XCTAssertTrue(find(app, "Massive drop in revenue", timeout: 8).exists)
+            capture(app, "OLED Ticket 1868 top")
+        } else { XCTFail("Ticket #1868 is missing from Blocked") }
+
+        go(app, "Keir")
+        openTool(app, "Connected games")
+        let game = app.buttons["keir-game-metroforge"]
+        if game.waitForExistence(timeout: 8) {
+            game.tap()
+            XCTAssertTrue(find(app, "Preview site", timeout: 8).exists)
+            capture(app, "OLED Connected games top")
+        }
+    }
+
     func testReviewScreensInLight() { captureReviewScreens("light", "Light") }
     func testReviewScreensInOLED() { captureReviewScreens("dark", "OLED") }
 
     private func captureReviewScreens(_ appearance: String, _ theme: String) {
+        continueAfterFailure = false
         let app = launch(appearance: appearance, ["--uitest-eight-screens", "--uitest-reset-resume"])
         func capturePage(_ title: String, scrolls: Int = 6) {
             capture(app, "\(theme) \(title) top")
             for _ in 0..<scrolls { app.swipeUp() }
             capture(app, "\(theme) \(title) bottom")
+        }
+        func dismissKeyboard() {
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.33))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.67))
+            start.press(forDuration: 0.05, thenDragTo: end)
         }
         let composer = composer(app)
         XCTAssertTrue(composer.waitForExistence(timeout: 15))
@@ -879,7 +919,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(chatKeyboard.waitForExistence(timeout: 5))
         XCTAssertLessThanOrEqual(composer.frame.maxY, chatKeyboard.frame.minY)
         capture(app, "\(theme) Chat keyboard")
-        app.swipeDown()
+        dismissKeyboard()
 
         go(app, "Ops")
         XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 10))
@@ -922,7 +962,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
         XCTAssertLessThanOrEqual(direction.frame.maxY, keyboard.frame.minY)
         capture(app, "\(theme) Ticket 1001 keyboard")
-        app.swipeDown()
+        dismissKeyboard()
 
         go(app, "Keir")
         chooseFromMenu(app, "keir-tools", "Connected games", until: { app.navigationBars["Connected games"].exists })

@@ -21,7 +21,6 @@ struct StarmerWidget: View {
     private var message: String {
         line["text"].string.replacingOccurrences(of: #"\s+on \d+\.\d+\.\d+(?=:|\b)"#, with: "", options: .regularExpression).nonempty ?? "Keir is settling in. The first line lands shortly."
     }
-    private var working: JSONValue { line["working"] }
     private var workHeadline: String { "Keir's queue" }
     private var workDetail: String { "Open Inbox to view tickets and tasks." }
     private var waiting: Int { ops.openTickets.filter { WorkQueuePresentation.bucket($0) == "waiting" }.count }

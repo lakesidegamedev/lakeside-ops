@@ -10,6 +10,8 @@ enum OpsText {
     static func scrub(_ raw: String) -> String {
         guard !raw.isEmpty else { return "" }
         var text = raw
+            .replacingOccurrences(of: "Task ran out of time twice; owner needs to choose the next move.",
+                                  with: "Keir ran out of time twice. The work needs to resume from the last saved step.")
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)

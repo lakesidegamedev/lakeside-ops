@@ -27,6 +27,7 @@ struct KeirWorkLink<Content: View>: View {
 struct KeirWorkingNow: View {
     @EnvironmentObject private var router: OpsRouter
     @ObservedObject private var keir = OpsServices.shared.keir
+    @ObservedObject private var attention = AttentionCenter.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let team: JSONValue
     @State private var expanded: Set<String> = []
@@ -38,7 +39,7 @@ struct KeirWorkingNow: View {
             ?? items.first { $0["state"].string == "working" }
             ?? items.first
     }
-    private var waiting: Int { count("needsYou") + count("stuck") }
+    private var waiting: Int { attention.count }
     private var queueDepth: Int { max(0, count("open") - (current == nil ? 0 : 1)) }
 
     var body: some View {
@@ -84,7 +85,7 @@ struct KeirWorkingNow: View {
         guard let current else { return "Nothing in the queue" }
         let elapsed = elapsed(for: current)
         var parts = [elapsed]
-        if waiting > 0 { parts.append("\(waiting) waiting on you") }
+        if waiting > 0 { parts.append("\(waiting) need you") }
         if queueDepth > 0 { parts.append("\(queueDepth) in queue") }
         return parts.joined(separator: " · ")
     }
@@ -125,6 +126,7 @@ struct KeirWorkingNow: View {
         let id = item["id"].string
         let open = expanded.contains(id)
         let status = OpsStatus.from(item["state"].string)
+        let reason = OpsText.scrub(item["reason"].string)
         return VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(reduceMotion ? nil : .snappy) {
@@ -135,7 +137,7 @@ struct KeirWorkingNow: View {
                     OpsStatusBadge(status: status, compact: true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(OpsText.workTitle(item)).font(.callout.weight(.medium)).lineLimit(2)
-                        Text("\(elapsed(for: item)) · \(OpsText.scrub(item["reason"].string))")
+                        Text(open || reason.isEmpty ? elapsed(for: item) : "\(elapsed(for: item)) · \(reason)")
                             .font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
                     }
                     Spacer(minLength: 0)

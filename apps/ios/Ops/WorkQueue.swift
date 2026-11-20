@@ -9,7 +9,7 @@ enum WorkQueuePresentation {
         let reason = timing["reason"].string.lowercased()
         if reason.contains("activation aborted") { return "stalled" }
         if value == "working" || (value.isEmpty && item["state"].string == "running") {
-            let heartbeat = [timing["heartbeatAt"], item["active"]["updatedAt"], item["updatedAt"]].compactMap(OpsFormat.date).max()
+            let heartbeat = [timing["heartbeatAt"], item["active"]["updatedAt"], item["active"]["startedAt"], item["updatedAt"]].compactMap(OpsFormat.date).max()
             if heartbeat.map({ Date().timeIntervalSince($0) > TicketPresentation.staleAfter }) ?? true { return "stalled" }
         }
         if !value.isEmpty { return value }

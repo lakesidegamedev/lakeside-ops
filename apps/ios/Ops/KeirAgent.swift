@@ -65,36 +65,40 @@ struct KeirThreads: View {
     @State private var naming = false
     @State private var title = ""
     @State private var renaming: JSONValue = .null
+    @State private var removing: String?
+    @State private var removalError: String?
     var body: some View {
         NavigationStack {
             List {
-                ForEach(keir.conversationRows, id: \.["id"].string) { thread in
-                    Button { keir.select(thread["id"].string); dismiss() } label: {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(thread["title"].string).font(.callout.weight(.semibold))
-                                    if thread["working"].bool { OpsStatusBadge(status: .running, compact: true) }
-                                }
-                                Text(thread["preview"].string.nonempty ?? (thread["system"].bool ? "Results from your watches" : "No messages yet"))
-                                    .font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
-                            }
-                            Spacer()
-                            if thread["id"].string == keir.thread { Image(systemName: "checkmark").font(.caption) }
-                        }.padding(.vertical, 4).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                    .swipeActions {
-                        if !thread["system"].bool && thread["id"].string != "main" {
-                            Button("Archive") { Task { _ = try? await session.post("/api/keir/app/threads/\(thread["id"].string)", ["archived": .bool(true)]); await keir.loadThreads(session); if keir.thread == thread["id"].string { keir.select("main") } } }.tint(OpsTheme.warn)
-                            Button("Rename") { renaming = thread; title = thread["title"].string }.tint(OpsTheme.sky)
-                        }
+                Section {
+                    chatRow(keir.mainThread, title: "Main", preview: "Persistent conversation with Keir")
+                }
+                Section {
+                    if keir.sideChats.isEmpty {
+                        Text("No side chats yet.").font(.opsCaption).foregroundStyle(OpsTheme.muted)
                     }
-                }.listRowBackground(Color.clear)
+                    ForEach(keir.sideChats, id: \.["id"].string) { thread in
+                        let id = thread["id"].string
+                        chatRow(id, title: thread["title"].string, preview: thread["preview"].string, running: thread["working"].bool)
+                            .swipeActions(allowsFullSwipe: false) {
+                                Button("Delete", role: .destructive) { removing = id }
+                                Button("Rename") { renaming = thread; title = thread["title"].string }.tint(OpsTheme.accent)
+                            }
+                    }
+                } header: { SectionLabel(text: "Side chats") }
+                if !keir.systemChats.isEmpty {
+                    Section {
+                        ForEach(keir.systemChats, id: \.["id"].string) { thread in
+                            chatRow(thread["id"].string, title: thread["title"].string, preview: thread["preview"].string)
+                        }
+                    } header: { SectionLabel(text: "Updates") }
+                }
+                if let removalError { Text(removalError).font(.opsCaption).foregroundStyle(OpsTheme.warn) }
             }
             .listStyle(.plain).opsScreen().navigationTitle("Conversations").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) { Button { title = ""; naming = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("New conversation") }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) { Button { title = ""; naming = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("New conversation") }
             }
             .alert("New thread", isPresented: $naming) {
                 TextField("What is it about?", text: $title)
@@ -106,9 +110,34 @@ struct KeirThreads: View {
                 Button("Save") { let id = renaming["id"].string, t = title; Task { _ = try? await session.post("/api/keir/app/threads/\(id)", ["title": .string(t)]); await keir.loadThreads(session) } }
                 Button("Cancel", role: .cancel) {}
             }
+            .alert("Delete this side chat?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+                Button("Delete", role: .destructive) {
+                    guard let id = removing else { return }
+                    Task {
+                        do { try await keir.removeSideChat(id, session); removalError = nil }
+                        catch { removalError = error.displayMessage }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
             .task { await keir.loadThreads(session) }
         }
     }
+
+    private func chatRow(_ id: String, title: String, preview: String, running: Bool = false) -> some View {
+        Button { keir.select(id); dismiss() } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.opsHeadline)
+                    if !preview.isEmpty { Text(preview).font(.opsCaption).foregroundStyle(OpsTheme.muted).lineLimit(2) }
+                }
+                Spacer()
+                if running { OpsStatusBadge(status: .running, compact: true) }
+                if keir.thread == id { Image(systemName: "checkmark").foregroundStyle(OpsTheme.accent) }
+            }.padding(.vertical, 4).contentShape(Rectangle())
+        }.buttonStyle(.plain).listRowBackground(Color.clear)
+    }
+
 }
 
 // MARK: Activity

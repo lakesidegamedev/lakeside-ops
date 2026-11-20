@@ -4,6 +4,7 @@ const { JOB_TERMINAL } = require("./machines");
 const crypto = require("node:crypto");
 const { rootJob, ticketOf } = require("./workrecord");
 const { parkedOnHandoffs } = require("./developerwatch");
+const { TIMEOUT_SUMMARY } = require("./deadline");
 const CLOSED = new Set(JOB_TERMINAL);
 const clip = (s, n = 240) => String(s || "").slice(0, n);
 const timestamp = n => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null;
@@ -32,6 +33,7 @@ function workStatus(data, job, { now = Date.now(), config = {} } = {}) {
   else if (decisions.length || questions.length) { state = "needs-you"; reason = clip(decisions[0]?.question || questions[0]?.title); next = "Open the task or ticket to answer the pending decision."; }
   else if (orphanApproval) { state = "stuck"; reason = "An action is pending without a reviewable decision."; next = "Keir must reconcile the approval request and its original authority."; }
   else if (!worker && !CLOSED.has(job.state) && (job.ownerDecisionPending || job.recoveryReviewRequired)) { state = "stuck"; reason = "Keir must review this hold; no owner approval is pending."; next = "Recover the original instruction and establish the exact next action before asking for approval."; }
+  else if (state === "stuck" && job.deadlineBlockedAt) { reason = TIMEOUT_SUMMARY; next = "Recover the last saved step and establish the next action."; }
   else if (live.some(j => Object.keys(j.ciWatch || {}).length)) { reason = "Waiting for repository checks."; next = "Recheck the current PR head and act on its result."; }
   else if (waiting.waitingFor) { reason = `Waiting for ${clip(waiting.waitingFor.kind || "an external update", 80)}.`; next = clip(waiting.summary) || "Check the dependency at the next scheduled wakeup."; }
   else if (live.some(j => j.codingParent) && !worker) { reason = "Waiting for delegated work."; next = "Incorporate the worker's result before continuing."; }

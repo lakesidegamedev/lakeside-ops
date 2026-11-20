@@ -140,10 +140,13 @@ struct TicketDetail: View {
         let job = hasWorker ? worker : current
         let raw = [job["error"].string, job["summary"].string, job["status"].string]
             .contains(where: { $0.lowercased().contains("activation aborted") }) ? "aborted" : job["state"].string
-        return TicketPresentation.status(
-            raw: raw,
-            updatedAt: hasWorker ? worker["updatedAt"] : current["updatedAt"],
-            timing: timing, ownerDecision: ownerDecision, blocked: !plainBlockers.isEmpty)
+        var measuredTiming = timing.object
+        let active = ticket["active"]
+        if !hasWorker, active["id"] == current["id"], OpsFormat.date(active["startedAt"]) != nil {
+            measuredTiming["heartbeatAt"] = active["startedAt"]
+        }
+        return TicketPresentation.status(raw: raw, updatedAt: job["updatedAt"],
+            timing: .object(measuredTiming), ownerDecision: ownerDecision, blocked: !plainBlockers.isEmpty)
     }
     private var errorLine: String {
         guard status.status == .failed else { return "" }

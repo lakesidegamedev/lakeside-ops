@@ -96,7 +96,7 @@ struct KeirMetricsView: View {
             metric("Pending decisions", kpis["decisionsPending"])
             metric("Open PRs", kpis["prsOpen"])
             metric("Failing PRs", kpis["prsRed"])
-            Text("Activation success measures runner outcomes, not verified ticket resolution.").font(.caption).foregroundStyle(OpsTheme.muted)
+            Text("Run success measures task execution. Ticket resolution is verified separately.").font(.caption).foregroundStyle(OpsTheme.muted)
         }
     }
 

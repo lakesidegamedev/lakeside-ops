@@ -36,27 +36,11 @@ extension View {
     }
 }
 
-/// A round chrome button: the menu at the top left, voice at the top right.
-struct KeirCircleIcon: View {
-    let system: String
-    var body: some View {
-        Image(systemName: system)
-            .font(.body.weight(.medium))
-            .foregroundStyle(OpsTheme.ink)
-            .frame(width: 40, height: 40)
-            .background(KeirChatTheme.chrome, in: Circle())
-            .overlay(Circle().strokeBorder(KeirChatTheme.stroke))
-            .shadow(color: KeirChatTheme.shadow, radius: 8, y: 2)
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
-    }
-}
-
 // MARK: - Keir at the top
 
 /// The animated Keir sprite in a round frame. A named state (listening,
 /// talking, thinking, working, sleeping) shows what Keir is doing; with none,
-/// he greets once and then idles with blinks and small quirks.
+/// the portrait greets once and idles with occasional blinks.
 struct KeirAvatar: View {
     let sprite: String?
     var body: some View {
@@ -100,9 +84,8 @@ extension KeirStatusPill where Leading == EmptyView {
     }
 }
 
-/// The top of the chat. Left: Keir's menu. Centre: Keir, the conversation
-/// name (tap for conversations) and at most a few status capsules. Right:
-/// voice. Nothing else lives here.
+/// The pinned conversation header. The centered name opens conversations
+/// and the trailing menu holds conversation controls.
 struct KeirHeader<Tools: View>: View {
     let title: String
     let presence: KeirPresence.State
