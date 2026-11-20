@@ -40,7 +40,8 @@ def main():
                 if state in ("INVALID", "FAILED"):
                     sys.exit(f"Build {number} failed processing ({state})")
                 if state == "VALID" and internal == "IN_BETA_TESTING":
-                    groups = apple.api(f"builds/{build['id']}/betaGroups?limit=200")["data"]
+                    group_filter = {"filter[app]": app_id, "filter[builds]": build["id"], "filter[isInternalGroup]": "true", "limit": 200}
+                    groups = apple.api("betaGroups?" + urllib.parse.urlencode(group_filter))["data"]
                     for group in groups:
                         if not group["attributes"].get("isInternalGroup"):
                             continue
