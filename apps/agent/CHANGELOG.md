@@ -5,6 +5,16 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.0.1 (2026-11-20)
+
+### For users
+
+- Keir no longer closes a ticket as "the fix is live" while a newer fix request on that ticket is still open.
+
+### For developers
+
+- The auto-close rule b now requires no unreleased fix handoff, so an older live mark cannot close over a newer request (ticket 1862).
+
 ## 11.0.0 (2026-11-20)
 
 <!-- Keir source coverage: 7abbcfc..52524d7. -->
