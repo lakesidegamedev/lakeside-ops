@@ -18,11 +18,23 @@ final class WorkQueueTests: XCTestCase {
         let approval: JSONValue = .object(["decisionPending": .bool(true)])
         XCTAssertEqual(WorkQueuePresentation.state(approval), "needs-you")
     }
-    func testOwnerDecisionsStayOnAllAndDecisionsButNotOnStatusFilters() {
-        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(filter: "all"))
-        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(filter: "needs-you"))
-        for filter in ["working", "waiting", "stuck"] {
-            XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(filter: filter), filter)
+    func testDefaultInboxLeadsWithOwnerPingsAndAnyNarrowingLeadsWithTheQueue() {
+        XCTAssertTrue(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: "all", search: ""))
+        XCTAssertTrue(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: "all", search: "  "))
+        for filter in ["working", "waiting", "stuck", "needs-you"] {
+            XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: filter, search: ""), filter)
         }
+        XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tasks", filter: "all", search: ""))
+        XCTAssertFalse(WorkQueuePresentation.leadsWithOwnerItems(scope: "tickets", filter: "all", search: "1501"))
+    }
+    func testOwnerDecisionsShowOnTheDefaultViewAndDecisionsOnly() {
+        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: "all", search: ""))
+        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: "needs-you", search: ""))
+        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(scope: "tasks", filter: "needs-you", search: ""))
+        for filter in ["working", "waiting", "stuck"] {
+            XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: filter, search: ""), filter)
+        }
+        XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(scope: "tasks", filter: "all", search: ""))
+        XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(scope: "tickets", filter: "all", search: "ledger"))
     }
 }
