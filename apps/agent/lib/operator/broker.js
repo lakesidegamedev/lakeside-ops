@@ -4340,9 +4340,25 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const coordinator = ownerDirected(job) && d.jobs[d.seen[`ticket:${job.ticket}`]];
         const sharedAnswerAt = coordinator?.kind === "ticket" && coordinator.ticket === job.ticket && coordinator.channelId === job.channelId ? coordinator.resolutionReadyAt || 0 : 0;
         const answerAt = sharedAnswerAt || job.resolutionReadyAt;
+        // Keir 11.1.1: a reply delivered to this ticket's channel by another job or an operator, cross-checked against Discord,
+        // only stops this job from posting a recap or a close notice. It never licenses closure: a progress note proves a message
+        // was sent, not that it solved the case. Closure still needs this ticket's own answer mark or a player confirmation.
+        if (!answerAt) {
+          const ticket = await mcp.call("support", "support_get", { kind: "ticket", number: job.ticket }, false, signal).catch(() => null);
+          const receipt = require("./answerreceipt").verifiedAnswerAfterRequest({ ticket, number: job.ticket, channelId: job.channelId, rows,
+            isAnswerSide: (m) => Boolean(m.author?.bot) || closeStaff.has(m.author?.id), isHolding: holdingPost });
+          if (receipt) {
+            ledger.audit("ticket_answer_receipt_seen", { job: job.id, ticket: job.ticket, messageId: receipt.messageId, key: receipt.key, at: receipt.at, complete: receipt.complete });
+            throw new Error("Not closed: the player already has a delivered reply after their latest message, but nothing confirms it solved their question. Do not post another recap or a notice that you will close. Finish waiting with waitFor \"player_reply\"; close only after the player confirms or you hold a verified outcome for this request.");
+          }
+        }
         // The task wakes when the grace ends, not on a long reply wait (ticket 1755 was due to
         // close two hours after its fix and slept nine).
-        if (!answerAt || now() - answerAt < config.closeGraceMs) { if (answerAt) job.closeReadyAt = answerAt + config.closeGraceMs; throw new Error("give the player the final answer and wait for the closure grace period"); }
+        if (!answerAt) throw new Error("give the player the final answer and wait for the closure grace period");
+        if (now() - answerAt < config.closeGraceMs) {
+          job.closeReadyAt = answerAt + config.closeGraceMs;
+          throw new Error("The player already has the final answer. Wait silently for the closure grace period or a new player reply.");
+        }
         // Review 2026-10-19: 1610 resolved one minute after "live", 1611 52
         // minutes after (the player's deliveries had fallen), 1630 before the
         // change shipped. After a fix goes live the player gets a turn to see
