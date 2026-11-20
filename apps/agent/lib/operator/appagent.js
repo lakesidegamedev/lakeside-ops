@@ -270,6 +270,9 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
     if (m && method === "POST") return updateThread(m[1], body);
     const ticketMatch = /^\/tickets\/(\d{1,7})$/.exec(path);
     if (ticketMatch && method === "GET") return require("./apptickets").ticketDetail(d, Number(ticketMatch[1]), now(), config);
+    // Connected games: fixed read-only catalogue (appgames.js). Owner-only, never writes.
+    const games = await require("./appgames").createGames({ mcp }).route(path, method);
+    if (games !== undefined) return games;
     if (path === "/work" && method === "GET") return workQueue.view();
     if (path === "/tasks" && method === "GET") return { tasks: tasks() };
     m = /^\/tasks\/([a-f0-9]{12})(?:\/(retry|stop|pause|resume))?$/.exec(path);

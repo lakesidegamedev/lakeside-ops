@@ -277,6 +277,10 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             deliver((try? JSONSerialization.data(withJSONObject: value)) ?? Data(), url: url, status: 200, type: "application/json")
             return
         }
+        if let value = KeirGamesFixtures.value(url.path, method: request.httpMethod ?? "GET") {
+            deliver((try? JSONSerialization.data(withJSONObject: value)) ?? Data(), url: url, status: 200, type: "application/json")
+            return
+        }
         let isAsk = url.host?.hasPrefix("ask.") == true
         var value: Any = ["error": "No test fixture for this endpoint"]
         var status = 200

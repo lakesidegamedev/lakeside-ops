@@ -17,6 +17,14 @@ Three places, in this order:
   typed draft is never replaced. After a force-quit the app reopens the last
   private thread, checked against the live thread list; only the thread id and
   a one-way account fingerprint are stored.
+- **Connected games** (Keir tools menu, studio mode only): pick A House Divided,
+  MetroForge or Grand Century and see what Keir can genuinely read there. Each
+  read shows whether it is live, unavailable or unsupported, the values returned,
+  when it was read and which read tool it came from. Questions land in the
+  message box as editable drafts; nothing is sent. Ticket questions exist for
+  A House Divided only. The server serves a fixed read-only catalogue
+  (`/api/keir/app/games`, owner session only) of deploy and health reads;
+  leaderboards, simulations and any write are not exposed.
 - **Inbox**: tickets and tasks with fix stages, your decisions, open questions
   and work waiting on you. Opened by the `lakesideops://keir?view=activity`
   link as before.

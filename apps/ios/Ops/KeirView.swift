@@ -23,7 +23,7 @@ struct KeirView: View {
     @State private var sheetRequest: Task<Void, Never>?
     @State private var connectionAttempt = 0
     @State private var confirmingYoloOff = false
-    enum KeirSheet: String, Identifiable { case threads, ideas, watches, memory, computer, controls; var id: String { rawValue } }
+    enum KeirSheet: String, Identifiable { case threads, ideas, watches, memory, computer, controls, games; var id: String { rawValue } }
 
     private var content: some View {
         VStack(spacing: 0) {
@@ -92,6 +92,10 @@ struct KeirView: View {
                     Toggle(isOn: $spokenReplies) { Label("Speak replies", systemImage: "speaker.wave.2") }
                     if session.profile["mode"].string != "standalone" {
                     Button { presentFromMenu(.computer) } label: { Label("Computer history", systemImage: "desktopcomputer") }
+                    }
+                    // KEIR-GAMES HOOK 1 of 2: studio mode only. Everything else lives in KeirGames.swift.
+                    if KeirGames.available(profile: session.profile) {
+                    Button { presentFromMenu(.games) } label: { Label("Connected games", systemImage: "gamecontroller") }.accessibilityIdentifier("keir-games-menu")
                     }
                 } label: { Image(systemName: "line.3.horizontal") }.accessibilityLabel("Keir tools").accessibilityIdentifier("keir-tools").disabled(presentingSheet)
             }
@@ -165,6 +169,8 @@ struct KeirView: View {
             case .ideas: NavigationStack { IdeasView().toolbar { Button("Done") { sheet = nil } } }
             case .watches: NavigationStack { WatchesView().toolbar { Button("Done") { sheet = nil } } }
             case .memory: NavigationStack { MemoryView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { sheet = nil } } } }
+            // KEIR-GAMES HOOK 2 of 2: the sheet puts an editable question in the composer; nothing is sent.
+            case .games: KeirGamesSheet(draftEmpty: draftIsEmpty) { text in guard draftIsEmpty else { return }; draft = text; composing = true; sheet = nil }
             }
         }
     }
