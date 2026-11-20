@@ -137,6 +137,16 @@ const RUN = [
   ["abort with no hold reason is an error", { state: "running" }, { aborted: true }, err("aborted"), { state: "blocked", summary: "aborted", effects: ["notify:error:j1:2"] }],
   ["a write this activation started makes the abort uncertain: blocked", { state: "running", effects: { w: { state: "started", at: NOW } } }, { aborted: true, paused: true, startedAt: NOW - 1 }, err("aborted"), { state: "blocked", effects: ["notify:error:j1:2"] }],
   ["an older unsettled write does not stop the hold", { state: "running", effects: { w: { state: "started", at: NOW - 99 * MIN } } }, { aborted: true, paused: true, startedAt: NOW - 1 }, err("aborted"), { state: "waiting", wakeAt: NOW + MIN, effects: [] }],
+  // Keir 11.1.1: the lane deadline cut a ticket run off before it wrote or posted anything.
+  ["a ticket run its deadline cut off before any write retries once", { state: "running" }, { aborted: true, timedOut: true }, err("activation aborted: no result before the 15-minute turn limit"), { state: "waiting", wakeAt: NOW + MIN, effects: ["audit:deadline_retry"] }],
+  ["a second deadline cut-off blocks and tells the owner", { state: "running", deadlineRetries: 1 }, { aborted: true, timedOut: true }, err("activation aborted: no result before the 15-minute turn limit"), { state: "blocked", effects: ["notify:error:j1:2"] }],
+  ["a deadline cut-off after a post this run blocks (no duplicate reply)", { state: "running", lastPublishedAt: NOW }, { aborted: true, timedOut: true, startedAt: NOW - 1 }, err("activation aborted"), { state: "blocked", effects: ["notify:error:j1:2"] }],
+  ["a deadline cut-off after a settled write this run blocks", { state: "running", effects: { w: { state: "done", at: NOW } } }, { aborted: true, timedOut: true, startedAt: NOW - 1 }, err("activation aborted"), { state: "blocked", effects: ["notify:error:j1:2"] }],
+  ["a deadline cut-off with an older uncertain write blocks", { state: "running", effects: { w: { state: "uncertain", at: 1 } } }, { aborted: true, timedOut: true }, err("activation aborted"), { state: "blocked", effects: ["notify:error:j1:2"] }],
+  ["a deadline cut-off during a staff hold takes the hold, not the retry", { state: "running" }, { aborted: true, timedOut: true, staffHeld: true }, err("activation aborted"), { state: "waiting", wakeAt: NOW + MIN, effects: [] }],
+  ["a deadline cut-off on an owner-paused ticket stays paused", { state: "running" }, { aborted: true, timedOut: true, pause: true }, err("activation aborted"), { state: "paused", noWake: true, effects: [] }],
+  ["a deadline cut-off on a non-ticket task still blocks", { state: "running", kind: "command", ticket: null }, { aborted: true, timedOut: true }, err("activation aborted"), { state: "blocked", effects: ["notify:error:j1:2"] }],
+  ["a stopped (cancelled) ticket is never revived by a deadline cut-off", { state: "cancelled" }, { aborted: true, timedOut: true }, err("activation aborted"), null],
   ["network failure retries after a minute", { state: "running" }, {}, err("fetch failed"), { state: "waiting", wakeAt: NOW + MIN, effects: ["audit:transient_retry"] }],
   ["second network failure retries after two minutes", { state: "running", transientFailures: 1 }, {}, err("ETIMEDOUT"), { state: "waiting", wakeAt: NOW + 2 * MIN, effects: ["audit:transient_retry"] }],
   ["fourth network failure is an error", { state: "running", transientFailures: 3 }, {}, err("fetch failed"), { state: "blocked", effects: ["notify:error:j1:2"] }],
@@ -152,7 +162,7 @@ const RUN = [
 for (const [name, fields, h, e, want] of RUN) {
   test(`onRunError: ${name}`, () => {
     const job = ticket(fields);
-    const out = lc.onRunError(job, e, { now: NOW, aborted: !!h.aborted, stopping: !!h.stopping, paused: !!h.paused, startedAt: h.startedAt ?? NOW - 1,
+    const out = lc.onRunError(job, e, { now: NOW, aborted: !!h.aborted, timedOut: !!h.timedOut, stopping: !!h.stopping, paused: !!h.paused, startedAt: h.startedAt ?? NOW - 1,
       supportDeferred: () => !!h.deferred, staffHeld: () => !!h.staffHeld, claimedBy: () => h.claimed ? "staff1" : null,
       pauseFor: () => h.pause ? { ticket: 5 } : null, staffActiveUntil: () => h.staffUntil || 0, redact: (t) => t });
     if (want === null) { assert.equal(out, null); return; }
