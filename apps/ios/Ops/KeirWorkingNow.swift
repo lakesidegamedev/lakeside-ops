@@ -63,7 +63,7 @@ struct KeirWorkingNow: View {
                     }
                     Hairline()
                     Button { router.tab = .activity } label: {
-                        Label("All work in Activity", systemImage: "list.bullet.rectangle")
+                        Label("All work in Inbox", systemImage: "list.bullet.rectangle")
                             .font(.caption.weight(.semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16).padding(.vertical, 10)

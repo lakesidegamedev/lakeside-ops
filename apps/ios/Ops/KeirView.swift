@@ -110,10 +110,12 @@ struct KeirView: View {
                 }
             }
             ToolbarItem(placement: .principal) {
-                Button { sheet = .threads } label: { HStack(spacing: 6) {
+                Button { sheet = .threads } label: { HStack(spacing: 5) {
+                    KeirSpriteStill(state: "idle", size: .small)
+                        .frame(width: 30, height: 30).accessibilityHidden(true)
                     Text(keir.threadTitle).font(.headline).lineLimit(1)
                     Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(OpsTheme.muted)
-                }.fixedSize() }.buttonStyle(.plain).accessibilityIdentifier("keir-threads").disabled(presentingSheet)
+                } }.buttonStyle(.plain).accessibilityLabel("Conversations, " + keir.threadTitle).accessibilityIdentifier("keir-threads").disabled(presentingSheet)
             }
         }
     }
@@ -444,8 +446,14 @@ private struct KeirMessage: View {
                     Text(OpsFormat.ago(message["at"])).font(.caption).foregroundStyle(OpsTheme.muted)
                     if message["editedAt"] != .null { Text("· edited").font(.caption).foregroundStyle(OpsTheme.muted) }
                 }
+                if !message["text"].string.isEmpty {
+                    NativeMarkdown(text: message["text"].string)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                ForEach(message["attachments"].array, id: \.["id"].string) { KeirAttachment(attachment: $0) }
                 if !message["activity"].array.isEmpty { KeirToolCalls(calls: message["activity"].array) }
-                if !message["text"].string.isEmpty { NativeMarkdown(text: message["text"].string).textSelection(.enabled) }
                 // Keir revises this same message with the fuller answer; the line
                 // underneath says what he is doing meanwhile.
                 if let progress = message["progress"].string.nonempty {

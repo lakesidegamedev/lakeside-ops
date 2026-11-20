@@ -115,7 +115,7 @@ extension String { var nonempty: String? { isEmpty ? nil : self } }
 struct AccountView: View {
     @EnvironmentObject private var session: AppSession
     @State private var signingOut = false
-    @AppStorage("appearance") private var appearance = "dark"
+    @AppStorage("appearance") private var appearance = "system"
     var body: some View {
         List {
             Section { BrandHeader(surface: session.surface).padding(.vertical, 8) }.listRowBackground(Brand.surface)

@@ -92,7 +92,7 @@ struct OpsRoot: View {
 struct OpsSettings: View {
     @EnvironmentObject private var session: AppSession
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("appearance") private var appearance = "dark"
+    @AppStorage("appearance") private var appearance = "system"
     @State private var prefs = Dictionary(uniqueKeysWithValues: OpsPushPrefs.keys.map { ($0, OpsPushPrefs.value($0)) })
     @ObservedObject private var push = OpsServices.shared.push
     @State private var status: UNAuthorizationStatus = .notDetermined

@@ -18,7 +18,7 @@ enum Brand {
 }
 
 struct LakesideStyle: ViewModifier {
-    @AppStorage("appearance") private var appearance = "dark"
+    @AppStorage("appearance") private var appearance = "system"
     func body(content: Content) -> some View {
         content.tint(Brand.sky).foregroundStyle(Brand.ink)
             .preferredColorScheme(appearance == "system" ? nil : appearance == "light" ? .light : .dark)
