@@ -15,9 +15,9 @@ on:
         type: boolean
         default: false
       test_scope:
-        description: Full suite, computer controls, or connection and remaining approval regression
+        description: Simulator suite to run before signing the exact checkout
         type: choice
-        options: [full, redesign, computer, connection, metrics]
+        options: [full, owner, redesign, computer, connection, metrics]
         default: full
 
 permissions:
@@ -54,7 +54,7 @@ jobs:
     defaults:
       run:
         working-directory: apps/ios
-    timeout-minutes: 45
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
       - name: Install project generator
