@@ -52,7 +52,8 @@ function decideClose(t, now, cfg = {}) {
   // restart it. Without channel rows, fall back to the ledger's latest reply.
   const silent = t.firstAnswerAfterHumanAt ? Math.max(humanAt, t.firstAnswerAfterHumanAt) : Math.max(humanAt, t.lastReplyAt || 0, answeredAt);
   if (now - silent < quiet) return none(`quiet for ${Math.round((now - silent) / MIN)} min, needs ${Math.round(quiet / MIN)}`);
-  if (t.liveAt && now - t.liveAt >= quiet && now - humanAt >= quiet) return { action: "close", rule: "b", reason: "the fix is live and the player has been quiet for 6 hours" };
+  // Keir 11.0.1 (ticket 1862): an earlier "is live" mark must not close over a newer fix request that is still unreleased.
+  if (t.liveAt && !t.fixPending && now - t.liveAt >= quiet && now - humanAt >= quiet) return { action: "close", rule: "b", reason: "the fix is live and the player has been quiet for 6 hours" };
   // Keir 10.1.14 (ticket 1838): "your question is answered" over a still-open "still being looked into". An answer that
   // is not the last word cannot be closed on while the latest staff or bot post promises a follow-up that never came.
   if (t.promisedFollowUp) return none("a follow-up was promised and has not come");

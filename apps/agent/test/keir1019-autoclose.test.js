@@ -27,6 +27,11 @@ test("rule b: fix live and 6 hours with no player message closes; 5 hours does n
   assert.equal(decideClose(snap({ lane: "bug" }), NOW).action, "none");
 });
 
+test("rule b: an older live mark does not close while a newer fix request is still open (ticket 1862)", () => {
+  const live = { liveAt: NOW - 7 * H, lane: "bug", answeredAt: NOW - 7 * H, lastReplyAt: NOW - 7 * H, lastHumanAt: NOW - 9 * H, fixPending: true };
+  assert.equal(decideClose(snap(live), NOW).action, "none");
+});
+
 test("rule c: an answered question with a quiet player for 6 hours closes; sooner does not", () => {
   const d = decideClose(snap(), NOW);
   assert.deepEqual([d.action, d.rule], ["close", "c"]);
