@@ -1148,7 +1148,8 @@ const desktop = require("./lib/operator/desktop").createDesktopGateway({ mcp, re
 const appServer = createAppServer({ app: appChannel, sessionExchangeUrl: env.KEIR_APP_SESSION_EXCHANGE_URL || "http://127.0.0.1:9788/api/auth/native-session", agentRoutes: async (...args) => (await desktop.route(...args)) ?? (await appPush.route(...args)) ?? (await appQuestions.route(...args)) ?? (await appComputer.route(...args)) ?? (await ticketSupervision.route(...args)) ?? appAgent.route(...args), artifactsDir: path.join(config.stateDir, "artifacts"), log,
   authenticate: createAuthenticator({ config, checkUrl: env.KEIR_APP_AUTH_URL || "http://127.0.0.1:9788/api/auth/admin-check" }) });
 appServer.listen(positive("KEIR_APP_PORT", 9768), "127.0.0.1", () => log("Keir app channel started"));
-const appPush = createAppPush({ ledger, log, apns: createApns({ teamId: env.KEIR_APNS_TEAM_ID, keyId: env.KEIR_APNS_KEY_ID, keyFile: env.KEIR_APNS_KEY_FILE, topic: env.KEIR_APNS_TOPIC }) });
+// Optional, explicit path of the private supervisor's approval alert projection. Unset means no private approval pushes.
+const appPush = createAppPush({ ledger, log, attention: require("./lib/operator/supervisorattention").createAttentionReader({ dir: env.KEIR_APPROVAL_ATTENTION_DIR }), apns: createApns({ teamId: env.KEIR_APNS_TEAM_ID, keyId: env.KEIR_APNS_KEY_ID, keyFile: env.KEIR_APNS_KEY_FILE, topic: env.KEIR_APNS_TOPIC }) });
 setInterval(() => { appPush.tick().catch((e) => log(`app push: ${e.message}`)); }, 5000).unref();
 setInterval(() => { appComputer.cleanup().catch((e) => log(`app computer cleanup: ${e.message}`)); }, 5000).unref();
 // Keir 8.4.1: new player messages are found by this scan, so its period is the first wait a player feels (20 s before).

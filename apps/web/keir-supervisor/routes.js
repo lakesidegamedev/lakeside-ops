@@ -108,9 +108,15 @@ function createSupervisorHost({ env = process.env, log = (m) => console.log(m), 
     const { createSandbox } = require("./sandbox");
     const { createClaudeExecutor } = require("./executor");
     const { createSupervisor, createPublisher } = require("./supervisor");
+    const { createAttention } = require("./attention");
     const repos = overrides.repos || resolveRepos(env);
     const sandbox = overrides.sandbox || createSandbox(path.join(dir, "workspaces"));
     const executor = overrides.executor || createClaudeExecutor({ env, stateDir: dir });
+    // Optional: without an explicit directory no push alert is projected and the in-app proposal card is unaffected.
+    let attention = overrides.attention || null, attentionIssue = null;
+    if (!attention && env.KEIR_APPROVAL_ATTENTION_DIR) {
+      try { attention = createAttention({ dir: env.KEIR_APPROVAL_ATTENTION_DIR, log }); } catch (e) { attentionIssue = e.message; log(`keir-supervisor: ${e.message}`); }
+    }
     const publishEnabled = env.KEIR_SUPERVISOR_PUBLISH === "1";
     const guardianDir = env.KEIR_GUARDIAN_DIR || "/var/lib/keir-guardian";
     // Read-only ticket and game evidence through the ops web MCP client, with this host's own credentials.
@@ -118,13 +124,14 @@ function createSupervisorHost({ env = process.env, log = (m) => console.log(m), 
       const hub = require("../keir-hub-data");
       return require("./studio-evidence").createStudioEvidence({ mcpCall: hub._mcpCall, configPath: hub.PATHS.mcp });
     })();
-    const instance = createSupervisor({ stateDir: dir, repos, sandbox, executor, guardianDir, publishEnabled, evidence,
+    const instance = createSupervisor({ stateDir: dir, repos, sandbox, executor, guardianDir, publishEnabled, evidence, attention,
       publisher: overrides.publisher || (publishEnabled ? createPublisher({ env }) : null), log, ...(overrides.supervisor || {}) });
     const ready = instance.start().catch((e) => log(`keir-supervisor: start failed: ${e.message}`));
     built = { configured: true, missing: [], instance, ready,
       async status() {
         return { configured: true, missing: [], executor: executor.available(), sandbox: await sandbox.available(),
-          repos: Object.values(repos).map((r) => publicRepo(r, publishEnabled)), runner: instance.status(), guardian: instance.guardian() };
+          repos: Object.values(repos).map((r) => publicRepo(r, publishEnabled)), runner: instance.status(), guardian: instance.guardian(),
+          approvalAlerts: attention ? { enabled: true } : { enabled: false, ...(attentionIssue ? { issue: attentionIssue } : {}) } };
       } };
     return built;
   }

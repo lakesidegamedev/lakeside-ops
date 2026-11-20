@@ -99,8 +99,36 @@ function duePushes(d, { now = Date.now() } = {}) {
   return out;
 }
 
-function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() }) {
+// One required-attention notification per private supervisor approval proposal.
+// Built only from the projection's id: the payload carries no title, chat or patch,
+// and no action category, so the lock screen cannot approve. It deep links to the
+// exact proposal inside private Keir, where the authenticated, digest-bound
+// request still decides. Model updates and later state changes never push again.
+// Kept beside, not inside, the push cursor state so it can never disturb that object's own setup.
+const attentionState = (t) => (t.attentionPush ||= { sent: {}, unreported: {} });
+function attentionPushes(reader, t, at) {
+  if (!reader) return [];
+  const state = attentionState(t);
+  for (const book of [state.sent, state.unreported]) for (const [id, when] of Object.entries(book)) if (at - when > 14 * 86400000) delete book[id];
+  return reader.pending().filter((row) => !state.sent[row.id]).map((row) => ({
+    key: `approval:${row.id}`, pref: "decisions", attention: row.id, collapseId: `keir-approval-${row.id}`,
+    mark: () => { state.sent[row.id] = at; },
+    payload: { aps: { alert: { title: "Private Keir: approval needed", body: "A change is ready for your review. Open it to approve or reject." }, sound: "default", "thread-id": "keir-approvals", "interruption-level": "time-sensitive" },
+      route: "supervisor-proposal", thread: "owner-supervisor", proposal: row.id } }));
+}
+
+function createAppPush({ ledger, apns, attention = null, log = () => {}, now = () => Date.now() }) {
   let busy = false;
+  // A fresh answer about a proposal; with no reader configured nothing is ever pending.
+  const attentionLive = (id) => Boolean(attention?.isPending(id));
+  // Without an Apple provider nothing can be pushed. Say so once per proposal instead of staying silent.
+  function reportNoProvider() {
+    if (!attention) return;
+    const t = threadOf(ledger.data), state = attentionState(t);
+    let changed = false;
+    for (const row of attention.pending()) if (!state.unreported[row.id]) { state.unreported[row.id] = now(); ledger.audit("app_attention_no_provider", { proposal: row.id }); changed = true; }
+    if (changed) ledger.save();
+  }
   function dropDevice(t, device, r) {
     t.devices = t.devices.filter((x) => x.token !== device.token); delete t.push.deferred?.[deviceId(device)];
     ledger.audit("app_device_removed", { reason: r.reason || r.status });
@@ -108,7 +136,7 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
   // Sends what a phone held back once its quiet hours have ended. Resolved decisions are dropped, not sent;
   // an approval that is still open but briefly not answerable (task paused) is kept for later.
   async function flushDeferred(t) {
-    const queues = t.push.deferred;
+    const queues = t.push?.deferred;
     if (!queues) return;
     const ids = new Set(t.devices.map(deviceId));
     for (const id of Object.keys(queues)) if (!ids.has(id)) delete queues[id];
@@ -117,13 +145,15 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
       if (!queues[id]?.length || quietNow(device.quiet, now())) continue;
       const newest = new Map();
       for (const e of queues[id]) if (e.collapseId) newest.set(e.collapseId, e.key);
-      const others = queues[id].filter((e) => !e.decision && !(e.collapseId && newest.get(e.collapseId) !== e.key)).slice(-DEFER_KEEP_OTHERS).map((e) => e.key);
+      const others = queues[id].filter((e) => !e.decision && !e.attention && !(e.collapseId && newest.get(e.collapseId) !== e.key)).slice(-DEFER_KEEP_OTHERS).map((e) => e.key);
       let failed = false;
       for (const e of [...queues[id]]) {
         // Every removal is saved at once, so a restart resumes exactly where this left off.
         const remove = () => { queues[id] = queues[id].filter((q) => q !== e); ledger.save(); };
         const x = e.decision && ledger.data.decisions?.[e.decision];
-        if (device.prefs?.[e.pref] === false || (e.decision ? !x || x.state !== "pending" || now() - e.at > DEFER_MAX_MS : !others.includes(e.key))) { ledger.audit("app_push_deferred_dropped", { key: e.key }); remove(); continue; }
+        // A held-back approval alert is re-checked against the projection: closed, superseded or too old means it is dropped, not sent.
+        const gone = e.attention ? !attentionLive(e.attention) : e.decision ? !x || x.state !== "pending" || now() - e.at > DEFER_MAX_MS : !others.includes(e.key);
+        if (device.prefs?.[e.pref] === false || gone) { ledger.audit("app_push_deferred_dropped", { key: e.key }); remove(); continue; }
         if (failed || e.decision && !actionable(ledger.data, x, now())) continue;
         const r = await apns.send(device.token, e.payload, { collapseId: e.collapseId, priority: e.priority });
         if (r.status === 200) { t.push.lastSuccess = now(); remove(); continue; }
@@ -134,7 +164,8 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
     }
   }
   async function tick() {
-    if (!apns || busy) return;
+    if (!apns) { reportNoProvider(); return; }
+    if (busy) return;
     busy = true;
     try {
     const t = threadOf(ledger.data);
@@ -154,8 +185,10 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
     if (!t.devices?.length) { duePushes(ledger.data, { now: now() }).forEach((p) => p.pref !== "decisions" && p.mark()); ledger.save(); return; }
       if (ledger.data.control?.stopped) { duePushes(ledger.data, { now: now() }).forEach((p) => p.pref !== "decisions" && p.mark()); ledger.save(); return; }
       await flushDeferred(t);
-      for (const p of duePushes(ledger.data, { now: now() }).slice(0, 10)) {
+      // Required approvals go first so a busy feed cannot starve them.
+      for (const p of [...attentionPushes(attention, t, now()), ...duePushes(ledger.data, { now: now() })].slice(0, 10)) {
         if (ledger.data.control?.stopped) return;
+        if (p.attention && !attentionLive(p.attention)) { p.mark(); continue; }
         // Earlier entries in this tick can satisfy the same monitor group.
         if (p.cooldown && t.push.incidentNotices?.[p.group] && now() - t.push.incidentNotices[p.group] < p.cooldown) { p.mark(); continue; }
         const delivered = (t.push.delivered ||= {});
@@ -164,11 +197,12 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
         for (const device of [...t.devices]) {
           const id = deviceId(device);
           if (device.prefs?.[p.pref] === false || receipts[id]) continue;
+          if (p.attention && !attentionLive(p.attention)) break; // closed while this tick was sending to other phones
           const priority = p.pref === "incidents" || p.collapseId === "keir-updates" ? 5 : 10;
           // A phone in quiet hours keeps its own durable copy and never holds up the others.
           if (quietNow(device.quiet, now())) {
             const queue = ((t.push.deferred ||= {})[id] ||= []);
-            if (!queue.some((e) => e.key === p.key)) queue.push({ key: p.key, pref: p.pref, payload: p.payload, collapseId: p.collapseId, priority, decision: p.decision || null, at: now() });
+            if (!queue.some((e) => e.key === p.key)) queue.push({ key: p.key, pref: p.pref, payload: p.payload, collapseId: p.collapseId, priority, decision: p.decision || null, attention: p.attention || null, at: now() });
             receipts[id] = now(); ledger.save(); continue;
           }
           const r = await apns.send(device.token, p.payload, { collapseId: p.collapseId, priority });
@@ -179,6 +213,8 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
           else if (r.status !== 200) { retry = true; log(`app push ${p.pref}: ${r.status} ${r.reason || ""}`); }
         }
         if (retry) break; // Do not advance a shared cursor past a failed delivery.
+        // A required approval that reached no phone (every one has these alerts off) stays due for a phone that registers later.
+        if (p.attention && !Object.keys(receipts).length) { delete delivered[p.key]; continue; }
         p.mark(); delete delivered[p.key]; ledger.save();
       }
       ledger.save();
@@ -186,7 +222,15 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
   }
   function status() {
     const t = threadOf(ledger.data);
-    return { configured: Boolean(apns), registeredDevices: t.devices?.length || 0, lastAccepted: t.push?.lastSuccess || null, lastError: t.push?.lastError || null };
+    const out = { configured: Boolean(apns), registeredDevices: t.devices?.length || 0, lastAccepted: t.push?.lastSuccess || null, lastError: t.push?.lastError || null };
+    if (attention) {
+      const sent = t.attentionPush?.sent || {}, waiting = attention.pending();
+      out.approvalAlerts = { pending: waiting.length, undelivered: waiting.filter((r) => !sent[r.id]).length,
+        ...(!attention.configured ? { problem: "KEIR_APPROVAL_ATTENTION_DIR must be an absolute path, so private approval alerts are off." } : {}),
+        ...(!apns && waiting.length ? { problem: "Apple push is not installed on this server, so private approvals are waiting only inside the app." } : {}),
+        ...(apns && waiting.length && !out.registeredDevices ? { problem: "No phone is registered, so private approvals are waiting only inside the app." } : {}) };
+    }
+    return out;
   }
   async function route(path, method) {
     if (path === "/notifications" && method === "GET") return status();
@@ -207,4 +251,4 @@ function createAppPush({ ledger, apns, log = () => {}, now = () => Date.now() })
   return { tick, status, route };
 }
 
-module.exports = { createApns, createAppPush, duePushes };
+module.exports = { createApns, createAppPush, duePushes, attentionPushes };
