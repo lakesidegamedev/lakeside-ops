@@ -10,6 +10,13 @@ Three places, in this order:
   studio's operator, with live task status, decisions you can approve or reject
   and charts. Chips under the title show what needs you, open tickets and
   running work, and open the inbox.
+  An empty conversation opens on a quiet start: Keir, a "Talk to Keir" button
+  (the existing voice mode) and, when the studio has a ticket with no recorded
+  Discord reply, one editable follow-up draft. The same suggestion stays in a
+  small ticket menu beside the composer. Nothing is sent automatically and a
+  typed draft is never replaced. After a force-quit the app reopens the last
+  private thread, checked against the live thread list; only the thread id and
+  a one-way account fingerprint are stored.
 - **Inbox**: tickets and tasks with fix stages, your decisions, open questions
   and work waiting on you. Opened by the `lakesideops://keir?view=activity`
   link as before.
