@@ -98,7 +98,7 @@ struct SchedulerView: View {
                 .accessibilityElement(children: .combine)
                 Hairline()
             }
-            Text("New runs may be queued at any time. The production worker claims them only from 03:00 through 08:00 America/New_York.")
+            Text("New runs may be queued at any time. New runs start between 3:00 AM and 8:00 AM Eastern Time.")
                 .font(.caption2).foregroundStyle(OpsTheme.muted)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 6)
@@ -379,7 +379,7 @@ struct WorldSimsView: View {
                         .accessibilityElement(children: .combine)
                         Hairline()
                     }
-                    Text("The production worker claims new runs only from 03:00 through 08:00 America/New_York. A run already in progress continues.")
+                    Text("New runs start between 3:00 AM and 8:00 AM Eastern Time. A run already in progress continues.")
                         .font(.caption2).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true).padding(.top, 8)
                 }
             }.padding(16)

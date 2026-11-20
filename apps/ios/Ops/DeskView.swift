@@ -21,7 +21,7 @@ struct DeskView: View {
                 }.listRowBackground(Color.clear)
             } header: { SectionLabel(text: "Tickets", count: tickets.count) }
             Section {
-                if workers.isEmpty { Text("No live workers.").foregroundStyle(OpsTheme.muted).listRowBackground(Color.clear) }
+                if workers.isEmpty { Text("No active sessions").foregroundStyle(OpsTheme.muted).listRowBackground(Color.clear) }
                 ForEach(workers, id: \.["id"].string) { worker in
                     NavigationLink { WorkerDetail(worker: worker) } label: {
                         WorkRow(title: workerTitle(worker), meta: "\(worker["runner"].string) · \(worker["model"].string)\(worker["effort"].string.isEmpty ? "" : " @\(worker["effort"].string)") · \(OpsFormat.ago(worker["updatedAt"]))", bar: OpsState.color(worker["state"].string)) {
@@ -29,7 +29,7 @@ struct DeskView: View {
                         }
                     }
                 }.listRowBackground(Color.clear)
-            } header: { SectionLabel(text: "Workers", count: workers.count) }
+            } header: { SectionLabel(text: "Active sessions", count: workers.count) }
             Section {
                 ForEach(recent, id: \.["id"].string) { job in
                     NavigationLink { WorkerDetail(worker: job) } label: { WorkRow(title: workerTitle(job), meta: "\(OpsState.word(job["state"].string)) · \(job["model"].string) · \(OpsFormat.ago(job["updatedAt"]))") }
