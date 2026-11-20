@@ -252,6 +252,7 @@ struct KeirNotifiedProposal: View {
             let result = try await session.get("/api/keir/supervisor/proposals")
             guard !Task.isCancelled else { return }
             selected = result["proposals"].array.compactMap(KeirProposal.init).first { $0.id == id }
+            if let selected, keir.isSupervisor { keir.supervisor.replace(selected) }
             issue = selected == nil ? "This approval is no longer available." : nil
         } catch {
             guard !Task.isCancelled else { return }
