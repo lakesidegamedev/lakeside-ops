@@ -690,6 +690,19 @@ enum KeirAgentFixtures {
             let now = Date().timeIntervalSince1970 * 1000
             let timing: [String: Any] = ["state": "waiting", "reason": "Waiting for the staging checks.", "next": "Read the check result and promote the tested head.", "milestone": "Staging checks pass", "nextCheckAt": now + 120000, "reviewAt": now + 600000, "since": now - 300000, "overdue": false, "etaLabel": "Completion time not established"]
             let stuck: [String: Any] = ["state": "stuck", "reason": "A completed action needs its receipt verified.", "next": "Inspect the saved result before retrying.", "since": now - 7200000, "reviewAt": now - 3600000, "overdue": true, "etaLabel": "Completion time not established"]
+            if ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens") {
+                let abort: [String: Any] = ["state": "stuck", "reason": "activation aborted: no result before the 15-minute turn limit",
+                                            "since": now - 3600000, "overdue": true]
+                let revenue: [String: Any] = [
+                    "number": 1868, "title": "Massive drop in revenue turn 77-78", "status": "open",
+                    "category": "bug", "createdAt": now - 14400000, "timing": abort,
+                    "replyState": ["state": "delivered", "url": "https://discord.com/channels/100/200/300"],
+                    "active": ["state": "running", "updatedAt": now - 3600000,
+                               "summary": "activation aborted: no result before the 15-minute turn limit"],
+                ]
+                let sample = hub()["tickets"] as? [[String: Any]] ?? []
+                return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue]]
+            }
             return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]
         case "/api/keir/app/tasks":
             let running: [String: Any] = ["id": "abcdef012345", "kind": "command", "state": "running", "title": "Promote development to production", "surface": "app", "receipts": 2, "decisionPending": false, "updatedAt": 1792020000000.0, "at": 1792019000000.0]

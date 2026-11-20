@@ -264,7 +264,7 @@ struct KeirGamesSheet: View {
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(game.name).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
-                                Text(game.state == .unsupported ? game.note : game.scope).font(.caption).foregroundStyle(.secondary)
+                                Text(game.state == .unsupported ? game.note : game.scope).font(.caption).foregroundStyle(OpsTheme.muted)
                             }
                             Spacer(minLength: 8)
                             if model.selected == game.id { Image(systemName: "checkmark").foregroundStyle(OpsTheme.sky).accessibilityHidden(true) }
@@ -298,16 +298,20 @@ struct KeirGamesSheet: View {
                 ForEach(game.reads) { read in KeirGameReadRow(read: read) }
             }
             if !model.reading, !model.detailFailed, game.state != .unsupported, let checked = game.reads.compactMap(\.checkedAt).max() {
-                Text("Checked \(checked.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                Text("Checked \(OpsFormat.clock(checked))").font(.caption).foregroundStyle(OpsTheme.muted)
                     .accessibilityIdentifier("keir-game-checked")
             }
         } header: { SectionLabel(text: game.name) }
         if !model.reading, !model.detailFailed, game.state != .unsupported, !(game.scope.isEmpty && game.withheld.isEmpty) {
             Section {
-                if !game.scope.isEmpty { Label(game.scope, systemImage: "lock").font(.caption).foregroundStyle(.secondary) }
-                if !game.withheld.isEmpty {
-                    Label("Not read by Keir: " + game.withheld.joined(separator: "; ") + ".", systemImage: "lock").font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    if !game.scope.isEmpty { Text(game.scope) }
+                    ForEach(game.withheld, id: \.self) { limit in
+                        Label(limit, systemImage: "lock")
+                    }
                 }
+                .font(.opsCaption)
+                .foregroundStyle(OpsTheme.muted)
             }
         }
         if let tickets = game.tickets {
@@ -316,7 +320,7 @@ struct KeirGamesSheet: View {
                     KeirGameStateDot(state: tickets.state, label: tickets.state == .available ? "Through the Inbox" : nil)
                     Text(tickets.state == .available ? "Through the Inbox" : tickets.state.title).font(.callout)
                 }
-                Text(tickets.note).font(.callout).foregroundStyle(.secondary)
+                Text(tickets.note).font(.callout).foregroundStyle(OpsTheme.muted)
             } header: { SectionLabel(text: "Tickets and pings") }
         }
         let topics = KeirGameDraft.topics(for: game)
@@ -368,23 +372,26 @@ struct KeirGameReadRow: View {
                 KeirGameStateDot(state: read.state)
                 Text(read.label).font(.callout.weight(.semibold))
                 Spacer(minLength: 8)
-                if read.state != .live { Text(read.state.title).font(.caption).foregroundStyle(.secondary) }
+                if read.state != .live { Text(read.state.title).font(.caption).foregroundStyle(OpsTheme.muted) }
             }
             ForEach(facts) { fact in
                 LabeledContent {
-                    Text(fact.value).font(.callout)
+                    HStack(spacing: 6) {
+                        Text(fact.value).font(.callout)
+                        if fact.value == "Responding" { KeirGameStateDot(state: .live) }
+                    }
                 } label: {
-                    Text(fact.label).font(.callout).foregroundStyle(.secondary)
+                    Text(fact.label).font(.callout).foregroundStyle(OpsTheme.muted)
                 }
                 .accessibilityElement(children: .combine)
             }
-            if !read.note.isEmpty { Text(read.note).font(.caption).foregroundStyle(.secondary) }
+            if !read.note.isEmpty { Text(read.note).font(.caption).foregroundStyle(OpsTheme.muted) }
             // Technical evidence stays available, folded away: which tool answered.
             DisclosureGroup {
-                Text("Read from \(read.source)").font(.caption).foregroundStyle(.secondary)
+                Text("Read from \(read.source)").font(.caption).foregroundStyle(OpsTheme.muted)
                     .accessibilityIdentifier("keir-game-source-\(read.id)")
             } label: {
-                Text("Details").font(.caption).foregroundStyle(.secondary)
+                Text("Details").font(.caption).foregroundStyle(OpsTheme.muted)
             }
         }
         .padding(.vertical, 2)

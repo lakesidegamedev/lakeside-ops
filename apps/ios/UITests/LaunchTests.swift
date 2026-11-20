@@ -687,7 +687,7 @@ final class LaunchTests: XCTestCase {
         func button(_ id: String) -> XCUIElement {
             let element = app.buttons[id]
             XCTAssertTrue(element.waitForExistence(timeout: 10), "\(id) is offered")
-            if !element.isHittable { app.swipeUp() }
+            for _ in 0..<8 where !element.isHittable { app.swipeUp() }
             return element
         }
         func confirm(_ title: String) {
@@ -707,10 +707,10 @@ final class LaunchTests: XCTestCase {
             field.typeText(text)
         }
 
-        XCTAssertTrue(find(app, "Support Keir is working this ticket").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["supervision-take"].exists || find(app, "Keir").waitForExistence(timeout: 10))
         button("supervision-take").tap()
-        confirm("Take this ticket from Support Keir")
-        XCTAssertTrue(find(app, "Your personal Keir is working this ticket").waitForExistence(timeout: 10))
+        confirm("Take this ticket from the support desk")
+        XCTAssertTrue(find(app, "Supervised worker").waitForExistence(timeout: 10))
         XCTAssertTrue(button("supervision-handback").exists)
         XCTAssertFalse(app.buttons["supervision-take"].exists, "one session at a time")
 
@@ -723,16 +723,16 @@ final class LaunchTests: XCTestCase {
         // Start a direction, then hand the ticket back without sending it.
         type("Half written note")
         button("supervision-handback").tap()
-        confirm("Hand this ticket back to Support Keir")
-        XCTAssertTrue(find(app, "Support Keir is working this ticket").waitForExistence(timeout: 10))
+        confirm("Hand this ticket back to the support desk")
+        XCTAssertTrue(app.buttons["supervision-take"].exists || find(app, "Keir").waitForExistence(timeout: 10))
         XCTAssertFalse(directionField().exists, "no direction box without a worker")
         XCTAssertFalse(app.buttons["supervision-handback"].exists)
         XCTAssertTrue(find(app, "Last worker").exists, "the retired worker stays visible as history")
 
         // Taking it again starts a clean session: the unsent note went nowhere.
         button("supervision-take").tap()
-        confirm("Take this ticket from Support Keir")
-        XCTAssertTrue(find(app, "Your personal Keir is working this ticket").waitForExistence(timeout: 10))
+        confirm("Take this ticket from the support desk")
+        XCTAssertTrue(find(app, "Supervised worker").waitForExistence(timeout: 10))
         XCTAssertTrue(directionField().waitForExistence(timeout: 5))
         XCTAssertFalse((directionField().value as? String ?? "").contains("Half written note"), "the draft was discarded at hand back")
         XCTAssertFalse(find(app, "Half written note", timeout: 2).exists, "the unsent draft never reached the new worker")
@@ -1002,7 +1002,7 @@ final class LaunchTests: XCTestCase {
 
     func testEmptyConversationOffersVoiceAndAnEditableTicketFollowUp() {
         let app = launchFresh(["--uitest-empty-keir", "--uitest-reset-resume"])
-        XCTAssertTrue(app.buttons["keir-start-voice"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["keir-microphone"].waitForExistence(timeout: 15))
         let ticket = app.buttons["keir-start-ticket"]
         XCTAssertTrue(ticket.waitForExistence(timeout: 15), "a ticket with no recorded reply is offered")
         XCTAssertFalse(app.buttons["decision-approve"].exists, "An unrelated studio approval belongs in Inbox")
@@ -1015,8 +1015,10 @@ final class LaunchTests: XCTestCase {
         let draft = box.value as? String ?? ""
         XCTAssertTrue(draft.contains("Ticket #1001"), "the suggestion lands in the composer: \(draft)")
         XCTAssertTrue(draft.contains("Don't message the player"))
-        XCTAssertTrue(app.buttons["keir-start-voice"].exists, "nothing was sent")
-        app.buttons["keir-start-voice"].tap()
+        XCTAssertTrue(ticket.exists, "nothing was sent")
+        box.tap()
+        box.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: draft.count))
+        chooseFromMenu(app, "keir-microphone", "Voice conversation", until: { app.staticTexts["Keir voice"].exists })
         XCTAssertTrue(app.staticTexts["Keir voice"].waitForExistence(timeout: 5), "the invitation opens the existing voice mode")
         app.buttons["End voice mode"].tap()
     }

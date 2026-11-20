@@ -1,7 +1,7 @@
 import SwiftUI
 import LakesideCore
 
-/// Owner ticket supervision: take a ticket from Support Keir for your personal
+/// Owner ticket supervision: take a ticket from the support desk for your personal
 /// Keir worker, watch and direct that worker, and hand the ticket back.
 /// Talks only to `/api/keir/app/tickets/:n/supervision`. Every write carries a
 /// request id that is reused when the same action is retried, so a dropped
@@ -190,15 +190,15 @@ enum SupervisionAction: String, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .take: return "Take this ticket from Support Keir"
-        case .handback: return "Hand this ticket back to Support Keir"
+        case .take: return "Take this ticket from the support desk"
+        case .handback: return "Hand this ticket back to the support desk"
         case .message: return "Send direction"
         }
     }
     var detail: String {
         switch self {
-        case .take: return "Support Keir stops and its queued replies are withdrawn. Your personal Keir becomes the only voice on this ticket until you hand it back. Staff claims still win."
-        case .handback: return "Your Keir stops at once and anything it had queued is withdrawn. Support Keir gets its notes and next step."
+        case .take: return "The support desk stops and its queued replies are withdrawn. The supervised worker becomes the only voice on this ticket until you hand it back. Staff claims still win."
+        case .handback: return "The supervised worker stops at once and anything it had queued is withdrawn. The support desk gets its notes and next step."
         case .message: return ""
         }
     }

@@ -96,7 +96,6 @@ struct KeirStart: View {
     /// The private conversation: no support tickets or studio counts here.
     var supervisor = false
     let draftEmpty: Bool
-    let speak: () -> Void
     let suggest: (JSONValue) -> Void
 
     var body: some View {
@@ -108,16 +107,6 @@ struct KeirStart: View {
                     .font(.callout).foregroundStyle(OpsTheme.muted).multilineTextAlignment(.center)
             }
             .accessibilityElement(children: .combine)
-            Button(action: speak) {
-                Label("Talk to Keir", systemImage: "waveform")
-                    .font(.callout.weight(.semibold)).padding(.horizontal, 20).frame(minHeight: 44)
-                    .background(KeirChatTheme.chrome, in: Capsule())
-                    .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
-                    .shadow(color: KeirChatTheme.shadow, radius: 8, y: 2)
-            }
-            .buttonStyle(.plain).foregroundStyle(OpsTheme.ink)
-            .accessibilityHint("Starts a spoken conversation")
-            .accessibilityIdentifier("keir-start-voice")
             if let ticket {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("No Discord reply recorded").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted).padding(.leading, 6)
