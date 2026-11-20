@@ -60,9 +60,12 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
         working: Object.values(d.jobs).some((j) => isAppJob(j) && (j.appThread || MAIN) === x.id && j.state === "running") };
     }).sort((a, b) => (b.id === MAIN) - (a.id === MAIN) || b.at - a.at);
   }
-  function createThread(title) {
+  function createThread(title, creationKey) {
     const t = agentState(d);
-    const thread = { id: id(), title: clip(title || "New thread", 60), at: now() };
+    if (creationKey !== undefined && !/^sup:j_[a-f0-9]{16}:[a-f0-9]{16}$/.test(creationKey)) throw err(400, "invalid side chat request key");
+    const previous = creationKey && Object.values(t.threads).find((thread) => thread.creationKey === creationKey);
+    if (previous) return previous;
+    const thread = { id: id(), title: clip(title || "New thread", 60), at: now(), ...(creationKey ? { creationKey } : {}) };
     t.threads[thread.id] = thread; ledger.save(); return thread;
   }
   function updateThread(threadId, { title, archived }) {
@@ -265,7 +268,7 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
   async function route(path, method, body, query) {
     if (muse) { const out = await muse.route(path, method, body, query); if (out !== undefined) return out; }
     if (path === "/threads" && method === "GET") return { threads: threads() };
-    if (path === "/threads" && method === "POST") return createThread(body.title);
+    if (path === "/threads" && method === "POST") return createThread(body.title, body.creationKey);
     let m = /^\/threads\/([a-z0-9]{6,12})$/.exec(path);
     if (m && method === "POST") return updateThread(m[1], body);
     const ticketMatch = /^\/tickets\/(\d{1,7})$/.exec(path);

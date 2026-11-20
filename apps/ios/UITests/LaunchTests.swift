@@ -934,7 +934,17 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(blocked.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["work-filter-needs-you"].exists)
         capturePage("Inbox all")
-        for _ in 0..<6 where !blocked.isHittable { app.swipeDown() }
+        let search = app.searchFields.firstMatch
+        for _ in 0..<6 where !search.isHittable { app.swipeDown() }
+        XCTAssertTrue(search.isHittable)
+        search.tap()
+        let inboxKeyboard = app.keyboards.firstMatch
+        XCTAssertTrue(inboxKeyboard.waitForExistence(timeout: 5))
+        XCTAssertLessThanOrEqual(search.frame.maxY, inboxKeyboard.frame.minY)
+        capture(app, "\(theme) Inbox all keyboard")
+        returnToTabs()
+        go(app, "Activity")
+        XCTAssertTrue(blocked.waitForExistence(timeout: 10))
         blocked.tap()
         capturePage("Inbox blocked", scrolls: 3)
         for _ in 0..<6 { app.swipeDown() }

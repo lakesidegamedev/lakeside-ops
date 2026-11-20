@@ -90,7 +90,8 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(box.waitForExistence(timeout: 10))
         let draft = box.value as? String ?? ""
         XCTAssertTrue(draft.hasPrefix("About MetroForge:"), draft)
-        XCTAssertTrue(draft.contains("mf_status"))
+        XCTAssertTrue(draft.contains("read-only checks"))
+        XCTAssertFalse(draft.contains("mf_status"))
         XCTAssertTrue(draft.contains("Don't change anything or message anyone"))
         XCTAssertFalse(app.buttons["keir-game-metroforge"].exists, "the sheet closed and nothing was sent")
     }

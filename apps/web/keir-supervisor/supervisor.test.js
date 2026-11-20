@@ -95,12 +95,12 @@ function setup({ executor, sandbox, publisher = null, publishEnabled = false, ro
   return { root, source, stateDir, sup, sandbox: sb, repos, guardianDir };
 }
 
-async function serve(sup, status = async () => ({ configured: true })) {
+async function serve(sup, status = async () => ({ configured: true }), appUpstream = undefined) {
   const sessions = { owner: { role: "admin", email: OWNER }, staff: { role: "admin", email: "someone@else" }, mod: { role: "moderator", email: OWNER } };
   const server = http.createServer(async (req, res) => {
     const pathname = new URL(req.url, "http://x").pathname;
     const handled = await handleKeirSupervisorRoute(req, res, pathname, {
-      env: { KEIR_OWNER_ID: "42" },
+      env: { KEIR_OWNER_ID: "42", KEIR_APP_BASE_URL: appUpstream },
       resolveSession: async (r) => sessions[/ops_session=(\w+)/.exec(r.headers.cookie || "")?.[1]] || null,
       getSupervisor: () => ({ configured: true, missing: [], instance: sup, status }),
     });
@@ -115,6 +115,40 @@ async function serve(sup, status = async () => ({ configured: true })) {
 }
 
 async function untilIdle(sup) { assert.equal(await sup.idle(120000), true, "jobs did not settle"); }
+
+test("a signed-in owner can ask the supervisor to create a private side chat", async (t) => {
+  const received = [];
+  const upstream = http.createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    received.push({ url: req.url, cookie: req.headers.cookie, ...JSON.parse(body) });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ id: "abcdef012345", title: "Payroll review" }));
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+  const executor = { available: () => ({ available: true }), async run({ toolUrl }) {
+    const client = mcp(toolUrl);
+    await client.init();
+    const created = await client.call("create_side_chat", { title: "Payroll review" });
+    assert.equal(created.id, "abcdef012345");
+    return { text: `Created ${created.title}.` };
+  } };
+  const { sup, root } = setup({ executor });
+  t.after(() => { sup.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  await sup.start();
+  const app = await serve(sup, undefined, `http://127.0.0.1:${upstream.address().port}`);
+  t.after(app.close);
+  const body = { text: "Create a side chat for payroll review", clientId: "side-chat-test" };
+  assert.equal((await app.req("/api/keir/supervisor/messages", { method: "POST", body })).status, 202);
+  await untilIdle(sup);
+  assert.equal(received.length, 1);
+  assert.equal(received[0].url, "/api/keir/app/threads");
+  assert.equal(received[0].cookie, "ops_session=owner");
+  assert.equal(received[0].title, "Payroll review");
+  assert.match(received[0].creationKey, /^sup:j_[a-f0-9]{16}:[a-f0-9]{16}$/);
+  assert.equal(sup.thread({}).messages.at(-1).text, "Created Payroll review.");
+});
 
 test("a requested queue snapshot persists with the answer and limits the rendered rows", async (t) => {
   const snapshot = { state: "read", at: Date.now(), possiblyMore: false,

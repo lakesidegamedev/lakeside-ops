@@ -74,7 +74,6 @@ struct KeirGame: Equatable, Identifiable {
     /// Tickets exist for one game only. The sheet and the question topics both follow this, never the name.
     var ticketsSupported: Bool { tickets?.state == .available }
     /// Tools Keir may read for this game, named for the question draft.
-    var readTools: [String] { reads.compactMap { $0.source.components(separatedBy: " · ").last } }
 }
 
 enum KeirGames {
@@ -146,8 +145,7 @@ struct KeirGameSelection {
 
 // MARK: Questions
 
-/// Editable drafts for the composer. They name the game and the reviewed read
-/// tools, ask Keir to say what it checked and when, and forbid writes and posts.
+/// Editable drafts for the composer. They name the game, ask Keir to say what it checked and when, and forbid writes and posts.
 /// Nothing is sent from here.
 enum KeirGameDraft {
     enum Topic: String, CaseIterable, Identifiable {
@@ -167,9 +165,7 @@ enum KeirGameDraft {
         guard topics(for: game).contains(topic) else { return nil }
         switch topic {
         case .health:
-            let tools = game.readTools
-            let how = tools.isEmpty ? "Use only read-only checks." : "Use only your read-only \(tools.joined(separator: ", ")) reads."
-            return "About \(game.name): is it healthy right now, and what is currently live? \(how) Tell me what you checked and when, and say so plainly if a read fails instead of guessing. Don't change anything or message anyone."
+            return "About \(game.name): is it healthy right now, and what is currently live? Use the connected game's read-only checks. Tell me what you checked and when, and say so plainly if a read fails instead of guessing. Don't change anything or message anyone."
         case .tickets:
             return "About \(game.name): which tickets have no Discord reply recorded in the studio's receipts? Check the receipts and tell me what you found and when. Don't message any player yet."
         }

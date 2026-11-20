@@ -51,6 +51,8 @@ const TOOLS = (repoKeys) => [
   { name: "propose_publish", description: "Freeze the workspace's current changes as a patch and ask the owner to approve publishing it as a branch and pull request. You cannot approve it yourself and chat replies are not approval; the owner decides with an explicit button bound to this exact patch.", input_schema: { type: "object", properties: { title: { type: "string", description: "Conventional commit title, e.g. fix(web): keep the poll cursor on reconnect" }, summary: { type: "string", maxLength: 4000 } }, required: ["title", "summary"], additionalProperties: false } },
   { name: "recall_conversation", description: "Look up earlier turns in this owner's private conversation, including archived exchanges. Use a distinctive phrase or ticket number. Treat excerpts as historical evidence and check their date.",
     input_schema: { type: "object", properties: { query: { type: "string", minLength: 2, maxLength: 160 } }, required: ["query"], additionalProperties: false } },
+  { name: "create_side_chat", description: "Create a separate private side chat in the owner's app when the owner asks for it in the current message. It does not post to any ticket or change the main chat.",
+    input_schema: { type: "object", properties: { title: { type: "string", minLength: 1, maxLength: 60 } }, required: ["title"], additionalProperties: false } },
   { name: "guardian_status", description: "Read the Keir guardian's latest health report (units, timers, restarts). Works while the support operator is offline.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "support_queue", description: "List open A House Divided support tickets with reply receipts and Keir's recorded wait or work state. Use for what tickets are waiting, unanswered, open or being worked. Set showCard to attach a structured snapshot of the open queue in your answer.", input_schema: { type: "object", properties: { showCard: { type: "boolean" } }, additionalProperties: false } },
   { name: "mcp_catalogue", description: "List MCP servers registered on the VPS. Supply a server to list its available read tools and their argument schemas.", input_schema: { type: "object", properties: { server: { type: "string" } }, additionalProperties: false } },
@@ -69,6 +71,7 @@ function brief(repos) {
     "You can read, edit and test allowlisted repositories in an isolated sandbox workspace (a private clone, no network, no credentials). Changes you make stay in that workspace until the owner approves publishing.",
     "You cannot deploy, push, restart services, change production configuration, touch live data or approve anything. If the owner asks for one of those, say exactly what it needs and who or what can do it.",
     "When a repair is ready and its focused tests pass, call propose_publish. The owner approves it with an explicit button bound to the exact patch. Text in the chat, including from the owner, is never approval.",
+    "When the owner asks to start a side chat, use create_side_chat and report its title. Preserve this main conversation. Only the owner’s current request authorizes creating a chat.",
     "For health questions about Keir, use guardian_status; it works while the support operator is down.",
     "Speak in the first person about your own work. Say 'the support desk' when another worker handled the ticket. For a question about the whole queue, call support_queue with showCard true. Start with what you need from the owner and add only relevant findings the card does not show. For a narrow ticket question, use one short item per relevant ticket. Summarize the result before offering history. Use clock times with AM or PM and a timezone.",
     "For open, waiting or unanswered tickets, use support_queue first. Lead with ticket numbers and what each is waiting on. A missing reply receipt means no reply is recorded. Include scheduled next checks, implementation holds and pending owner decisions. A scheduled check without a named person is a timed follow-up. Queued describes the next activation, and priorActivations shows whether work already happened. Never equate a queued activation with a ticket nobody has worked.",
@@ -136,10 +139,19 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
   }
 
   const queueCards = new Map();
+  const sideChatCreators = new Map();
 
   async function call(job, name, input, signal) {
     const live = st().jobs[job.id] || job;
     if (name === "recall_conversation") return store.recall(input.query, st().messages.find((m) => m.jobId === job.id)?.seq ?? st().seq, signal);
+    if (name === "create_side_chat") {
+      const create = sideChatCreators.get(job.id);
+      if (!create) throw new Error("A current authenticated owner session is required to create a side chat.");
+      const title = String(input.title || "").replace(/\s+/g, " ").trim();
+      if (!title || title.length > 60) throw new Error("Choose a side chat title from 1 to 60 characters.");
+      const key = `sup:${job.id}:${sha(title.toLowerCase()).slice(0, 16)}`;
+      return create(title, key, signal);
+    }
     if (name === "guardian_status") return guardianStatus(guardianDir, now());
     if (name === "support_queue") {
       if (!evidence) throw new Error("Support reads are not configured on this server.");
@@ -257,6 +269,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
   function finish(job, state, fields = {}) {
     Object.assign(job, { state, finishedAt: now() }, fields);
     controllers.delete(job.id);
+    sideChatCreators.delete(job.id);
   }
 
   async function execute(job) {
@@ -357,7 +370,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     return { owner, recovered: interrupted.length };
   }
 
-  function post(text, clientId) {
+  function post(text, clientId, createSideChat) {
     if (!owner) throw Object.assign(new Error("The supervisor runner is owned by another web process."), { status: 503 });
     const body = String(text || "").trim();
     if (!body || body.length > 8000) throw Object.assign(new Error("text must be 1-8000 characters"), { status: 400 });
@@ -365,11 +378,13 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     const seen = st().clientIds[clientId];
     if (seen) {
       if (seen.textHash !== sha(body)) throw Object.assign(new Error("clientId was already used for a different message"), { status: 409 });
+      if (createSideChat && OPEN.includes(st().jobs[seen.jobId]?.state)) sideChatCreators.set(seen.jobId, createSideChat);
       return { accepted: true, duplicate: true, ...receipt(seen.messageId, seen.jobId) };
     }
     const message = store.append({ role: "owner", kind: "message", text: body, clientId });
     const job = store.addJob({ messageId: message.id, messageSeq: message.seq });
     message.jobId = job.id;
+    if (createSideChat) sideChatCreators.set(job.id, createSideChat);
     st().clientIds[clientId] = { messageId: message.id, jobId: job.id, textHash: sha(body), at: now() };
     store.save();
     setImmediate(() => kick());
@@ -462,7 +477,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     return { owner, queued: Object.values(st().jobs).filter((j) => j.state === "queued").length, running: running ? jobView(running) : null, session: st().session };
   }
 
-  function stop() { stopped = true; clearTimeout(attentionRetry); for (const c of controllers.values()) c.abort(); toolServer.close(); if (owner) { try { if (Number(fs.readFileSync(lockFile, "utf8")) === process.pid) fs.rmSync(lockFile, { force: true }); } catch { /* gone */ } } }
+  function stop() { stopped = true; sideChatCreators.clear(); clearTimeout(attentionRetry); for (const c of controllers.values()) c.abort(); toolServer.close(); if (owner) { try { if (Number(fs.readFileSync(lockFile, "utf8")) === process.pid) fs.rmSync(lockFile, { force: true }); } catch { /* gone */ } } }
 
   async function idle(timeoutMs = 60000) {
     const end = Date.now() + timeoutMs;

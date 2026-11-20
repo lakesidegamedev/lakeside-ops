@@ -70,7 +70,6 @@ final class GamesTransport: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(deploy.source, "metroforge · mf_status")
         XCTAssertNotNil(deploy.checkedAt)
         XCTAssertEqual(deploy.facts.first?.label, "Preview site")
-        XCTAssertEqual(detail.readTools, ["mf_status", "mf_cities"])
     }
 
     func testAnUnavailableReadShowsNoNumbersEvenIfTheServerSentSome() throws {
@@ -130,7 +129,8 @@ final class GamesTransport: URLProtocol, @unchecked Sendable {
     func testTheHealthDraftNamesTheGameAndItsReadToolsAndForbidsWrites() throws {
         let text = try XCTUnwrap(KeirGameDraft.prompt(.health, game: try game("metroforge")))
         XCTAssertTrue(text.hasPrefix("About MetroForge:"))
-        XCTAssertTrue(text.contains("mf_status, mf_cities"))
+        XCTAssertTrue(text.contains("read-only checks"))
+        XCTAssertFalse(text.contains("mf_status"))
         XCTAssertTrue(text.contains("Don't change anything or message anyone"))
         XCTAssertTrue(text.contains("say so plainly if a read fails"))
         XCTAssertFalse(text.contains("mf_leaderboard"))

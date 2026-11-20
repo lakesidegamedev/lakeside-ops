@@ -36,6 +36,18 @@ test("threads keep their own live task and messages", () => {
   assert.ok(!agent.threads().some((t) => t.id === side.id));
 });
 
+test("retrying a model-created side chat preserves the same chat and its deletion", async () => {
+  const { agent } = setup();
+  const creationKey = "sup:j_1234567890abcdef:1234567890abcdef";
+  const first = await agent.route("/threads", "POST", { title: "Payroll review", creationKey });
+  const retry = await agent.route("/threads", "POST", { title: "Payroll review", creationKey });
+  assert.equal(first.id, retry.id);
+  assert.equal(agent.threads().filter((thread) => thread.id === first.id).length, 1);
+  agent.updateThread(first.id, { archived: true });
+  assert.equal((await agent.route("/threads", "POST", { title: "Payroll review", creationKey })).archived, true);
+  assert.ok(!agent.threads().some((thread) => thread.id === first.id));
+});
+
 test("activity shows owner tasks with receipts, and retry and stop work", () => {
   const { ledger, app, agent } = setup();
   const { jobId } = app.authenticatedPost("Merge the green dev PR for the bond fix");

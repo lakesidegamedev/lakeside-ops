@@ -402,8 +402,8 @@ struct KeirView: View {
         if sheet == nil { presentingSheet = false }
     }
 
-    // The thread response contains its own tasks and messages. Studio-wide
-    // approvals stay accessible from Inbox without displacing this conversation.
+    // Main and Inbox share the approval list. Side chats show decisions
+    // for their own jobs, while the Inbox badge stays available everywhere.
     private var threadDecisions: [JSONValue] {
         if keir.thread == keir.mainThread { return ops.decisions }
         let jobs = Set(keir.tasks.map { $0["id"].string } + keir.messages.map { $0["jobId"].string })
@@ -826,7 +826,7 @@ struct DecisionCard: View {
                 .background(OpsTheme.raised, in: Capsule())
         }
         Button { act("approve") } label: {
-            Text("Approve this action").fontWeight(.semibold).lineLimit(2).multilineTextAlignment(.center)
+            Text("Approve").fontWeight(.semibold).lineLimit(1).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 8)
                 .background(decision["canApprove"] == .bool(false) ? OpsTheme.raised : OpsTheme.sky, in: Capsule())
                 .foregroundStyle(decision["canApprove"] == .bool(false) ? OpsTheme.muted : OpsTheme.onAccent)
