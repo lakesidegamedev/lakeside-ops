@@ -43,7 +43,7 @@ struct BrandMark: View {
     var surface: Surface
     var size: CGFloat = 44
     var body: some View {
-        Image(surface == .ask ? "AskMark" : "LakesideMark")
+        Image(surface == .ask ? "AskMark" : surface == .ops ? "KeirMark" : "LakesideMark")
             .resizable().scaledToFit().frame(width: size, height: size)
             .accessibilityLabel(surface == .ask ? "Lakeside Ask logo" : "Lakeside Games logo")
     }

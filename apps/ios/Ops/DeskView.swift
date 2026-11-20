@@ -56,11 +56,15 @@ struct DeskView: View {
 }
 
 struct TicketDetail: View {
+    @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var session: AppSession
     @Environment(\.scenePhase) private var scenePhase
     let ticket: JSONValue
     @State private var detail: JSONValue = .null
     @State private var error: String?
+    private var replyState: JSONValue {
+        ops.hub["tickets"].array.first(where: { $0["number"] == ticket["number"] })?["replyState"] ?? ticket["replyState"]
+    }
     private var card: JSONValue { detail["card"] == .null ? ticket["card"] : detail["card"] }
     var body: some View {
         ScrollView {
@@ -84,6 +88,11 @@ struct TicketDetail: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(ticket["title"].string).font(.title2.weight(.semibold)).tracking(-0.4)
+                    if replyState["state"].string == "delivered" {
+                        Label("Reply delivered to Discord", systemImage: "checkmark.bubble").font(.callout).foregroundStyle(OpsTheme.mint)
+                    } else if replyState["state"].string == "no_receipt" {
+                        Label("No Discord reply receipt", systemImage: "bubble.left").font(.callout).foregroundStyle(OpsTheme.warn)
+                    }
                     Text("Ticket #\(ticket["number"].string) · \(ticket["category"].string.capitalized) · opened \(OpsFormat.ago(ticket["createdAt"]))").font(.caption).foregroundStyle(OpsTheme.muted)
                 }
                 if detail["timing"] != .null || ticket["timing"] != .null {

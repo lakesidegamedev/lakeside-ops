@@ -13,6 +13,11 @@ for folder in ["Ops"] {
     let destination = root.appendingPathComponent("AppIcon.appiconset")
     try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
     try data.write(to: destination.appendingPathComponent("Icon.png"))
+    let mark = root.appendingPathComponent("KeirMark.imageset")
+    try FileManager.default.createDirectory(at: mark, withIntermediateDirectories: true)
+    try data.write(to: mark.appendingPathComponent("Keir.png"))
+    let markInfo: [String: Any] = ["images": [["filename": "Keir.png", "idiom": "universal"]], "info": ["author": "xcode", "version": 1]]
+    try JSONSerialization.data(withJSONObject: markInfo).write(to: mark.appendingPathComponent("Contents.json"))
     let content: [String: Any] = ["images": [["filename": "Icon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"]], "info": ["author": "xcode", "version": 1]]
     try JSONSerialization.data(withJSONObject: content, options: [.prettyPrinted, .sortedKeys]).write(to: destination.appendingPathComponent("Contents.json"))
     try Data("{\"info\":{\"author\":\"xcode\",\"version\":1}}".utf8).write(to: root.appendingPathComponent("Contents.json"))

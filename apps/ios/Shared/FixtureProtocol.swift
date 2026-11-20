@@ -638,7 +638,7 @@ enum OpsFixtures {
         let item: [String: Any] = ["name": "Funding display fix", "stage": "main", "blocked": false, "note": "Live on the main server."]
         let card: [String: Any] = ["status": "Department funding at 0 is intended when its laws cost nothing.", "items": [item]]
         let ticket: [String: Any] = ["number": 1001, "title": "Budget screen shows zero funding", "status": "open", "category": "bug", "createdAt": 1792010000000.0,
-            "prs": [101], "decisionPending": false, "active": ["state": "running"], "card": card]
+            "replyState": ["state": "no_receipt"], "prs": [101], "decisionPending": false, "active": ["state": "running"], "card": card]
         let empty: [Any] = []
         let counts: [String: Any] = ["ticketRoots": 4, "actionableTicketRoots": 3, "monitoringTicketRoots": 1, "rootJobs": 4, "childJobs": 2, "executing": 2, "queued": 1, "dependency": 1, "ci": 1, "owner": 1, "turn": 0, "schedule": 0, "other": 0]
         let cost: [String: Any] = ["modelMs": 5400000, "activations": 23, "exhausted": 2, "repeatedRoots": 1, "timedOut": 1]

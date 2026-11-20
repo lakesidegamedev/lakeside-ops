@@ -114,6 +114,7 @@ struct KeirThreads: View {
 // MARK: Activity
 
 struct ActivityView: View {
+    @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
     @EnvironmentObject private var session: AppSession
     @State private var tasks: [JSONValue] = []
@@ -128,6 +129,14 @@ struct ActivityView: View {
     /// rest of "Needs you" (open questions, work the owner must unblock) lives here.
     private var otherAttention: [AttentionItem] { attention.items.filter { $0.kind != .decision } }
     private var tickets: [JSONValue] { work["tickets"].array }
+    private var awaitingFirstReply: [JSONValue] {
+        guard session.profile["mode"].string != "standalone", scope == "tickets", filter == "all" else { return [] }
+        return ops.hub["tickets"].array.filter { row in
+            row["replyState"]["state"].string == "no_receipt" &&
+            !["closed", "resolved", "duplicate", "merged", "archived", "wontfix"].contains(row["status"].string) &&
+            (search.isEmpty || row["title"].string.localizedCaseInsensitiveContains(search) || row["number"].string == search.trimmingCharacters(in: CharacterSet(charactersIn: "#")))
+        }.sorted { ($0["createdAt"].number ?? 0) < ($1["createdAt"].number ?? 0) }
+    }
     private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
     private var entries: [JSONValue] { showTickets ? tickets : tasks }
     private var visible: [JSONValue] { entries.filter { WorkQueuePresentation.matches($0, filter: filter, search: search, ticket: showTickets) }.sorted { WorkQueuePresentation.rank($0) < WorkQueuePresentation.rank($1) } }
@@ -135,6 +144,16 @@ struct ActivityView: View {
     var body: some View {
         List {
             DecisionAnswerReceipt().listRowBackground(Color.clear)
+            if !awaitingFirstReply.isEmpty {
+                Section {
+                    ForEach(awaitingFirstReply, id: \.["number"].string) { item in
+                        NavigationLink { TicketDetail(ticket: item) } label: {
+                            WorkRow(title: item["title"].string, meta: "#\(item["number"].string) · Opened \(OpsFormat.ago(item["createdAt"]))", bar: OpsTheme.warn)
+                        }
+                    }
+                } header: { SectionLabel(text: "No recorded reply", count: awaitingFirstReply.count) }
+                .listRowBackground(Color.clear)
+            }
             if !otherAttention.isEmpty && filter != "working" && filter != "waiting" {
                 Section {
                     ForEach(otherAttention) { item in
