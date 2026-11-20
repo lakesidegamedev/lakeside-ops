@@ -779,7 +779,7 @@ struct DecisionCard: View {
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(OpsText.decisionTitle(decision)).font(.opsCardTitle).fixedSize(horizontal: false, vertical: true)
-                        if let n = decision["ticket"].number { Text("Ticket #\(Int(n))").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                        if let n = decision["ticket"].number { Text("Ticket #\(String(Int(n)))").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
                         if !detail.isEmpty { Text(detail).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
                         if let checked = OpsFormat.date(decision["checksAt"]) {
                             Text("Checks last ran · " + OpsFormat.contextual(checked)).font(.opsCaption).foregroundStyle(OpsTheme.muted)

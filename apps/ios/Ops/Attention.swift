@@ -310,8 +310,21 @@ struct AttentionRow: View {
     let action: String
     var icon: String = "arrow.right"
 
+    var card = true
+
     var body: some View {
-        OpsCard {
+        Group {
+            if card { OpsCard { content } }
+            else { content }
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.kindLabel). \(item.title). \(item.detail). \(action)")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 OpsStatusBadge(status: status, label: item.kindLabel)
                 Spacer(minLength: 8)
@@ -324,7 +337,7 @@ struct AttentionRow: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(item.title).font(.opsCardTitle).foregroundStyle(OpsTheme.ink)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let number = item.ticketNumber { Text("Ticket #\(number)").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                    if let number = item.ticketNumber { Text("Ticket #\(String(number))").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
                     if !item.detail.isEmpty, item.detail != item.title {
                         Text(item.detail).font(.opsCaption).foregroundStyle(OpsTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
@@ -335,10 +348,6 @@ struct AttentionRow: View {
                     .foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
             }
         }
-        .contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.kindLabel). \(item.title). \(item.detail). \(action)")
-        .accessibilityAddTraits(.isButton)
     }
 }
 

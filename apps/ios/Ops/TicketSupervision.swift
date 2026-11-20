@@ -124,11 +124,13 @@ struct TicketOwnershipActions: View {
             HStack(spacing: 12) {
                 if model.state["canTake"].bool {
                     Button { model.confirming = .take } label: { Label("Take over", systemImage: "person.badge.key") }
-                        .buttonStyle(.bordered).disabled(model.busy).accessibilityIdentifier("supervision-take")
+                        .buttonStyle(.plain).foregroundStyle(OpsTheme.muted).padding(.vertical, 4)
+                        .disabled(model.busy).accessibilityIdentifier("supervision-take")
                 }
                 if model.state["canHandback"].bool {
                     Button { model.confirming = .handback } label: { Label("Hand back", systemImage: "arrow.uturn.backward") }
-                        .buttonStyle(.bordered).disabled(model.busy).accessibilityIdentifier("supervision-handback")
+                        .buttonStyle(.plain).foregroundStyle(OpsTheme.accent).padding(.vertical, 4)
+                        .disabled(model.busy).accessibilityIdentifier("supervision-handback")
                 }
             }
             if let error = model.error {

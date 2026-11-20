@@ -370,8 +370,8 @@ private struct InboxTicketDecision: View {
     @State private var choices: [JSONValue] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: open) { AttentionRow(item: item, action: "View ticket") }.buttonStyle(.plain)
+        OpsCard {
+            Button(action: open) { AttentionRow(item: item, action: "View ticket", card: false) }.buttonStyle(.plain)
             ForEach(knownChoice.map { [$0] } ?? choices, id: \.["id"].string) { choice in
                 TicketDecisionInline(decision: choice, showQuestion: false, changed: changed)
             }

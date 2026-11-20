@@ -378,34 +378,38 @@ struct KeirGameReadRow: View {
     private var facts: [KeirGameFact] {
         read.facts.filter { $0.label != "Bundles" }
     }
+    private var stale: Bool { read.checkedAt.map { Date().timeIntervalSince($0) >= 86_400 } ?? false }
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Text(read.label).font(.opsHeadline)
                 Spacer(minLength: 8)
-                let stale = read.checkedAt.map { Date().timeIntervalSince($0) >= 86_400 } ?? false
-                let state: KeirGameState = stale ? .unavailable : read.state
+                let tone = stale ? OpsTheme.neutral : read.state.color
                 HStack(spacing: 4) {
-                    Image(systemName: state.icon)
-                    Text(stale ? "Stale" : state.title)
+                    Image(systemName: stale ? "clock" : read.state.icon)
+                    Text(stale ? "Stale" : read.state.title)
                 }.fixedSize()
-                    .font(.opsCaption.weight(.semibold)).foregroundStyle(state.color)
+                    .font(.opsCaption.weight(.semibold)).foregroundStyle(tone)
                     .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(state.color.opacity(0.12), in: Capsule())
+                    .background(tone.opacity(0.12), in: Capsule())
                     .accessibilityIdentifier("keir-game-state")
             }
             ForEach(facts) { fact in
                 LabeledContent {
                     HStack(spacing: 6) {
-                        Text(fact.value).font(.callout)
-                        if fact.value == "Responding" { KeirGameStateDot(state: .live) }
+                        Text(fact.value).font(.callout).foregroundStyle(stale ? OpsTheme.muted : OpsTheme.ink)
+                        if !stale, fact.value == "Responding" { KeirGameStateDot(state: .live) }
                     }
                 } label: {
                     Text(fact.label).font(.callout).foregroundStyle(OpsTheme.muted)
                 }
                 .accessibilityElement(children: .combine)
             }
-            if !read.note.isEmpty { Text(read.note).font(.caption).foregroundStyle(OpsTheme.muted) }
+            if stale, let checked = read.checkedAt {
+                Text("Checked \(OpsFormat.contextual(checked))").font(.opsCaption).foregroundStyle(OpsTheme.muted)
+            } else if read.state != .live && !read.note.isEmpty {
+                Text(read.note).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+            }
             // Technical evidence stays available, folded away: which tool answered.
             DisclosureGroup {
                 Text("Read from \(read.source)").font(.caption).foregroundStyle(OpsTheme.muted)
