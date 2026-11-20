@@ -18,4 +18,11 @@ final class WorkQueueTests: XCTestCase {
         let approval: JSONValue = .object(["decisionPending": .bool(true)])
         XCTAssertEqual(WorkQueuePresentation.state(approval), "needs-you")
     }
+    func testOwnerDecisionsStayOnAllAndDecisionsButNotOnStatusFilters() {
+        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(filter: "all"))
+        XCTAssertTrue(WorkQueuePresentation.showsOwnerItems(filter: "needs-you"))
+        for filter in ["working", "waiting", "stuck"] {
+            XCTAssertFalse(WorkQueuePresentation.showsOwnerItems(filter: filter), filter)
+        }
+    }
 }

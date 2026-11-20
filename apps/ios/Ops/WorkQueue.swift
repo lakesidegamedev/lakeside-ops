@@ -19,6 +19,12 @@ enum WorkQueuePresentation {
         let text = [item["title"].string, item["number"].string, item["ticket"].string, item["timing"]["reason"].string].joined(separator: " ")
         return statusMatches && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
     }
+    /// Owner pings (Needs you and Your decisions) sit above the queue on the
+    /// All and Decisions filters. A status filter shows only work in that state,
+    /// so its rows are not pushed below the decision cards and out of view.
+    static func showsOwnerItems(filter: String) -> Bool {
+        filter == "all" || filter == "needs-you"
+    }
     static func rank(_ item: JSONValue) -> Int {
         if state(item) == "needs-you" { return 0 }
         if item["timing"]["overdue"].bool || ["stuck", "unassigned"].contains(state(item)) { return 1 }
