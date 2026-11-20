@@ -89,6 +89,12 @@ follow redirects. Access is restricted server-side.
 - Voice uses microphone energy for listening feedback, Microsoft Ava for spoken
   replies and the configured conversation provider (Gemini Flash by default).
 
+## Keir 2.5 internal beta
+
+Open Chat to continue your private conversation. On a configured studio server, the owner’s Keir can read its guardian, work in an isolated copy of Lakeside Ops, and look up an earlier exchange after a restart. The Keir menu opens Connected games. The Inbox holds decisions and links to individual tickets. A ticket shows who has it, its worker’s activity and directions, and the handback control. Settings offers light and OLED black appearances and per-device notification quiet hours.
+
+The release uses the existing Lakeside Ops TestFlight app record and bundle identifier. After uploading, run **TestFlight status** with the exact marketing version and workflow build number to verify Apple has assigned the build to an internal group with testers.
+
 ## Building
 
 Requires Xcode 26 and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
