@@ -7,6 +7,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const readline = require("node:readline");
 const { EventEmitter } = require("node:events");
 
 const HOT_MESSAGES = 1000;
@@ -84,6 +85,42 @@ function createStore(dir, { now = Date.now } = {}) {
     return job;
   }
 
+  // Recover a prior owner conversation without putting the entire archive in
+  // either process memory or the next model prompt.
+  async function recall(query, beforeSeq, signal) {
+    const needle = String(query || "").trim().toLowerCase();
+    if (needle.length < 2 || needle.length > 160) throw new Error("Search text must be 2–160 characters.");
+    const matches = [];
+    function consider(row) {
+      if (!Number.isSafeInteger(row.seq) || row.seq >= beforeSeq || typeof row.text !== "string") return;
+      const offset = row.text.toLowerCase().indexOf(needle);
+      if (offset < 0 || matches.some((m) => m.seq === row.seq)) return;
+      const start = Math.max(0, offset - 150);
+      matches.push({ seq: row.seq, at: row.at, role: row.role, excerpt: row.text.slice(start, start + 600) });
+      if (matches.length > 12) matches.shift();
+    }
+    // The recent window is normally sufficient. Only scan the cold file if
+    // it could still contribute to the newest twelve matches.
+    for (const row of state.messages) consider(row);
+    if (matches.length < 12 && state.archived > 0) {
+      const recent = matches.splice(0);
+      const input = fs.createReadStream(archive, { encoding: "utf8", signal });
+      const lines = readline.createInterface({ input, crlfDelay: Infinity });
+      try {
+        for await (const line of lines) {
+          signal?.throwIfAborted();
+          if (line) consider(JSON.parse(line));
+        }
+      } finally { lines.close(); input.destroy(); }
+      for (const row of recent) {
+        const duplicate = matches.findIndex((m) => m.seq === row.seq);
+        if (duplicate >= 0) matches.splice(duplicate, 1);
+        matches.push(row);
+      }
+    }
+    return matches.slice(-12).reverse();
+  }
+
   // Resolve when the revision moves past `rev` or the wait ends.
   function waitForChange(rev, ms, signal) {
     if (state.rev !== rev || ms <= 0) return Promise.resolve();
@@ -95,7 +132,7 @@ function createStore(dir, { now = Date.now } = {}) {
     });
   }
 
-  return { dir, get state() { return state; }, save, append, addJob, waitForChange, events, sha };
+  return { dir, get state() { return state; }, save, append, addJob, recall, waitForChange, events, sha };
 }
 
 module.exports = { createStore, HOT_MESSAGES, sha };

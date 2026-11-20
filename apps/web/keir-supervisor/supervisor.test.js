@@ -366,3 +366,19 @@ test("approval publishes the frozen patch from a fresh clone, once", async (t) =
     assert.match(sup.thread({}).messages.at(-1).text, /Published .* Nothing was merged or deployed/);
   } finally { app.close(); sup.stop(); }
 });
+
+test("the owner can recall an archived exchange after restart without returning the current request", async (t) => {
+  const { createStore, HOT_MESSAGES } = require("./store");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-owner-recall-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = createStore(dir);
+  store.append({ role: "owner", text: "Remember the equity allocation for ticket 1867." });
+  for (let i = 0; i < HOT_MESSAGES; i++) store.append({ role: "supervisor", text: "Another exchange" });
+  const recent = store.append({ role: "supervisor", text: "Updated ticket 1867." });
+  const current = store.append({ role: "owner", text: "Recall ticket 1867." });
+  store.save();
+  const reopened = createStore(dir);
+  const results = await reopened.recall("TICKET 1867", current.seq);
+  assert.deepEqual(results.map((row) => row.seq), [recent.seq, 1]);
+  assert.match(results[1].excerpt, /equity allocation/);
+});

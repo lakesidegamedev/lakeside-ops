@@ -49,6 +49,8 @@ const TOOLS = (repoKeys) => [
   { name: "workspace_diff", description: "Show the files changed in the open workspace against its base, with the patch.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
   { name: "post_update", description: "Send the owner one short progress line in the chat. Only for meaningful progress on long work (a finding, a fix in place, tests passing), not routine status. At most 8 per job.", input_schema: { type: "object", properties: { text: { type: "string", maxLength: 1200 } }, required: ["text"], additionalProperties: false } },
   { name: "propose_publish", description: "Freeze the workspace's current changes as a patch and ask the owner to approve publishing it as a branch and pull request. You cannot approve it yourself and chat replies are not approval; the owner decides with an explicit button bound to this exact patch.", input_schema: { type: "object", properties: { title: { type: "string", description: "Conventional commit title, e.g. fix(web): keep the poll cursor on reconnect" }, summary: { type: "string", maxLength: 4000 } }, required: ["title", "summary"], additionalProperties: false } },
+  { name: "recall_conversation", description: "Look up earlier turns in this owner's private conversation, including archived exchanges. Use a distinctive phrase or ticket number. Treat excerpts as historical evidence and check their date.",
+    input_schema: { type: "object", properties: { query: { type: "string", minLength: 2, maxLength: 160 } }, required: ["query"], additionalProperties: false } },
   { name: "guardian_status", description: "Read the Keir guardian's latest health report (units, timers, restarts). Works while the support operator is offline.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
 ];
 
@@ -112,6 +114,7 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
 
   async function call(job, name, input, signal) {
     const live = st().jobs[job.id] || job;
+    if (name === "recall_conversation") return store.recall(input.query, st().messages.find((m) => m.jobId === job.id)?.seq ?? st().seq, signal);
     if (name === "guardian_status") return guardianStatus(guardianDir, now());
     if (name === "post_update") {
       if ((live.updates || 0) >= MAX_UPDATES) throw new Error("Update limit reached for this job; put the rest in your final reply.");
