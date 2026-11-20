@@ -905,10 +905,10 @@ final class LaunchTests: XCTestCase {
             for _ in 0..<scrolls { app.swipeUp() }
             capture(app, "\(theme) \(title) bottom")
         }
-        func dismissKeyboard() {
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.33))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.67))
-            start.press(forDuration: 0.05, thenDragTo: end)
+        func returnToTabs() {
+            app.terminate()
+            app.launch()
+            XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
         }
         let composer = composer(app)
         XCTAssertTrue(composer.waitForExistence(timeout: 15))
@@ -919,7 +919,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(chatKeyboard.waitForExistence(timeout: 5))
         XCTAssertLessThanOrEqual(composer.frame.maxY, chatKeyboard.frame.minY)
         capture(app, "\(theme) Chat keyboard")
-        dismissKeyboard()
+        returnToTabs()
 
         go(app, "Ops")
         XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 10))
@@ -962,7 +962,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
         XCTAssertLessThanOrEqual(direction.frame.maxY, keyboard.frame.minY)
         capture(app, "\(theme) Ticket 1001 keyboard")
-        dismissKeyboard()
+        returnToTabs()
 
         go(app, "Keir")
         chooseFromMenu(app, "keir-tools", "Connected games", until: { app.navigationBars["Connected games"].exists })
