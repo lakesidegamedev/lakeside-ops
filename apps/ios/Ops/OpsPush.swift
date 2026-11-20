@@ -20,13 +20,17 @@ import LakesideCore
     @Published var openKeirVoice = false
     @Published var destination: OpsDestination?
     @Published var activityFilter = "all"
+    /// Pushed screens inside the Ops tab. Feed and Goals used to be tabs of their
+    /// own; they now live under Ops, and notifications reach them through here.
+    @Published var studioPath: [StudioRoute] = []
+    func open(_ route: StudioRoute) { tab = .ops; studioPath = [route] }
     func openTask(_ id: String) { tab = .activity; destination = .task(id) }
     func openDecision(_ id: String) { activityFilter = "all"; tab = .activity; destination = .decision(id) }
     func openDecisionTask(_ decision: JSONValue) {
         if decision["canOpenTask"] == .bool(false), decision["ticket"] != .null { tab = .activity; destination = .ticket(.object(["number": decision["ticket"]])) }
         else { openTask(decision["jobId"].string) }
     }
-    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; activityFilter = "all" }
+    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; activityFilter = "all"; studioPath = [] }
 }
 
 enum OpsDestination: Identifiable, Equatable {
@@ -34,7 +38,14 @@ enum OpsDestination: Identifiable, Equatable {
     var id: String { switch self { case .task(let id): return "task-" + id; case .decision(let id): return "decision-" + id; case .ticket(let ticket): return "ticket-" + ticket["number"].string; case .alerts: return "alerts" } }
 }
 
-enum OpsTab: Hashable { case keir, feed, goals, activity, ops }
+/// The three places the app lives: the conversation, the inbox (tickets,
+/// decisions, work) and the studio's operations. `activity` is the inbox; the
+/// case keeps its name so links and notifications written for earlier builds
+/// still resolve.
+enum OpsTab: Hashable { case keir, activity, ops }
+
+/// Screens reachable from Ops that earlier builds exposed as tabs.
+enum StudioRoute: Hashable { case feed, goals }
 
 @MainActor final class OpsPushStatus: ObservableObject {
     @Published var message = "Not registered yet"
@@ -105,7 +116,7 @@ enum OpsNotificationDelivery {
             case "keir": services.keir.select(thread ?? "main"); services.router.tab = .keir
             case "decision": if let decision { services.router.openDecision(decision) } else { services.router.tab = .activity }
             case "alerts": services.router.tab = .ops; services.router.destination = .alerts
-            case "feed": services.router.tab = .feed
+            case "feed": services.router.open(.feed)
             default: break
             }
             if let decision, ["approve", "reject", "explain"].contains(action) {

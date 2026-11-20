@@ -77,9 +77,9 @@ struct BrandHero: View {
                         .font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.2).foregroundStyle(Brand.sky)
                 }
             }
-            Text(surface == .ask ? "Know your\nnext move." : surface == .hub ? "Your studio.\nIn motion." : "Your studio.\nIn view.")
+            Text(surface == .ask ? "Know your\nnext move." : surface == .hub ? "Your studio.\nIn motion." : "Talk to Keir.\nRun the studio.")
                 .font(.system(size: compact ? 38 : 48, weight: .bold, design: .rounded)).tracking(-1.8).fixedSize(horizontal: false, vertical: true)
-            Text(surface == .ask ? "Answers about how the game actually works. Live context. Sources you can follow." : surface == .hub ? "One assistant with lasting memory. A team that grows with the task. Your studio, wherever you are." : "The pulse of your games, services, and agents. All in one place.")
+            Text(surface == .ask ? "Answers about how the game actually works. Live context. Sources you can follow." : surface == .hub ? "One assistant with lasting memory. A team that grows with the task. Your studio, wherever you are." : "Ask, decide and follow the work. Tickets, approvals and studio health, all in one place.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }

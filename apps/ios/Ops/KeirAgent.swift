@@ -123,6 +123,10 @@ struct ActivityView: View {
     @State private var search = ""
     @State private var scope = "tickets"
     @State private var filter = "all"
+    @ObservedObject private var attention = AttentionCenter.shared
+    /// Decisions render below with their own approve and reject controls; the
+    /// rest of "Needs you" (open questions, work the owner must unblock) lives here.
+    private var otherAttention: [AttentionItem] { attention.items.filter { $0.kind != .decision } }
     private var tickets: [JSONValue] { work["tickets"].array }
     private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
     private var entries: [JSONValue] { showTickets ? tickets : tasks }
@@ -131,6 +135,18 @@ struct ActivityView: View {
     var body: some View {
         List {
             DecisionAnswerReceipt().listRowBackground(Color.clear)
+            if !otherAttention.isEmpty && filter != "working" && filter != "waiting" {
+                Section {
+                    ForEach(otherAttention) { item in
+                        if item.kind == .ownerWork {
+                            NavigationLink { WorkItemDetail(item: item.work) } label: { AttentionRow(item: item, action: "Open work") }.buttonStyle(.plain)
+                        } else {
+                            Button { router.tab = .keir } label: { AttentionRow(item: item, action: "Answer in the conversation", icon: "bubble.left") }.buttonStyle(.plain)
+                        }
+                    }
+                } header: { SectionLabel(text: AttentionCenter.label, count: otherAttention.count, identifier: "inbox-attention-count") }
+                .listRowBackground(Color.clear).listRowSeparator(.hidden)
+            }
             Section {
                 if work["source"]["enabled"].bool {
                     Picker("Work type", selection: $scope) {
@@ -183,7 +199,9 @@ struct ActivityView: View {
                 }.listRowBackground(Color.clear)
             } header: { SectionLabel(text: showTickets ? "Ticket queue" : "Task queue", count: visible.count) }
         }
-        .listStyle(.plain).opsScreen().navigationTitle("Activity").navigationBarTitleDisplayMode(.inline)
+        .listStyle(.plain)
+        .frame(maxWidth: 820).frame(maxWidth: .infinity)
+        .opsScreen().navigationTitle("Inbox").navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Ticket number or task")
         .onChange(of: router.activityFilter) { _, next in filter = next }
         .onAppear { filter = router.activityFilter }

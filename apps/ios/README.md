@@ -1,16 +1,26 @@
-# Lakeside Ops
+# Keir
 
-The Lakeside Games studio operations app for iPhone and iPad. Native SwiftUI,
-iOS 17 and later.
+The Lakeside Games studio app for iPhone and iPad, shown on the Home Screen as
+Keir (bundle ID `net.lakesidegames.ops`, unchanged). Native SwiftUI, iOS 17 and
+later.
 
-- **Keir**: a private thread with Keir, the studio's operator. Live task
-  status, decisions you can approve or reject, charts.
-- **Pulse**: what needs attention, service uptime, operator activity, host load
-  and recent alerts.
-- **Desk**: open support tickets with fix stages, and the workers on them.
-- **Work**: the product board by live lane.
+Three places, in this order:
+
+- **Conversation**: the landing screen. A private thread with Keir, the
+  studio's operator, with live task status, decisions you can approve or reject
+  and charts. Chips under the title show what needs you, open tickets and
+  running work, and open the inbox.
+- **Inbox**: tickets and tasks with fix stages, your decisions, open questions
+  and work waiting on you. Opened by the `lakesideops://keir?view=activity`
+  link as before.
+- **Ops**: studio health and queues, the support desk, the Feed briefing,
+  goals, scheduler, security, pull requests, simulations and backups. Absent in
+  standalone mode, as before.
 - **Notifications**: replies, time-sensitive decisions with approve and reject
   on the lock screen, and quiet incident alerts.
+
+On iPad with iOS 18 the three places become a sidebar; on iOS 17 they stay a
+tab bar. Conversation and inbox content keeps a readable width on large screens.
 
 The app talks only to `ops.lakesidegames.net` with the signed-in staff session.
 Credentials stay in the device Keychain, requests are pinned to HTTPS and never
