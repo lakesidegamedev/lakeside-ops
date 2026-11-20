@@ -579,7 +579,7 @@ async function flushOutbox() {
         if (channelJob && i > 0) await new Promise((r) => setTimeout(r, replyGapMs));
         if (ledger.data.control?.stopped && !entry.controlResponse) continue outboxEntries;
         if (require("./lib/operator/supporttakeover").suppressOutbox(ledger, key, entry, Date.now())) continue outboxEntries;
-        if (require("./lib/operator/conversationturn").superseded(channelJob, entry)) {
+        if (entry.answerTo && require("./lib/operator/conversationturn").superseded(channelJob, entry)) {
           entry.skipped = "superseded by a newer Discord turn"; entry.deliveredAt = Date.now();
           ledger.audit("outbox_superseded", { key, job: channelJob.id, deliveredChunks: entry.deliveredChunks || 0 });
           ledger.save(); continue outboxEntries;

@@ -1649,18 +1649,27 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // Keir 8.4: an update_kind "production" post is a claim about the deployed revision. Without the main-release receipt it is not sent.
     const evNow = ticketEvidence(ticketNo);
     if (!evNow.main.done || !evNow.mainOwn.done) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "no main release evidence" }); return false; }
-    const told = new Set([...(card.liveNotified || []), ...before.filter(live).map((i) => i.name)].map(statusCard.cleanName));
+    const pending = card.pendingLiveNotice;
+    const told = new Set([...(card.liveNotified || []), ...before.filter(live).map(i => i.name)].map(statusCard.cleanName));
+    for (const name of pending?.names || []) told.delete(name);
     const fresh = after.filter((i) => live(i) && !told.has(statusCard.cleanName(i.name)));
     if (!fresh.length) return false;
     const root = d.jobs[d.seen[`ticket:${ticketNo}`]];
     const openAsk = d.ticketCases?.[ticketNo]?.asked?.some(ask => !ask.answeredAt);
-    if (root && (openAsk || root.inbox?.some(m => conversationTurn.human(root, m)) || root.state === "running")) {
-      ledger.audit("live_notice_deferred_to_conversation", { job: root.id, ticket: ticketNo });
+    if (root && (conversationTurn.inFlight(root) || root.inbox?.some(m => conversationTurn.human(root, m)) || (openAsk && !pending))) {
+      const names = fresh.map(i => statusCard.cleanName(i.name));
+      if (!pending || names.some(n => !pending.names.includes(n))) {
+        card.pendingLiveNotice = { names, at: pending?.at || now() };
+        (root.inbox ||= []).push({ role: "system", authorId: "stage-engine", at: new Date(now()).toISOString(),
+          content: "A change is verified live: " + names.join(", ") + ". If relevant, incorporate that in your answer. Verify the player's actual outcome separately." });
+        ledger.audit("live_notice_deferred_to_conversation", { job: root.id, ticket: ticketNo });
+        ledger.save();
+      }
       return false;
     }
 
     const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
-    if (said) { ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
+    if (said) { delete card.pendingLiveNotice; card.liveNotified = [...told, ...fresh.map(i => statusCard.cleanName(i.name))].slice(-20); ledger.save(); ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
     const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
       + "\n\nIf you still see the problem, reply here.";
@@ -1668,6 +1677,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       guardPlayerRegister(effectJob, ticketNo, message);
       const key = `live-notice:${ticketNo}:${crypto.createHash("sha1").update(names.join("|")).digest("hex").slice(0, 10)}`;
       await effect(effectJob, key, () => mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
+      delete card.pendingLiveNotice;
       card.liveNotified = [...told, ...fresh.map((i) => statusCard.cleanName(i.name))].slice(-20);
       effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
       ledger.audit("live_notice", { job: effectJob.id, ticket: ticketNo, items: names.length }); ledger.save();
@@ -1740,6 +1750,20 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const moved = [];
     for (const [n, card] of Object.entries(d.statusCards || {})) {
       const root = d.jobs[d.seen[`ticket:${n}`]];
+      if (card.pendingLiveNotice && root && ["queued", "waiting", "blocked"].includes(root.state) &&
+          !root.channelClosed && !root.resolved && !root.ticketPaused && !(root.staffActiveUntil > now()) &&
+          !root.inbox?.some(m => conversationTurn.human(root, m)) && !d.paused && !config.supportDeferred(root)) {
+        // A card that already moved will never advance again. Retry its deferred
+        // notice under a stable effect owner after the person has had their turn.
+        try {
+          cardOwnership(n);
+          const pending = card.pendingLiveNotice;
+          const notice = ledger.createJob(`live-notice:${n}:${pending.at}`, { kind: "notice", role: "support", ticket: Number(n), internalProbe: true, channelId: root.channelId, source: {} });
+          notice.state = "running";
+          try { await liveNotice(notice, Number(n), card.items || [], card.items || []); }
+          finally { notice.state = "done"; ledger.save(); }
+        } catch { /* a staff claim or ownership handoff holds delivery */ }
+      }
       // Evidence is per ticket, not per fix, so only a one-fix card moves by itself; a card with several fixes stays with the model.
       if (!root || ["done", "cancelled", "dismissed", "paused"].includes(root.state) || root.channelClosed || root.resolved || !card.messageId || (card.items || []).length !== 1) continue;
       const ev = ticketEvidence(Number(n));
@@ -2254,6 +2278,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       return { messages: rows, instruction: "Answer the latest person first. Reconcile any correction with your evidence and keep earlier promises open." };
     }
     conversationTurn.check(job);
+    if (name === "finish" && conversationTurn.owes(job))
+      throw new Error("A Discord question arrived during this investigation. Answer it before finishing this turn.");
     if (name === "present_choices") {
       if (job.role !== "owner") throw new Error("Owner task required for choices");
       if (job.replyChannel === "app") {
@@ -2693,6 +2719,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
       if (require("./toolmarkup").leaked(input.message)) throw new Error("This message contains tool-call markup. Call the tool through the tool interface instead of writing it out, then reply with the result.");
       let message = publicText(input.message);
+      if (job.startedAt && job.unavailableScreenshotTurn === job.startedAt &&
+          /\b(?:should (?:now )?(?:appear|show|see|be visible)|(?:now|currently) (?:lists?|shows?|appears?|displays?)|you(?:'ll| will) see)\b/i.test(message))
+        throw new Error("The referenced screenshot is unavailable. Explain what you meant by the earlier reference. Leave the current screen unverified, or check it before claiming what appears there.");
       if (job.replyChannel !== "app" && Boolean(job.ticket || job.source?.channelName) && /\bintake\s+persisted|\b(?:support|ticket['’]s own)\s+task\b|receipt and intake card|intake card delivered/i.test(message))
         throw new Error("Public ticket acknowledgements should give the ticket link in one short sentence. Keep intake bookkeeping and task handoffs private.");
       require("./advicerouting").guard(job, d, message);
@@ -2732,6 +2761,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           const delivery = sent.delivery;
           const posted = delivery?.posted === true || delivery?.alreadyPosted === true || ["posted", "sent", "delivered", "already_posted"].includes(delivery?.status) || delivery?.delivery?.status === "posted";
           if (!posted || delivery?.via === "intake-card") throw new Error("Ticket answer delivery is not confirmed as a new channel message. Do not mark the player answered or start closure grace; inspect the delivery receipt first.");
+          conversationTurn.answered(job);
           job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, ticketNo, message);
           const ticketTask = d.jobs[d.seen[`ticket:${ticketNo}`]]; if (ticketTask) ticketTask.lastPublishedAt = now();
           ledger.save();
@@ -2756,6 +2786,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const key = `channel-reply:${job.id}:${answerTo && answerTo !== job.source?.messageId ? answerTo + ":" : ""}${hash(message)}`;
       if (ticketNo) recordTicketPost(job, ticketNo, message);
       ledger.notify(key, `channel:${job.id}`, message, answerTo ? { answerTo } : {});
+      conversationTurn.answered(job);
       job.channelReplyQueued = true; job.channelRepliedAt = now(); ledger.save();
       return { queued: true, delivery: "durable channel outbox" };
     }
@@ -3968,7 +3999,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Keir 8.4.2: an image posted earlier in this channel (context.recentImages) can be opened by its message id.
       const earlier = input.messageId && input.messageId !== job.source.messageId;
       if (earlier && !(conversation?.recentImages?.(job) || []).some((i) => i.messageId === input.messageId && i.index === Number(input.index))) throw new Error("messageId is not one of context.recentImages");
-      const original = await discord("GET", `/channels/${job.source.channelId}/messages/${earlier ? input.messageId : job.source.messageId}`);
+      const original = await discord("GET", `/channels/${job.source.channelId}/messages/${earlier ? input.messageId : job.source.messageId}`).catch(error => {
+        if (!/\b404\b/.test(String(error.message))) throw error;
+        job.unavailableScreenshotTurn = job.startedAt;
+        throw new Error("The original Discord screenshot is unavailable. If the person is challenging an earlier claim about what they can see, say what you meant and withdraw any unverified claim. Ask for the missing evidence only if it would change your answer.");
+      });
       const a = original.attachments?.[Number(input.index)];
       if (!a && job.ticket) {
         const image = await reportImage();
@@ -3981,6 +4016,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!r.ok || !/^image\/(png|jpeg|webp|gif)$/.test(r.headers.get("content-type") || "")) throw new Error("image download failed");
       const bytes = Buffer.from(await r.arrayBuffer());
       if (bytes.length > 4 * 1024 * 1024) throw new Error("image is oversized");
+      delete job.unavailableScreenshotTurn;
       (job.viewedImages ||= []).includes(original.id) || job.viewedImages.push(original.id);
       return { image: { type: "base64", media_type: a.content_type, data: bytes.toString("base64") } };
     }
@@ -4232,7 +4268,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (["support_tracker_sync", "support_tracker_note"].includes(input.tool)) { job.trackerRaised = true; ledger.save(); }
       if (input.tool === "support_public_update") {
         const delivered = ["sent", "delivered", "posted", "already_posted"].includes(result.delivery?.status) || result.delivery?.alreadyPosted === true || result.delivery?.posted === true || result.delivery?.delivery?.status === "posted";
-        if (delivered) { job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, job.ticket, args.message || ""); }
+        if (delivered) { conversationTurn.answered(job); job.channelReplyQueued = true; job.lastPublishedAt = now(); recordTicketPost(job, job.ticket, args.message || ""); }
         else ledger.notify(`delivery:${job.id}:${hash(args)}`, "owner", `Ticket ${job.ticket}: public update delivery needs verification.`);
       }
       if (input.tool === "support_resolve") {
@@ -4517,6 +4553,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (!(job.lastPublishedAt >= job.startedAt)) throw new Error("Answer the current question before yielding to the worker.");
         job.state = job.inbox?.length ? "queued" : "waiting";
         delete job.wakeAt;
+        job.history = [...(job.history || []), { at: new Date(now()).toISOString(), kind: "finish", state: job.state, summary: String(input.summary || "").slice(0, 1000) }].slice(-20);
         ledger.audit("conversation_yielded_to_worker", { job: job.id });
         ledger.save();
         return { state: job.state };

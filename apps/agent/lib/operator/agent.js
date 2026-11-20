@@ -367,7 +367,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   const toolServer = createToolServer({ broker, normalizeImage, effectGuard: config.effectGuard !== false });
   const cwd = path.join(config.stateDir, "claude-cwd"); fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });
   async function run(job, signal, { replyOnly = false } = {}) {
-    if (replyOnly) conversationTurn.foreground.add(job);
+    if (replyOnly) {
+      conversationTurn.foreground.add(job);
+      job.foregroundAttempt = (job.inbox || []).filter(m => conversationTurn.human(job, m)).at(-1)?.messageId;
+    }
     // A wake ends the previous reply gate, even if this activation aborts.
     delete job.waitingFor;
     const ownerMuse = musePolicy.origin(ledger.data, job);
@@ -472,7 +475,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     const discover = !ticketCompact || laneMoved;
     const activationInbox = (job.inbox || []).filter(row => !replyOnly || conversationTurn.human(job, row));
     if (conversationTurn.eligible(job)) conversationTurn.begin(job, activationInbox);
-    const requestInbox = [...(job.requestInbox || []), ...activationInbox].slice(-20);
+    const requestInbox = conversationTurn.distinct([...(job.requestInbox || []), ...activationInbox]).slice(-20);
     const internalWake = row => row.role === "system" || row.investigationResult || row.codingResult;
     job.activationInternalWake = Boolean(job.lastPublishedAt && requestInbox.length && requestInbox.every(internalWake) &&
       (Date.parse(job.source?.at || "") || 0) <= job.lastPublishedAt);
@@ -486,7 +489,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       context.stepLimitRecovery = "Take one concrete step from the last saved checkpoint. Skip reads that already gave the same answer, then checkpoint or finish.";
     }
     if (replyOnly) {
-      context.foreground = "A delegated worker is still running. Answer the player right now from this ticket. Use the existing evidence, acknowledge any correction, and leave outstanding investigation with the coordinator. Finish waiting after delivery.";
+      context.foreground = "A delegated worker is still running. Answer the person who just wrote from this ticket. Use the existing evidence, acknowledge any correction, and leave outstanding investigation with the coordinator. Finish waiting after delivery.";
       context.ticketWork = broker.ticketWork?.(job);
     }
     const voiceContext = require("./voiceturn").context(ledger.data, job);
@@ -734,12 +737,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // moves to the fallback route, instead of every job retrying the dead route (OpenCode Go, 2026-11-03).
     if (result.is_error && result.subtype !== "error_max_turns" && switchOnUsageLimit(job, String(result.result || result.subtype || ""))) { ledger.save(); return; }
     if (replyOnly && job.state === "running") {
-      // A provider can return plain text or time out before its finish call.
-      // Preserve the turn for ordinary recovery if no reply was delivered.
-      if (job.lastPublishedAt < job.startedAt || !job.lastPublishedAt) {
-        const seen = new Set((job.inbox || []).map(m => m.messageId));
-        job.inbox = [...activationInbox.filter(m => !seen.has(m.messageId)), ...(job.inbox || [])];
-      }
+      // Unanswered human messages remain in the durable inbox across retries.
       job.state = "waiting";
       job.wakeAt = Date.now() + 30000;
       job.debounceWake = true;

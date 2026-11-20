@@ -46,7 +46,7 @@ function pickForLanes(jobs, active, ctx = {}) {
     const lane = [...free].find(l => laneClass(l) === "conversation");
     if (!lane) break;
     const work = workIdForJob(job, byId);
-    if (used.has(work) || hold(job, ctx) || !job.inbox?.some(row => human(job, row))) continue;
+    if (used.has(work) || hold(job, ctx) || !job.inbox?.some(row => human(job, row)) || job.foregroundAttempt === job.inbox.filter(row => human(job, row)).at(-1)?.messageId) continue;
     const busy = running.filter(j => workIdForJob(j, byId) === work);
     if (!busy.length || !busy.every(j => j.kind === "coding" && j.codingParent === job.id)) continue;
     free.delete(lane);
