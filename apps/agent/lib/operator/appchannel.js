@@ -403,14 +403,17 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     const describe = (a) => alertKind(a.key) === "incident" ? require("./notification-policy").describeAlert(a, d, now()).text || "" : a.content;
     return (d.alerts || []).filter((a) => !/^recovery:watchkeeper:/.test(String(a.key)) && describe(a)).slice(-limit).reverse().map((a) => ({ key: a.key, kind: alertKind(a.key), text: ownerText(describe(a)).slice(0, 2000), at: a.at }));
   }
-  function register(token, fields = {}) {
+  function register(token, fields = {}, quiet) {
     const t = threadOf(d);
     const value = String(token || "");
     if (!/^[a-f0-9]{64,200}$/i.test(value)) throw Object.assign(new Error("invalid device token"), { status: 400 });
     const prefs = { feed: fields.feed !== false, replies: fields.replies !== false, decisions: fields.decisions !== false, incidents: fields.incidents !== false };
-    t.devices = [...(t.devices || []).filter((x) => x.token !== value), { token: value, prefs, at: now() }].slice(-5);
+    // An older build that omits quiet hours keeps the window the owner already set.
+    const previous = (t.devices || []).find((x) => x.token === value);
+    const window = quiet === undefined ? previous?.quiet : require("./quiethours").normalizeQuiet(quiet);
+    t.devices = [...(t.devices || []).filter((x) => x.token !== value), { token: value, prefs, ...(window ? { quiet: window } : {}), at: now() }].slice(-5);
     ledger.audit("app_device", { devices: t.devices.length }); ledger.save();
-    return { registered: true, prefs };
+    return { registered: true, prefs, quiet: window || { enabled: false } };
   }
   function removeActivity(activityId) {
     const t = threadOf(d); t.activities = (t.activities || []).filter(a => a.id !== activityId); ledger.save(); return { removed: true };
@@ -549,7 +552,7 @@ function createAppServer({ app, authenticate, artifactsDir, agentRoutes = null, 
         if (route === "/controls") return reply(200, app.controls.update(b));
         if (route === "/models") return reply(200, app.selectModel(b.thread || "main", b.selection));
         if (route === "/cancel") return reply(200, app.cancel(b.taskId));
-        if (route === "/devices") return reply(200, app.register(b.token, b.prefs || {}));
+        if (route === "/devices") return reply(200, app.register(b.token, b.prefs || {}, b.quiet));
         if (decision) return reply(200, await app.authenticatedAnswer(decision[1], b.verdict, b.text));
         const r = app.authenticatedPost(b.text, b.clientId, b.thread, { mode: b.mode, taskId: b.taskId, voice: b.voice, attachments: b.attachments });
         return reply(r.duplicate ? 200 : 201, r);
@@ -568,7 +571,7 @@ function createAppServer({ app, authenticate, artifactsDir, agentRoutes = null, 
       }
       return reply(404, { error: "not found" });
     } catch (e) {
-      if (e.status) return reply(e.status, { error: e.message });
+      if (e.status) return reply(e.status, { error: e.message, ...(typeof e.reason === "string" ? { code: e.reason } : {}), ...(Array.isArray(e.blockers) ? { blockers: e.blockers } : {}) });
       log(`app: ${e.message}`); return reply(500, { error: "server error" });
     }
   });

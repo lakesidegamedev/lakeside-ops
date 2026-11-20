@@ -5,7 +5,14 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.1.0 (2026-11-20)
+
 ### For users
+
+- In the owner app you can take over a ticket, see what its assigned worker has done, send it directions, and hand the conversation back to Support Keir.
+
+- The owner’s Keir iPhone app can show actionable support approvals alongside the existing Discord notifications. Quiet hours apply to each device. When quiet hours end, the app alerts you only for decisions that still need an answer.
+- Connected games shows the A House Divided turn and engine, MetroForge services and city bundles, and Grand Century site and release health. Each card identifies its source and when Keir checked it.
 
 - If a ticket run stalls before Keir sends a reply or takes an external action, Keir can try once more automatically.
 
@@ -15,8 +22,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ### For developers
 
+- The owner app serves a fixed catalogue of game reads through the tool broker. Quiet hours use a device time zone and persist delayed approval notifications across restarts.
+
 - The scheduler distinguishes a lane deadline from an owner stop or staff takeover. A ticket can retry one deadline after a minute if no writes or posts occurred. A second deadline alerts the owner.
 
+- Owner ticket supervision (`ticketsupervision.js`, `GET`/`POST /api/keir/app/tickets/:n/supervision`, ops `take`, `message`, `handback`). Take verifies the ticket against the support record and a fresh Discord claim scan, sets the per-ticket owner to `keir-worker:<task>`, withdraws Support Keir's queued replies and starts a separate durable support worker with the coordinator's next action and evidence. Only that worker passes the takeover fence and `supportOwner.deferred`; channel messages route to it (`supporttakeover.publisher`). Handback fences the worker at once, withdraws its queued posts, refuses its late tool calls, and files a Handoff Desk receipt for Support Keir. Staff claims, staff holds, granted approvals and uncertain receipts are never touched; stale revisions and reused request ids are refused. A staff or desk takeover during supervision ends it on the next tick.
 - `support_evidence_lookup` (ops-knowledge) is in support read scope and a player ping may call it, and nothing else in ops-knowledge. `evidencelookup.js` builds its arguments (scrubbed question, country and commodity only, the live gamestate tool list instead of the model's hint) and turns an unlisted read into a stated gap. Quick turns on easily confused measures get a pointer to it; navigation, thanks and stop get none.
 - Reporter-bound reads inject `ticket` and `character` in every role (owner, developer in a public room, player, finding) and every inherited child; no role chooses the identity.
 - Evidence-gap learning: a gap is a candidate until a second reporter hits it, standing caveats and undeployed tools are not failures, and only the reporter's own helpful vote confirms a lesson (an auto-close or thanks does not). `keir-lesson-report` shows confirmed apart from recalled-quiet.
@@ -1183,7 +1193,6 @@ speaks every thirty minutes. Keir runs on DeepSeek V4.1 Flash.
 ### For developers
 
 - Isolate each Cursor CLI activation and scope its broker tools to the task.
-
 
 - Route conversation, work, coding, investigation, vision, engineering and voice
   activations through Cursor Auto with per-activation broker grants and isolated

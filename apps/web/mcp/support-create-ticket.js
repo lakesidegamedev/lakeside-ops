@@ -370,5 +370,5 @@ function registerCreateTicket(server, { auth, Tickets, z, jsonResult, errorResul
 
 module.exports = {
   registerCreateTicket, createSupportTicket, findGuildMemberByUsername, findGuildMember, TicketCreateError,
-  sendWithRetry, ticketPageCandidate, discord, CATEGORY, channelSlug,
+  sendWithRetry, ticketPageCandidate, discord, CATEGORY, GUILD_ID, channelSlug,
 };
