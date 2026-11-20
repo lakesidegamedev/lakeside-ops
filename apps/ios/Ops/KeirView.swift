@@ -428,7 +428,8 @@ private struct KeirMessage: View {
     @EnvironmentObject private var session: AppSession
     let message: JSONValue
     private var owner: Bool { message["role"].string == "owner" }
-    var body: some View {
+    var body: some View { row.keirConversationActions(for: message) }   // the one hook: KeirConversationActions.swift
+    @ViewBuilder private var row: some View {
         if message["update"].bool && !message["items"].array.isEmpty { KeirUpdateMessage(message: message) }
         else if owner {
             HStack {
