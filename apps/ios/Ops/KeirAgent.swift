@@ -68,7 +68,7 @@ struct KeirThreads: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(keir.threads, id: \.["id"].string) { thread in
+                ForEach(keir.conversationRows, id: \.["id"].string) { thread in
                     Button { keir.select(thread["id"].string); dismiss() } label: {
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 3) {

@@ -79,6 +79,21 @@ import LakesideCore
     @Published var sending = false
     @Published private(set) var lastSentJob: String?
     @Published var error: String?
+    static let supervisorThread = "owner-supervisor"
+    @Published private(set) var supervisorAvailable = false
+    var isSupervisor: Bool { thread == Self.supervisorThread }
+    var personalHome: Bool { isSupervisor || thread == "main" }
+
+    func setSupervisorAvailable(_ available: Bool) {
+        guard available != supervisorAvailable else { return }
+        supervisorAvailable = available
+        if available && !threadChosen && !restoreHeld && thread == "main" {
+            switchThread(Self.supervisorThread)
+        } else if !available && isSupervisor {
+            switchThread("main")
+        }
+    }
+
     @Published var thread = "main"
     @Published var threads: [JSONValue] = []
     @Published var queued = 0
@@ -107,6 +122,7 @@ import LakesideCore
     init(resume: KeirResume = KeirResume()) { self.resume = resume }
 
     func reset() {
+        supervisorAvailable = false
         resume.clear(); resumeScope = nil; restoredScope = nil; threadChosen = false; restoreHeld = false
         generation = UUID(); messages = []; tasks = []; backgroundTasks = []; questions = []; team = .null
         threads = []; thread = "main"; connected = false; working = false; sending = false; queued = 0
@@ -117,6 +133,7 @@ import LakesideCore
     var stopped: Bool { controls["stopped"].bool }
     var yolo: Bool { controls["approvalMode"].string == "yolo" }
     func loadControls(_ session: AppSession) async {
+        guard !isSupervisor else { return }
         let selected = thread, epoch = generation
         do {
             let result = try await session.get("/api/keir/app/controls", query: ["thread": selected])
@@ -124,7 +141,7 @@ import LakesideCore
         } catch { if thread == selected && epoch == generation { self.error = error.displayMessage } }
     }
     func control(_ fields: [String: JSONValue], _ session: AppSession) async {
-        guard !controlling else { return }
+        guard !controlling, !isSupervisor else { return }
         controlling = true; defer { controlling = false }
         let selected = thread, epoch = generation
         do {
@@ -153,8 +170,13 @@ import LakesideCore
                 // request until the thread or a task changes (25s at most).
                 let selected = thread
                 // edits=1: this build renders a revised answer in place by id.
-                let view = try await session.get("/api/keir/app/thread", query: ["after": String(cursor), "wait": version.isEmpty ? "0" : "25", "since": version, "thread": selected, "edits": "1"])
-                guard generation == epoch else { return }
+                let view: JSONValue
+                if selected == Self.supervisorThread {
+                    view = try await session.get("/api/keir/supervisor/thread", query: version.isEmpty ? [:] : ["after": String(cursor), "since": version, "wait": "25"])
+                } else {
+                    view = try await session.get("/api/keir/app/thread", query: ["after": String(cursor), "wait": version.isEmpty ? "0" : "25", "since": version, "thread": selected, "edits": "1"])
+                }
+                guard generation == epoch, !Task.isCancelled else { return }
                 guard selected == thread else { continue }
                 let before = version
                 apply(view); connected = true; error = nil; delay = 1
@@ -196,9 +218,16 @@ import LakesideCore
     private func apply(_ view: JSONValue) {
         // A revised answer keeps its id and seq and arrives in `revised`: replace
         // the row in place so the same message grows into the fuller answer.
-        if merge(view["messages"].array, view["revised"].array) { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+        let rows = view["messages"].array.map { row -> JSONValue in
+            guard isSupervisor, row["role"].string == "supervisor" else { return row }
+            var fields = row.object
+            fields["role"] = .string("keir")
+            if let date = OpsFormat.date(row["at"]) { fields["at"] = .number(date.timeIntervalSince1970 * 1000) }
+            return .object(fields)
+        }
+        if merge(rows, view["revised"].array) { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
         if view["controls"] != .null { controls = view["controls"] }
-        tasks = view["tasks"].array
+        tasks = (isSupervisor ? view["jobs"] : view["tasks"]).array
         working = view["working"].bool
         queued = Int(view["queued"].number ?? 0)
         questions = view["questions"].array
@@ -210,6 +239,7 @@ import LakesideCore
         if let target = steeringTask, !live.contains(where: { $0["id"].string == target }) { steeringTask = nil; sendMode = "new" }
         cursor = Int(view["cursor"].number ?? Double(cursor))
         version = view["version"].string
+        guard !isSupervisor else { return }
         let snapshot = view["activity"]
         Task { await KeirLiveActivity.shared.sync(snapshot, session: OpsServices.shared.session) }
     }
@@ -224,15 +254,21 @@ import LakesideCore
             pending = (body, selected, mode, target, voice, attachments, UUID().uuidString)
         }
         do {
-            let result = try await session.post("/api/keir/app/messages", ["text": .string(body), "clientId": .string(pending!.id), "thread": .string(selected), "mode": .string(mode), "taskId": target.map(JSONValue.string) ?? .null, "voice": .bool(voice), "attachments": attachments])
+            let result: JSONValue
+            if selected == Self.supervisorThread {
+                guard attachments.array.isEmpty else { throw AppFailure(message: "This conversation currently accepts text and voice. Your attachments are still here.") }
+                result = try await session.post("/api/keir/supervisor/messages", ["text": .string(body), "clientId": .string(pending!.id)])
+            } else {
+                result = try await session.post("/api/keir/app/messages", ["text": .string(body), "clientId": .string(pending!.id), "thread": .string(selected), "mode": .string(mode), "taskId": target.map(JSONValue.string) ?? .null, "voice": .bool(voice), "attachments": attachments])
+            }
             guard generation == epoch else { return false }
-            pending = nil; error = nil; lastSentJob = result["jobId"].string.nonempty
+            pending = nil; error = nil; lastSentJob = (selected == Self.supervisorThread ? result["job"]["id"] : result["jobId"]).string.nonempty
             guard thread == selected else { return true }
             if !voice { steeringTask = nil; sendMode = "new" }
-            if let created = result["thread"].string.nonempty { await loadThreads(session); select(created); return true }
+            if !isSupervisor, let created = result["thread"].string.nonempty { await loadThreads(session); select(created); return true }
             if result["controls"] != .null { controls = result["controls"] }
             let message = result["message"]
-            if message != .null, !messages.contains(where: { $0["id"] == message["id"] }) { messages.append(message); cursor = max(cursor, Int(message["seq"].number ?? 0)) }
+            if message != .null, !messages.contains(where: { $0["id"] == message["id"] }) { messages.append(message); if !isSupervisor { cursor = max(cursor, Int(message["seq"].number ?? 0)) } }
             return true
         } catch { if generation == epoch { self.error = error.displayMessage }; return false }
     }
@@ -260,7 +296,7 @@ import LakesideCore
     private func persistThread() {
         guard let scope = resumeScope else { return }
         let system = threads.first { $0["id"].string == thread }?["system"].bool ?? false
-        if thread == "main" || thread == "watches" || system { resume.clear() } else { resume.save(thread, scope: scope) }
+        if personalHome || thread == "watches" || system { resume.clear() } else { resume.save(thread, scope: scope) }
     }
 
     /// Reopens the last private conversation after a cold start. The saved id is
@@ -269,7 +305,7 @@ import LakesideCore
     /// account changed, or the owner signed out. `listing` exists for tests.
     func resumeLastThread(_ session: AppSession, listing: (@MainActor () async -> [JSONValue]?)? = nil) async {
         guard let scope = resumeScope, restoredScope != scope else { return }
-        guard !threadChosen, !restoreHeld, thread == "main" else { restoredScope = scope; return }
+        guard !threadChosen, !restoreHeld, personalHome else { restoredScope = scope; return }
         guard let saved = resume.saved(for: scope) else {
             resume.clear()   // nothing for this account; never keep another account's entry
             restoredScope = scope; return
@@ -279,12 +315,13 @@ import LakesideCore
         if let listing { list = await listing() } else { list = await fetchThreads(session) }
         // A failed read keeps the saved id and leaves the next attempt open.
         guard let list else { return }
-        guard generation == epoch, resumeScope == scope, !threadChosen, !restoreHeld, thread == "main" else { return }
+        guard generation == epoch, resumeScope == scope, !threadChosen, !restoreHeld, personalHome else { return }
         restoredScope = scope
         threads = list
         if KeirResume.legitimate(saved, in: list) { switchThread(saved) } else { resume.clear() }
     }
     func loadModels(_ session: AppSession) async {
+        guard !isSupervisor else { return }
         let selected = thread, epoch = generation
         do {
             let result = try await session.get("/api/keir/app/models", query: ["thread": selected])
@@ -324,7 +361,17 @@ import LakesideCore
         do { let made = try await session.post("/api/keir/app/threads", ["title": .string(title)]); guard epoch == generation else { return }; await loadThreads(session); select(made["id"].string) }
         catch { if epoch == generation { self.error = error.displayMessage } }
     }
-    var threadTitle: String { threads.first { $0["id"].string == thread }?["title"].string ?? (thread == "watches" ? "Watches" : "Keir") }
+    var conversationRows: [JSONValue] {
+        guard supervisorAvailable else { return threads }
+        let home = JSONValue.object(["id": .string(Self.supervisorThread), "title": .string("Keir"), "system": .bool(true), "preview": .string("Your private conversation")])
+        let others = threads.map { row -> JSONValue in
+            guard row["id"].string == "main" else { return row }
+            var fields = row.object; fields["title"] = .string("Support Keir")
+            return .object(fields)
+        }
+        return [home] + others
+    }
+    var threadTitle: String { conversationRows.first { $0["id"].string == thread }?["title"].string ?? (thread == "watches" ? "Watches" : "Keir") }
 
     private var observedStart: [String: Date] = [:]
 

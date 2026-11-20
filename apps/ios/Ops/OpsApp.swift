@@ -74,10 +74,11 @@ struct OpsRoot: View {
         .task { await OpsPushRegistration.request() }
         // Reopen the last private conversation once the account is known, and
         // retry on foreground if the first thread read failed.
-        .task(id: "\(KeirResume.scope(profile: session.profile, server: Surface.ops.base) ?? "")|\(scenePhase == .active)") {
+        .task(id: "\(KeirResume.scope(profile: session.profile, server: Surface.ops.base) ?? "")|\(session.profile["ownerSupervisor"].bool)|\(scenePhase == .active)") {
             guard scenePhase == .active else { return }
             let keir = OpsServices.shared.keir
             keir.bindAccount(KeirResume.scope(profile: session.profile, server: Surface.ops.base))
+            keir.setSupervisorAvailable(session.profile["ownerSupervisor"].bool)
             await keir.resumeLastThread(session)
         }
         .task(id: scenePhase == .active) {

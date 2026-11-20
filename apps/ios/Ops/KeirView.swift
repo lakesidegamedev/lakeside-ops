@@ -33,7 +33,7 @@ struct KeirView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
                         if keir.messages.isEmpty && !keir.connected { connectionPlaceholder }
-                        else if keir.messages.isEmpty && keir.thread == "main" {
+                        else if keir.messages.isEmpty && keir.personalHome {
                             KeirStart(ticket: waitingTickets.first, draftEmpty: draftIsEmpty,
                                       speak: { voice.stop(); composing = false; voiceMode = true },
                                       suggest: suggestFollowUp)
@@ -43,7 +43,7 @@ struct KeirView: View {
                         ForEach(keir.messages, id: \.["id"].string) { KeirMessage(message: $0).transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity)) }
                         ForEach(threadDecisions, id: \.["id"].string) { DecisionCard(decision: $0) }
                         ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) { KeirQuestions(panel: $0) }
-                        if keir.thread == "main", !keir.messages.isEmpty, (keir.team["open"].number ?? 0) > 0 {
+                        if keir.personalHome, !keir.messages.isEmpty, (keir.team["open"].number ?? 0) > 0 {
                             KeirWorkingNow(team: keir.team)
                         }
                         ForEach(keir.tasks.filter { $0["computer"] != .null }, id: \.["id"].string) { task in
@@ -145,7 +145,7 @@ struct KeirView: View {
         .sensoryFeedback(.warning, trigger: presence == .approval) { _, needed in needed }
         .onChange(of: keir.stopped) { _, stopped in if stopped { voice.stop() } }
         .onChange(of: spokenReplies) { _, enabled in if !enabled { voice.stopSpeaking() } }
-        .onChange(of: draft) { _, text in if keir.thread == "main", !text.isEmpty { keir.holdRestore() } }
+        .onChange(of: draft) { _, text in if keir.personalHome, !text.isEmpty { keir.holdRestore() } }
         .onChange(of: voice.transcript) { _, text in
             draft = [voiceDraft, text].filter { !$0.isEmpty }.joined(separator: " ")
         }
@@ -224,7 +224,7 @@ struct KeirView: View {
 
     @ViewBuilder private var contextBar: some View {
         let chips = contextChips
-        if !chips.isEmpty && keir.thread == "main" {
+        if !chips.isEmpty && keir.personalHome {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(chips) { chip in
