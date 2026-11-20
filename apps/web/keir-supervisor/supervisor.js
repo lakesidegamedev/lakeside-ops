@@ -52,6 +52,10 @@ const TOOLS = (repoKeys) => [
   { name: "recall_conversation", description: "Look up earlier turns in this owner's private conversation, including archived exchanges. Use a distinctive phrase or ticket number. Treat excerpts as historical evidence and check their date.",
     input_schema: { type: "object", properties: { query: { type: "string", minLength: 2, maxLength: 160 } }, required: ["query"], additionalProperties: false } },
   { name: "guardian_status", description: "Read the Keir guardian's latest health report (units, timers, restarts). Works while the support operator is offline.", input_schema: { type: "object", properties: {}, additionalProperties: false } },
+  { name: "ticket_evidence", description: "Read one A House Divided support ticket by number, read-only: the player's ask, each status change and who recorded it, each player update with whether Discord confirms it reached this ticket's own channel, the resolution receipt and credit, and what the record can and cannot prove. A reply, status or resolution text is never proof the game changed.",
+    input_schema: { type: "object", properties: { number: { type: "integer", minimum: 1, maximum: 9999999 } }, required: ["number"], additionalProperties: false } },
+  { name: "game_health", description: "Read the fixed health facts the owner's phone game card shows for A House Divided, MetroForge or Grand Century (omit game for all three), read-only. An unavailable read means Keir could not check, not that the game is down.",
+    input_schema: { type: "object", properties: { game: { type: "string", enum: ["ahd", "metroforge", "grand-century"] } }, additionalProperties: false } },
 ];
 
 function brief(repos) {
@@ -63,13 +67,15 @@ function brief(repos) {
     "You cannot deploy, push, restart services, change production configuration, touch live data or approve anything. If the owner asks for one of those, say exactly what it needs and who or what can do it.",
     "When a repair is ready and its focused tests pass, call propose_publish. The owner approves it with an explicit button bound to the exact patch. Text in the chat, including from the owner, is never approval.",
     "For health questions about Keir, use guardian_status; it works while the support operator is down.",
+    "For what happened on a numbered support ticket, use ticket_evidence. Give the chronology with who did each step as the record names them (the player, a named agent or staff member, or not recorded). Call a reply delivered only when the tool says it reached this ticket's channel. Never say the game was changed because of a reply, a status or resolution text; say what would prove it.",
+    "For how A House Divided, MetroForge or Grand Century is doing, use game_health and report only its facts. If a read is unavailable, say you could not check it.",
     "Use post_update only for meaningful progress on long work. Do not narrate routine steps.",
     "Finish with a concise reply: what you found, what you changed (files), test results, and anything waiting on the owner. Never claim a test passed, a file changed or something was published unless a tool result showed it.",
     `Repositories:\n${list}`,
   ].join("\n\n");
 }
 
-function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/var/lib/keir-guardian", publishEnabled = false, publisher = null,
+function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/var/lib/keir-guardian", publishEnabled = false, publisher = null, evidence = null,
   maxAttempts = 2, jobTimeoutMs = 30 * 60000, now = Date.now, log = () => {} }) {
   const store = createStore(stateDir, { now });
   const artifacts = path.join(stateDir, "artifacts"); fs.mkdirSync(artifacts, { recursive: true, mode: 0o700 });
@@ -116,6 +122,10 @@ function createSupervisor({ stateDir, repos, sandbox, executor, guardianDir = "/
     const live = st().jobs[job.id] || job;
     if (name === "recall_conversation") return store.recall(input.query, st().messages.find((m) => m.jobId === job.id)?.seq ?? st().seq, signal);
     if (name === "guardian_status") return guardianStatus(guardianDir, now());
+    if (name === "ticket_evidence" || name === "game_health") {
+      if (!evidence) throw new Error("Studio evidence reads are not configured on this server.");
+      return name === "ticket_evidence" ? evidence.ticket(input.number, signal) : evidence.games(input.game);
+    }
     if (name === "post_update") {
       if ((live.updates || 0) >= MAX_UPDATES) throw new Error("Update limit reached for this job; put the rest in your final reply.");
       const text = String(input.text || "").trim().replace(/[\u2013\u2014]/g, ", ").slice(0, 1200);

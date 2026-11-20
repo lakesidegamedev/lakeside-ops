@@ -15,6 +15,7 @@ chat, source work or approvals, so it keeps working while the operator is down.
 | `toolserver.js` | Loopback MCP endpoint, one unguessable path per job. |
 | `sandbox.js`, `sandbox-tool.js` | Bubblewrap workspace: no network, empty env, only the workspace writable; file operations run inside it. |
 | `repos.js` | Fixed repository allowlist. Clients and the model pick a key, never a path. |
+| `studio-evidence.js` | Read-only `ticket_evidence` (one numbered support record: chronology, actors, verified channel delivery, what it cannot prove) and `game_health` (the phone game card's facts). Reads go through the ops web MCP client with this host's credentials; the model picks a ticket number or game id only. The game part copies `apps/agent/lib/operator/appgames.js`; `apps/agent/test/appgames-web-parity.test.js` keeps them identical. |
 
 ## Behaviour
 
