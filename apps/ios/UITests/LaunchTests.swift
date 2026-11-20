@@ -821,7 +821,7 @@ final class LaunchTests: XCTestCase {
 
     func testNativeSignInAndCancellation() {
         let app = XCUIApplication(); app.launch()
-        let signIn = app.buttons["Sign in to Lakeside"]
+        let signIn = app.buttons["sign-in"]
         XCTAssertTrue(signIn.waitForExistence(timeout: 15))
         XCTAssertEqual(app.webViews.count, 0)
         capture(app, "Sign in")
