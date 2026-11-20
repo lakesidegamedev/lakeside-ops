@@ -147,7 +147,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       d.supportOwner.tickets[nTicket] = "keir";
       require("./supporttakeover").record(ledger, nTicket, "keir", actor, { correction: "Handed back in the ticket channel." }, now());
       if (d.channels[channel.id]?.keirStopped) delete d.channels[channel.id].keirStopped;
-      const job = Object.values(d.jobs).filter((j) => Number(j.ticket) === nTicket && j.kind === "ticket" && !j.channelClosed).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0];
+      const job = Object.values(d.jobs).filter((j) => Number(j.ticket) === nTicket && j.kind === "ticket" && !j.supervision && !j.channelClosed).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))[0];
       if (job && ["deferred", "waiting", "dismissed", "cancelled", "queued"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
       ledger.audit("ticket_handed_back", { ticket: nTicket, by: actor, message: message.id, job: job?.id || null });
       d.seen[key] = "ticket-handback"; ledger.save(); return;
@@ -262,7 +262,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     }
     // Keep staff chat as transcript context and hold automatic ticket work.
     if (!historical && nTicket && role !== "player" && !explicit) {
-      const heldTicket = d.jobs[d.seen[`ticket:${nTicket}`]];
+      const heldTicket = require("./supporttakeover").publisher(d, nTicket);
       if (heldTicket && !["done", "cancelled"].includes(heldTicket.state)) {
         heldTicket.staffActiveUntil = now() + STAFF_HOLD_MS;
         if (heldTicket.state === "waiting" && !heldTicket.addressedPending) {
@@ -426,7 +426,8 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       const named = new RegExp(`\\b(?:keir|keith|starmer)\\b|<@!?${config.botId}>`, "i").test(s.content || "");
       if ((cat === "moderation" || (cat === "incident" && !named)) && !d.channels[channel.id]?.ownerDirectedAt) { d.seen[key] = `${cat}-ticket`; ledger.save(); return; }
       const keyTicket = `ticket:${n}`;
-      let job = d.jobs[d.seen[keyTicket]];
+      // While the owner supervises this ticket, its worker is the one voice.
+      let job = require("./supporttakeover").publisher(d, n);
       if (!job) job = ledger.createJob(keyTicket, { kind: "ticket", role: "support", ticket: n, channelId: channel.id, source: s, deadline: now() + config.taskLifetimeMs });
       // An incident job is cancelled on adoption (staff own it); a message
       // naming Keir brings it back for that conversation.

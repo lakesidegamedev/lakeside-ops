@@ -52,6 +52,10 @@ The example tenant uses rate-limited password login. Set `auth.mode: sso` (or
 `OPS_AUTH_MODE=sso`) to use a configured identity broker and disable local
 password login and local sessions. The Lakeside deployment uses this mode.
 
+### Studio owner’s private Keir
+
+The iPhone owner chat runs on this web service. Configure an absolute durable `KEIR_SUPERVISOR_DIR`, the read-only `KEIR_SUPERVISOR_LAKESIDE_OPS_SOURCE` checkout, and a signed-in Claude CLI for the service account. The owner’s `/api/me` reports runner readiness. The authenticated `/api/keir/supervisor/status` reports the workspace, model, and guardian checks. Ordinary staff sessions have no access to this conversation. The support operator separately owns ticket handback and Discord delivery. See the [supervisor deployment settings](keir-supervisor/README.md).
+
 ## Security
 
 - No secrets in git (`.env`, `.sessions.json` gitignored)
