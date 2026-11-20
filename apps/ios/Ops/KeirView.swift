@@ -624,6 +624,7 @@ private struct KeirMessage: View {
                         .font(.opsBody)
                         .foregroundStyle(OpsTheme.ink)
                 }
+                if message["queueCard"] != .null { KeirQueueSnapshot(value: message["queueCard"]) }
                 ForEach(message["attachments"].array, id: \.["id"].string) { KeirAttachment(attachment: $0) }
                 if !message["activity"].array.isEmpty { KeirToolCalls(calls: message["activity"].array) }
                 // Keir revises this same message with the fuller answer; the line
@@ -657,6 +658,53 @@ private struct KeirMessage: View {
                 ShareLink(item: message["text"].string)
             }
         }
+    }
+}
+
+private struct KeirQueueSnapshot: View {
+    let value: JSONValue
+
+    private func status(_ row: JSONValue) -> OpsStatus {
+        if row["ownerDecisionPending"].bool { return .waiting }
+        if row["implementationHeld"].bool { return .blocked }
+        return OpsStatus.from(row["work"].string)
+    }
+
+    private func label(_ row: JSONValue) -> String {
+        if row["ownerDecisionPending"].bool { return "Needs your decision" }
+        if row["implementationHeld"].bool { return "Held by staff" }
+        switch row["waitingFor"].string {
+        case "player_reply": return "Waiting for the player"
+        case "developer_reply": return "Waiting for a developer"
+        default: break
+        }
+        if let next = OpsFormat.date(row["nextCheckAt"]) {
+            return "Next check " + next.formatted(date: .abbreviated, time: .omitted) + " at " + OpsFormat.clock(next)
+        }
+        if row["work"].string == "waiting" { return "Waiting" }
+        if row["work"].string.isEmpty { return "Work status unavailable" }
+        return status(row).title
+    }
+
+    var body: some View {
+        OpsCard {
+            SectionLabel(text: "Support queue")
+            if value["items"].array.isEmpty { Text("No open tickets").font(.opsBody) }
+            ForEach(value["items"].array, id: \.["number"].string) { ticket in
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("#\(ticket["number"].string) \(ticket["title"].string)").font(.opsHeadline)
+                    HStack(spacing: 7) {
+                        Circle().fill(status(ticket).color).frame(width: 7, height: 7).accessibilityHidden(true)
+                        Text(label(ticket)).font(.opsSecondary)
+                    }.foregroundStyle(OpsTheme.muted)
+                }
+            }
+            if value["possiblyMore"].bool { Text("More tickets may be open.").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+            if let checked = OpsFormat.date(value["checkedAt"]) {
+                Text("Checked " + checked.formatted(date: .abbreviated, time: .omitted) + " at " + OpsFormat.clock(checked))
+                    .font(.opsCaption).foregroundStyle(OpsTheme.muted)
+            }
+        }.accessibilityIdentifier("keir-chat-support-queue")
     }
 }
 
