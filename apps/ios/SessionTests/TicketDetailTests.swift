@@ -9,7 +9,7 @@ final class TicketDetailTests: XCTestCase {
         let fresh = JSONValue.number((now.timeIntervalSince1970 - 60) * 1000)
         XCTAssertEqual(TicketPresentation.status(raw: "running", updatedAt: fresh, now: now).label, "Running")
         let old = JSONValue.number((now.timeIntervalSince1970 - 3600) * 1000)
-        XCTAssertEqual(TicketPresentation.status(raw: "running", updatedAt: old, now: now).label, "Stale")
+        XCTAssertEqual(TicketPresentation.status(raw: "running", updatedAt: old, now: now).label, "Stalled")
     }
 
     func testAbortedBlockedAndOverdueAreNeverRunning() {

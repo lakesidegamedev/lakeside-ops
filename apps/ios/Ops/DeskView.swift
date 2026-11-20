@@ -66,7 +66,7 @@ enum TicketPresentation {
     /// waiting on the owner and not stale.
     static func status(raw: String, updatedAt: JSONValue = .null, timing: JSONValue = .null, ownerDecision: Bool = false, blocked: Bool = false, now: Date = Date()) -> (status: OpsStatus, label: String) {
         let lowered = raw.lowercased()
-        if lowered.contains("abort") { return (.failed, "Aborted") }
+        if lowered.contains("abort") { return (.failed, "Stalled") }
         let base = OpsStatus.from(raw)
         if base == .failed { return (.failed, "Failed") }
         if base == .done { return (.done, "Done") }
@@ -76,7 +76,7 @@ enum TicketPresentation {
         if timing["overdue"].bool || (expected.map { $0 <= now } ?? false) { return (.blocked, "Overdue") }
         if base == .running {
             let updated = OpsFormat.date(updatedAt)
-            if timing["stale"].bool || (updated.map { now.timeIntervalSince($0) > staleAfter } ?? false) { return (.blocked, "Stale") }
+            if timing["stale"].bool || (updated.map { now.timeIntervalSince($0) > staleAfter } ?? true) { return (.blocked, "Stalled") }
             return (.running, "Running")
         }
         switch base {
@@ -136,13 +136,17 @@ struct TicketDetail: View {
     /// ticket's recorded work is used, and nothing is ever assumed running.
     private var status: (status: OpsStatus, label: String) {
         let hasWorker = worker != .null
+        let job = hasWorker ? worker : current
+        let raw = [job["error"].string, job["summary"].string, job["status"].string]
+            .contains(where: { $0.lowercased().contains("activation aborted") }) ? "aborted" : job["state"].string
         return TicketPresentation.status(
-            raw: hasWorker ? worker["state"].string : current["state"].string,
+            raw: raw,
             updatedAt: hasWorker ? worker["updatedAt"] : current["updatedAt"],
             timing: timing, ownerDecision: ownerDecision, blocked: !plainBlockers.isEmpty)
     }
     private var errorLine: String {
         guard status.status == .failed else { return "" }
+        if status.label == "Stalled" { return "Keir’s last attempt stopped before it could finish." }
         for raw in [worker["error"].string, current["error"].string, worker["status"].string, current["status"].string] {
             let line = TicketPresentation.errorSentence(raw)
             if !line.isEmpty { return line }
@@ -366,7 +370,7 @@ struct TicketDetail: View {
                                 Text(handoff["status"].string).font(.callout.weight(.semibold))
                                 Text("Delivered \(OpsFormat.ago(handoff["at"]))").font(.caption).foregroundStyle(OpsTheme.muted)
                                 if handoff["incorporatedAt"] != .null {
-                                    Text("Read by Support Keir \(OpsFormat.ago(handoff["incorporatedAt"]))").font(.caption).foregroundStyle(OpsTheme.muted)
+                                    Text("Read by the support desk \(OpsFormat.ago(handoff["incorporatedAt"]))").font(.caption).foregroundStyle(OpsTheme.muted)
                                 }
                                 Text("Delivery and incorporation do not mean the ticket work is complete.").font(.caption).foregroundStyle(OpsTheme.muted)
                             }

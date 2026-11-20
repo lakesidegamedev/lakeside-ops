@@ -7,6 +7,7 @@ simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,
 test_args=(test)
 case "${OPS_TEST_SCOPE:-full}" in
   full) ;;
+  review) test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testReviewScreensInLight -only-testing:OpsUITests/LaunchTests/testReviewScreensInOLED) ;;
   owner)
     test_args+=(
       -only-testing:OpsSessionTests

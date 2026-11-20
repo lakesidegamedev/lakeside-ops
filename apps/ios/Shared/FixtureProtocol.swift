@@ -717,7 +717,7 @@ enum KeirAgentFixtures {
                     "active": ["state": "running", "updatedAt": now - 3600000,
                                "summary": "activation aborted: no result before the 15-minute turn limit"],
                 ]
-                let sample = hub()["tickets"] as? [[String: Any]] ?? []
+                let sample = OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []
                 return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue]]
             }
             return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]

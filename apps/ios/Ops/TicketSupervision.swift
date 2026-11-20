@@ -168,7 +168,7 @@ struct TicketDirectionComposer: View {
             Text("Guides the worker. Approvals still come to you.").font(.caption2).foregroundStyle(OpsTheme.muted).lineLimit(1)
                 .padding(.horizontal, 16)
             KeirComposerPill { EmptyView() } field: {
-                TextField("Direct your Keir", text: $model.draft, axis: .vertical).lineLimit(1...5)
+                TextField("Message the worker", text: $model.draft, axis: .vertical).lineLimit(1...5)
                     .padding(.leading, 14)
                     .accessibilityIdentifier("supervision-direction")
             } trailing: {
