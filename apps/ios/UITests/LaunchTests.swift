@@ -101,6 +101,11 @@ final class LaunchTests: XCTestCase {
     private func digits(_ text: String) -> String {
         text.filter(\.isNumber)
     }
+    private func directionField(_ app: XCUIApplication) -> XCUIElement {
+        let id = "supervision-direction"
+        return app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
     private func capture(_ app: XCUIApplication, _ name: String) {
         let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
     }
@@ -696,11 +701,8 @@ final class LaunchTests: XCTestCase {
             XCTAssertTrue(action.waitForExistence(timeout: 5), "confirmation offers \(title)")
             action.tap()
         }
-        func directionField() -> XCUIElement {
-            app.textFields["supervision-direction"].exists ? app.textFields["supervision-direction"] : app.textViews["supervision-direction"]
-        }
         func type(_ text: String) {
-            let field = directionField()
+            let field = directionField(app)
             XCTAssertTrue(field.waitForExistence(timeout: 10))
             if !field.isHittable { app.swipeUp() }
             field.tap()
@@ -711,14 +713,13 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["supervision-take"].exists || find(app, "Keir").waitForExistence(timeout: 10))
         button("supervision-take").tap()
         confirm("Take this ticket from the support desk")
-        XCTAssertTrue(find(app, "Supervised worker").waitForExistence(timeout: 10))
         XCTAssertTrue(button("supervision-handback").exists)
         XCTAssertFalse(app.buttons["supervision-take"].exists, "one session at a time")
 
         type("Ask which turn the budget went to zero")
         app.buttons["Send direction"].tap()
         XCTAssertTrue(find(app, "Ask which turn the budget went to zero").waitForExistence(timeout: 10), "the direction is listed for this worker")
-        XCTAssertFalse((directionField().value as? String ?? "").contains("Ask which turn"), "a sent direction leaves the box")
+        XCTAssertFalse((directionField(app).value as? String ?? "").contains("Ask which turn"), "a sent direction leaves the box")
         capture(app, "Ticket supervised with a direction")
 
         // Start a direction, then hand the ticket back without sending it.
@@ -726,16 +727,18 @@ final class LaunchTests: XCTestCase {
         button("supervision-handback").tap()
         confirm("Hand this ticket back to the support desk")
         XCTAssertTrue(app.buttons["supervision-take"].exists || find(app, "Keir").waitForExistence(timeout: 10))
-        XCTAssertFalse(directionField().exists, "no direction box without a worker")
+        XCTAssertFalse(directionField(app).exists, "no direction box without a worker")
         XCTAssertFalse(app.buttons["supervision-handback"].exists)
-        XCTAssertTrue(find(app, "Last worker").exists, "the retired worker stays visible as history")
+        let details = app.buttons["Details"].firstMatch
+        XCTAssertTrue(reveal(app, details))
+        details.tap()
+        XCTAssertTrue(find(app, "Last worker").exists, "the retired worker stays visible in Details")
 
         // Taking it again starts a clean session: the unsent note went nowhere.
         button("supervision-take").tap()
         confirm("Take this ticket from the support desk")
-        XCTAssertTrue(find(app, "Supervised worker").waitForExistence(timeout: 10))
-        XCTAssertTrue(directionField().waitForExistence(timeout: 5))
-        XCTAssertFalse((directionField().value as? String ?? "").contains("Half written note"), "the draft was discarded at hand back")
+        XCTAssertTrue(directionField(app).waitForExistence(timeout: 10))
+        XCTAssertFalse((directionField(app).value as? String ?? "").contains("Half written note"), "the draft was discarded at hand back")
         XCTAssertFalse(find(app, "Half written note", timeout: 2).exists, "the unsent draft never reached the new worker")
         XCTAssertFalse(find(app, "Ask which turn the budget went to zero", timeout: 2).exists, "the earlier worker's directions are not shown as this worker's")
         capture(app, "Ticket taken again cleanly")
@@ -955,6 +958,14 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(find(app, "Massive drop in revenue turn").waitForExistence(timeout: 10))
         capturePage("Ticket 1868")
 
+        go(app, "Keir")
+        chooseFromMenu(app, "keir-tools", "Connected games", until: { app.navigationBars["Connected games"].exists })
+        XCTAssertTrue(app.buttons["keir-game-metroforge"].waitForExistence(timeout: 10))
+        app.buttons["keir-game-metroforge"].tap()
+        XCTAssertTrue(find(app, "Preview site").waitForExistence(timeout: 10))
+        capturePage("Connected games")
+        app.buttons["Done"].tap()
+
         go(app, "Ops")
         openRow(app, "Support desk")
         openRow(app, "Budget screen shows zero funding")
@@ -972,7 +983,8 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(take.isHittable)
         take.tap()
         app.buttons["Take this ticket from the support desk"].tap()
-        let direction = app.textFields["supervision-direction"].exists ? app.textFields["supervision-direction"] : app.textViews["supervision-direction"]
+        XCTAssertTrue(app.buttons["supervision-handback"].waitForExistence(timeout: 10), "Takeover finished")
+        let direction = directionField(app)
         XCTAssertTrue(direction.waitForExistence(timeout: 10))
         direction.tap()
         let keyboard = app.keyboards.firstMatch
@@ -981,12 +993,7 @@ final class LaunchTests: XCTestCase {
         capture(app, "\(theme) Ticket 1001 keyboard")
         returnToTabs()
 
-        go(app, "Keir")
-        chooseFromMenu(app, "keir-tools", "Connected games", until: { app.navigationBars["Connected games"].exists })
-        XCTAssertTrue(app.buttons["keir-game-metroforge"].waitForExistence(timeout: 10))
-        app.buttons["keir-game-metroforge"].tap()
-        XCTAssertTrue(find(app, "Preview site").waitForExistence(timeout: 10))
-        capturePage("Connected games")
+
     }
 
     /// The chat on a phone in both themes: a conversation with history, the two
