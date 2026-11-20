@@ -8,20 +8,52 @@ enum Brand {
             return UIColor(red: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: 1)
         })
     }
-    static let background = adaptive(0x0a0f14, 0xf7f8fa)
-    static let surface = adaptive(0x111b26, 0xffffff)
-    static let raised = adaptive(0x16222e, 0xeaf0f6)
+    /// A colour that exists only in light mode, such as a soft shadow. On the
+    /// OLED black theme it disappears instead of turning into a grey haze.
+    static func lightOnly(_ hex: UInt32, alpha: CGFloat) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? .clear
+                : UIColor(red: CGFloat((hex >> 16) & 255) / 255, green: CGFloat((hex >> 8) & 255) / 255, blue: CGFloat(hex & 255) / 255, alpha: alpha)
+        })
+    }
+    // Dark is true black for OLED screens: pixels behind the canvas are off.
+    // Raised layers step up in small greys so cards still read on black.
+    static let background = adaptive(0x000000, 0xf8f9fb)
+    static let surface = adaptive(0x111113, 0xffffff)
+    static let raised = adaptive(0x1c1c1e, 0xeef0f3)
     static let sky = adaptive(0x38bdf8, 0x0284c7)
     static let onAccent = adaptive(0x06222f, 0xffffff)
     static let mint = adaptive(0x21c8a0, 0x0d9488)
-    static let ink = adaptive(0xeaf0f6, 0x1a1d24)
+    static let ink = adaptive(0xf2f4f7, 0x16181d)
+}
+
+/// The three appearance choices. "dark" is the value earlier builds saved for
+/// their dark theme, so an owner who picked dark keeps it and now gets true
+/// OLED black. A missing or unknown value follows the system setting.
+enum KeirAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .system: return "System"
+        case .light: return "Light"
+        case .dark: return "OLED black"
+        }
+    }
+    static func scheme(for stored: String) -> ColorScheme? {
+        switch KeirAppearance(rawValue: stored) ?? .system {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
 }
 
 struct LakesideStyle: ViewModifier {
-    @AppStorage("appearance") private var appearance = "dark"
+    @AppStorage("appearance") private var appearance = KeirAppearance.system.rawValue
     func body(content: Content) -> some View {
         content.tint(Brand.sky).foregroundStyle(Brand.ink)
-            .preferredColorScheme(appearance == "system" ? nil : appearance == "light" ? .light : .dark)
+            .preferredColorScheme(KeirAppearance.scheme(for: appearance))
             .scrollContentBackground(.hidden)
             .background(Brand.background)
     }
@@ -43,7 +75,7 @@ struct BrandMark: View {
     var surface: Surface
     var size: CGFloat = 44
     var body: some View {
-        Image(surface == .ask ? "AskMark" : "LakesideMark")
+        Image(surface == .ask ? "AskMark" : surface == .ops ? "KeirMark" : "LakesideMark")
             .resizable().scaledToFit().frame(width: size, height: size)
             .accessibilityLabel(surface == .ask ? "Lakeside Ask logo" : "Lakeside Games logo")
     }
@@ -77,9 +109,9 @@ struct BrandHero: View {
                         .font(.system(size: 9, weight: .semibold, design: .monospaced)).tracking(1.2).foregroundStyle(Brand.sky)
                 }
             }
-            Text(surface == .ask ? "Know your\nnext move." : surface == .hub ? "Your studio.\nIn motion." : "Your studio.\nIn view.")
+            Text(surface == .ask ? "Know your\nnext move." : surface == .hub ? "Your studio.\nIn motion." : "Talk to Keir.\nRun the studio.")
                 .font(.system(size: compact ? 38 : 48, weight: .bold, design: .rounded)).tracking(-1.8).fixedSize(horizontal: false, vertical: true)
-            Text(surface == .ask ? "Answers about how the game actually works. Live context. Sources you can follow." : surface == .hub ? "One assistant with lasting memory. A team that grows with the task. Your studio, wherever you are." : "The pulse of your games, services, and agents. All in one place.")
+            Text(surface == .ask ? "Answers about how the game actually works. Live context. Sources you can follow." : surface == .hub ? "One assistant with lasting memory. A team that grows with the task. Your studio, wherever you are." : "Ask, decide and follow the work. Tickets, approvals and studio health, all in one place.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }.frame(maxWidth: .infinity, alignment: .leading)
     }

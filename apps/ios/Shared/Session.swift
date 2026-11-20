@@ -5,7 +5,7 @@ import LakesideCore
 
 enum Surface {
     case ask, ops, hub
-    var title: String { self == .ask ? "Lakeside Ask" : "Lakeside Ops" }
+    var title: String { self == .ask ? "Lakeside Ask" : "Keir" }
     var host: String { base.host ?? "invalid.invalid" }
     /// Endpoint.url rejects anything that is not https, so the unreachable
     /// fallback fails closed instead of crashing.
@@ -24,6 +24,9 @@ struct AppFailure: LocalizedError {
     let message: String
     var statusCode: Int? = nil
     var kind: FailureKind? = nil
+    /// The server's JSON error body, when it sent one. Callers read flags such
+    /// as `configured` from it; it is never shown to the person as-is.
+    var payload: JSONValue = .null
     var errorDescription: String? { message }
 }
 
@@ -208,7 +211,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
             updateUsage(payload["usage"])
             let kind = FailureKind.classify(status: http.statusCode, payload: payload)
             let message = payload["error"].string.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw AppFailure(message: message.isEmpty ? kind.defaultMessage : message, statusCode: http.statusCode, kind: kind)
+            throw AppFailure(message: message.isEmpty ? kind.defaultMessage : message, statusCode: http.statusCode, kind: kind, payload: payload)
         }
     }
     func get(_ path: String, query: [String: String] = [:]) async throws -> JSONValue {

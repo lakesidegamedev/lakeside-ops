@@ -63,7 +63,7 @@ struct KeirWorkingNow: View {
                     }
                     Hairline()
                     Button { router.tab = .activity } label: {
-                        Label("All work in Activity", systemImage: "list.bullet.rectangle")
+                        Label("All work in Inbox", systemImage: "list.bullet.rectangle")
                             .font(.caption.weight(.semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 16).padding(.vertical, 10)
@@ -74,8 +74,10 @@ struct KeirWorkingNow: View {
                 .transition(.opacity)
             }
         }
-        .background(OpsTheme.surface)
-        .overlay(alignment: .bottom) { Hairline() }
+        .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(KeirChatTheme.stroke))
+        .shadow(color: KeirChatTheme.shadow, radius: 10, y: 3)
     }
 
     private var statusLine: String {

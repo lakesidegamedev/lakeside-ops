@@ -1,16 +1,55 @@
-# Lakeside Ops
+# Keir
 
-The Lakeside Games studio operations app for iPhone and iPad. Native SwiftUI,
-iOS 17 and later.
+The Lakeside Games studio app for iPhone and iPad, shown on the Home Screen as
+Keir (bundle ID `net.lakesidegames.ops`, unchanged). Native SwiftUI, iOS 17 and
+later.
 
-- **Keir**: a private thread with Keir, the studio's operator. Live task
-  status, decisions you can approve or reject, charts.
-- **Pulse**: what needs attention, service uptime, operator activity, host load
-  and recent alerts.
-- **Desk**: open support tickets with fix stages, and the workers on them.
-- **Work**: the product board by live lane.
+Three places, in this order, on a quiet dock at the bottom (the native tab
+bar):
+
+- **Chat**: the landing screen, a private thread with Keir, the studio's
+  operator. Keir sits at the top centre, animated by what he is doing
+  (listening, talking, thinking, working, asleep when stopped); tap him for
+  your conversations. Under his name, small capsules appear only when true:
+  running work, what needs you (both open the inbox) and autonomy. The
+  timeline is the screen: your messages on the right, Keir's on the left,
+  with work, decisions, questions and files shown inline as rounded objects.
+  One pill composer sits at the bottom: "+" holds attachments, ticket
+  follow-up drafts, message routing and the model; the microphone dictates
+  and becomes send once there is text. Keir's menu at the top left holds
+  conversations, controls, spoken replies, computer history, the support
+  desk, settings and Stop or Start Keir. Voice mode is the button at the top
+  right.
+  An empty conversation opens on a quiet start: a welcome line, a "Talk to
+  Keir" button (the existing voice mode) and, when the studio has a ticket
+  with no recorded Discord reply, one editable follow-up draft. Nothing is
+  sent automatically and a typed draft is never replaced. After a force-quit
+  the app reopens the last private thread, checked against the live thread
+  list; only the thread id and a one-way account fingerprint are stored.
+- **Connected games** (Keir tools menu, studio mode only): pick A House Divided,
+  MetroForge or Grand Century and see what Keir can genuinely read there. Each
+  read shows whether it is live, unavailable or unsupported, the values returned,
+  when it was read and which read tool it came from. Questions land in the
+  message box as editable drafts; nothing is sent. Ticket questions exist for
+  A House Divided only. The server serves a fixed read-only catalogue
+  (`/api/keir/app/games`, owner session only) of deploy and health reads;
+  leaderboards, simulations and any write are not exposed.
+- **Inbox**: tickets and tasks with fix stages, your decisions, open questions
+  and work waiting on you. Opened by the `lakesideops://keir?view=activity`
+  link as before.
+- **Ops**: studio health and queues, the support desk, the Feed briefing,
+  goals, scheduler, security, pull requests, simulations and backups. Absent in
+  standalone mode, as before.
 - **Notifications**: replies, time-sensitive decisions with approve and reject
   on the lock screen, and quiet incident alerts.
+
+On iPad with iOS 18 the three places become a sidebar; on iOS 17 they stay a
+tab bar. Chat and inbox content keeps a readable width on large screens.
+
+**Appearance**: System (the default), Light, or OLED black, in Settings. OLED
+black is a true black background with slightly raised greys for bubbles and
+cards. A dark theme chosen in an earlier version is kept and becomes OLED
+black.
 
 The app talks only to `ops.lakesidegames.net` with the signed-in staff session.
 Credentials stay in the device Keychain, requests are pinned to HTTPS and never
@@ -49,6 +88,12 @@ follow redirects. Access is restricted server-side.
   their next milestone and blockers, with editable, evidence-backed suggestions.
 - Voice uses microphone energy for listening feedback, Microsoft Ava for spoken
   replies and the configured conversation provider (Gemini Flash by default).
+
+## Keir 2.5 internal beta
+
+Open Chat to continue your private conversation. On a configured studio server, the owner’s Keir can read its guardian, work in an isolated copy of Lakeside Ops, and look up an earlier exchange after a restart. The Keir menu opens Connected games. The Inbox holds decisions and links to individual tickets. A ticket shows who has it, its worker’s activity and directions, and the handback control. Settings offers light and OLED black appearances and per-device notification quiet hours.
+
+The release uses the existing Lakeside Ops TestFlight app record and bundle identifier. After uploading, run **TestFlight status** with the exact marketing version and workflow build number to verify Apple has assigned the build to an internal group with testers.
 
 ## Building
 

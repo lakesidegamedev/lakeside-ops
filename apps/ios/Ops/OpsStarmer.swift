@@ -61,10 +61,15 @@ struct StarmerWidget: View {
         )
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(OpsTheme.hairline, lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .gesture(
+        // Simultaneous, so a vertical drag that starts on the card still scrolls
+        // Ops. An exclusive drag swallowed it, and at accessibility text sizes
+        // the card fills most of the screen, which left the rows below it
+        // (Feed, Goals) out of reach. Only a mostly horizontal swipe flips it.
+        .simultaneousGesture(
             DragGesture(minimumDistance: 24)
                 .onEnded { value in
-                    guard abs(value.translation.width) > 40 else { return }
+                    guard abs(value.translation.width) > 40,
+                          abs(value.translation.width) > abs(value.translation.height) else { return }
                     withAnimation(.snappy(duration: 0.25)) { showWork = value.translation.width < 0 }
                 }
         )

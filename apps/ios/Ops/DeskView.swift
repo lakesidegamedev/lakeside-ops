@@ -56,11 +56,15 @@ struct DeskView: View {
 }
 
 struct TicketDetail: View {
+    @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var session: AppSession
     @Environment(\.scenePhase) private var scenePhase
     let ticket: JSONValue
     @State private var detail: JSONValue = .null
     @State private var error: String?
+    private var replyState: JSONValue {
+        ops.hub["tickets"].array.first(where: { $0["number"] == ticket["number"] })?["replyState"] ?? ticket["replyState"]
+    }
     private var card: JSONValue { detail["card"] == .null ? ticket["card"] : detail["card"] }
     var body: some View {
         ScrollView {
@@ -79,11 +83,22 @@ struct TicketDetail: View {
                     Hairline()
                 }
                 OwnerDirectionButton(title: "Reply or give direction", context: "Ticket #\(ticket["number"].string)")
+                TicketSupervisionPanel(number: ticket["number"].string)
+                Hairline()
                 ForEach(detail["tasks"].array.filter { $0["canOpen"].bool }, id: \.["id"].string) { task in
                     NavigationLink("Open task: \(task["summary"].string.nonempty ?? task["state"].string)") { TaskDetail(id: task["id"].string) }
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(ticket["title"].string).font(.title2.weight(.semibold)).tracking(-0.4)
+                    if replyState["state"].string == "delivered" {
+                        if let url = URL(string: replyState["url"].string), url.scheme == "https", url.host == "discord.com" {
+                            Link(destination: url) { Label("View reply in Discord", systemImage: "arrow.up.right.square") }.font(.callout)
+                        } else {
+                            Label("Reply delivered to Discord", systemImage: "checkmark.bubble").font(.callout).foregroundStyle(OpsTheme.mint)
+                        }
+                    } else if replyState["state"].string == "no_receipt" {
+                        Label("No Discord reply receipt", systemImage: "bubble.left").font(.callout).foregroundStyle(OpsTheme.warn)
+                    }
                     Text("Ticket #\(ticket["number"].string) · \(ticket["category"].string.capitalized) · opened \(OpsFormat.ago(ticket["createdAt"]))").font(.caption).foregroundStyle(OpsTheme.muted)
                 }
                 if detail["timing"] != .null || ticket["timing"] != .null {

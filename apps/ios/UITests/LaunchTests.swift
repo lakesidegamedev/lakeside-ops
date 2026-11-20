@@ -6,7 +6,7 @@ import XCTest
 final class LaunchTests: XCTestCase {
     private func launch() -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"]; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Keir"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
         return app
     }
     /// Polls the element types that carry text. A descendants(.any) query over the
@@ -23,6 +23,19 @@ final class LaunchTests: XCTestCase {
         } while Date() < deadline
         return app.staticTexts.matching(match).firstMatch
     }
+    /// Moves to a place in the app by its name before the redesign: Keir and
+    /// Activity are the Chat and Inbox tabs of the dock, and Feed and Goals are
+    /// opened from Ops.
+    private func go(_ app: XCUIApplication, _ place: String) {
+        switch place {
+        case "Keir": app.tabBars.buttons["Chat"].tap()
+        case "Activity": app.tabBars.buttons["Inbox"].tap()
+        case "Feed", "Goals":
+            app.tabBars.buttons["Ops"].tap()
+            openRow(app, place)
+        default: app.tabBars.buttons[place].tap()
+        }
+    }
     /// Opens an item from the Keir tools menu, waiting out any closing sheet.
     private func openTool(_ app: XCUIApplication, _ name: String, destinationTitle: String? = nil) {
         let tools = app.buttons["keir-tools"]
@@ -36,31 +49,54 @@ final class LaunchTests: XCTestCase {
         XCTFail("Keir tools menu did not offer \(name)")
     }
     /// Opens a row in the Ops list by the start of its combined label. Returning
-    /// from a detail keeps the list where it was, so a target above the fold is
-    /// reached by first scrolling to the top rather than only swiping up.
-    private func openRow(_ app: XCUIApplication, _ title: String, timeout: TimeInterval = 12) {
+    /// from a detail keeps the list where it was, so the target can be below or
+    /// above the viewport: search down to the end, then back up to the top. The
+    /// search counts swipes, not seconds. At accessibility text sizes the list is
+    /// many screens long and each swipe waits longer for the app to settle, so a
+    /// time budget ran out before the last rows (Feed, Goals) were reached.
+    private func openRow(_ app: XCUIApplication, _ title: String, swipes: Int = 16, file: StaticString = #filePath, line: UInt = #line) {
         let matches = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", title))
-        func row() -> XCUIElement { matches.firstMatch }
         func open() -> Bool {
-            guard row().exists && row().isHittable else { return false }
-            row().tap(); return true
+            let row = matches.firstMatch
+            guard row.exists && row.isHittable else { return false }
+            row.tap(); return true
         }
+        _ = app.navigationBars["Ops"].waitForExistence(timeout: 5)
         if open() { return }
-        var deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if open() { return }
-            app.swipeUp()
-        } while Date() < deadline
-        // A detail return keeps the list where it was, so the target can be
-        // above the viewport. Scroll back to the top and search again.
-        deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            if open() { return }
-            app.swipeDown()
-        } while Date() < deadline
+        let directions: [() -> Void] = [{ app.swipeUp() }, { app.swipeDown() }]
+        for swipe in directions {
+            for _ in 0..<swipes {
+                swipe()
+                if open() { return }
+            }
+        }
         let fallback = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", title)).firstMatch
         if fallback.exists && fallback.isHittable { fallback.tap(); return }
-        XCTFail("Ops row \(title) is missing or not hittable")
+        XCTFail("Ops row \(title) is missing or not hittable", file: file, line: line)
+    }
+    /// Scrolls until `element` can be tapped and reports whether it can. A
+    /// screen popped back to keeps its scroll position, and a lazy stack drops
+    /// views far off screen, so a control at the top (the briefing's primary
+    /// action after returning from Feed) is searched for upward first.
+    private func reveal(_ app: XCUIApplication, _ element: XCUIElement, swipes: Int = 16) -> Bool {
+        if element.waitForExistence(timeout: 3) && element.isHittable { return true }
+        let directions: [() -> Void] = [{ app.swipeDown() }, { app.swipeUp() }]
+        for swipe in directions {
+            for _ in 0..<swipes {
+                swipe()
+                if element.exists && element.isHittable { return true }
+            }
+        }
+        return false
+    }
+    /// Polls a condition that has no single element to wait on.
+    private func eventually(timeout: TimeInterval = 8, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if condition() { return true }
+            usleep(250_000)
+        } while Date() < deadline
+        return false
     }
     private func digits(_ text: String) -> String {
         text.filter(\.isNumber)
@@ -68,10 +104,59 @@ final class LaunchTests: XCTestCase {
     private func capture(_ app: XCUIApplication, _ name: String) {
         let screenshot = XCTAttachment(screenshot: app.screenshot()); screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
     }
+    /// Opens one of Keir's menus (the top-left tools menu or the composer's
+    /// "+") and taps the item whose label starts with `item`. Menu items are
+    /// matched by label because SwiftUI does not pass identifiers into menus.
+    ///
+    /// With `until`, the choice counts only once its outcome shows. A tap that
+    /// lands while the menu is still animating is dropped and the menu stays
+    /// open, so that case chooses again. A menu that closed without the outcome
+    /// is an app failure and is reported, never retried.
+    @discardableResult
+    private func chooseFromMenu(_ app: XCUIApplication, _ menu: String, _ item: String, until outcome: (() -> Bool)? = nil,
+                                file: StaticString = #filePath, line: UInt = #line) -> Bool {
+        let opener = app.buttons[menu]
+        let entry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", item)).firstMatch
+        for _ in 0..<4 {
+            if !entry.exists, opener.waitForExistence(timeout: 5) && opener.isHittable && opener.isEnabled { opener.tap() }
+            guard entry.waitForExistence(timeout: 3) else { continue }
+            entry.tap()
+            guard let outcome else { return true }
+            if eventually(outcome) { return true }
+            guard entry.exists else {
+                XCTFail("choosing \(item) from \(menu) closed the menu but had no effect", file: file, line: line)
+                return false
+            }
+        }
+        XCTFail("\(menu) did not offer \(item)", file: file, line: line)
+        return false
+    }
+    /// Reads the label of a menu item without choosing it, then closes the menu.
+    private func menuItemLabel(_ app: XCUIApplication, _ menu: String, _ item: String) -> String {
+        let opener = app.buttons[menu]
+        XCTAssertTrue(opener.waitForExistence(timeout: 8))
+        opener.tap()
+        let entry = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", item)).firstMatch
+        let label = entry.waitForExistence(timeout: 5) ? entry.label : ""
+        dismissMenu(app, closing: entry)
+        return label
+    }
+    /// A tap outside an open menu closes it without reaching what is under it.
+    /// Pass an item of the menu to wait until the menu has really closed: the
+    /// next menu opened while this one still animates out can swallow its tap.
+    private func dismissMenu(_ app: XCUIApplication, closing item: XCUIElement? = nil, file: StaticString = #filePath, line: UInt = #line) {
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.35)).tap()
+        if let item, item.exists {
+            XCTAssertTrue(item.waitForNonExistence(timeout: 5), "the menu closed", file: file, line: line)
+            usleep(300_000)
+        } else {
+            sleep(1)
+        }
+    }
 
     func testIdeasSwipeTriage() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap()
+        go(app, "Ops")
         openRow(app, "Ideas")
         let cell = app.cells.firstMatch
         XCTAssertTrue(cell.waitForExistence(timeout: 10))
@@ -90,7 +175,7 @@ final class LaunchTests: XCTestCase {
     /// fixture so Keir has live work to display.
     func testRedesignEvidenceScreens() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-dev-partner"]; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Keir"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["keir-working-now"].waitForExistence(timeout: 15))
         capture(app, "After Keir")
         app.buttons["keir-tools"].tap()
@@ -98,11 +183,11 @@ final class LaunchTests: XCTestCase {
         capture(app, "After Keir menu")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.6)).tap()
         sleep(1)
-        app.tabBars.buttons["Feed"].tap()
+        go(app, "Feed")
         XCTAssertTrue(app.navigationBars["Feed"].waitForExistence(timeout: 10))
         sleep(1)
         capture(app, "After Feed")
-        app.tabBars.buttons["Ops"].tap()
+        go(app, "Ops")
         XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 10))
         sleep(1)
         capture(app, "After Ops")
@@ -112,19 +197,27 @@ final class LaunchTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-fixtures", "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Feed"].waitForExistence(timeout: 20))
-        app.tabBars.buttons["Feed"].tap()
+        XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 20))
+        go(app, "Feed")
+        XCTAssertTrue(app.navigationBars["Feed"].waitForExistence(timeout: 15), "Feed opens from Ops at accessibility sizes")
         let feedAction = app.buttons["feed-review-attention"]
         XCTAssertTrue(feedAction.waitForExistence(timeout: 15))
-        XCTAssertTrue(feedAction.isHittable, "the primary action stays reachable at accessibility sizes")
+        XCTAssertTrue(reveal(app, feedAction), "the primary action stays reachable at accessibility sizes")
         capture(app, "Feed at accessibility text size")
-        app.tabBars.buttons["Ops"].tap()
+        // The Ops tab returns to the list where it was left, near Feed at the
+        // bottom; the briefing's action is reached by scrolling back up.
+        go(app, "Ops")
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 10))
         let opsAction = app.buttons["ops-review-attention"]
-        XCTAssertTrue(opsAction.waitForExistence(timeout: 15))
-        XCTAssertTrue(opsAction.isHittable)
+        XCTAssertTrue(reveal(app, opsAction), "the Ops primary action stays reachable at accessibility sizes")
         capture(app, "Ops at accessibility text size")
-        app.tabBars.buttons["Keir"].tap()
+        go(app, "Keir")
         XCTAssertTrue(app.textFields["keir-composer"].waitForExistence(timeout: 10) || app.textViews["keir-composer"].exists)
+        // The chat chrome stays reachable at the largest text size.
+        for id in ["keir-tools", "keir-threads", "keir-microphone", "add-attachment"] {
+            XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 5) && app.buttons[id].isHittable, "\(id) is reachable at accessibility sizes")
+        }
+        capture(app, "Chat at accessibility text size")
     }
 
     func testKeirComposerOffersPhotosAndFiles() {
@@ -170,7 +263,7 @@ final class LaunchTests: XCTestCase {
 
     func testFeedWithBriefIdeasAndUpcoming() {
         let app = launch()
-        app.tabBars.buttons["Feed"].tap()
+        go(app, "Feed")
         XCTAssertTrue(find(app, "Completed model activations").waitForExistence(timeout: 10))
         capture(app, "Feed overview with activity graph")
         for _ in 0..<5 { if find(app, "CI runs the full matrix", timeout: 1).exists { break }; app.swipeUp() }
@@ -183,7 +276,7 @@ final class LaunchTests: XCTestCase {
 
     func testGoalsListDetailAndNewGoal() {
         let app = launch()
-        app.tabBars.buttons["Goals"].tap()
+        go(app, "Goals")
         let goal = find(app, "Median turn time under 60 seconds")
         XCTAssertTrue(goal.waitForExistence(timeout: 10))
         capture(app, "Goals")
@@ -202,7 +295,7 @@ final class LaunchTests: XCTestCase {
 
     func testTicketQueueShowsBlockedWaitAndNextCheck() {
         let app = launch()
-        app.tabBars.buttons["Activity"].tap()
+        go(app, "Activity")
         XCTAssertTrue(app.buttons["work-filter-stuck"].waitForExistence(timeout: 10))
         app.buttons["work-filter-stuck"].tap()
         XCTAssertTrue(find(app, "Verify an interrupted action").waitForExistence(timeout: 10))
@@ -218,7 +311,7 @@ final class LaunchTests: XCTestCase {
 
     func testActivityApprovalsPlanAndLiveWork() {
         let app = launch()
-        app.tabBars.buttons["Activity"].tap()
+        go(app, "Activity")
         XCTAssertTrue(find(app, "Merge #201").waitForExistence(timeout: 10))
         capture(app, "Activity with approvals")
         app.segmentedControls.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Tasks")).firstMatch.tap()
@@ -235,7 +328,7 @@ final class LaunchTests: XCTestCase {
 
     func testOpsHubScreens() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap()
+        go(app, "Ops")
         // Needs you lists only decisions and owner work; a degraded service is a
         // health fact, not an owner decision, and never appears as a separate list.
         if !find(app, "Merge #201 to development", timeout: 3).exists { app.swipeUp() }
@@ -267,7 +360,7 @@ final class LaunchTests: XCTestCase {
 
     func testStarmerWidgetFlipsToWork() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap()
+        go(app, "Ops")
         let line = app.staticTexts["ops-starmer-line"]
         for _ in 0..<4 where !line.exists { app.swipeUp() }
         XCTAssertTrue(line.waitForExistence(timeout: 15))
@@ -289,7 +382,7 @@ final class LaunchTests: XCTestCase {
             app.launchArguments = ["--uitest-fixtures", "--uitest-starmer-state", state]
             app.launch()
             XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 20), state)
-            app.tabBars.buttons["Ops"].tap()
+            go(app, "Ops")
             let line = app.staticTexts["ops-starmer-line"]
             for _ in 0..<4 where !line.exists { app.swipeUp() }
             XCTAssertTrue(line.waitForExistence(timeout: 15), state)
@@ -300,7 +393,7 @@ final class LaunchTests: XCTestCase {
 
     func testAwayRecapShowsAndDismisses() {
         let app = launch()
-        app.tabBars.buttons["Feed"].tap()
+        go(app, "Feed")
         // The app can restore the previous test's scroll position. Start at the
         // top so the recap, which sits under the hero, is on screen.
         for _ in 0..<3 { app.swipeDown() }
@@ -315,7 +408,7 @@ final class LaunchTests: XCTestCase {
 
     func testOpsSystemsDrillDowns() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap()
+        go(app, "Ops")
         for (row, title, evidence) in [
             ("Scheduler", "Scheduler", "ios-simulator"),
             ("Security", "Security", "fail2ban recidive jail"),
@@ -334,22 +427,39 @@ final class LaunchTests: XCTestCase {
         }
     }
 
+    func testConversationIsHomeAndContextChipOpensInbox() {
+        let app = launch()
+        XCTAssertTrue(app.tabBars.buttons["Chat"].isSelected, "The app must land in the chat")
+        let chip = app.buttons["keir-chip-attention"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        chip.tap()
+        XCTAssertTrue(app.navigationBars["Inbox"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.tabBars.buttons["Inbox"].isSelected)
+        capture(app, "Inbox from the needs-you capsule")
+    }
+
     func testAttentionCountsMatchAcrossScreens() {
         let app = launch()
-        app.tabBars.buttons["Feed"].tap()
+        go(app, "Feed")
         let feedButton = app.buttons["feed-review-attention"]
         XCTAssertTrue(feedButton.waitForExistence(timeout: 10))
         let feedCount = digits(feedButton.label)
         XCTAssertFalse(feedCount.isEmpty)
         XCTAssertEqual(app.staticTexts["feed-attention-count"].label, feedCount)
-        app.tabBars.buttons["Ops"].tap()
+        // Back on Ops the list keeps the scroll position that reached Feed, so
+        // the briefing at the top is scrolled back into view.
+        go(app, "Ops")
+        XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 10))
         let opsButton = app.buttons["ops-review-attention"]
-        XCTAssertTrue(opsButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(reveal(app, opsButton), "the Ops briefing offers the review action")
         XCTAssertEqual(digits(opsButton.label), feedCount, "Feed and Ops disagree on the count")
-        XCTAssertEqual(app.staticTexts["ops-attention-count"].label, feedCount)
-        app.tabBars.buttons["Keir"].tap()
-        XCTAssertTrue(app.staticTexts["keir-attention-count"].waitForExistence(timeout: 10))
-        XCTAssertEqual(app.staticTexts["keir-attention-count"].label, feedCount, "Keir and Feed disagree on the count")
+        let opsCount = app.staticTexts["ops-attention-count"]
+        XCTAssertTrue(reveal(app, opsCount))
+        XCTAssertEqual(opsCount.label, feedCount)
+        go(app, "Keir")
+        let chip = app.buttons["keir-chip-attention"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        XCTAssertEqual(digits(chip.label), feedCount, "The Inbox shortcut and Feed disagree on the count")
         capture(app, "Keir attention count matches")
     }
 
@@ -363,7 +473,7 @@ final class LaunchTests: XCTestCase {
         capture(app, "Keir tools menu")
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.6)).tap()
         sleep(1)
-        app.tabBars.buttons["Ops"].tap()
+        go(app, "Ops")
         for destination in ["Ideas", "Watches", "Memory"] {
             openRow(app, destination)
             XCTAssertTrue(app.navigationBars[destination].waitForExistence(timeout: 10), "\(destination) is missing from Ops")
@@ -385,7 +495,7 @@ final class LaunchTests: XCTestCase {
 
     func testWatchesMemoryAndThreads() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap()
+        go(app, "Ops")
         openRow(app, "Watches")
         XCTAssertTrue(find(app, "PR 201 is merged").waitForExistence(timeout: 10))
         app.buttons["watch-add"].tap()
@@ -399,7 +509,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(find(app, "Never promote economy changes").waitForExistence(timeout: 10))
         capture(app, "Memory")
         app.navigationBars.buttons.firstMatch.tap()
-        app.tabBars.buttons["Keir"].tap()
+        go(app, "Keir")
         let threads = app.buttons["keir-threads"]
         XCTAssertTrue(threads.waitForExistence(timeout: 5))
         for _ in 0..<3 { if threads.isHittable { break }; sleep(1) }
@@ -410,14 +520,19 @@ final class LaunchTests: XCTestCase {
 
     func testNativeStopStartAndYoloControls() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"]; app.launch()
-        let kill = app.buttons["keir-kill-switch"]
-        XCTAssertTrue(kill.waitForExistence(timeout: 15)); kill.tap()
+        // Stop and start are a deliberate choice in Keir's menu, not a
+        // permanent button on the chat.
+        XCTAssertTrue(app.buttons["keir-tools"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["Stop Keir"].exists, "stop is not on screen until the menu opens")
+        // The header pill reads Stopped while Keir is stopped.
+        let stopped = { self.find(app, "Stopped", timeout: 0.5).exists }
+        chooseFromMenu(app, "keir-tools", "Stop Keir", until: stopped)
         XCTAssertTrue(find(app, "Stopped").waitForExistence(timeout: 5))
-        XCTAssertTrue(kill.label.contains("Start")); capture(app, "Keir stopped")
-        kill.tap()
-        XCTAssertTrue(kill.waitForExistence(timeout: 5)); XCTAssertTrue(kill.label.contains("Stop"))
-        app.buttons["keir-tools"].tap()
-        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Controls, providers")).firstMatch.tap()
+        XCTAssertTrue(menuItemLabel(app, "keir-tools", "Start Keir").contains("Start")); capture(app, "Keir stopped")
+        chooseFromMenu(app, "keir-tools", "Start Keir", until: { !stopped() })
+        XCTAssertTrue(find(app, "Stopped", timeout: 2).waitForNonExistence(timeout: 5))
+        XCTAssertTrue(menuItemLabel(app, "keir-tools", "Stop Keir").contains("Stop"))
+        chooseFromMenu(app, "keir-tools", "Controls, providers", until: { app.navigationBars["Keir controls"].exists })
         let yolo = app.switches["keir-yolo"]
         XCTAssertTrue(yolo.waitForExistence(timeout: 8))
         yolo.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
@@ -437,7 +552,7 @@ final class LaunchTests: XCTestCase {
         app.buttons["Turn off autonomy"].tap()
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["keir-yolo-banner"])
         waitForExpectations(timeout: 5)
-        XCTAssertTrue(app.buttons["keir-model"].label.contains("Fixture model"))
+        XCTAssertTrue(menuItemLabel(app, "add-attachment", "Model").contains("Fixture model"))
         app.buttons["keir-microphone"].tap()
         XCTAssertTrue(app.staticTexts["Keir voice"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Microsoft Ava · online voice"].exists)
@@ -472,7 +587,7 @@ final class LaunchTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(bar.waitForExistence(timeout: 8))
         app.buttons["keir-working-all"].tap()
-        XCTAssertTrue(app.tabBars.buttons["Activity"].isSelected)
+        XCTAssertTrue(app.tabBars.buttons["Inbox"].isSelected)
     }
 
     func testCompactTablesAndProviderAvailability() {
@@ -481,8 +596,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(find(app, "Implementation is waiting on the assigned developer").exists)
         XCTAssertFalse(find(app, "What are we working on?").exists)
         capture(app, "Compact phone table")
-        app.buttons["keir-tools"].tap()
-        app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Controls, providers")).firstMatch.tap()
+        chooseFromMenu(app, "keir-tools", "Controls, providers", until: { app.navigationBars["Keir controls"].exists })
         XCTAssertTrue(app.navigationBars["Keir controls"].waitForExistence(timeout: 8))
         app.buttons["keir-route-conversation"].tap()
         XCTAssertTrue(find(app, "Opus 5.5").waitForExistence(timeout: 5))
@@ -495,7 +609,7 @@ final class LaunchTests: XCTestCase {
 
     func testEvidenceBackedGoalSuggestionReview() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-goal-suggestions"]; app.launch()
-        app.tabBars.buttons["Goals"].tap()
+        go(app, "Goals")
         XCTAssertTrue(find(app, "Keep replies under five seconds").waitForExistence(timeout: 10))
         app.buttons["Review goal"].tap()
         XCTAssertTrue(app.textFields["goal-title"].exists || app.textViews["goal-title"].exists)
@@ -504,15 +618,18 @@ final class LaunchTests: XCTestCase {
 
     func testChoicesModelSwitchAndConcurrentWork() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-rich-controls", "--uitest-legacy-model-picker"]; app.launch()
-        XCTAssertTrue(app.buttons["keir-model"].waitForExistence(timeout: 15))
-        app.buttons["keir-model"].tap()
+        // The model lives in the composer's "+" menu with the other choices
+        // that shape the next message.
+        XCTAssertTrue(app.buttons["add-attachment"].waitForExistence(timeout: 15))
+        chooseFromMenu(app, "add-attachment", "Model")
         let fixtureModel = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Fixture model")).firstMatch
         XCTAssertTrue(fixtureModel.waitForExistence(timeout: 8))
         for _ in 0..<10 where !fixtureModel.isHittable { usleep(200_000) }
         if fixtureModel.isHittable { fixtureModel.tap() }
         else { fixtureModel.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        XCTAssertTrue(app.buttons["keir-model"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["keir-model"].label.contains("Fixture model"))
+        sleep(1)
+        XCTAssertTrue(menuItemLabel(app, "add-attachment", "Model").contains("Fixture model"))
+        // Running work shows as a capsule under Keir that opens the inbox.
         XCTAssertTrue(app.buttons["keir-activity-strip"].waitForExistence(timeout: 5))
         // The redesign starts chat at the top, where the needs-you stack already
         // holds the question. Wait for the model sheet to finish closing instead
@@ -550,13 +667,77 @@ final class LaunchTests: XCTestCase {
 
     func testTicketExplainsBlockersAndCompletedWork() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap(); openRow(app, "Support desk")
+        go(app, "Ops"); openRow(app, "Support desk")
         let ticket = find(app, "Budget screen shows zero funding")
         XCTAssertTrue(ticket.waitForExistence(timeout: 10)); ticket.tap()
         XCTAssertTrue(find(app, "Choose payroll behavior").waitForExistence(timeout: 10))
         XCTAssertTrue(find(app, "Waiting for the owner decision").exists)
         XCTAssertTrue(find(app, "Filed issue #99").exists)
         capture(app, "Ticket blockers and Keir work")
+    }
+
+    /// Take, direct and hand back one ticket through the stateful supervision
+    /// fixture. A half-typed direction left when the ticket is handed back must
+    /// not ride along with the next take to a new worker.
+    func testTicketSupervisionTakeDirectAndHandBack() {
+        let app = launch()
+        go(app, "Ops"); openRow(app, "Support desk")
+        let ticket = find(app, "Budget screen shows zero funding")
+        XCTAssertTrue(ticket.waitForExistence(timeout: 10)); ticket.tap()
+        func button(_ id: String) -> XCUIElement {
+            let element = app.buttons[id]
+            XCTAssertTrue(element.waitForExistence(timeout: 10), "\(id) is offered")
+            if !element.isHittable { app.swipeUp() }
+            return element
+        }
+        func confirm(_ title: String) {
+            let action = app.buttons[title]
+            XCTAssertTrue(action.waitForExistence(timeout: 5), "confirmation offers \(title)")
+            action.tap()
+        }
+        func directionField() -> XCUIElement {
+            app.textFields["supervision-direction"].exists ? app.textFields["supervision-direction"] : app.textViews["supervision-direction"]
+        }
+        func type(_ text: String) {
+            let field = directionField()
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            if !field.isHittable { app.swipeUp() }
+            field.tap()
+            if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { field.tap() }
+            field.typeText(text)
+        }
+
+        XCTAssertTrue(find(app, "Support Keir is working this ticket").waitForExistence(timeout: 10))
+        button("supervision-take").tap()
+        confirm("Take this ticket from Support Keir")
+        XCTAssertTrue(find(app, "Your personal Keir is working this ticket").waitForExistence(timeout: 10))
+        XCTAssertTrue(button("supervision-handback").exists)
+        XCTAssertFalse(app.buttons["supervision-take"].exists, "one session at a time")
+
+        type("Ask which turn the budget went to zero")
+        app.buttons["Send direction"].tap()
+        XCTAssertTrue(find(app, "Ask which turn the budget went to zero").waitForExistence(timeout: 10), "the direction is listed for this worker")
+        XCTAssertFalse((directionField().value as? String ?? "").contains("Ask which turn"), "a sent direction leaves the box")
+        capture(app, "Ticket supervised with a direction")
+
+        // Start a direction, then hand the ticket back without sending it.
+        type("Half written note")
+        button("supervision-handback").tap()
+        confirm("Hand this ticket back to Support Keir")
+        XCTAssertTrue(find(app, "Support Keir is working this ticket").waitForExistence(timeout: 10))
+        XCTAssertFalse(directionField().exists, "no direction box without a worker")
+        XCTAssertFalse(app.buttons["supervision-handback"].exists)
+        XCTAssertTrue(find(app, "Last worker").exists, "the retired worker stays visible as history")
+
+        // Taking it again starts a clean session: the unsent note went nowhere.
+        button("supervision-take").tap()
+        confirm("Take this ticket from Support Keir")
+        XCTAssertTrue(find(app, "Your personal Keir is working this ticket").waitForExistence(timeout: 10))
+        XCTAssertTrue(directionField().waitForExistence(timeout: 5))
+        XCTAssertFalse((directionField().value as? String ?? "").contains("Half written note"), "the draft was discarded at hand back")
+        XCTAssertFalse(find(app, "Half written note", timeout: 2).exists, "the unsent draft never reached the new worker")
+        XCTAssertFalse(find(app, "Ask which turn the budget went to zero", timeout: 2).exists, "the earlier worker's directions are not shown as this worker's")
+        capture(app, "Ticket taken again cleanly")
     }
 
     func testComputerInputUncertaintyInspectionAndClose() {
@@ -608,7 +789,7 @@ final class LaunchTests: XCTestCase {
 
     func testKeirDashboardMetricsAndMonitoring() {
         let app = launch()
-        app.tabBars.buttons["Ops"].tap(); openRow(app, "Dashboard")
+        go(app, "Ops"); openRow(app, "Dashboard")
         XCTAssertTrue(app.navigationBars["Keir dashboard"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Activations, 46"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Median activation, 12s"].exists)
@@ -627,7 +808,7 @@ final class LaunchTests: XCTestCase {
     func testKeirDashboardDoesNotInventMissingMetrics() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-metrics-partial"]; app.launch()
         XCTAssertTrue(app.tabBars.buttons["Ops"].waitForExistence(timeout: 15))
-        app.tabBars.buttons["Ops"].tap(); openRow(app, "Dashboard")
+        go(app, "Ops"); openRow(app, "Dashboard")
         XCTAssertTrue(app.staticTexts["Median activation, Not recorded"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["Successful activations, No sample"].waitForExistence(timeout: 5))
         for _ in 0..<10 {
@@ -640,7 +821,7 @@ final class LaunchTests: XCTestCase {
 
     func testNativeSignInAndCancellation() {
         let app = XCUIApplication(); app.launch()
-        let signIn = app.buttons["Sign in to Lakeside"]
+        let signIn = app.buttons["sign-in"]
         XCTAssertTrue(signIn.waitForExistence(timeout: 15))
         XCTAssertEqual(app.webViews.count, 0)
         capture(app, "Sign in")
@@ -653,7 +834,7 @@ final class LaunchTests: XCTestCase {
     }
     func testActivityLoadsCanonicalDecisionsAndShowsExactScope() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-action-scope"]; app.launch()
-        app.tabBars.buttons["Activity"].tap()
+        go(app, "Activity")
         XCTAssertTrue(app.buttons["decision-approve"].waitForExistence(timeout: 10))
         let review = app.buttons["Review full action and scope"]
         XCTAssertTrue(review.exists); review.tap()
@@ -665,6 +846,207 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(scope.label.contains("fixture/repository"))
         XCTAssertTrue(scope.label.contains("fixture-exact-head"))
         capture(app, "Exact decision scope in Activity")
+    }
+
+
+    // MARK: Chat shell evidence
+
+    private func launch(appearance: String, _ extra: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-fixtures", "-appearance", appearance] + extra
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 20), appearance)
+        return app
+    }
+
+    /// The chat on a phone in both themes: a conversation with history, the two
+    /// menus, the theme setting, the empty start, the inbox and large text.
+    /// Every screen is kept as a test attachment for review. "dark" is the
+    /// value an earlier build saved, so this also proves it now means OLED black.
+    func testChatShellInLightAndOLEDThemes() {
+        for (appearance, name) in [("light", "Light"), ("dark", "OLED")] {
+            var app = launch(appearance: appearance)
+            XCTAssertTrue(find(app, "How did the last turn go?").waitForExistence(timeout: 10), name)
+            for id in ["keir-tools", "keir-threads", "keir-microphone", "add-attachment"] {
+                XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 5) && app.buttons[id].isHittable, "\(id) is reachable in \(name)")
+            }
+            XCTAssertTrue(app.tabBars.buttons["Inbox"].exists && app.tabBars.buttons["Ops"].exists, "the dock reaches the other places")
+            XCTAssertFalse(app.buttons["Stop Keir"].exists, "stop is behind Keir's menu, not on the chat")
+            XCTAssertFalse(app.buttons["keir-send-mode"].exists, "routing is behind the composer menu")
+            XCTAssertFalse(app.otherElements["keir-context-bar"].exists, "no chip strip under the title")
+            sleep(2) // Keir's greeting animation finishes
+            capture(app, "\(name) chat")
+
+            app.buttons["keir-tools"].tap()
+            XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5), name)
+            XCTAssertTrue(app.buttons["Stop Keir"].exists, "stop is one deliberate tap away")
+            capture(app, "\(name) Keir menu")
+            dismissMenu(app, closing: app.buttons["Stop Keir"])
+
+            app.buttons["add-attachment"].tap()
+            XCTAssertTrue(app.buttons["Photo library"].waitForExistence(timeout: 5), name)
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model")).firstMatch.exists, "model is in the composer menu")
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Send as")).firstMatch.exists, "routing is in the composer menu")
+            capture(app, "\(name) composer menu")
+            dismissMenu(app, closing: app.buttons["Photo library"])
+
+            chooseFromMenu(app, "keir-tools", "Settings", until: { app.navigationBars["Settings"].exists })
+            XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 8), name)
+            let expected = appearance == "dark" ? "OLED black" : "Light"
+            let picker = app.buttons["settings-theme"]
+            for _ in 0..<6 where !(picker.exists && picker.isHittable) { app.swipeUp() }
+            let shown = picker.exists ? "\(picker.label) \(picker.value as? String ?? "")" : (find(app, expected, timeout: 2).exists ? expected : "")
+            XCTAssertTrue(shown.contains(expected), "the saved theme shows as \(expected), found \(shown)")
+            capture(app, "\(name) theme setting")
+            app.buttons["Done"].firstMatch.tap()
+
+            app.tabBars.buttons["Inbox"].tap()
+            XCTAssertTrue(app.navigationBars["Inbox"].waitForExistence(timeout: 10), name)
+            capture(app, "\(name) inbox")
+            app.terminate()
+
+            app = launch(appearance: appearance, ["--uitest-empty-keir", "--uitest-reset-resume"])
+            XCTAssertTrue(app.buttons["keir-start-voice"].waitForExistence(timeout: 15), name)
+            sleep(2)
+            capture(app, "\(name) empty chat")
+            app.terminate()
+
+            app = launch(appearance: appearance, ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityL"])
+            XCTAssertTrue(find(app, "How did the last turn go?").waitForExistence(timeout: 10), name)
+            for id in ["keir-tools", "keir-threads", "keir-microphone", "add-attachment"] {
+                XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 5) && app.buttons[id].isHittable, "\(id) is reachable with large text in \(name)")
+            }
+            XCTAssertTrue(app.textFields["keir-composer"].exists || app.textViews["keir-composer"].exists)
+            capture(app, "\(name) chat, large text")
+            app.terminate()
+        }
+    }
+
+    /// Typing turns the microphone into send, and the routing choice shows
+    /// above the composer only when it is not the default.
+    func testComposerSwapsMicrophoneForSendAndShowsRouting() {
+        let app = launch()
+        XCTAssertTrue(app.buttons["keir-dictate"].waitForExistence(timeout: 10), "an empty composer offers dictation")
+        XCTAssertFalse(app.buttons["keir-send"].exists, "nothing to send yet")
+        XCTAssertFalse(app.otherElements["keir-route-chip"].exists)
+        let box = composer(app)
+        box.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { box.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap() }
+        app.typeText("Draft")
+        XCTAssertTrue(app.buttons["keir-send"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["keir-dictate"].exists)
+        capture(app, "Composer ready to send")
+        chooseFromMenu(app, "add-attachment", "Send as")
+        let followUp = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Follow up")).firstMatch
+        XCTAssertTrue(followUp.waitForExistence(timeout: 5)); followUp.tap()
+        let chip = app.descendants(matching: .any)["keir-route-chip"]
+        XCTAssertTrue(chip.waitForExistence(timeout: 5), "a non-default route is visible before sending")
+        capture(app, "Composer with follow-up routing")
+        app.buttons["Send as a new task instead"].tap()
+        XCTAssertTrue(chip.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(composer(app).value as? String, "Draft", "changing the route keeps the draft")
+    }
+
+    // MARK: Personal start and resume
+
+    private func composer(_ app: XCUIApplication) -> XCUIElement {
+        app.textFields["keir-composer"].exists ? app.textFields["keir-composer"] : app.textViews["keir-composer"]
+    }
+    private func waitForThreadTitle(_ app: XCUIApplication, _ title: String, file: StaticString = #filePath, line: UInt = #line) {
+        let button = app.buttons["keir-threads"]
+        XCTAssertTrue(button.waitForExistence(timeout: 15), file: file, line: line)
+        expectation(for: NSPredicate(format: "label CONTAINS %@", title), evaluatedWith: button)
+        waitForExpectations(timeout: 15)
+    }
+    private func launchFresh(_ extra: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"] + extra; app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
+        return app
+    }
+    private func openBondMarket(_ app: XCUIApplication) {
+        let threads = app.buttons["keir-threads"]
+        XCTAssertTrue(threads.waitForExistence(timeout: 10))
+        for _ in 0..<3 { if threads.isHittable { break }; sleep(1) }
+        threads.tap()
+        let row = find(app, "Bond market")
+        XCTAssertTrue(row.waitForExistence(timeout: 10)); row.tap()
+        waitForThreadTitle(app, "Bond market")
+    }
+
+    func testKeirReopensTheLastPrivateConversationAfterForceQuit() {
+        var app = launchFresh(["--uitest-reset-resume"])
+        waitForThreadTitle(app, "Keir")
+        openBondMarket(app)
+        sleep(1)
+        app.terminate()
+        app = launchFresh(["--uitest-keep-resume"])
+        waitForThreadTitle(app, "Bond market")
+    }
+
+    func testResumeForgetsAThreadThatIsNoLongerListed() {
+        var app = launchFresh(["--uitest-reset-resume"])
+        openBondMarket(app)
+        sleep(1)
+        app.terminate()
+        app = launchFresh(["--uitest-resume-archived", "--uitest-keep-resume"])
+        waitForThreadTitle(app, "Keir")
+        XCTAssertFalse(app.buttons["keir-threads"].label.contains("Bond market"))
+        sleep(1)
+        app.terminate()
+        // The unlisted thread was forgotten, not just hidden: it stays gone when it is listed again.
+        app = launchFresh(["--uitest-keep-resume"])
+        waitForThreadTitle(app, "Keir")
+        XCTAssertFalse(app.buttons["keir-threads"].label.contains("Bond market"))
+    }
+
+    func testEmptyConversationOffersVoiceAndAnEditableTicketFollowUp() {
+        let app = launchFresh(["--uitest-empty-keir", "--uitest-reset-resume"])
+        XCTAssertTrue(app.buttons["keir-start-voice"].waitForExistence(timeout: 15))
+        let ticket = app.buttons["keir-start-ticket"]
+        XCTAssertTrue(ticket.waitForExistence(timeout: 15), "a ticket with no recorded reply is offered")
+        XCTAssertFalse(app.buttons["decision-approve"].exists, "An unrelated studio approval belongs in Inbox")
+        XCTAssertTrue(ticket.label.contains("1001"))
+        XCTAssertTrue(find(app, "No Discord reply recorded").exists)
+        capture(app, "Keir personal iPhone start")
+        ticket.tap()
+        let box = composer(app)
+        XCTAssertTrue(box.waitForExistence(timeout: 5))
+        let draft = box.value as? String ?? ""
+        XCTAssertTrue(draft.contains("Ticket #1001"), "the suggestion lands in the composer: \(draft)")
+        XCTAssertTrue(draft.contains("Don't message the player"))
+        XCTAssertTrue(app.buttons["keir-start-voice"].exists, "nothing was sent")
+        app.buttons["keir-start-voice"].tap()
+        XCTAssertTrue(app.staticTexts["Keir voice"].waitForExistence(timeout: 5), "the invitation opens the existing voice mode")
+        app.buttons["End voice mode"].tap()
+    }
+
+    func testTicketSuggestionNeverReplacesATypedDraft() {
+        let app = launchFresh(["--uitest-empty-keir", "--uitest-reset-resume"])
+        let ticket = app.buttons["keir-start-ticket"]
+        XCTAssertTrue(ticket.waitForExistence(timeout: 15))
+        let box = composer(app)
+        XCTAssertTrue(box.waitForExistence(timeout: 5)); box.tap()
+        if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { box.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap() }
+        app.typeText("My own words")
+        XCTAssertFalse(ticket.isEnabled, "a typed draft is protected")
+        XCTAssertEqual(composer(app).value as? String, "My own words")
+    }
+
+    func testTicketFollowUpStaysReachableInAConversationWithHistory() {
+        let app = launchFresh()
+        XCTAssertTrue(find(app, "How did the last turn go?").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["add-attachment"].waitForExistence(timeout: 15))
+        capture(app, "Keir personal iPhone conversation")
+        // Ticket drafts sit in the composer's "+" menu once there is history.
+        // The submenu tap can be dropped while the "+" menu is still animating
+        // (CI log: the entry was tapped and #1001 never appeared). Choose again
+        // until the tickets are listed.
+        chooseFromMenu(app, "add-attachment", "Ticket follow-ups", until: { self.find(app, "#1001", timeout: 1).exists })
+        let item = find(app, "#1001")
+        XCTAssertTrue(item.waitForExistence(timeout: 5)); item.tap()
+        let draft = composer(app).value as? String ?? ""
+        XCTAssertTrue(draft.contains("Ticket #1001"))
+        XCTAssertTrue(find(app, "How did the last turn go?").exists, "nothing was sent")
     }
 
 }

@@ -41,9 +41,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.lakesidegames.ops
-        MARKETING_VERSION: '2.4.1'
+        MARKETING_VERSION: '2.5.0'
         INFOPLIST_KEY_LakesideOpsServerURL: "$(OPS_SERVER_URL)"
-        INFOPLIST_KEY_CFBundleDisplayName: Lakeside Ops
+        INFOPLIST_KEY_CFBundleDisplayName: Keir
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Talk to Keir using your microphone.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn your speech into messages for Keir. Recognition runs on your device when available; otherwise Apple processes the audio.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -61,7 +61,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.lakesidegames.ops.widgets
-        MARKETING_VERSION: '2.4.1'
+        MARKETING_VERSION: '2.5.0'
         INFOPLIST_KEY_CFBundleDisplayName: Keir
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES

@@ -53,7 +53,7 @@ struct OpsHub: View {
                 }
                 .accessibilityIdentifier("ops-review-attention")
             } else {
-                OpsPrimaryButton(title: "Open Keir", icon: "bubble.left.and.text.bubble.right") {
+                OpsPrimaryButton(title: "Open the conversation", icon: "bubble.left.and.text.bubble.right") {
                     router.tab = .keir
                 }
                 .accessibilityIdentifier("ops-open-keir")
@@ -199,6 +199,12 @@ struct OpsHub: View {
     private var keir: some View {
         VStack(alignment: .leading, spacing: 4) {
             SectionLabel(text: "Keir")
+            NavigationLink(value: StudioRoute.feed) {
+                OpsQueueRow(title: "Feed", detail: "Briefing, what Keir did, what is next", status: .idle, icon: "sparkles.rectangle.stack")
+            }
+            NavigationLink(value: StudioRoute.goals) {
+                OpsQueueRow(title: "Goals", detail: "Milestones and blockers", status: .idle, icon: "flag")
+            }
             NavigationLink { KeirMetricsView() } label: {
                 OpsQueueRow(title: "Dashboard", detail: "Execution metrics and monitoring", status: .idle, icon: "chart.bar.xaxis")
             }

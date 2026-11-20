@@ -20,21 +20,40 @@ import LakesideCore
     @Published var openKeirVoice = false
     @Published var destination: OpsDestination?
     @Published var activityFilter = "all"
+    /// Settings is one sheet for the whole app. Inbox and Ops open it from their
+    /// toolbar; chat opens it from Keir's menu.
+    @Published var showSettings = false
+    /// Pushed screens inside the Ops tab. Feed and Goals used to be tabs of their
+    /// own; they now live under Ops, and notifications reach them through here.
+    @Published var studioPath: [StudioRoute] = []
+    func open(_ route: StudioRoute) { tab = .ops; studioPath = [route] }
     func openTask(_ id: String) { tab = .activity; destination = .task(id) }
     func openDecision(_ id: String) { activityFilter = "all"; tab = .activity; destination = .decision(id) }
+    /// A private supervisor approval alert. Opening it only brings the owner to
+    /// that exact proposal in private Keir; the approve or reject card there is
+    /// what decides, through the authenticated request. Alerts never approve.
+    @Published var supervisorProposal: String?
+    func openSupervisorProposal(_ id: String) { tab = .keir; supervisorProposal = id; destination = .proposal(id) }
     func openDecisionTask(_ decision: JSONValue) {
         if decision["canOpenTask"] == .bool(false), decision["ticket"] != .null { tab = .activity; destination = .ticket(.object(["number": decision["ticket"]])) }
         else { openTask(decision["jobId"].string) }
     }
-    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; activityFilter = "all" }
+    func reset() { tab = .keir; openKeirControls = false; openKeirVoice = false; destination = nil; supervisorProposal = nil; activityFilter = "all"; studioPath = []; showSettings = false }
 }
 
 enum OpsDestination: Identifiable, Equatable {
-    case task(String), decision(String), ticket(JSONValue), alerts
-    var id: String { switch self { case .task(let id): return "task-" + id; case .decision(let id): return "decision-" + id; case .ticket(let ticket): return "ticket-" + ticket["number"].string; case .alerts: return "alerts" } }
+    case task(String), decision(String), proposal(String), ticket(JSONValue), alerts
+    var id: String { switch self { case .task(let id): return "task-" + id; case .decision(let id): return "decision-" + id; case .ticket(let ticket): return "ticket-" + ticket["number"].string; case .proposal(let id): return "proposal-" + id; case .alerts: return "alerts" } }
 }
 
-enum OpsTab: Hashable { case keir, feed, goals, activity, ops }
+/// The three places the app lives: the conversation, the inbox (tickets,
+/// decisions, work) and the studio's operations. `activity` is the inbox; the
+/// case keeps its name so links and notifications written for earlier builds
+/// still resolve.
+enum OpsTab: Hashable { case keir, activity, ops }
+
+/// Screens reachable from Ops that earlier builds exposed as tabs.
+enum StudioRoute: Hashable { case feed, goals }
 
 @MainActor final class OpsPushStatus: ObservableObject {
     @Published var message = "Not registered yet"
@@ -90,13 +109,13 @@ final class OpsAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationC
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
         OpsNotificationDelivery.handle(route: info["route"] as? String, thread: info["thread"] as? String,
-                                       decision: info["decision"] as? String, action: response.actionIdentifier,
+                                       decision: info["decision"] as? String, proposal: info["proposal"] as? String, action: response.actionIdentifier,
                                        text: (response as? UNTextInputNotificationResponse)?.userText ?? "", completion: completionHandler)
     }
 }
 
 enum OpsNotificationDelivery {
-    nonisolated static func handle(route: String?, thread: String?, decision: String?, action: String, text: String,
+    nonisolated static func handle(route: String?, thread: String?, decision: String?, proposal: String? = nil, action: String, text: String,
                                     completion: @escaping () -> Void) {
         Task { @MainActor in
             defer { completion() }
@@ -104,8 +123,13 @@ enum OpsNotificationDelivery {
             switch route {
             case "keir": services.keir.select(thread ?? "main"); services.router.tab = .keir
             case "decision": if let decision { services.router.openDecision(decision) } else { services.router.tab = .activity }
+            case "supervisor-proposal":
+                // Only a well-formed proposal id is accepted, and only into the owner supervisor thread.
+                if let proposal, proposal.range(of: "^p_[a-f0-9]{16}$", options: .regularExpression) != nil {
+                    services.keir.select(KeirStore.supervisorThread); services.router.openSupervisorProposal(proposal)
+                } else { services.keir.select(KeirStore.supervisorThread); services.router.tab = .keir }
             case "alerts": services.router.tab = .ops; services.router.destination = .alerts
-            case "feed": services.router.tab = .feed
+            case "feed": services.router.open(.feed)
             default: break
             }
             if let decision, ["approve", "reject", "explain"].contains(action) {
@@ -139,7 +163,7 @@ enum OpsNotificationDelivery {
         guard appSession.signedIn else { return }
         let status = OpsServices.shared.push
         do {
-            _ = try await appSession.post("/api/keir/app/devices", ["token": .string(token), "prefs": OpsPushPrefs.payload])
+            _ = try await appSession.post("/api/keir/app/devices", ["token": .string(token), "prefs": OpsPushPrefs.payload, "quiet": QuietHours.load().payload])
             status.lastRegistered = Date(); status.message = "Registered with Keir"; status.error = nil
         } catch { status.error = "Device registration will retry: \(error.displayMessage)" }
     }

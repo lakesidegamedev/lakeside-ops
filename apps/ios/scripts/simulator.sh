@@ -7,10 +7,24 @@ simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,
 test_args=(test)
 case "${OPS_TEST_SCOPE:-full}" in
   full) ;;
+  owner)
+    test_args+=(
+      -only-testing:OpsSessionTests
+      -only-testing:OpsUITests/LaunchTests/testChatShellInLightAndOLEDThemes
+      -only-testing:OpsUITests/LaunchTests/testTicketSupervisionTakeDirectAndHandBack
+      -only-testing:OpsUITests/LaunchTests/testTicketQueueShowsBlockedWaitAndNextCheck
+      -only-testing:OpsUITests/LaunchTests/testActivityApprovalsPlanAndLiveWork
+      -only-testing:OpsUITests/LaunchTests/testTicketFollowUpStaysReachableInAConversationWithHistory
+      -only-testing:OpsUITests/LaunchTests/testNativeSignInAndCancellation
+      -only-testing:OpsUITests/KeirGamesUITests/testTicketQuestionsAreOnlyForAHouseDivided
+      -only-testing:OpsUITests/LaunchTests/testKeirReopensTheLastPrivateConversationAfterForceQuit
+      -only-testing:OpsUITests/KeirGamesUITests/testSelectAGameSeeWhatKeirCanReadAndAskInTheConversation
+    )
+    ;;
   computer) test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testComputerInputUncertaintyInspectionAndClose -only-testing:OpsUITests/LaunchTests/testCancelledComputerInspectionAndExplicitDiscard -only-testing:OpsUITests/LaunchTests/testChoicesModelSwitchAndConcurrentWork -only-testing:OpsUITests/LaunchTests/testKeirThreadDecisionAndReply -only-testing:OpsUITests/LaunchTests/testWatchesMemoryAndThreads) ;;
   connection) test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testKeirUnavailableKeepsDraftAndRetriesConnection -only-testing:OpsUITests/LaunchTests/testKeirThreadDecisionAndReply) ;;
   metrics) test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testKeirDashboardMetricsAndMonitoring -only-testing:OpsUITests/LaunchTests/testKeirDashboardDoesNotInventMissingMetrics) ;;
-  redesign) test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testFeedWithBriefIdeasAndUpcoming -only-testing:OpsUITests/LaunchTests/testKeirThreadDecisionAndReply -only-testing:OpsUITests/LaunchTests/testWorkingNowBarAndProgressUpdates -only-testing:OpsUITests/LaunchTests/testAttentionCountsMatchAcrossScreens -only-testing:OpsUITests/LaunchTests/testKeirToolsMenuDoesNotDuplicateOps -only-testing:OpsUITests/LaunchTests/testBrokenStatusTextNeverBecomesAStatus -only-testing:OpsUITests/LaunchTests/testOpsSystemsDrillDowns -only-testing:OpsUITests/LaunchTests/testIdeasSwipeTriage -only-testing:OpsUITests/LaunchTests/testRedesignEvidenceScreens -only-testing:OpsUITests/LaunchTests/testAccessibilityTextSizeKeepsPrimaryActionsReachable) ;;
+  redesign) test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testFeedWithBriefIdeasAndUpcoming -only-testing:OpsUITests/LaunchTests/testKeirThreadDecisionAndReply -only-testing:OpsUITests/LaunchTests/testWorkingNowBarAndProgressUpdates -only-testing:OpsUITests/LaunchTests/testAttentionCountsMatchAcrossScreens -only-testing:OpsUITests/LaunchTests/testKeirToolsMenuDoesNotDuplicateOps -only-testing:OpsUITests/LaunchTests/testBrokenStatusTextNeverBecomesAStatus -only-testing:OpsUITests/LaunchTests/testOpsSystemsDrillDowns -only-testing:OpsUITests/LaunchTests/testIdeasSwipeTriage -only-testing:OpsUITests/LaunchTests/testRedesignEvidenceScreens -only-testing:OpsUITests/LaunchTests/testAccessibilityTextSizeKeepsPrimaryActionsReachable -only-testing:OpsUITests/LaunchTests/testChatShellInLightAndOLEDThemes -only-testing:OpsUITests/LaunchTests/testComposerSwapsMicrophoneForSendAndShowsRouting -only-testing:OpsUITests/LaunchTests/testNativeStopStartAndYoloControls -only-testing:OpsUITests/LaunchTests/testConversationIsHomeAndContextChipOpensInbox -only-testing:OpsUITests/LaunchTests/testTicketFollowUpStaysReachableInAConversationWithHistory) ;;
   *) exit 2 ;;
 esac
 xcodebuild "${test_args[@]}" -project LakesideOps.xcodeproj -scheme "$scheme" \

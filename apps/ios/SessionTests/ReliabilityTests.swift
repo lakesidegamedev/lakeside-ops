@@ -47,7 +47,8 @@ private final class ReliabilityTransport: URLProtocol, @unchecked Sendable {
             }
         }
         await fulfillment(of: [finished], timeout: 5)
-        XCTAssertEqual(OpsServices.shared.router.tab, .feed)
+        XCTAssertEqual(OpsServices.shared.router.tab, .ops)
+        XCTAssertEqual(OpsServices.shared.router.studioPath, [.feed])
     }
 
     func testDownstream401DoesNotDiscardTheOwnersSession() async throws {
@@ -113,6 +114,22 @@ private final class ReliabilityTransport: URLProtocol, @unchecked Sendable {
         await fulfillment(of: [finished], timeout: 5)
         XCTAssertEqual(OpsServices.shared.router.destination, .decision("abcdefabcdef"))
         OpsServices.shared.router.reset()
+    }
+    func testPrivateApprovalAlertOpensItsExactProposalAndNeverDecides() async {
+        let finished = expectation(description: "Proposal routed")
+        OpsNotificationDelivery.handle(route: "supervisor-proposal", thread: "owner-supervisor", decision: nil, proposal: "p_0123456789abcdef", action: "approve", text: "") { finished.fulfill() }
+        await fulfillment(of: [finished], timeout: 5)
+        XCTAssertEqual(OpsServices.shared.router.tab, .keir)
+        XCTAssertEqual(OpsServices.shared.router.supervisorProposal, "p_0123456789abcdef")
+        XCTAssertEqual(OpsServices.shared.router.destination, .proposal("p_0123456789abcdef"))
+        XCTAssertEqual(OpsServices.shared.keir.thread, KeirStore.supervisorThread)
+        // A malformed id is never routed to, and an alert action never answers anything.
+        OpsServices.shared.router.reset()
+        let bad = expectation(description: "Bad id ignored")
+        OpsNotificationDelivery.handle(route: "supervisor-proposal", thread: nil, decision: nil, proposal: "../x", action: "default", text: "") { bad.fulfill() }
+        await fulfillment(of: [bad], timeout: 5)
+        XCTAssertNil(OpsServices.shared.router.supervisorProposal)
+        OpsServices.shared.reset()
     }
 
 }
