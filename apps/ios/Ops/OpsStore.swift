@@ -14,6 +14,7 @@ import LakesideCore
     /// Keir's ticket work queue (`/api/keir/app/work`). Shared so the Inbox
     /// badge, Ops and the Inbox list read the same tickets.
     @Published var work: JSONValue = .null
+    @Published var tasks: [JSONValue] = []
     @Published var answerReceipt: JSONValue = .null
     /// The last refresh that reached the server at all.
     @Published var updated: Date?
@@ -28,7 +29,7 @@ import LakesideCore
     private var generation = UUID()
     func reset() {
         generation = UUID(); services = []; hub = .null; kanban = .null; host = .null; scheduler = .null
-        decisions = []; alerts = []; work = .null; answerReceipt = .null; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
+        decisions = []; alerts = []; work = .null; tasks = []; answerReceipt = .null; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
         AttentionCenter.shared.reset()
     }
     var kpis: JSONValue { hub["kpis"] }
@@ -91,7 +92,7 @@ import LakesideCore
         }
     }
 
-    private static let panelCount = 7
+    private static let panelCount = 8
     private static func list(_ names: [String]) -> String {
         guard names.count > 1 else { return names.first ?? "" }
         return names.dropLast().joined(separator: ", ") + " and " + names.last!
@@ -108,18 +109,21 @@ import LakesideCore
         async let open = try? session.get("/api/keir/app/decisions")
         async let feed = try? session.get("/api/keir/app/alerts")
         async let queue = try? session.get("/api/keir/app/work")
-        let (s, k, b, h, d, a, w) = await (status, keir, board, schedule, open, feed, queue)
+        async let taskList = try? session.get("/api/keir/app/tasks")
+        let (s, k, b, h, d, a, w, t) = await (status, keir, board, schedule, open, feed, queue, taskList)
         guard generation == epoch else { return }
         if let s { services = s["services"].array }
-        if let k { hub = k; activityUpdated = Date() }
+        if let k { hub = k }
+        if t != nil, w != nil { activityUpdated = Date() }
         if let b { kanban = b }
         if let h { host = h["host"]; scheduler = h }
         if let d { decisions = d["decisions"].array }
         if let a { alerts = a["alerts"].array }
         if let w { work = w }
+        if let t { tasks = t["tasks"].array }
         rebuildAttention()
-        let names = ["Service status", "Keir activity", "Work board", "Scheduler", "Decisions", "Alerts", "Ticket queue"]
-        failedPanels = zip(names, [s, k, b, h, d, a, w]).filter { $0.1 == nil }.map { $0.0 }
+        let names = ["Service status", "Keir activity", "Work board", "Scheduler", "Decisions", "Alerts", "Ticket queue", "Tasks"]
+        failedPanels = zip(names, [s, k, b, h, d, a, w, t]).filter { $0.1 == nil }.map { $0.0 }
         error = failedPanels.count == Self.panelCount ? "Ops is unreachable. Pull to retry." : failedPanels.isEmpty ? nil : "\(Self.list(failedPanels)) could not refresh."
         if failedPanels.count < Self.panelCount { updated = Date() }
     }
@@ -130,13 +134,17 @@ import LakesideCore
         let epoch = generation
         async let open = try? session.get("/api/keir/app/decisions")
         async let queue = try? session.get("/api/keir/app/work")
-        let (d, w) = await (open, queue)
+        async let taskList = try? session.get("/api/keir/app/tasks")
+        let (d, w, t) = await (open, queue, taskList)
         guard generation == epoch else { return nil }
         if let d { decisions = d["decisions"].array }
         if let w { work = w }
+        if let t { tasks = t["tasks"].array }
+        if t != nil, w != nil { activityUpdated = Date() }
         rebuildAttention()
         if d == nil { return "Decisions could not refresh. Pull to retry." }
         if w == nil { return "Ticket queue could not refresh. The last list is still shown." }
+        if t == nil { return "Tasks could not refresh. The last list is still shown." }
         return nil
     }
 
@@ -537,7 +545,7 @@ import LakesideCore
         let home = JSONValue.object(["id": .string(Self.supervisorThread), "title": .string("Keir"), "system": .bool(true), "preview": .string("Your private conversation")])
         let others = threads.map { row -> JSONValue in
             guard row["id"].string == "main" else { return row }
-            var fields = row.object; fields["title"] = .string("Support Keir")
+            var fields = row.object; fields["title"] = .string("Support desk")
             return .object(fields)
         }
         return [home] + others

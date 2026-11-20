@@ -49,7 +49,12 @@ final class WorkQueueTests: XCTestCase {
             }
         }
     }
-    func testCompactRowsDoNotClaimAnUnknownCompletionTime() {
-        XCTAssertEqual(WorkTimingView.noEstimate, "Completion time not established")
+    func testAnAbortedWorkerIsBlockedWithoutBeingReportedAsRunning() {
+        let item: JSONValue = .object(["timing": .object([
+            "state": .string("working"), "reason": .string("activation aborted: no result")
+        ])])
+        XCTAssertEqual(WorkQueuePresentation.label(item), "Stalled")
+        XCTAssertEqual(WorkQueuePresentation.bucket(item), "stuck")
+        XCTAssertEqual(WorkQueuePresentation.status(item), .failed)
     }
 }

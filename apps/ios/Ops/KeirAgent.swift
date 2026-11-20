@@ -117,7 +117,6 @@ struct ActivityView: View {
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
     @EnvironmentObject private var session: AppSession
-    @State private var tasks: [JSONValue] = []
     @State private var error: String?
     @State private var search = ""
     @State private var scope = "tickets"
@@ -128,6 +127,7 @@ struct ActivityView: View {
     /// The queue and the badge read the same ticket list from the shared store.
     private var work: JSONValue { ops.work }
     private var tickets: [JSONValue] { ops.openTickets }
+    private var tasks: [JSONValue] { ops.tasks }
     private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
     private var entries: [JSONValue] { showTickets ? tickets : tasks }
     private var trimmedSearch: String { search.trimmingCharacters(in: .whitespaces) }
@@ -140,7 +140,7 @@ struct ActivityView: View {
 
     private func queueRows(_ key: String, search: String) -> [JSONValue] {
         guard key != "needs-you" else { return [] }
-        let held = Set(attention.items.compactMap(\.ticketNumber).map(String.init))
+        let held = Set(attention.items.compactMap(\.ticketNumber).map { String($0) })
         return entries.filter {
             (!showTickets || !held.contains($0["number"].string))
                 && WorkQueuePresentation.matches($0, filter: key, search: search, ticket: showTickets)
@@ -314,9 +314,7 @@ struct ActivityView: View {
     }
 
     private func load() async {
-        do { tasks = try await session.get("/api/keir/app/tasks")["tasks"].array; error = nil }
-        catch { self.error = error.displayMessage }
-        if let failure = await ops.refreshInbox(session) { error = failure }
+        error = await ops.refreshInbox(session)
     }
 }
 

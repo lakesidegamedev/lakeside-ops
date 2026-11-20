@@ -13,8 +13,9 @@ struct OpsHub: View {
 
     private var broken: Int { ops.servicesDown.count + ops.redPRs }
     private var openTickets: Int { ops.openTickets.count }
-    private var running: Int { Int(ops.kpis["running"].number ?? 0) }
-    private var queued: Int { Int(ops.kpis["queued"].number ?? 0) }
+    private var activity: [JSONValue] { ops.tasks + ops.openTickets }
+    private var running: Bool { activity.contains { WorkQueuePresentation.bucket($0) == "working" } }
+    private var queued: Bool { activity.contains { WorkQueuePresentation.bucket($0) == "waiting" } }
     private var blockedWork: Int { ops.blocked.count }
     private var nowWork: Int { ops.kanban["now"].array.count }
     private var nextWork: Int { ops.kanban["next"].array.count }
@@ -69,7 +70,9 @@ struct OpsHub: View {
         switch ops.heartbeat(now: now) {
         case .stalled, .unreachable: return .blocked
         case .connecting: return .idle
-        case .fresh: return running > 0 ? .running : .idle
+        case .fresh:
+            if running { return .running }
+            return activity.contains { WorkQueuePresentation.state($0) == "stalled" } ? .blocked : .idle
         }
     }
 
@@ -78,14 +81,14 @@ struct OpsHub: View {
         case .connecting: return "Checking on Keir"
         case .unreachable: return "Keir's state is unknown"
         case .stalled:
-            return running > 0 ? "Keir was running \(running) task\(running == 1 ? "" : "s") when last heard from" : "Keir's state is not current"
+            return "Keir’s activity is out of date"
         case .fresh:
             guard ops.activityUpdated != nil else { return "Keir's activity has not loaded" }
-            if running > 0 {
-                let rest = queued > 0 ? ", \(queued) queued" : ""
-                return "Keir is running \(running) task\(running == 1 ? "" : "s")\(rest)"
+            if running { return "Keir is working" }
+            if activity.contains(where: { WorkQueuePresentation.state($0) == "stalled" }) {
+                return "Keir has stalled work"
             }
-            return queued > 0 ? "Keir is idle with \(queued) queued" : "Keir is idle"
+            return queued ? "Keir is idle with work queued" : "Keir is idle"
         }
     }
 

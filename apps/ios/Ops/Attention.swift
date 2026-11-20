@@ -43,7 +43,7 @@ final class AttentionCenter: ObservableObject {
     /// its timing state is needs-you. Finished tickets never count.
     static func waitsOnDecision(_ ticket: JSONValue) -> Bool {
         guard KeirTicketFollowUp.isOpen(ticket) else { return false }
-        return ticket["decisionPending"].bool || ticket["timing"]["state"].string == "needs-you"
+        return WorkQueuePresentation.state(ticket) == "needs-you"
     }
 
     private static func ticketNumber(_ value: JSONValue) -> Int? {

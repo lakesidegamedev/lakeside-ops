@@ -71,17 +71,17 @@ enum TicketPresentation {
         if base == .failed { return (.failed, "Failed") }
         if base == .done { return (.done, "Done") }
         if ownerDecision { return (.waiting, "Waiting on you") }
+        if base == .running {
+            let seen = [updatedAt, timing["heartbeatAt"]].compactMap(OpsFormat.date).max()
+            if timing["stale"].bool || (seen.map { now.timeIntervalSince($0) > staleAfter } ?? true) { return (.blocked, "Stalled") }
+        }
         if blocked || base == .blocked { return (.blocked, "Blocked") }
         let expected = OpsFormat.date(timing["expectedDoneAt"])
         if timing["overdue"].bool || (expected.map { $0 <= now } ?? false) { return (.blocked, "Overdue") }
-        if base == .running {
-            let updated = OpsFormat.date(updatedAt)
-            if timing["stale"].bool || (updated.map { now.timeIntervalSince($0) > staleAfter } ?? true) { return (.blocked, "Stalled") }
-            return (.running, "Running")
-        }
         switch base {
+        case .running: return (.running, "Running")
         case .queued: return (.queued, "Queued")
-        case .waiting: return (.waiting, "Waiting on you")
+        case .waiting: return (.waiting, "Waiting")
         default: return (.idle, "Idle")
         }
     }
@@ -203,7 +203,7 @@ struct TicketDetail: View {
     private var statusSection: some View {
         let expected = OpsFormat.date(timing["expectedDoneAt"])
         let overdue = status.label == "Overdue" || (status.status != .done && status.status != .failed && (timing["overdue"].bool || (expected.map { $0 <= Date() } ?? false)))
-        let started = OpsFormat.ago(timing["since"] == .null ? current["startedAt"] : timing["since"])
+        let started = OpsFormat.ago(worker["startedAt"] == .null ? current["startedAt"] : worker["startedAt"])
         return VStack(alignment: .leading, spacing: 10) {
             row("Status") { OpsStatusBadge(status: status.status, label: status.label, compact: true) }
             row("Owner") { Text(supervision.state == .null ? "Checking" : supervision.ownerWord).font(.callout) }
@@ -254,7 +254,8 @@ struct TicketDetail: View {
                 Text(line).font(.body).textSelection(.enabled)
             }
             if current != .null {
-                Text("Updated \(OpsFormat.ago(current["updatedAt"]))").font(.caption).foregroundStyle(OpsTheme.muted)
+                let updated = OpsFormat.ago(current["updatedAt"])
+                if !updated.isEmpty { Text("Updated \(updated)").font(.caption).foregroundStyle(OpsTheme.muted) }
             } else if let error {
                 Text(error).font(.callout).foregroundStyle(OpsTheme.warn)
                 Button("Retry ticket activity") { Task { await load() } }
@@ -334,8 +335,8 @@ struct TicketDetail: View {
     }
 
     @ViewBuilder private var detailsSection: some View {
-        let summary = TicketPresentation.clean(current["summary"].string)
-        let next = TicketPresentation.clean(worker["nextAction"].string)
+        let summary = OpsText.scrub(current["summary"].string)
+        let next = OpsText.scrub(worker["nextAction"].string)
         let tasks = detail["tasks"].array.filter { $0["canOpen"].bool }
         DisclosureGroup("Details") {
             VStack(alignment: .leading, spacing: 16) {

@@ -3,14 +3,14 @@ import LakesideCore
 
 enum WorkQueuePresentation {
     static func state(_ item: JSONValue) -> String {
-        if item["decisionPending"].bool { return "needs-you" }
         let timing = item["timing"]
         let value = timing["state"].string
+        if value == "needs-you" || (value.isEmpty && item["decisionPending"].bool) { return "needs-you" }
         let reason = timing["reason"].string.lowercased()
         if reason.contains("activation aborted") { return "stalled" }
         if value == "working" || (value.isEmpty && item["state"].string == "running") {
-            if let heartbeat = OpsFormat.date(timing["heartbeatAt"] == .null ? item["updatedAt"] : timing["heartbeatAt"]),
-               Date().timeIntervalSince(heartbeat) > 20 * 60 { return "stalled" }
+            let heartbeat = [timing["heartbeatAt"], item["active"]["updatedAt"], item["updatedAt"]].compactMap(OpsFormat.date).max()
+            if heartbeat.map({ Date().timeIntervalSince($0) > TicketPresentation.staleAfter }) ?? true { return "stalled" }
         }
         if !value.isEmpty { return value }
         switch item["state"].string {
@@ -31,7 +31,7 @@ enum WorkQueuePresentation {
         return (filter == "all" || filter == bucket(item)) && (search.isEmpty || text.localizedCaseInsensitiveContains(search))
     }
     /// The default Inbox (Tickets, All, no search) leads with owner pings:
-    /// tickets with no recorded reply, then Needs you. A filter,
+    /// Needs you, then the work groups. A filter,
     /// a search or the Tasks scope is a request for specific work, so the
     /// matching queue rows lead instead.
     static func leadsWithOwnerItems(scope: String, filter: String, search: String) -> Bool {
@@ -56,6 +56,7 @@ enum WorkQueuePresentation {
         return ["working": "Running", "waiting": "Queued", "queued": "Queued", "held": "Held", "stuck": "Blocked", "unassigned": "Unassigned", "needs-you": "Needs you", "finished": "Done"][s] ?? OpsStatus.from(s).title
     }
     static func status(_ item: JSONValue) -> OpsStatus {
+        if state(item) == "stalled" && item["timing"]["reason"].string.localizedCaseInsensitiveContains("aborted") { return .failed }
         if item["timing"]["overdue"].bool { return .blocked }
         return OpsStatus.from(state(item))
     }
@@ -70,26 +71,25 @@ struct WorkTimingView: View {
     var compact = false
     /// Queue rows show the age on their top line beside the chevron.
     var showsSince = true
-    private static let noEstimate = "Completion time not " + "established"
     private var estimate: Text {
         if let expected = OpsFormat.date(value["expectedDoneAt"]) {
             return Text(expected <= Date() ? "Keir's task estimate is overdue" : "Task estimate: \(OpsFormat.clock(expected))")
         }
-        return Text(value["etaLabel"].string.nonempty ?? Self.noEstimate)
+        return Text("")
     }
     /// A compact row says nothing about completion unless there is an estimate.
     private var hasEstimate: Bool {
-        OpsFormat.date(value["expectedDoneAt"]) != nil || !["", Self.noEstimate].contains(value["etaLabel"].string)
+        OpsFormat.date(value["expectedDoneAt"]) != nil
     }
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 5 : 10) {
             if !value["reason"].string.isEmpty {
-                Text(OpsText.scrub(value["reason"].string)).font(compact ? .caption : .callout).lineLimit(compact ? 2 : nil)
+                Text(value["reason"].string.localizedCaseInsensitiveContains("activation aborted") ? "Keir’s last attempt stopped before it could finish." : OpsText.scrub(value["reason"].string)).font(compact ? .caption : .callout).lineLimit(compact ? 2 : nil)
             }
             if !compact && !value["milestone"].string.isEmpty && value["milestone"] != value["reason"] {
                 Label(OpsText.scrub(value["milestone"].string), systemImage: "flag").font(.callout)
             }
-            if !value["next"].string.isEmpty {
+            if !value["next"].string.isEmpty && value["next"].string != "Keir will record the next result." {
                 Text("Next: \(OpsText.scrub(value["next"].string))").font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(compact ? 2 : nil)
             }
             HStack(spacing: 12) {
@@ -101,7 +101,7 @@ struct WorkTimingView: View {
                 }
             }.foregroundStyle(OpsTheme.muted)
             if compact && value["state"].string != "finished" && hasEstimate {
-                estimate.font(.caption2).foregroundStyle(OpsTheme.muted)
+                estimate.font(.caption2).foregroundStyle(value["overdue"].bool ? OpsTheme.warn : OpsTheme.muted)
             }
             if !compact {
                 if hasEstimate { estimate.font(.caption).foregroundStyle(value["overdue"].bool ? OpsTheme.warn : OpsTheme.muted) }

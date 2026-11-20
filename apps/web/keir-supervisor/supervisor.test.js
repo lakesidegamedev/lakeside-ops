@@ -85,13 +85,13 @@ function repairModel(log = []) {
   };
 }
 
-function setup({ executor, sandbox, publisher = null, publishEnabled = false, root = tmp(), maxAttempts = 2, attention = null } = {}) {
+function setup({ executor, sandbox, publisher = null, publishEnabled = false, root = tmp(), maxAttempts = 2, attention = null, evidence = null } = {}) {
   const source = fs.existsSync(path.join(root, "source")) ? path.join(root, "source") : fixtureRepo(root);
   const guardianDir = fs.existsSync(path.join(root, "guardian")) ? path.join(root, "guardian") : guardianFile(root);
   const stateDir = path.join(root, "state");
   const repos = { "lakeside-ops": { key: "lakeside-ops", source, base: "main", github: null, deps: [], note: "fixture", available: true, reason: null } };
   const sb = sandbox || createSandbox(path.join(stateDir, "workspaces"));
-  const sup = createSupervisor({ stateDir, repos, sandbox: sb, executor, guardianDir, publisher, publishEnabled, maxAttempts, attention });
+  const sup = createSupervisor({ stateDir, repos, sandbox: sb, executor, guardianDir, publisher, publishEnabled, maxAttempts, attention, evidence });
   return { root, source, stateDir, sup, sandbox: sb, repos, guardianDir };
 }
 
@@ -115,6 +115,28 @@ async function serve(sup, status = async () => ({ configured: true })) {
 }
 
 async function untilIdle(sup) { assert.equal(await sup.idle(120000), true, "jobs did not settle"); }
+
+test("a requested queue snapshot persists with the answer and limits the rendered rows", async (t) => {
+  const snapshot = { state: "read", at: Date.now(), possiblyMore: false,
+    items: Array.from({ length: 13 }, (_, i) => ({ number: i + 1, title: `Ticket ${i + 1}`, status: "open" })) };
+  const evidence = { queue: async () => snapshot };
+  const executor = { available: () => ({ available: true }), async run({ toolUrl }) {
+    const client = mcp(toolUrl);
+    await client.init();
+    assert.deepEqual(await client.call("support_queue", { showCard: true }), snapshot);
+    return { text: "I found 13 open tickets." };
+  } };
+  const { sup, root } = setup({ executor, evidence });
+  t.after(() => { sup.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  await sup.start();
+  sup.post("Show my open tickets", "test-queue-card");
+  await untilIdle(sup);
+  const answer = sup.thread({}).messages.find((message) => message.kind === "answer");
+  assert.equal(answer.text, "I found 13 open tickets.");
+  assert.deepEqual(answer.queueCard.items, snapshot.items.slice(0, 12));
+  assert.equal(answer.queueCard.possiblyMore, true);
+});
+
 
 let sandboxState = null;
 async function sandboxReady() {

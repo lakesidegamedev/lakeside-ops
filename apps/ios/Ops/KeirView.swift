@@ -4,9 +4,8 @@ import LakesideCore
 
 /// The chat. Keir sits at the top, the timeline is the screen, and one pill
 /// composer sits at the bottom above the dock. Work, decisions and questions
-/// appear inline as objects only when they exist. Settings, stop, model,
-/// routing, conversations and the desk are behind the two menus (Keir's menu
-/// at the top left and "+" in the composer), so the screen itself stays quiet.
+/// appear inline when they exist. The header holds conversation controls and
+/// the composer holds attachments and message options.
 struct KeirView: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore

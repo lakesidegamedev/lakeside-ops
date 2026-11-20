@@ -15,9 +15,10 @@ final class TicketDetailTests: XCTestCase {
     func testAbortedBlockedAndOverdueAreNeverRunning() {
         XCTAssertEqual(TicketPresentation.status(raw: "aborted", now: now).status, .failed)
         XCTAssertEqual(TicketPresentation.status(raw: "running", ownerDecision: true, now: now).label, "Waiting on you")
-        XCTAssertEqual(TicketPresentation.status(raw: "running", blocked: true, now: now).label, "Blocked")
+        let fresh = JSONValue.number(now.timeIntervalSince1970 * 1000)
+        XCTAssertEqual(TicketPresentation.status(raw: "running", updatedAt: fresh, blocked: true, now: now).label, "Blocked")
         let overdue = JSONValue.object(["overdue": .bool(true)])
-        XCTAssertEqual(TicketPresentation.status(raw: "running", timing: overdue, now: now).label, "Overdue")
+        XCTAssertEqual(TicketPresentation.status(raw: "running", updatedAt: fresh, timing: overdue, now: now).label, "Overdue")
         XCTAssertEqual(TicketPresentation.status(raw: "", now: now).status, .idle)
     }
 

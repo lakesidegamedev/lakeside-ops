@@ -347,7 +347,7 @@ final class LaunchTests: XCTestCase {
         capture(app, "Desk")
         app.navigationBars.buttons.firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Ops"].waitForExistence(timeout: 5))
-        openRow(app, "Work in progress")
+        openRow(app, "Studio work in progress")
         XCTAssertTrue(find(app, "Keir chat in Lakeside Ops").waitForExistence(timeout: 10))
         capture(app, "Work")
         app.navigationBars.buttons.firstMatch.tap()
@@ -370,7 +370,7 @@ final class LaunchTests: XCTestCase {
         app.buttons["ops-starmer-flip"].tap()
         let working = app.staticTexts["ops-starmer-working"]
         XCTAssertTrue(working.waitForExistence(timeout: 5))
-        XCTAssertTrue(find(app, "Choose payroll behavior").waitForExistence(timeout: 5))
+        XCTAssertTrue(find(app, "Open Inbox to view tickets and tasks.").waitForExistence(timeout: 5))
         capture(app, "Ops widget working")
     }
 
@@ -890,6 +890,7 @@ final class LaunchTests: XCTestCase {
         go(app, "Activity")
         let blocked = app.buttons["work-filter-stuck"]
         XCTAssertTrue(blocked.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["work-filter-needs-you"].exists)
         capturePage("Inbox all")
         for _ in 0..<6 where !blocked.isHittable { app.swipeDown() }
         blocked.tap()
@@ -946,7 +947,7 @@ final class LaunchTests: XCTestCase {
             capture(app, "\(name) chat")
 
             app.buttons["keir-tools"].tap()
-            XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5), name)
+            XCTAssertTrue(app.buttons["Connected games"].waitForExistence(timeout: 5), name)
             XCTAssertTrue(app.buttons["Stop Keir"].exists, "stop is one deliberate tap away")
             capture(app, "\(name) Keir menu")
             dismissMenu(app, closing: app.buttons["Stop Keir"])

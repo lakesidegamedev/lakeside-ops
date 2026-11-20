@@ -736,7 +736,7 @@ enum KeirAgentFixtures {
             }
             return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": (OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []) + [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]
         case "/api/keir/app/tasks":
-            let running: [String: Any] = ["id": "abcdef012345", "kind": "command", "state": "running", "title": "Promote development to production", "surface": "app", "receipts": 2, "decisionPending": false, "updatedAt": 1792020000000.0, "at": 1792019000000.0]
+            let running: [String: Any] = ["id": "abcdef012345", "kind": "command", "state": "running", "title": "Promote development to production", "surface": "app", "receipts": 2, "decisionPending": false, "updatedAt": Date().timeIntervalSince1970 * 1000, "at": 1792019000000.0]
             let done: [String: Any] = ["id": "fedcba543210", "kind": "conversation", "state": "done", "title": "How did the last turn go?", "surface": "app", "receipts": 0, "decisionPending": false, "updatedAt": 1792018000000.0, "at": 1792018000000.0]
             return ["tasks": [running, done]]
         case "/api/keir/app/tasks/abcdef012345":
