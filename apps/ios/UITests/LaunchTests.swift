@@ -955,6 +955,10 @@ final class LaunchTests: XCTestCase {
         let blocked = app.buttons["work-filter-stuck"]
         XCTAssertTrue(blocked.waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["work-filter-needs-you"].exists)
+        XCTAssertTrue(find(app, "Checks need a fresh run").waitForExistence(timeout: 8))
+        let approve = app.buttons["decision-approve"]
+        XCTAssertTrue(approve.exists)
+        XCTAssertFalse(approve.isEnabled)
         capturePage("Inbox all")
         let search = app.searchFields.firstMatch
         for _ in 0..<6 where !search.isHittable { app.swipeDown() }
@@ -969,9 +973,6 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(blocked.waitForExistence(timeout: 10))
         blocked.tap()
         capturePage("Inbox blocked", scrolls: 3)
-        for _ in 0..<6 { app.swipeDown() }
-        go(app, "Ops")
-        go(app, "Activity")
         goToFilter(app, "work-filter-stalled")
         openRow(app, "Massive drop in revenue turn 77-78", swipes: 6)
         XCTAssertTrue(find(app, "Massive drop in revenue turn").waitForExistence(timeout: 10))

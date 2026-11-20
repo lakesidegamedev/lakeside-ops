@@ -158,14 +158,12 @@ struct TicketDirectionsList: View {
     }
 }
 
-/// The direction composer, pinned above the keyboard. One helper line sits
-/// above the field; there is no plus because nothing attaches to a direction.
+/// Ticket directions use the same pill as chat and stay above the keyboard.
 struct TicketDirectionComposer: View {
     @EnvironmentObject private var session: AppSession
     @ObservedObject var model: TicketSupervisionModel
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-                .padding(.horizontal, 16)
             KeirComposerPill { EmptyView() } field: {
                 TextField("Message Keir", text: $model.draft, axis: .vertical).lineLimit(1...5)
                     .padding(.leading, 14)
