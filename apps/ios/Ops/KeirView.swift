@@ -25,6 +25,8 @@ struct KeirView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var sheet: KeirSheet?
     @State private var presentingSheet = false
+    /// Set by the sheet's own content when it appears; see `presentFromMenu`.
+    @State private var sheetOnScreen: KeirSheet?
     @State private var sheetRequest: Task<Void, Never>?
     @State private var connectionAttempt = 0
     @State private var confirmingYoloOff = false
@@ -370,8 +372,8 @@ struct KeirView: View {
         }
         .fullScreenCover(isPresented: $voiceMode) { KeirVoiceMode(keir: keir) }
         .onChange(of: sheet) { _, next in if next != nil { presentingSheet = true } }
-        .sheet(item: $sheet, onDismiss: { presentingSheet = false }) { which in
-            switch which {
+        .sheet(item: $sheet, onDismiss: { presentingSheet = false; sheetOnScreen = nil }) { which in
+            Group { switch which {
             case .controls: KeirControls(keir: keir, voice: voice)
             case .threads: KeirThreads(keir: keir)
             case .computer: NavigationStack { KeirComputer().toolbar { Button("Done") { sheet = nil } } }
@@ -380,7 +382,8 @@ struct KeirView: View {
             case .memory: NavigationStack { MemoryView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { sheet = nil } } } }
             case .games: KeirGamesSheet(draftEmpty: draftIsEmpty) { text in guard draftIsEmpty else { return }; draft = text; composing = true; sheet = nil }
             case .desk: NavigationStack { DeskView().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { sheet = nil } } } }
-            }
+            } }
+            .onAppear { sheetOnScreen = which }
         }
     }
 
@@ -429,13 +432,22 @@ struct KeirView: View {
         }
     }
 
+    /// A sheet requested while UIKit is still closing the menu is dropped, but
+    /// `sheet` keeps naming it, so nothing appeared and the header stayed
+    /// disabled until relaunch. Check that the sheet reached the screen and ask
+    /// again if it did not. The header is not disabled before the sheet exists:
+    /// changing the menu button while its menu closes is what the wait avoids.
     private func presentFromMenu(_ target: KeirSheet) {
-        presentingSheet = true
         sheetRequest?.cancel()
         sheetRequest = Task { @MainActor in
-            do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
-            guard scenePhase == .active else { presentingSheet = false; return }
-            sheet = target
+            for _ in 0..<3 {
+                do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+                guard scenePhase == .active, sheet == nil else { return }
+                sheet = target
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard sheet == target, sheetOnScreen != target else { return }
+                sheet = nil; presentingSheet = false
+            }
         }
     }
 

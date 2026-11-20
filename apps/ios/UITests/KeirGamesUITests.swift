@@ -5,7 +5,7 @@ import XCTest
 final class KeirGamesUITests: XCTestCase {
     private func launch(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"] + extra; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Conversation"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
         return app
     }
     private func composer(_ app: XCUIApplication) -> XCUIElement {
