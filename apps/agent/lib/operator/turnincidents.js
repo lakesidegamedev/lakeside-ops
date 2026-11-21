@@ -39,7 +39,8 @@ const SETTLE_MS = 10 * MINUTE;          // an uncertain create is not retried be
 const CLOSED_CHECK_MS = 10 * MINUTE;    // how often an open incident's own status is re-read
 const FOLD_MIN_MS = 30 * MINUTE;        // a same-turn change of step is posted at most this often
 const RECOVERED_KEEP_MS = 6 * HOUR;     // a recovered incident still absorbs a new failure for this long, if open
-const STATUS_BOUND_MS = 5 * MINUTE;     // an incident whose status cannot be read is not added to; past this, a new one opens
+const STATUS_BOUND_MS = 5 * MINUTE;
+const MAX_UNRECORDED_CREATES = 3;      // creates that made a channel but no ticket record, before Keir stops and tells the owner     // an incident whose status cannot be read is not added to; past this, a new one opens
 const OPEN = (s) => !["resolved", "closed", "merged", "rejected", "done"].includes(String(s || "").toLowerCase());
 
 // --- reading the engine ------------------------------------------------------------------------------------------
@@ -368,6 +369,10 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
         ledger.audit("turn_incident_open_failed", { key: rec.key, error, retryAt: rec.nextAt });
       } else {
         rec.state = "uncertain"; rec.emptyReads = 0;
+        // The support service made the Discord channel but could not record the ticket (release review M5): counted,
+        // and the channel name kept for the owner, so repeated tries are bounded.
+        const orphan = /channel\s+#?([\w-]+)\s+created but/i.exec(String(e.message));
+        if (orphan) { rec.unrecordedCreates = (rec.unrecordedCreates || 0) + 1; rec.orphans = [...new Set([...(rec.orphans || []), orphan[1]])].slice(-10); }
         ledger.audit("turn_incident_open_uncertain", { key: rec.key, error });
       }
       note(rec.key, "blocked", `Turn ${rec.turn} failed at ${clock(rec.firstFailedAt)} but Keir could not open the incident yet (${error.slice(0, 160)}). It keeps trying while the turn is failed.`);
@@ -393,7 +398,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     if (job) cur.jobId = job.id;
     ledger.audit("turn_incident_opened", { key: rec.key, incident: number, turn: rec.turn, how, job: job?.id || null, supportDeferred: Boolean(rec.supportDeferred) });
     log(`turn incident opened: #${number} for turn ${rec.turn} (${how})`);
-    note(`incident:${number}`, "opened", `Turn ${rec.turn} failed at ${clock(rec.firstFailedAt)}. Keir opened incident #${number} and is on it.`);
+    note(`incident:${number}`, "opened", `Turn ${rec.turn} failed at ${clock(rec.firstFailedAt)}. Keir opened incident #${number} and is on it.${rec.orphans?.length ? ` Earlier tries left ${rec.orphans.map((c) => `#${c}`).join(", ")} with no ticket record; those channels can be removed.` : ""}`);
     try { require("./incidents").resetIncidentCache(); } catch {}
     onOpened(cur);
     ledger.save();
@@ -415,8 +420,13 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     if (searched === null) return null; // the search failed: proves nothing
     rec.emptyReads = (rec.emptyReads || 0) + 1;
     if (now() - (rec.intentAt || 0) >= SETTLE_MS && rec.emptyReads >= 2) {
-      rec.state = "retry"; rec.nextAt = 0; dropLock(rec.key);
+      dropLock(rec.key);
       ledger.audit("turn_incident_verified_absent", { key: rec.key, reads: rec.emptyReads });
+      if ((rec.unrecordedCreates || 0) >= MAX_UNRECORDED_CREATES) {
+        rec.state = "create-unrecorded";
+        hold(rec.key, "create-unrecorded", `${rec.unrecordedCreates} tries made a channel but no incident record; not trying again`);
+        note(`${rec.key}:unrecorded`, "blocked", `Turn ${rec.turn} is failing and Keir could not open its incident: ${rec.unrecordedCreates} tries each made a Discord channel (${(rec.orphans || []).map((c) => `#${c}`).join(", ")}) but the ticket was never recorded. Keir has stopped trying; please open the incident by hand and remove those channels.`);
+      } else { rec.state = "retry"; rec.nextAt = 0; }
     }
     return null;
   }
@@ -578,6 +588,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
         if (!new RegExp(`\\bturn\\s+${f.turn}\\b`, "i").test(existing.title || "")) await postOnce(c, `turn:${f.turn}`, newTurnMessage(f, null), true);
         ledger.save(); return { key, incident: c.number, adopted: true };
       }
+      if (rec.state === "create-unrecorded") { ledger.save(); return { key, held: "create-unrecorded" }; }
       const c = await open(rec, gate.act);
       ledger.save();
       return { key, incident: c?.number || null, preview: !gate.act || undefined };
@@ -630,7 +641,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
   function status() {
     const s = st();
     return { current: s.current ? { number: s.current.number, by: s.current.by, turns: s.current.turns, recovered: s.current.recovered || null } : null,
-      pending: Object.values(s.records).filter((r) => ["opening", "retry", "uncertain"].includes(r.state)).map((r) => ({ key: r.key, state: r.state, lastError: r.lastError || null, nextAt: r.nextAt || null })),
+      pending: Object.values(s.records).filter((r) => ["opening", "retry", "uncertain", "create-unrecorded"].includes(r.state)).map((r) => ({ key: r.key, state: r.state, lastError: r.lastError || null, nextAt: r.nextAt || null })),
       lastHold: s.lastHold || null, lastRead: s.lastRead || null };
   }
   return { check, probe, sweep, status, incidentForTurn };

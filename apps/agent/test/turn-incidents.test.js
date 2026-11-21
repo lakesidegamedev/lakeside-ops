@@ -638,3 +638,29 @@ test("m5: a step with no plain name is described in neutral words, never by its 
   assert.match(ti.openingMessage({ ...f, phase: "corporationTurn" }), /in the step that runs companies' production and sales/, "known steps keep their plain names");
   assert.doesNotMatch(ti.openingMessage({ ...f, phase: null }), /step/, "no step named when none is known");
 });
+
+const orphanError = () => new Error('{"isError":true,"content":[{"type":"text","text":"channel #ticket-incident-keir-1890 created but the game API refused the ticket (500)"}]}');
+async function minutes(r, from, to) { for (let t = at(from); t <= at(to); t += 60000) { r.set(t); await r.pass.probe(); } }
+
+test("M5: a create that keeps making a channel with no ticket record stops after three tries and tells the owner once", async () => {
+  const r = rig({ start: "11:30", world: { failCreate: () => orphanError() } });
+  await minutes(r, "11:30", "14:00");
+  assert.equal(r.w.calls.filter((c) => c.tool === "support_create_ticket").length, 3);
+  const told = r.notes.filter((n) => /:unrecorded$/.test(n.key));
+  assert.equal(told.length, 1);
+  assert.match(told[0].content, /3 tries each made a Discord channel \(#ticket-incident-keir-1890\) but the ticket was never recorded/);
+  assert.equal(r.d.turnIncidents.records["w3:t108"].state, "create-unrecorded");
+  assert.match(holds(r.d), /create-unrecorded/);
+});
+
+test("M5, the other way: a passing registration fault and plain timeouts still end in one incident", async () => {
+  let n = 0;
+  const r = rig({ start: "11:30", world: { failCreate: () => (r.w.clock() < at("11:50") ? (++n, orphanError()) : null) } });
+  await minutes(r, "11:30", "12:30");
+  assert.equal(r.w.creates.length, 1);
+  assert.match(r.notes.find((x) => /opened/.test(x.key)).content, /Earlier tries left #ticket-incident-keir-1890 with no ticket record/);
+  const slow = rig({ start: "11:30", world: { failCreate: () => (slow.w.clock() < at("12:40") ? Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }) : null) } });
+  await minutes(slow, "11:30", "13:10");
+  assert.ok(slow.w.calls.filter((c) => c.tool === "support_create_ticket").length > 3, "timeouts that made nothing are not bounded");
+  assert.equal(slow.w.creates.length, 1);
+});
