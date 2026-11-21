@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.3.0 (2026-11-21)
+
 ### For users
 
 - Every new support report now opens with one line saying replies come from Keir, an AI assistant, and that staff review anything needing a decision. A player's very first report still gets the full introduction; returning players, staff and the owner get the one line.
