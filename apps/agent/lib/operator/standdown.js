@@ -195,21 +195,29 @@ function yesNo(text) {
 const LEAD = /^(?:(?:ok(?:ay)?|yes|yeah|sure)\s+)?(?:let'?s\s+)?(?:go with|pick|choose|take|do|i choose|i pick|option)\s+/;
 const TAIL = /\s+(?:please|thanks|thank you|for now)$/;
 const bare = (text) => norm(text).replace(/[.!']/g, "").replace(LEAD, "").replace(TAIL, "").trim();
-function optionNumber(text) {
+// Review 3 F4: a number names an option only as the whole message ("1", "option 2", "go with 2 please"), or, inside a
+// reply to the question, as "option N" in a sentence that does not negate, defer or ask ("not option 2", "don't do
+// option 1", "option 1 looks wrong, why 500?" choose nothing).
+function optionNumber(text, { reply = false } = {}) {
   const t = String(text || "").trim();
-  const m = /^(?:option|choice|#)?\s*([1-6])\s*[.!)]?$/i.exec(t) || /\b(?:option|choice)\s*#?\s*([1-6])\b/i.exec(t) || /^(?:go with|pick|choose|take)\s+(?:option\s*)?#?([1-6])\b/i.exec(t);
-  return m ? m[1] : null;
+  const whole = /^(?:option|choice|#)?\s*([1-6])(?:\s+(?:please|thanks|thank you))?\s*[.!)]?$/i.exec(t) || /^(?:go with|pick|choose|take)\s+(?:option\s*|choice\s*)?#?([1-6])(?:\s+(?:please|thanks|thank you))?\s*[.!]?$/i.exec(t);
+  if (whole) return whole[1];
+  const inside = reply && /\b(?:option|choice)\s*#?\s*([1-6])\b/i.exec(t);
+  if (!inside || /\?/.test(t)) return null;
+  const rest = norm(t.replace(inside[0], " "));
+  return NEGATES.test(rest) || DEFER.test(rest) ? null : inside[1];
 }
 // Fourth pass (review N4): a label inside a negated, deferring or conditional sentence is not a choice ("we should not
 // refund the player until I check", "dont refund the player yet", "refund the player later maybe").
-const NEGATES = /\b(?:not|don'?t|dont|never|no|nope|won'?t|wont|shouldn'?t|can'?t|until|unless|instead|yet|later|maybe|perhaps|if|whether)\b|^\s*(?:should|shall|do|does|did|can|could|would|will|is|are|what|why|how|when|who)\b/i;
+// Review 3 F4: naming an option to reject it ("anything but", "other than", "X is wrong") is not choosing it.
+const NEGATES = /\b(?:not|don'?t|dont|never|no|nope|won'?t|wont|shouldn'?t|can'?t|until|unless|instead|yet|later|maybe|perhaps|if|whether|but|except|other than|rather than|wrong|bad|against)\b|^\s*(?:should|shall|do|does|did|can|could|would|will|is|are|what|why|how|when|who)\b/i;
 // The option this message clearly names, or null. A single-choice question (no options) takes a yes or no.
 // Outside a Discord reply to the question only the whole message names an option; inside a reply a label may sit in a
 // longer sentence, but never one that negates, defers or asks.
 function namedOption(x, text, { alone, reply = false }) {
   const options = x.options || [];
   if (!options.length) { const yn = yesNo(text); return yn ? { free: yn } : null; }
-  const n = alone ? optionNumber(text) : null;
+  const n = alone ? optionNumber(text, { reply }) : null;
   if (n && options.some((o) => o.id === n)) return options.find((o) => o.id === n);
   // A label counts when it is the whole message (after "go with", "please" and the like), or when it is at least two
   // words long and the message is not a question. "wait, why is the refund so large?" does not pick "Wait".
@@ -262,10 +270,13 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
   const jobs = Object.values(d.jobs || {}).filter((j) => Number(j.ticket) === Number(ticket));
   const open = Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !x.actionId && !x.binds && (x.at || 0) <= at && (jobs.some((j) => j.id === x.jobId) || Number(x.ticket) === Number(ticket)));
   const replied = open.filter((x) => repliesTo(x, replyTo, botId));
+  // Review 3 F4: a Discord reply to anything but the question is the owner talking to that message's author (the player,
+  // staff, another post): never an answer, and not meant for the question.
+  const elsewhere = Boolean(replyTo?.id) && !replied.length;
   let picks = [];
   // A reply to the question counts only when it also gives an answer: "can you link the PR here?" sent as a reply is not one.
   if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true, reply: true }), reply: true })).filter((p) => p.option);
-  else {
+  else if (!elsewhere) {
     const named = open.map((x) => ({ x, option: namedOption(x, content, { alone: open.length === 1 }) })).filter((p) => p.option);
     // A message that could answer several questions answers none of them.
     if (named.length === 1) picks = named;
@@ -283,7 +294,7 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
   // time, so a second unmatched message is not lost. The owner's DM notice stays one per question.
   if (!answered.length) for (const x of open) {
     x.channelContext = [...(x.channelContext || []), { at, text: content.slice(0, 300), message: messageId }].slice(-5);
-    if (!(replied.includes(x) || meantFor(x, content, botId))) continue;
+    if (!(replied.includes(x) || (!elsewhere && meantFor(x, content, botId)))) continue;
     const asker = d.jobs?.[x.jobId];
     if (asker && !JOB_TERMINAL.includes(asker.state)) (asker.inbox ||= []).push({ authorId: "owner-channel", role: "system", at: new Date(at).toISOString(), decision: x.id,
       content: `The owner wrote in the ticket channel: "${content.slice(0, 400)}". It was not taken as the answer to your open question "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}", which stays open. Use it as context; do not act on it as the decision.` });

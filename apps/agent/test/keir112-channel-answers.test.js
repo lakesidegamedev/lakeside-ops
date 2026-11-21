@@ -193,3 +193,67 @@ test("M2: every unmatched owner message meant for the question reaches the askin
   say(v, "the demand cap is the real issue here", { notify: () => false });
   assert.equal(v.x.unmatchedNoticeAt, undefined);
 });
+
+// Review 3 F4 (the reviewer's answers.js): one open question, "Raise the demand cap for this player to 500?".
+const cap500 = (options) => world(1900, "Raise the demand cap for this player to 500?", options);
+const TWO = () => [{ label: "Raise it to 500" }, { label: "Leave the cap" }];
+const PLAYER_MSG = { id: "999", authorId: "200000000000000009", content: "Do I need to do anything else?" };
+
+test("F4: a reply to someone else's message never answers the question, and is kept only as context", () => {
+  for (const [text, replyTo, options] of [
+    ["no", PLAYER_MSG, null], ["ok", PLAYER_MSG, null],
+    ["sure", { id: "998", authorId: DELEGATE, content: "want me to grab the logs?" }, null],
+    ["1", PLAYER_MSG, TWO()], ["Leave the cap", PLAYER_MSG, TWO()],
+    ["yes", { id: "997", authorId: BOT, content: "I checked your factory and the wages look right now." }, null],
+  ]) {
+    const w = cap500(options);
+    const sent = [];
+    assert.deepEqual(say(w, text, { replyTo, notify: (k) => { sent.push(k); return true; } }), [], `${text} as a reply to ${replyTo.authorId}`);
+    assert.equal(w.x.state, "pending");
+    assert.equal(w.x.channelContext.at(-1).text, text, "kept on the question as context");
+    if (replyTo.authorId !== BOT) {
+      assert.deepEqual(sent, [], "talking to someone else: no DM notice");
+      assert.equal((w.data.jobs.j1.inbox || []).length, 0);
+    }
+  }
+});
+
+test("F4: naming an option to reject it, question it or put it off is not choosing it, alone or as a reply", () => {
+  const texts = ["don't do option 1, I need to think", "option 1 looks wrong to me, why 500?", "not option 2", "anything but option 1",
+    "not Leave the cap", "anything but Leave the cap", "Leave the cap is wrong", "option 2 is a bad idea", "take 2 minutes and think about it"];
+  for (const text of texts) {
+    const w = cap500(TWO());
+    assert.deepEqual(say(w, text), [], text);
+    w.x.sent[OWNER] = { channelId: "dm", messageId: "q1" };
+    assert.deepEqual(say(w, text, { replyTo: { id: "q1", authorId: BOT } }), [], `${text} (reply)`);
+    assert.equal(w.x.state, "pending", text);
+  }
+});
+
+test("F4, the other side: a true reply, a bare option, and a plain yes or no to a yes or no question still answer", () => {
+  const counted = [
+    ["1", {}, TWO(), "Raise it to 500"], ["option 2", {}, TWO(), "Leave the cap"], ["go with 2 please", {}, TWO(), "Leave the cap"],
+    ["option 1 please", {}, TWO(), "Raise it to 500"], ["Leave the cap", {}, TWO(), "Leave the cap"],
+    ["1", { reply: true }, TWO(), "Raise it to 500"], ["go with option 2, thanks", { reply: true }, TWO(), "Leave the cap"],
+    ["Leave the cap please", { reply: true }, TWO(), "Leave the cap"],
+  ];
+  for (const [text, { reply }, options, label] of counted) {
+    const w = cap500(options);
+    if (reply) w.x.sent[OWNER] = { channelId: "dm", messageId: "q1" };
+    assert.deepEqual(say(w, text, reply ? { replyTo: { id: "q1", authorId: BOT } } : {}), [w.x.id], text);
+    assert.equal(w.x.selectedOption.label, label, text);
+  }
+  for (const [text, reply] of [["yes", false], ["no", false], ["yes", true], ["no.", true]]) {
+    const w = cap500(null);
+    if (reply) w.x.sent[OWNER] = { channelId: "dm", messageId: "q1" };
+    assert.deepEqual(say(w, text, reply ? { replyTo: { id: "q1", authorId: BOT } } : {}), [w.x.id], `${text}${reply ? " (reply)" : ""}`);
+    assert.equal(w.x.state, "answered");
+  }
+  // An unmatched message meant for the question still reaches the task and gets the one notice.
+  const w = cap500(TWO());
+  const sent = [];
+  say(w, "option 1 looks wrong to me, why 500?", { notify: (k) => { sent.push(k); return true; } });
+  say(w, "not option 2 either", { notify: (k) => { sent.push(k); return true; } });
+  assert.equal(sent.length, 1);
+  assert.equal(w.data.jobs.j1.inbox.filter((m) => m.authorId === "owner-channel").length, 2);
+});
