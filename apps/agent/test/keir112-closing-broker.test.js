@@ -125,3 +125,36 @@ test("N3: a step-back that crashed before it posted is tried once more on the ne
   job.lastRunStartedAt = 3; closing.onActivation(job, 3);
   assert.equal(closing.stepBack(d, job, Date.now(), closing.DEFAULTS), false, "never a loop");
 });
+
+test("N10: a second, substantive answer to the player's open question gets through when it names a turn", async () => {
+  const f = setup(); f.playerWrote(30);
+  const d = f.ledger.data;
+  d.watch = { turnClock: { turn: 80, iteration: 3, at: f.now() } };
+  // The player's question is an open asked item.
+  d.ticketCases = { 123: { ticket: 123, claims: [], promises: [], staff: [], questions: [], asked: [], said: [], askedRefusals: 0 } };
+  require("../lib/operator/ticketcase").addAsked(d.ticketCases[123], "Why did my factory produce nothing? The workers are gone.", f.now() - 30 * 60000);
+  await f.broker.tool(f.job, "channel_reply", { message: "Your factory has had no workers assigned since the housing change. I am checking why the workers left." });
+  f.advance(12); f.job.lastGameReadAt = f.now(); // read the workers' move
+  // Not refused by the turn rule: it answers the open question (and explains the cause).
+  await f.broker.tool(f.job, "channel_reply", { message: "Found it: after turn 78 your factory workers moved to the new mine because its wage is higher, so the factory produced nothing." });
+  assert.equal(f.posts().length, 2);
+  assert.equal(f.audits("turn_post_not_called_for").length, 0);
+});
+
+test("N10: a post the rule cannot place goes out and the doubt is recorded; unprompted turn commentary is still refused", async () => {
+  const f = setup(); f.playerWrote(30);
+  const d = f.ledger.data;
+  d.watch = { turnClock: { turn: 80, iteration: 3, at: f.now() } };
+  d.ticketCases = { 123: { ticket: 123, claims: [], promises: [], staff: [], questions: [], asked: [], said: [], askedRefusals: 0 } };
+  require("../lib/operator/ticketcase").addAsked(d.ticketCases[123], "Why are my bond sales not working at all?", f.now() - 30 * 60000);
+  await f.broker.tool(f.job, "channel_reply", { message: "Your company has three listings waiting in the market queue right now." });
+  f.advance(65); d.watch.turnClock = { turn: 81, iteration: 3, at: f.now() }; f.job.lastGameReadAt = f.now();
+  // The question is still open, the post does not clearly answer it: a doubt, posted, recorded.
+  await f.broker.tool(f.job, "channel_reply", { message: "Turn 81: the market rule is still in force." });
+  assert.equal(f.posts().length, 2);
+  assert.equal(d.postDoubts[123][0].rule, "turn_rule");
+  // Nothing owed (the ask is answered) and nothing explained: the opposite side still holds.
+  d.ticketCases[123].asked[0].answeredAt = f.now();
+  f.advance(65); d.watch.turnClock = { turn: 82, iteration: 3, at: f.now() }; f.job.lastGameReadAt = f.now();
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Turn 82: the market rule is still in force." }), /a turn having run is not a reason to post/);
+});

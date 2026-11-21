@@ -570,6 +570,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     all[ticketNo] = [...(all[ticketNo] || []).filter((r) => now() - r.at < 7 * 86400000), { at: now(), rule, job: job.id, text: String(message || "").slice(0, 400) }].slice(-20);
     for (const n of Object.keys(all)) if (!all[n].some((r) => now() - r.at < 7 * 86400000)) delete all[n];
   }
+  // Fourth pass (review N10): where a post rule cannot tell, the post goes out and the doubt is recorded here (printed by
+  // bin/keir-preview.js), never a refusal.
+  function noteDoubt(rule, job, ticketNo, message) {
+    const all = (d.postDoubts ||= {});
+    all[ticketNo] = [...(all[ticketNo] || []).filter((r) => now() - r.at < 7 * 86400000), { at: now(), rule, job: job.id, text: String(message || "").slice(0, 400) }].slice(-20);
+    for (const n of Object.keys(all)) if (!all[n].some((r) => now() - r.at < 7 * 86400000)) delete all[n];
+    ledger.audit("post_rule_doubt", { job: job.id, ticket: ticketNo, rule });
+  }
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -1377,12 +1385,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       // An answer the player is owed (owedNow) passes like a due promise: it answers them.
       const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]];
       const calledFor = closing.closingCallsForTurn(d, job, now()) || (root && root !== job && closing.closingCallsForTurn(d, root, now()));
-      const turnArgs = { posts: answerPosts, humanAt: h, message, correction, promiseDue, calledFor, lastKeirAt: lastAnswerAt };
+      // Review N10: an open player question this post answers makes it an answer; any open question makes a doubt, not a refusal.
+      const ask = require("./ticketcase").openAsk(d, ticketNo, message, now());
+      const turnArgs = { posts: answerPosts, humanAt: h, message, correction, promiseDue, calledFor, lastKeirAt: lastAnswerAt, answersAsk: ask.answers, openAsk: ask.open > 0 };
       const turnRule = pb.turnPostRule(turnArgs);
       if (turnRule) rule("turnRule", turnRule.why === "same turn answer" ? "turn_repeat_refused" : "turn_post_not_called_for", turnRule.refusal);
-      else if (!opts.collect) { const via = pb.turnPostVia(turnArgs); if (via === "closing") job.turnReportViaClosing = true; else if (via === "promise" && !owedNow) job.turnReportViaPromise = true; } // a report uses up what called for it
+      else if (!opts.collect) { const via = pb.turnPostVia(turnArgs); if (via === "closing") job.turnReportViaClosing = true; else if (via === "promise" && !owedNow) job.turnReportViaPromise = true; else if (via === "doubt" && ctl().gate("turnRule").run) noteDoubt("turn_rule", job, ticketNo, message); } // a report uses up what called for it
       const cap = Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR;
-      const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || correction || playerAsked || require("./promises").dueNow(d, ticketNo, now()), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
+      const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || correction || playerAsked || ask.answers || require("./promises").dueNow(d, ticketNo, now()), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
       if (!r.allow) rule("postBudget", "hourly_post_cap_refused", pb.hourlyRefusal(r, cap));
     }
     // Keir 10: a post must not contradict this ticket's earlier posts without saying "Correction:", and must not call something

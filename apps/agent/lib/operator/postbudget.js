@@ -77,14 +77,19 @@ function isTurnReport(text) { return REPORT.test(String(text || "")); }
 // lastKeirAt: Keir's last post from a durable record (the post window above is emptied after an hour of quiet).
 // Why a post may go out under the turn rule: null (not a turn report), "correction", "answer", "promise" or "closing";
 // "refused" when it may not.
-function turnPostVia({ posts, humanAt, message, correction = false, promiseDue = false, calledFor = false, lastKeirAt = 0 }) {
+// Fourth pass (review N10): the player being owed an answer outranks the rule. A post that answers one of the player's open
+// questions is an answer, whatever turn it names. A post made while the player still has an open question that it does not
+// clearly answer may be an answer the rule cannot recognise: it goes out as "doubt" and the doubt is recorded.
+// Only a turn update with nothing owed is refused. (Explanatory wording is not a test: the 1845 per-turn reports explain too.)
+function turnPostVia({ posts, humanAt, message, correction = false, promiseDue = false, calledFor = false, lastKeirAt = 0, answersAsk = false, openAsk = false }) {
   if (!isTurnReport(message) || /\?\s*$/.test(String(message).trim())) return null;
   if (correction) return "correction";
   const lastAt = Math.max((posts || []).filter((p) => !isCard(p)).at(-1)?.at || 0, lastKeirAt || 0);
   // The first answer on a ticket, or one after the player wrote, answers them; only an unprompted follow-up is commentary.
-  if (!lastAt || (humanAt || 0) > lastAt) return "answer";
+  if (!lastAt || (humanAt || 0) > lastAt || answersAsk) return "answer";
   if (promiseDue) return "promise";
   if (calledFor && !repeatsTurnAnswer({ posts, humanAt, message })) return "closing";
+  if (openAsk) return "doubt";
   return "refused";
 }
 function turnPostRule(args) {

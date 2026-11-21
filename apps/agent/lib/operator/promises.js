@@ -60,8 +60,11 @@ function dueNow(d, ticket, now) {
 }
 
 // First person, future, a follow-up verb: "I will compare...", "I'll confirm here once...", "we'll let you know".
-const FOLLOW = /\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:\w+\s+){0,3}?(?:compare|check|confirm|update|tell|let you know|come back|follow up|get back|report back|look|post|reply|verify|read|recheck|re-check)\b/i;
-const NOT_PROMISE = /\b(?:if you (?:want|like|need)|if (?:that|it) helps|unless you)\b|\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:not|never)\b|\b(?:won(?:'|’)?t|will not|shan(?:'|’)?t)\b/i;
+const FOLLOW = /\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+((?:\w+\s+){0,3}?)(?:compare|check|confirm|update|tell|let you know|come back|follow up|get back|report back|look|post|reply|verify|read|recheck|re-check)\b/i;
+// Offers are not promises. Fourth pass (review N2): a negation counts only inside the promise clause itself, between the
+// modal and the verb ("I will not check"); "won't" elsewhere in the sentence ("it won't take long") does not void it.
+const NOT_PROMISE = /\b(?:if you (?:want|like|need)|if (?:that|it) helps|unless you)\b/i;
+const NEGATED = /\b(?:not|never|no longer)\b/i;
 // Quoted speech is somebody's words, not Keir's promise.
 const unquote = (t) => String(t || "").replace(/"[^"\n]*"|“[^”\n]*”/g, " ");
 function sentences(text) { return unquote(text).split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean); }
@@ -69,7 +72,8 @@ function sentences(text) { return unquote(text).split(/(?<=[.!?])\s+|\n+/).map((
 // The promise in a post, with its due time, or null. Questions and offers are not promises.
 function detect(text, now, due = DUE) {
   for (const s of sentences(text)) {
-    if (s.endsWith("?") || !FOLLOW.test(s) || NOT_PROMISE.test(s)) continue;
+    const m = FOLLOW.exec(s);
+    if (s.endsWith("?") || !m || NOT_PROMISE.test(s) || NEGATED.test(m[1] || "")) continue;
     const kind = /\b(?:next|a|the|another|each|every)\s+turn\b|\bnext (?:few|couple of|two|three) turns\b|\bturn (?:has )?(?:run|processed|passes|finishes)\b|\bafter turn \d+/i.test(s) ? "turn"
       : /\b(?:deploy\w*|released?|goes live|is live|reaches the main server|on the main server|ships?)\b/i.test(s) ? "release"
       : /\btomorrow\b/i.test(s) ? "tomorrow"
@@ -89,25 +93,29 @@ function list(d, ticket) { d.ticketPromises ||= {}; return (d.ticketPromises[tic
 
 // Called by the post path for every delivered Keir reply on a ticket (never for cards or code notices).
 // askedAt: the last time the player or staff wrote on the ticket. A reply made after a promise wake and before anyone
-// wrote again answers that wake: it keeps or ends the woken promise and never records a new one (review B3).
+// wrote again answers that wake: it keeps or ends the woken promise (review B3). Fourth pass (review N2): a real new
+// promise in that reply is still recorded, chained to the woken one: it inherits the wakes already spent, so the chain
+// stays inside the same two wakes per promise and four per ticket a day, then the one fallback line. Nothing is dropped.
 function notePost(d, ticket, job, message, now, { askedAt = 0 } = {}) {
   if (!ticket || !job) return null;
   const rows = list(d, ticket);
-  const afterWake = rows.some((p) => p.wokenAt && p.wokenAt > (askedAt || 0) && p.wokenAt <= now && now - p.wokenAt < DAY);
+  const woken = rows.filter((p) => p.wokenAt && p.wokenAt > (askedAt || 0) && p.wokenAt <= now && now - p.wokenAt < DAY);
+  const afterWake = woken.length > 0;
+  const chainFrom = afterWake ? woken.reduce((a, b) => ((b.wakes || 0) > (a.wakes || 0) ? b : a)) : null;
   if (afterWake && cannotConfirm(message)) {
     for (const p of rows) if (p.state === "open" && p.wokenAt) { p.state = "ended"; p.endedAt = now; p.reason = "the player was told it cannot be confirmed yet"; }
   }
-  const found = afterWake ? null : detect(message, now);
-  // A later reply keeps an open promise when it comes after the wake, at least half way to the due time, is the turn report
-  // a turn promise was about, or is on the same subject.
+  const found = detect(message, now);
+  // A later reply keeps an open promise when it comes after the wake, is the turn report a turn promise was about, or is
+  // on the same subject. Review N2: an unrelated reply half way to the due time no longer keeps it.
   // Parts of the same reply and anything within ten minutes never count.
   for (const p of rows) {
     if (p.state !== "open" || now - p.at < KEEP_AFTER_MS) continue;
-    const halfway = now - p.at >= (p.dueAt - p.at) / 2;
     const turnReport = !found && p.kind === "turn" && /\bturn\b[^.]{0,40}\b(?:has (?:now )?run|ran|processed)\b|\bturn \d+\b/i.test(String(message || ""));
-    if ((p.wokenAt && now > p.wokenAt) || halfway || turnReport || (!found && overlap(p.text, message) >= 2)) { p.state = "kept"; p.keptAt = now; }
+    if ((p.wokenAt && now > p.wokenAt) || turnReport || (!found && overlap(p.text, message) >= 2)) { p.state = "kept"; p.keptAt = now; }
   }
   if (!found) return null;
+  if (chainFrom) { found.wakes = chainFrom.wakes || 0; found.chainedFrom = chainFrom.id; }
   if (found.kind === "turn") {
     const clock = clockOf(d, now);
     if (clock) {
@@ -119,10 +127,12 @@ function notePost(d, ticket, job, message, now, { askedAt = 0 } = {}) {
   const open = rows.find((p) => p.state === "open");
   if (open) {
     open.text = found.text; open.dueAt = Math.min(open.dueAt, found.dueAt); open.repeats = (open.repeats || 0) + 1;
+    if (Number.isFinite(found.wakes)) open.wakes = Math.max(open.wakes || 0, found.wakes);
     if (Number.isFinite(found.afterTurn)) open.afterTurn = Number.isFinite(open.afterTurn) ? Math.min(open.afterTurn, found.afterTurn) : found.afterTurn;
     return open;
   }
   const p = { id: `${ticket}-${now.toString(36)}`, at: now, jobId: job.id, state: "open", wakes: 0, ...found };
+  if (p.chainedFrom && !Number.isFinite(found.afterTurn)) p.dueAt = Math.max(p.dueAt, now + RETRY_MS); // never due at once
   rows.push(p);
   d.ticketPromises[ticket] = rows.filter((x) => x.state === "open" || now - x.at < 7 * 24 * HOUR).slice(-MAX_OPEN * 4);
   return p;
@@ -145,11 +155,15 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
     if (d.channels?.[job.channelId]?.keirStopped) return "Keir told to stand down";
     return null;
   }
+  // Review m1: a job held for a person (an uncertain write, an owner blocker, a deadline the owner must decide on) is not
+  // requeued by a promise; the wake still counts, so after two the player gets the plain line and staff hear. A job
+  // blocked by the activation time limit (ticket 1868) is not held for a person and is woken.
+  const heldForPerson = (job) => job.state === "blocked" && Boolean(job.deadlineBlockedAt || job.ownerMuseBlocker || job.uncertain || Object.values(job.effects || {}).some((e) => e?.state === "uncertain"));
   function wake(job, p, second) {
     const told = new Date(p.at).toISOString().slice(11, 16);
     (job.inbox ||= []).push({ authorId: "promise-keeper", role: "system", at: new Date(now()).toISOString(),
       content: `${second ? "Still owed: y" : "Y"}ou told the player at ${told} UTC: "${p.text}". That follow-up is due now. Read what you need, then post it. If you cannot confirm it yet, tell the player plainly in one or two sentences that you cannot confirm it yet and what you are waiting for. If you already gave this follow-up, finish without posting again; otherwise do not finish without posting one of the two.${job.closing?.closesWhen ? ` Your recorded closing condition: closes when ${String(job.closing.closesWhen).replace(/^closes when /i, "").slice(0, 200)}; waiting on ${String(job.closing.waitingOn || "").slice(0, 160)}.` : ""}` });
-    if (!["queued", "running"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
+    if (!["queued", "running"].includes(job.state) && !heldForPerson(job)) { job.state = "queued"; job.wakeAt = 0; }
     p.wakes += 1; p.wokenAt = now(); p.nextAt = now() + retryMs;
     ledger.audit("promise_wake", { ticket: p.id.split("-")[0], promise: p.id, job: job.id, wakes: p.wakes, was: p.kind });
   }

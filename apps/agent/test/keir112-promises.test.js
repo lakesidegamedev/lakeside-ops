@@ -171,25 +171,52 @@ test("a paused game still brings a turn promise due after the backstop, so the p
 // ---- Third pass: the review's B3, m2 and m3 ----
 const { staticControls } = require("../lib/operator/controls");
 
-test("B3: the holding line a wake asks for never re-arms a promise; \"I can't confirm yet\" ends it until the player writes", async () => {
+test("B3 and N2: a promise made in the wake reply is recorded, chained to the woken one, and the chain stays bounded", async () => {
   const w = world();
   w.job.state = "waiting";
   notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("19:45"));
   w.set("21:16"); await w.keeper.tick();
   assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 1);
-  // The woken activation says what the wake prompt asks for, which itself sounds like a promise.
+  // The woken activation says it cannot confirm yet and promises to come back: a real promise the player now holds.
   notePost(w.data, 1868, w.job, "I can't confirm this yet. I'm waiting for the turn to finish and I'll update you here once it has run.", at("21:20"), { askedAt: at("19:00") });
-  assert.deepEqual(w.data.ticketPromises[1868].map((p) => p.state), ["ended"], "no second promise opened");
+  const rows = w.data.ticketPromises[1868];
+  assert.deepEqual(rows.map((p) => p.state), ["ended", "open"], "review N2: the new promise is tracked, not dropped");
+  assert.equal(rows[1].chainedFrom, rows[0].id);
+  assert.equal(rows[1].wakes, 1, "it inherits the wake already spent");
+  // B3's side: the chain cannot feed itself. One more wake, then the plain line, then nothing.
   w.job.state = "done";
-  for (const t of ["22:00", "23:00", "23:59"]) { w.set(t); await w.keeper.tick(); }
-  assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 1, "no wake loop");
-  assert.equal(w.posted.length, 0);
-  // Another holding post from any task before the player writes does not open one either.
-  notePost(w.data, 1868, w.job, "I'll update you once the turn has run.", at("23:30"), { askedAt: at("19:00") });
-  assert.equal(w.data.ticketPromises[1868].filter((p) => p.state === "open").length, 0);
-  // The player asks again: a new promise may be recorded.
-  notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("23:45"), { askedAt: at("23:40") });
-  assert.equal(w.data.ticketPromises[1868].filter((p) => p.state === "open").length, 1);
+  for (const t of ["22:00", "23:00", "23:40", "23:59"]) { w.set(t); await w.keeper.tick(); w.job.state = "done"; }
+  assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 2, "two wakes in all, no loop");
+  assert.equal(w.posted.length, 1, "then the one plain line");
+  assert.equal(rows[1].state, "failed");
+  // The player asks again: a fresh promise starts with its own two wakes.
+  notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("23:59"), { askedAt: at("23:58") });
+  assert.equal(w.data.ticketPromises[1868].at(-1).wakes, 0);
+});
+
+test("N2: a holding line after a wake with no promise in it records nothing; an unrelated reply no longer keeps a promise", () => {
+  const w = world();
+  notePost(w.data, 1868, w.job, "I'll check the bond yields tomorrow and tell you why the price fell.", at("08:00"));
+  // Twelve hours later (past half way), Keir answers something else on the ticket: the promise stays open.
+  notePost(w.data, 1868, w.job, "Your factory license was renewed on its own.", at("20:00"), { askedAt: at("19:59") });
+  assert.equal(w.data.ticketPromises[1868][0].state, "open");
+  // A reply on the same subject keeps it.
+  notePost(w.data, 1868, w.job, "The bond yields rose and the price fell because the central bank raised rates.", at("21:00"), { askedAt: at("19:59") });
+  assert.equal(w.data.ticketPromises[1868][0].state, "kept");
+  // After a wake, a plain "can't confirm" with no new promise records nothing new.
+  const w2 = world();
+  w2.data.ticketPromises = { 1868: [{ id: "1868-a", at: at("08:00"), jobId: w2.job.id, state: "open", wakes: 1, wokenAt: at("12:00"), kind: "plain", text: "I'll check this.", dueAt: at("12:00") }] };
+  assert.equal(notePost(w2.data, 1868, w2.job, "I can't confirm this yet; the fix is not on the main server.", at("12:05"), { askedAt: at("07:00") }), null);
+  assert.deepEqual(w2.data.ticketPromises[1868].map((p) => p.state), ["ended"]);
+});
+
+test("N2: a negation counts only inside the promise clause", () => {
+  const now = at("12:00");
+  assert.ok(detect("I will check after the next turn, it won't take long.", now));
+  assert.ok(detect("I'll let you know once it's live so you won't need to ask again.", now));
+  assert.equal(detect("I will not check that again.", now), null);
+  assert.equal(detect("We will never update this ticket again.", now), null);
+  assert.equal(detect("I won't look at that again.", now), null);
 });
 
 test("B3: a ticket gets at most four promise wakes a day, however many promises it collects", async () => {
@@ -244,4 +271,19 @@ test("the promise switch: off wakes nothing, preview records the wake it would m
     assert.equal(data.ticketPromises[1868][0].wakes, 0);
     assert.equal(Boolean(data.preview?.items?.["promises:wake:ticket 1868"]), expectPreview);
   }
+});
+
+test("m1: a promise never requeues a job held for a person, but the player still gets the plain line after two wakes", async () => {
+  const w = world();
+  notePost(w.data, 1868, w.job, PROMISE, at("19:45"));
+  w.job.state = "blocked"; w.job.deadlineBlockedAt = at("19:50"); // the owner must choose the next move
+  for (const t of ["21:16", "21:47", "22:18"]) { w.set(t); await w.keeper.tick(); assert.equal(w.job.state, "blocked"); }
+  assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 2);
+  assert.equal(w.posted.length, 1, "not silent: the plain line went out");
+  // The other side (ticket 1868): blocked by the activation time limit is not held for a person, so it is woken.
+  const v = world();
+  notePost(v.data, 1868, v.job, PROMISE, at("19:45"));
+  v.job.state = "blocked"; v.job.summary = "activation aborted: no result before the 15-minute turn limit";
+  v.set("21:16"); await v.keeper.tick();
+  assert.equal(v.job.state, "queued");
 });
