@@ -20,9 +20,14 @@ function createOwnerWait({ ledger, api, ownerLogin = "Egg3901", now = () => Date
   async function tick() {
     d.ownerWait ||= {};
     const prs = await api([`repos/${GAME_REPO}/pulls?state=open&base=development&per_page=50`]);
+    const keirPrs = require("./keirprs");
+    const index = keirPrs.ledgerIndex(d);
     for (const pr of Array.isArray(prs) ? prs : []) {
       const head = pr.head?.sha, key = `${pr.number}:${head}`;
       if (!head || pr.draft || pr.user?.login === ownerLogin || d.ownerWait[key]) continue;
+      // Keir 11.2: Keir's own PRs are not a developer's. A live Keir task already owns the ask, and an orphaned one goes to
+      // the open-PR pass (keirprs.js), which asks once. A PR that any task is already asking about is never asked twice.
+      if (keirPrs.isKeirPr(pr, d, index) || index.get(Number(pr.number))?.live) continue;
       const runs = latestByName((await api([`repos/${GAME_REPO}/commits/${head}/check-runs?per_page=100`]))?.check_runs);
       if (!READY.every((n) => runs.get(n)?.conclusion === "success")) continue;
       // Anything else red or still running means the author is not done; only the owner gate may be open.

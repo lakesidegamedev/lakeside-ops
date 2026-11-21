@@ -3280,6 +3280,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const keirMade = Object.values(d.jobs).some((j) => (j.pullRequests || []).some((u) => canonicalGithubUrl(u) === `https://github.com/${repo}/pull/${Number(input.number)}`));
       // An owner-approval task (ownerwait.js) may ask about the one developer PR it was made for; the merge still needs his button.
       const ownerWaitPr = job.ownerWaitPr && Number(job.ownerWaitPr) === Number(input.number);
+      // Keir 11.2: the open-PR pass (keirprs.js) adopts a green Keir PR whose task ended; its one task asks the owner about that PR.
+      const adoptedPr = job.adoptedPr && Number(job.adoptedPr) === Number(input.number);
       // Keir 10.1.9 (owner, 2026-11-17, PR 6680): a green PR Keir opened that this task has no standing authority to merge
       // (a watch finding, an engineering task) goes to the owner as an Approve / Decline question, never as plain text.
       const staffSide = job.role !== "player" && ["ticket", "command", "finding"].includes(job.kind);
@@ -3287,7 +3289,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       let askForAuthority = ["merge", "promote"].includes(input.action) && staffSide && !hasStandingAuthority
         && (input.action === "merge" ? keirMade || Boolean(job.pullRequests?.length) : Boolean(job.pullRequests?.length));
       if (docReview && input.action === "merge") askForAuthority = true;
-      if (input.action === "merge" && !ownerDirected(job) && !keirMade && !ownerWaitPr) throw new Error("merge only PRs Keir opened unless the owner asked");
+      if (adoptedPr && input.action === "merge") askForAuthority = true;
+      if (input.action === "merge" && !ownerDirected(job) && !keirMade && !ownerWaitPr && !adoptedPr) throw new Error("merge only PRs Keir opened unless the owner asked");
       // Reading where a change is, its checks or its failures is open to every
       // staff-side task: a ticket inherited from another operator has no PRs of
       // its own yet still has to know whether the fix is live (2026-10-13: four
@@ -3445,6 +3448,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             if (prNow.merged) return { number: prNow.number, merged: true, already: true, sha: prNow.merge_commit_sha };
             if (prNow.state !== "open") throw new Error(`PR ${prNow.number} is ${prNow.state}`);
             const g = await gate(prNow);
+            if (!g.ready) await mergeDeadEnd(prNow, g);
             if (!g.ready) return { number: prNow.number, merged: false, url: prNow.html_url, ...g, approvalRequired: false, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix. The owner is only asked about a PR whose checks are green." : "Checks are not all green yet: finish waiting with a wakeup of about 10 minutes and call merge again. The owner is only asked once they are green." };
           }
           // A task that judges its own change economy-affecting (prices, money,
@@ -3832,6 +3836,30 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           ...(qualification.qualified ? { qualification } : {}),
           ready: runs.length > 0 && (!pending.length || qualification.qualified) && !failed.length && pr.mergeable === true };
       }
+      // Keir 11.2 (audit P1-1, H5): a merge Keir was asked to carry out and GitHub refuses (red check, conflict, missing
+      // section) used to end as a silent "probe" dismissal. The owner now gets one plain line per PR, head and reason. When
+      // the only blocker is Keir's own PR description, Keir repairs it instead.
+      async function mergeDeadEnd(pr, g) {
+        try {
+          const n = Number(pr.number), head = pr.head?.sha || "";
+          const approved = Object.values(d.actions).some((a) => a.kind === "github" && a.args?.action === "merge" && Number(a.args.number) === n && ["approved", "executing"].includes(a.state));
+          if (!(job.ownerWaitPr || job.adoptedPr || approved) || repo !== GAME_REPO || input.action !== "merge") return;
+          if (!g.failed.length && g.mergeable !== false) return; // still running: not a dead end yet
+          const names = g.failed.map((f) => String(f).split(":")[0]);
+          const keirPrs = require("./keirprs");
+          const why = keirPrs.plainReason(names, g.mergeable);
+          if (why.key === "custom-rules" && !require("./prdisclosure").hasDisclosure(pr.body)) {
+            if (keirPrs.isKeirPr(pr, d)) {
+              await effect(job, `disclosure:${n}:${head}`, () => api(["-X", "PATCH", `repos/${repo}/pulls/${n}`, "-f", `body=${withDisclosure(pr.body)}`]), { kind: "github", text: `describe PR ${n}` });
+              ledger.audit("keir_pr_description_repaired", { job: job.id, pr: n, head });
+              return;
+            }
+            why.text = "its description is missing the Conflict of interest section, which its author has to add";
+          }
+          ledger.notify(`pr-blocked:${n}:${why.key}:${head}`, "owner", `PR #${n} (${String(pr.title || "").slice(0, 100)}) is ready to merge but blocked: ${why.text}. Nothing was merged.`);
+          ledger.audit("merge_dead_end_reported", { job: job.id, pr: n, head, reason: why.key });
+        } catch (e) { ledger.audit("merge_dead_end_report_failed", { job: job.id, pr: Number(pr.number), reason: String(e.message).slice(0, 200) }); }
+      }
       async function mergeWhenGreen(number, method, expectBase) {
         let pr = await api([`repos/${repo}/pulls/${number}`]);
         if (pr.merged) return { number, merged: true, already: true, sha: pr.merge_commit_sha };
@@ -3877,6 +3905,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           }
         }
         const g = await gate(pr);
+        if (!g.ready) await mergeDeadEnd(pr, g);
         if (!g.ready) return { number, merged: false, url: pr.html_url, ...g, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix, do not merge." : g.pending.length ? "Checks still running: finish waiting with a wakeup of about 10 minutes and call this again." : g.checks ? "Every check finished green, but GitHub has not reported this PR as mergeable yet. Finish waiting about 5 minutes and call merge again; do not tell the owner checks are running." : "No checks have reported on this head yet: finish waiting about 10 minutes and call this again." };
         const mergeOnce = () => api(["-X", "PUT", `repos/${repo}/pulls/${number}/merge`, "-f", `merge_method=${method}`, "-f", `sha=${pr.head.sha}`]);
         // 405/409/422 are GitHub refusing the merge: nothing merged. "Base branch
@@ -3894,7 +3923,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               try { return await mergeOnce(); } catch (second) { if (!refused(second)) throw second; last = second; }
             }
             const error = new Error(`GitHub refused the merge and nothing merged (${redactSecrets(String(last.message)).slice(0, 200)}). Re-read the PR; once it is green and mergeable at the same head, call merge again under the same approval. This needs no owner inspection.`);
-            error.code = "GITHUB_MERGE_REFUSED"; throw error;
+            error.code = "GITHUB_MERGE_REFUSED";
+            await mergeDeadEnd(latest || pr, { failed: [`merge: ${String(last.message).slice(0, 80)}`], mergeable: latest?.mergeable ?? pr.mergeable });
+            throw error;
           }
         });
         if (scopedConsent && result?.merged) { scopedConsent.state = "done"; scopedConsent.completedAt = now(); ledger.save(); }

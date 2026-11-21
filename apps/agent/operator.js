@@ -206,8 +206,12 @@ const decisions = createDecisions({ ledger, config, discord, log, onAnswered: (x
 function d0(x) { return ledger.data.jobs[x.jobId]?.ticket || null; }
 const { render: renderDecision } = require("./lib/operator/decisions");
 let checkingDecisions = false;
+// Keir 11.2: GitHub is read before the decision loop sends any reminder or escalation (lib/operator/prtruth.js).
+const ghRead = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
+const prTruth = require("./lib/operator/prtruth").createPrTruth({ ledger, api: ghRead, log });
 async function checkDecisions() {
   if (checkingDecisions) return; checkingDecisions = true;
+  try { await prTruth.tick(); } catch (e) { log(`prtruth: ${e.message}`); }
   try { await decisions.tick(); } catch (e) { log(`decisions: ${e.message}`); } finally { checkingDecisions = false; }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
 }
@@ -412,6 +416,12 @@ const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain(
 tickers.every("ownerwait", 5 * 60000, async () => {
   try { await ownerWait.tick(); } catch (e) { log(`ownerwait: ${e.message}`); }
 });
+// Keir 11.2: every open Keir PR gets one ask, a repair, a plain blocked line, or a close with a note (lib/operator/keirprs.js).
+// Writes go out as keir-bot when its token is set. KEIR_STALE_PR_DAYS (default 5) sets when an orphaned PR is closed as stale.
+const ghKeir = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000,
+  env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", ...(config.githubReviewerToken ? { GH_TOKEN: config.githubReviewerToken } : {}) } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
+const keirPrs = require("./lib/operator/keirprs").createKeirPrs({ ledger, api: ciApi, write: ghKeir, config, log, drain: () => drain(), staleDays: Number(env.KEIR_STALE_PR_DAYS || 5) });
+tickers.every("keirprs", 60 * 60000, async () => { if (killSwitch.state()?.engaged) return; await keirPrs.tick(); }, { immediateMs: 10 * 60000, maxMs: 5 * 60000 });
 tickers.every("ciwatch", 60000, async () => {
   try { await ciWatch.tick(); } catch (e) { log(`ciwatch: ${e.message}`); }
   // Keir 10: cards move on receipts, without a model run (broker.stageTick).
