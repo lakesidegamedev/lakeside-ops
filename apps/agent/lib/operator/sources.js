@@ -43,13 +43,29 @@ function ticketFacts(ledger, job, ticketNo) {
 // interface code is "the page's code", game logic is "the game's rules", and a read whose files cannot be told apart (or
 // that names no file) gives no line at all. A wrong label is worse than none.
 const PAGE_LABEL = "the page's code", RULES_LABEL = "the game's rules", LIVE_LABEL = "a live check of the page";
-const UI_FILE = /\.(?:tsx|jsx|css|scss|vue|svelte)$|(?:^|\/)(?:components|pages|views|ui|hooks|styles|app)\//i;
-const RULES_FILE = /(?:^|\/)(?:lib|simulation|engine|turn|market|economy|constants|rules|server|services|models|wiki|docs)\/.*\.(?:ts|js|mjs|cjs|json|md)$/i;
+// Keir 11.4 review (M3): checked against the game repository's real layout (src/app, src/components, src/hooks and
+// src/contexts are interface; src/simulation, src/data and the domain folders of src/lib are game logic). src/lib also
+// holds plumbing (src/lib/api/fetchJson.ts, src/lib/compression.ts, src/lib/utils/format.ts): a page crash traced to one
+// of those is not "the game's rules", so plumbing folders and plumbing file names get no label. API routes, tests,
+// scripts, design notes and anything outside src get none either.
+const UI_DIRS = /^src\/(?:app|components|hooks|contexts|landing-islands|styles)\/|^src\/lib\/(?:ui|hooks|themes|navigation|sidebarWidgets|statusBar|clientShell|charts)\//;
+const PLUMBING_DIRS = new Set(["__tests__", "account", "admin", "advertising", "altDetection", "analytics", "api", "askDrawer", "audit", "auth", "automationPolicy", "changelog", "client", "config", "cron", "data", "db", "discord", "errors", "feedback", "i18n", "identityHistory", "images", "inbox", "landing", "mail", "maps", "metrics", "migrations", "nativePush", "notifications", "numeric", "observability", "onboarding", "patreon", "promo", "publicApi", "registration", "remediation", "resetCabinet", "resetFinance", "resetLegislation", "resetMetrics", "resetVersions", "retention", "safety", "sandbox", "search", "security", "seeds", "settings", "shell", "staff", "suggestions", "support", "supporter", "telemetry", "test-utils", "tickets", "time", "tutorial", "utils", "vpn"]);
+const PLUMBING_NAME = /^(?:fetch|api|http|auth|cache|cookie|browser|format|util|helper|logger|logging|log\b|session|compress|gzip|zlib|decode|encode|serial|i18n|locale|env|config|db|mongo|redis|discord|mail|telemetry|sentry|analytics|middleware|client|request|response|route|cors|rate[-_]?limit)/i;
+const TEST_FILE = /(?:\.test|\.spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:__tests__|__mocks__|test-utils|tests?)\//;
 function fileKind(file) {
-  const f = String(file || "");
+  let f = String(file || "").replace(/\\/g, "/").replace(/^\.?\//, "");
   if (!f) return null;
-  if (UI_FILE.test(f)) return PAGE_LABEL;
-  if (RULES_FILE.test(f)) return RULES_LABEL;
+  const at = f.indexOf("src/"); if (at > 0) f = f.slice(at);
+  if (TEST_FILE.test(f)) return null;
+  if (/(?:^|\/)wiki\//.test(f) && /^(?:src|public|content)\//.test(f)) return RULES_LABEL;
+  if (!f.startsWith("src/") || f.startsWith("src/app/api/")) return null;
+  if (UI_DIRS.test(f)) return PAGE_LABEL;
+  const name = f.split("/").pop();
+  if (PLUMBING_NAME.test(name) || /(?:Client|Api|Fetch|Http|Cache|Route|Handler|Compression)\.[cm]?[jt]sx?$/.test(name)) return null;
+  if (/\.(?:tsx|jsx|css|scss)$/.test(name)) return PAGE_LABEL;
+  if (/^src\/(?:simulation|data)\//.test(f)) return RULES_LABEL;
+  const lib = /^src\/lib\/(?:([^/]+)\/)?[^/]+\.(?:ts|js|mjs|cjs|json)$/.exec(f) || /^src\/lib\/([^/]+)\//.exec(f);
+  if (lib) return lib[1] && PLUMBING_DIRS.has(lib[1]) ? null : RULES_LABEL;
   return null;
 }
 // Files a code read touched, top hit first: the path it asked for, then the files its result names.
@@ -67,9 +83,11 @@ function codeFiles(args, result) {
   scan(r);
   return out;
 }
+// The label for a read: a read of one file is named by that file; a search is named by its top hit only, since the
+// answer rests on what it found first. A top hit that cannot be told apart gives no label.
 function codeLabel(args, result) {
-  for (const f of codeFiles(args, result)) { const k = fileKind(f); if (k) return k; }
-  return null;
+  const list = codeFiles(args, result);
+  return list.length ? fileKind(list[0]) : null;
 }
 const CODE_TOOLS = new Set(["code_search", "code_read", "code_exact"]);
 const TABLE = {
@@ -124,6 +142,7 @@ function factual(message) {
   return text.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter((x) => x && !/\?\s*$/.test(x) && !OWN_VOICE.test(x)).join(" ");
 }
 
+const PAGE_FAULT = /\b(?:crash(?:es|ed|ing)?|error (?:panel|page|message|screen)|shows? an error|(?:fails?|failed|won(?:'|’)?t|will not|does(?:n(?:'|’)?t| not)) (?:to )?(?:load|open|render)|blank (?:page|screen)|gives up)\b/i;
 function checkedLine(message, observations) {
   const text = factual(message);
   // Checkable figures only: with no evidence at all, exactly those are reported as unsupported.
@@ -140,7 +159,10 @@ function checkedLine(message, observations) {
   // Keir 11.4: the newest code read whose files are clearly page code or game logic, and a live check of the page when
   // the claim is about a page (never beside the game's rules, and never a read that cannot be told apart).
   if (!named.length && ruleLookup.ruleClaim(text)) {
-    const code = rows.find((o) => /"tool"\s*:\s*"code_(?:search|read|exact)"/.test(String(o.input || "")) && describe(o));
+    // Keir 11.4 review (M3): a fault on a page (it crashes, shows an error, will not load) rests on the page's code or a
+    // live check, never on a game rule read for something else on the same ticket.
+    const pageFault = PAGE_FAULT.test(text);
+    const code = rows.find((o) => /"tool"\s*:\s*"code_(?:search|read|exact)"/.test(String(o.input || "")) && describe(o) && (!pageFault || describe(o) === PAGE_LABEL));
     add(code);
     if (!code || describe(code) === PAGE_LABEL) add(rows.find((o) => o.tool === "view_page"));
   }
