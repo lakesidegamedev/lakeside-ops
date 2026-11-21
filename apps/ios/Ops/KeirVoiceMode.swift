@@ -83,7 +83,7 @@ struct KeirVoiceMode: View {
     private var routeLabel: String {
         let options = keir.controls["options"]["voice"].array
         let name = { (id: String) in KeirProviderName.label(id, options: options) }
-        let busy = voice.speaking || preparing || waiting
+        let busy = state == .speaking || preparing || waiting
         if busy, let expectedJob,
            let task = keir.tasks.first(where: { $0["id"].string == expectedJob && $0["state"].string == "running" }),
            !task["provider"]["model"].string.isEmpty {
@@ -107,7 +107,7 @@ struct KeirVoiceMode: View {
         return fallback.isEmpty ? "Automatic" : "Automatic · " + KeirProviderName.label(fallback, options: keir.controls["options"]["voice"].array)
     }
     private var screen: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Keir voice").font(.headline)
@@ -141,7 +141,10 @@ struct KeirVoiceMode: View {
                     if !voice.transcript.isEmpty { Text(voice.transcript).font(.title3).foregroundStyle(OpsTheme.muted) }
                     if !reply.isEmpty { Text(reply).font(.title3).textSelection(.enabled) }
                 }.frame(maxWidth: .infinity)
-            }.frame(maxHeight: 200)
+            }
+            // The answer keeps room for a few lines; the spacers give way first.
+            .frame(minHeight: 132, maxHeight: 200)
+            .layoutPriority(1)
             if let message = error ?? voice.error ?? (!keir.connected ? keir.error : nil) {
                 Text(message).font(.callout).foregroundStyle(OpsTheme.warn)
                 Button("Try voice again") { waiting = false; waitTask?.cancel(); paused = false; error = nil; if !keir.connected { connectionAttempt += 1 }; listen() }
@@ -287,7 +290,7 @@ struct KeirVoicePortrait: View {
     @Environment(\.accessibilityReduceMotion) private var reduced
 
     static let side: CGFloat = 160
-    static let stage: CGFloat = 232
+    static let stage: CGFloat = 212
 
     private var still: Bool { reduced || OpsMotion.frozen || previewLevel != nil }
     private var spriteState: String {
@@ -335,7 +338,7 @@ struct KeirVoicePortrait: View {
                     .scaleEffect(1 + 0.12 * level)
                 Circle().stroke(OpsTheme.sky.opacity(0.22 * level), lineWidth: 1.5)
                     .frame(width: Self.side + 18, height: Self.side + 18)
-                    .scaleEffect(1 + 0.26 * level)
+                    .scaleEffect(1 + 0.2 * level)
             }
             sprite
                 .frame(width: Self.side, height: Self.side)
