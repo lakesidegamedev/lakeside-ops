@@ -343,6 +343,7 @@ struct KeirIdentitySection: View {
                 }
             }
         } header: { SectionLabel(text: "Keir") }
+        .listRowBackground(OpsTheme.surface)
         .task { if let r = try? await session.get("/api/keir/app/identity") { identity = r } }
     }
     private func save(_ body: [String: JSONValue]) {
