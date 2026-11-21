@@ -5,6 +5,19 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For users
+
+- When a turn fails, Keir opens the incident itself, in code, the moment it sees the failure: no staff approval, no model, no waiting for the game's own retries. Players get one plain message in the incident channel (which turn, when it failed, which step in plain words, that the game is not advancing, and that Keir is on it), and player reports about it merge into that incident as before. A turn that is overdue with nothing running, a stuck turn, or a game that paused itself because turns stopped finishing counts the same as a failed attempt. On 2026-11-21 this would have opened the turn 108 incident at about 11:32 UTC instead of 13:04.
+- Repeated failures of the same turn add nothing until something changes; another turn failing, a different step stopping it or the game pausing itself adds one update that counts the repeats. When turns run again the incident gets one update with how long the game was stuck, and says plainly when follow-up is still in progress because work was skipped on the way. Closing stays with the incident's own ticket task.
+- Only three things hold it back, each recorded with its reason: a turn failure incident is already open (Keir's or anyone's; the failure is added to it), the owner has stopped Keir (kill switch or pause), or the game is paused on purpose or a reset is running. Another coordinator owning support intake does not stop it.
+- The owner gets one alert in the app's incident feed when the incident is opened or joined, and one if it cannot be opened yet (Keir keeps retrying with backoff while the turn is failed).
+- New switch `turnIncidents` (`KEIR_TURN_INCIDENTS`), on by default, with preview mode; `bin/keir-preview.js` shows what it recorded and would open.
+
+### For developers
+
+- `lib/operator/turnincidents.js`: the deterministic pass. Inputs are turndiag `lock_status` and `turn_failure_detail` and gamestate `game_overview`; a one-minute probe (two small reads) runs the full read only when something looks wrong, the five-minute watch tick and every Watchkeeper turn observation also call it. Once per world and turn: the intent is written to the ledger and to an O_EXCL lock file under `<state dir>/turn-incidents/` before `support_create_ticket`; an uncertain create is reconciled from the open incident list and `support_search` and is retried only after ten minutes and two agreeing empty reads. A failed or list-less read of open incidents is never taken as none open.
+- The opened incident gets a normal ticket task (`keirIncident`, linked to the watch finding and its task) and a `keirIncidents` entry, so the channel scan treats it as Keir's. A severe turn finding is no longer proposed to staff when its incident is already open. Finding tasks keep every tool refusal they had.
+
 ## 11.2.1 (2026-11-21)
 
 ### For users

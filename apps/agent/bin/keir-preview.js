@@ -83,10 +83,17 @@ async function buildPreview({ data, settings, api, now = Date.now(), env = proce
   const doubts = Object.entries(data.postDoubts || {}).flatMap(([ticket, rows]) => rows.map((r) => ({ ticket: Number(ticket), ...r })));
   // Waits that are parked or slowed now, with what wakes them and what the player is owed (review N1).
   const parked = Object.values(data.jobs || {}).filter((j) => j.closing?.parked || j.closing?.slowed).map((j) => ({ job: j.id, ticket: j.ticket || null, ...require("../lib/operator/closing").describe(j) }));
-  return { items, unchecked: [...unchecked], live, refused, doubts, parked, notes };
+  // Keir 11.3: the turn incident pass reads the game, which the report does not contact; it shows what the service
+  // recorded (the open incident, opens in progress, and the last thing that held one back). Its preview rows are in "live".
+  const ti = data.turnIncidents || null;
+  const turnIncidents = ti ? {
+    current: ti.current ? { number: ti.current.number, by: ti.current.by, turns: ti.current.turns || [], recovered: Boolean(ti.current.recovered) } : null,
+    pending: Object.values(ti.records || {}).filter((r) => ["opening", "retry", "uncertain", "previewed"].includes(r.state)).map((r) => ({ key: r.key, state: r.state, error: r.lastError || null })),
+    lastHold: ti.lastHold || null, lastRead: ti.lastRead || null } : null;
+  return { items, unchecked: [...unchecked], live, refused, doubts, parked, notes, turnIncidents };
 }
 
-function render({ items, unchecked, live, refused, doubts = [], parked = [] }, { settings, killSwitch, paused, github }) {
+function render({ items, unchecked, live, refused, doubts = [], parked = [], turnIncidents = null }, { settings, killSwitch, paused, github }) {
   const out = [];
   out.push(`Keir preview, ${new Date().toISOString()}. Nothing was changed.`);
   out.push("");
@@ -124,6 +131,16 @@ function render({ items, unchecked, live, refused, doubts = [], parked = [] }, {
     out.push("");
     out.push(`Parked or slowed waits (${parked.length}):`);
     for (const p of parked) out.push(`  - ${p.ticket ? `ticket ${p.ticket}` : `job ${p.job}`}: ${p.parked ? `parked since ${p.parked.since.slice(0, 16)}, wakes when ${p.parked.wakesWhen || "something changes"}` : `slowed: ${p.slowed.why}`}; waiting on ${String(p.waitingOn).slice(0, 120)}${p.parked?.owed ? `; the player is owed ${p.parked.owed}` : ""}`);
+  }
+  out.push("");
+  out.push("Turn failure incidents (the game is not read by the report; this is what the service last recorded):");
+  if (!turnIncidents) out.push("  nothing recorded yet");
+  else {
+    const c = turnIncidents.current;
+    out.push(c ? `  open: incident #${c.number} (${c.by === "keir" ? "opened by Keir" : "already open, Keir adds to it"}), turns ${c.turns.join(", ")}${c.recovered ? ", recovery posted" : ""}` : "  open: none");
+    for (const p of turnIncidents.pending) out.push(`  ${p.state === "previewed" ? "would open" : p.state}: ${p.key}${p.error ? ` (${String(p.error).slice(0, 160)})` : ""}`);
+    if (turnIncidents.lastHold) out.push(`  last held back: ${turnIncidents.lastHold.key}, ${turnIncidents.lastHold.why} (${new Date(turnIncidents.lastHold.at).toISOString().slice(0, 16)})`);
+    if (turnIncidents.lastRead) out.push(`  last read: ${new Date(turnIncidents.lastRead.at).toISOString().slice(0, 16)}, ${turnIncidents.lastRead.readable === false ? "game unreadable" : turnIncidents.lastRead.failing ? `turn ${turnIncidents.lastRead.failing.turn} failing (${turnIncidents.lastRead.failing.kind})` : "no turn failing"}`);
   }
   out.push("");
   out.push(unchecked.length ? `Could not check (${unchecked.length}):` : "Everything the passes needed was read.");
