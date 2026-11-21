@@ -360,7 +360,11 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     private static let supervision = SupervisionState()
 
-    private func bodyObject() -> [String: Any]? {
+    /// The body stream can be read once; the timing wrapper and the route
+    /// both need it.
+    private lazy var parsedBody: [String: Any]? = parseBody()
+    private func bodyObject() -> [String: Any]? { parsedBody }
+    private func parseBody() -> [String: Any]? {
         var data = request.httpBody ?? Data()
         if data.isEmpty, let stream = request.httpBodyStream {
             stream.open(); defer { stream.close() }
@@ -375,7 +379,44 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
     }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    /// Approve, decline, choose and send answer at once in the fixture, so
+    /// the in-between state ("Approving", "Sending") was never exercised.
+    /// Tests can slow these writes and make them fail; `--uitest-slow-actions`
+    /// does the same for UI tests and screenshots.
+    final class ActionTiming: @unchecked Sendable {
+        let lock = NSLock()
+        private var delay: TimeInterval = ProcessInfo.processInfo.arguments.contains("--uitest-slow-actions") ? 6 : 0
+        private var failures = 0
+        private var recorded: [(path: String, body: [String: Any])] = []
+        /// Each write from now on waits `delay` seconds; the next `failures` of them time out.
+        func set(delay: TimeInterval, failures: Int = 0) { lock.lock(); defer { lock.unlock() }; self.delay = delay; self.failures = failures; recorded = [] }
+        func reset() { set(delay: 0) }
+        /// Every write that reached the transport, in order.
+        var posts: [(path: String, body: [String: Any])] { lock.lock(); defer { lock.unlock() }; return recorded }
+        fileprivate func take(_ path: String, _ body: [String: Any]) -> (delay: TimeInterval, fail: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            recorded.append((path, body))
+            let fail = failures > 0
+            if fail { failures -= 1 }
+            return (delay, fail)
+        }
+    }
+    static let actions = ActionTiming()
+    private static func isAction(_ request: URLRequest) -> Bool {
+        guard request.httpMethod == "POST", let path = request.url?.path else { return false }
+        return path.hasPrefix("/api/keir/app/decisions/") || path == "/api/keir/app/messages"
+    }
+
     override func startLoading() {
+        guard Self.isAction(request), let url = request.url else { respond(); return }
+        let timing = Self.actions.take(url.path, bodyObject() ?? [:])
+        guard timing.delay > 0 || timing.fail else { respond(); return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timing.delay) { [self] in
+            if timing.fail { client?.urlProtocol(self, didFailWithError: URLError(.timedOut)) } else { respond() }
+        }
+    }
+
+    private func respond() {
         guard let url = request.url else { return }
         if ProcessInfo.processInfo.arguments.contains("--uitest-keir-offline"), ["/api/keir/app/thread", "/api/keir/app/messages"].contains(url.path) {
             deliver(Data(#"{"error":"Keir backend is unavailable"}"#.utf8), url: url, status: 502, type: "application/json"); return

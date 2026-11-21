@@ -822,6 +822,46 @@ final class LaunchTests: XCTestCase {
     }
 
 
+    // MARK: Tap feedback
+
+    /// With approve and send slowed to six seconds by the fixture, the tapped
+    /// control must show its in-progress state long before the server answers,
+    /// and the confirmed state must still come from the server.
+    func testTappedControlsShowTheirInProgressStateInLightAndOLED() {
+        for (appearance, theme) in [("light", "Light"), ("dark", "OLED")] {
+            let app = launch(appearance: appearance, ["--uitest-slow-actions"])
+            XCTAssertTrue(find(app, "How did the last turn go?").waitForExistence(timeout: 10), theme)
+
+            go(app, "Activity")
+            let approve = app.buttons["decision-approve"]
+            XCTAssertTrue(approve.waitForExistence(timeout: 10), theme)
+            XCTAssertTrue(approve.isEnabled, theme)
+            approve.tap()
+            let approving = NSPredicate(format: "label CONTAINS %@", "Approving")
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: approving, object: approve)], timeout: 2), .completed, "Approve says Approving at once in \(theme)")
+            capture(app, "\(theme) Approve in progress")
+            // Still not approved until the server answers, then it leaves the list.
+            expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: approve)
+            waitForExpectations(timeout: 15)
+
+            go(app, "Keir")
+            let field = composer(app)
+            XCTAssertTrue(field.waitForExistence(timeout: 8), theme)
+            field.tap()
+            if !app.keyboards.firstMatch.waitForExistence(timeout: 3) { field.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).tap() }
+            XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), theme)
+            app.typeText("Is the build green?")
+            app.buttons["keir-send"].tap()
+            let sending = app.descendants(matching: .any)["keir-outgoing-sending"]
+            XCTAssertTrue(sending.waitForExistence(timeout: 2), "The message shows as Sending at once in \(theme)")
+            XCTAssertTrue(find(app, "Is the build green?", timeout: 1).exists, "The sent text is in the conversation before the server answers")
+            sleep(1)
+            capture(app, "\(theme) Message sending")
+            XCTAssertTrue(sending.waitForNonExistence(timeout: 15), "The server's message replaces the Sending one in \(theme)")
+            app.terminate()
+        }
+    }
+
     // MARK: Chat shell evidence
 
     private func launch(appearance: String, _ extra: [String] = []) -> XCUIApplication {

@@ -325,17 +325,20 @@ struct TicketDetail: View {
             }
         }
         if status.label == "Stalled", let task = detail["retryTaskId"].string.nonempty {
-            OpsPrimaryButton(title: "Retry", icon: "arrow.clockwise", busy: retrying) {
-                retrying = true
+            OpsPrimaryButton(title: "Retry", icon: "arrow.clockwise", busy: retrying, busyTitle: "Queuing a retry") {
+                guard !retrying else { return }
+                retrying = true; retryNotice = nil
                 Task {
-                    defer { retrying = false }
                     do {
                         _ = try await session.post("/api/keir/app/tickets/\(number)/retry", ["taskId": .string(task)])
                         retryNotice = "Another attempt is queued"
+                        retrying = false
+                        // The confirmation shows first; the ticket re-read follows.
                         await load()
-                    } catch { retryNotice = error.displayMessage }
+                    } catch { retryNotice = "Retry was not queued. " + error.displayMessage; retrying = false }
                 }
             }
+            .accessibilityIdentifier("ticket-retry")
             if retryNotice == nil {
                 Text(lastAttemptLine).font(.opsCaption).foregroundStyle(OpsTheme.muted)
             }
@@ -516,7 +519,11 @@ struct TicketDecisionInline: View {
     @Environment(\.dynamicTypeSize) private var textSize
     @State private var outcome: String?
     @State private var failure: String?
-    @State private var busy = false
+    /// Set in the same frame as the tap.
+    @State private var tapped: String?
+    private var pending: OpsStore.PendingAnswer? { ops.answering[decision["id"].string] }
+    private var sending: String? { tapped ?? (pending?.failure == nil ? pending?.verdict : nil) }
+    private var busy: Bool { sending != nil }
 
     private var options: [JSONValue] { decision["options"].array.filter { !$0["id"].string.isEmpty && !$0["label"].string.isEmpty } }
     private var inline: Bool { decision["type"].string == "choice" && options.count >= 2 && decision["canAnswer"] != .bool(false) }
@@ -539,7 +546,18 @@ struct TicketDecisionInline: View {
                     OpsIconLine(text: "Keir recommends: " + pick["label"].string, icon: "star.fill",
                                 color: OpsTheme.accent, font: .caption.weight(.semibold))
                 }
-                if let failure { Text(failure).font(.caption).foregroundStyle(OpsTheme.danger) }
+                if let failure {
+                    // Rolled back: the options are live again, with the reason
+                    // and the same request one tap away.
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(failure).font(.caption).foregroundStyle(OpsTheme.danger).fixedSize(horizontal: false, vertical: true)
+                        if let failed = pending, failed.failure != nil {
+                            Button("Try again") { choose(String(failed.verdict.dropFirst("choose:".count))) }
+                                .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.sky)
+                                .accessibilityIdentifier("decision-retry")
+                        }
+                    }.accessibilityIdentifier("decision-failure")
+                }
                 if explained {
                     VStack(spacing: 6) { buttons }.disabled(busy)
                 } else {
@@ -567,6 +585,9 @@ struct TicketDecisionInline: View {
         ForEach(options, id: \.["id"].string) { option in
             let isPick = option["recommended"].bool
             let effect = OpsText.scrub(option["detail"].string)
+            let inFlight = sending == "choose:" + option["id"].string
+            let described: String = option["label"].string + (isPick ? ", recommended" : "") + (effect.isEmpty ? "" : ". " + effect)
+            let spoken: String = inFlight ? option["label"].string + ". " + OpsStore.progressWord("choose:") : described
             Button { choose(option["id"].string) } label: {
                 if explained {
                     // Label, then the one-line effect for players, left aligned
@@ -574,6 +595,7 @@ struct TicketDecisionInline: View {
                     HStack(alignment: .center, spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
+                                if inFlight { OpsSpinner(tint: isPick ? OpsTheme.onAccent : OpsTheme.sky, size: 14) }
                                 Text(option["label"].string).font(.subheadline.weight(.semibold)).lineLimit(2)
                                 if isPick {
                                     Text("Recommended").font(.caption2.weight(.bold))
@@ -581,7 +603,7 @@ struct TicketDecisionInline: View {
                                         .background(OpsTheme.onAccent.opacity(0.22), in: Capsule())
                                 }
                             }
-                            Text(effect.nonempty ?? "No effect described").font(.caption).opacity(effect.isEmpty ? 0.6 : 0.9)
+                            Text(inFlight ? OpsStore.progressWord("choose:") : effect.nonempty ?? "No effect described").font(.caption).opacity(effect.isEmpty ? 0.6 : 0.9)
                                 .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 4)
@@ -593,26 +615,39 @@ struct TicketDecisionInline: View {
                     .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(isPick ? Color.clear : OpsTheme.sky.opacity(0.35)))
                     .foregroundStyle(isPick ? OpsTheme.onAccent : OpsTheme.ink)
                 } else {
-                    Text(option["label"].string).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+                    HStack(spacing: 6) {
+                        if inFlight { OpsSpinner(tint: OpsTheme.onAccent, size: 14) }
+                        Text(inFlight ? OpsStore.progressWord("choose:") : option["label"].string)
+                            .font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+                    }
                         .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 10)
                         .background(isPick ? OpsTheme.sky : OpsTheme.sky.opacity(0.85), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .foregroundStyle(OpsTheme.onAccent)
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(option["label"].string + (isPick ? ", recommended" : "") + (effect.isEmpty ? "" : ". " + effect))
+            .opacity(busy && !inFlight ? 0.5 : 1)
+            .accessibilityLabel(spoken)
             .accessibilityIdentifier("ticket-decision-\(option["id"].string)")
         }
     }
 
+    /// Haptic, double-tap guard and the in-progress option in this frame;
+    /// the outcome only from the server.
     private func choose(_ id: String) {
-        busy = true
+        guard !busy else { return }
+        OpsTap.commit()
+        let verdict = "choose:" + id, decisionId = decision["id"].string
+        tapped = verdict; failure = nil
         Task {
-            if await ops.answer(decision["id"].string, verdict: "choose:" + id, session) {
+            if await ops.answer(decisionId, verdict: verdict, session) {
                 outcome = "Choice saved. Keir will continue with your selection."
+                tapped = nil
                 await changed()
-            } else { failure = ops.error ?? "The choice could not be saved. Refresh and try again." }
-            busy = false
+            } else {
+                if let reason = ops.answering[decisionId]?.failure { failure = reason }
+                tapped = nil
+            }
         }
     }
 }

@@ -16,6 +16,20 @@ import LakesideCore
     @Published var work: JSONValue = .null
     @Published private var taskRows: [JSONValue] = []
     @Published var answerReceipt: JSONValue = .null
+    /// A decision answer the owner tapped that the server has not confirmed.
+    /// The request key is kept across a retry, so a retry after a timeout is
+    /// the same request, not a second approval.
+    struct PendingAnswer: Equatable {
+        let verdict: String
+        let requestId: String
+        var failure: String?
+    }
+    /// In-flight and failed answers by decision id. A card reads this to show
+    /// "Approving" at once and to roll back with the reason if it fails.
+    @Published private(set) var answering: [String: PendingAnswer] = [:]
+    /// Decisions the server confirmed answered. A refresh that was already
+    /// in flight when the answer landed must not bring the card back.
+    private var answered: Set<String> = []
     /// The last refresh that reached the server at all.
     @Published var updated: Date?
     /// The last time Keir's activity (running, queued, tickets) was read. The
@@ -29,7 +43,7 @@ import LakesideCore
     private var generation = UUID()
     func reset() {
         generation = UUID(); services = []; hub = .null; kanban = .null; host = .null; scheduler = .null
-        decisions = []; alerts = []; work = .null; taskRows = []; answerReceipt = .null; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
+        decisions = []; alerts = []; work = .null; taskRows = []; answerReceipt = .null; answering = [:]; answered = []; queue = []; updated = nil; activityUpdated = nil; error = nil; failedPanels = []; loading = false; UNBadge.set(0)
         AttentionCenter.shared.reset()
     }
     var kpis: JSONValue { hub["kpis"] }
@@ -46,13 +60,25 @@ import LakesideCore
     var queueTasks: [JSONValue] {
         tasks.filter { WorkQueuePresentation.bucket($0) != "needs-you" }
     }
+    /// One Inbox queue row with its bucket and rank worked out once, when the
+    /// data changes, instead of on every render of every chip and section.
+    struct QueueEntry: Identifiable {
+        let item: JSONValue
+        let ticket: Bool
+        let bucket: String
+        let rank: Int
+        var key: String { item[ticket ? "number" : "id"].string }
+        var id: String { (ticket ? "ticket:" : "task:") + key }
+    }
+    /// Every queue row the Inbox lists, in rank order. Rebuilt with the
+    /// attention list, so the chips, sections, Ops tiles and badge agree.
+    @Published private(set) var queue: [QueueEntry] = []
+
     /// Queue rows in one Inbox bucket, counted exactly as the Inbox chip counts them.
     func queueCount(_ bucket: String) -> Int {
-        (queueTickets + queueTasks).filter { WorkQueuePresentation.bucket($0) == bucket }.count
+        queue.filter { $0.bucket == bucket }.count
     }
-    var blockedQueueCount: Int {
-        (queueTickets + queueTasks).filter { WorkQueuePresentation.bucket($0) == "stuck" }.count
-    }
+    var blockedQueueCount: Int { queueCount("stuck") }
     func serviceState(_ service: JSONValue, now: Date = Date()) -> String {
         guard let checked = OpsFormat.date(service["lastChecked"]), now.timeIntervalSince(checked) < 86_400 else { return "Stale" }
         switch service["current"].string {
@@ -157,7 +183,7 @@ import LakesideCore
         if t != nil, w != nil { activityUpdated = Date() }
         if let b { kanban = b }
         if let h { host = h["host"]; scheduler = h }
-        if let d { decisions = d["decisions"].array }
+        if let d { decisions = d["decisions"].array.filter { !answered.contains($0["id"].string) } }
         if let a { alerts = a["alerts"].array }
         if let w { work = w }
         if let t { taskRows = t["tasks"].array }
@@ -177,7 +203,7 @@ import LakesideCore
         async let taskList = try? session.get("/api/keir/app/tasks")
         let (d, w, t) = await (open, queue, taskList)
         guard generation == epoch else { return nil }
-        if let d { decisions = d["decisions"].array }
+        if let d { decisions = d["decisions"].array.filter { !answered.contains($0["id"].string) } }
         if let w { work = w }
         if let t { taskRows = t["tasks"].array }
         if t != nil, w != nil { activityUpdated = Date() }
@@ -191,19 +217,79 @@ import LakesideCore
     private func rebuildAttention() {
         AttentionCenter.shared.setWork(decisions: decisions, ownerWork: needsOwner, tickets: openTickets, tasks: tasks)
         UNBadge.set(attention)
+        var entries: [QueueEntry] = []
+        for item in queueTickets {
+            entries.append(QueueEntry(item: item, ticket: true, bucket: WorkQueuePresentation.bucket(item), rank: WorkQueuePresentation.rank(item)))
+        }
+        for item in queueTasks {
+            entries.append(QueueEntry(item: item, ticket: false, bucket: WorkQueuePresentation.bucket(item), rank: WorkQueuePresentation.rank(item)))
+        }
+        // Stable by rank: equal ranks keep the order the server sent.
+        let order: [Int] = Array(entries.indices).sorted { (a: Int, b: Int) -> Bool in
+            entries[a].rank != entries[b].rank ? entries[a].rank < entries[b].rank : a < b
+        }
+        queue = order.map { entries[$0] }
     }
 
+    /// The words a card shows while its answer is in flight. They say the
+    /// request is being sent, never that it is done.
+    static func progressWord(_ verdict: String) -> String {
+        switch verdict {
+        case "approve": return "Approving"
+        case "reject": return "Declining"
+        case "refresh": return "Requesting fresh checks"
+        case "explain": return "Sending your reply"
+        default: return "Saving your choice"
+        }
+    }
+
+    /// The state the server reports for a decision this verdict already
+    /// answered ("already approve"). A retry whose first attempt did reach
+    /// the server gets that refusal, which confirms the original answer.
+    private static func answeredState(_ verdict: String) -> String {
+        if verdict.hasPrefix("choose:") { return "selected" }
+        if verdict == "refresh" { return "superseded" }
+        return verdict
+    }
+
+    /// Sends one answer. The card shows its in-progress state from the tap;
+    /// the decision only leaves the list once the server confirms it. One
+    /// answer per decision is in flight at a time, so a double tap sends once.
     func answer(_ id: String, verdict: String, text: String = "", _ session: AppSession) async -> Bool {
         let epoch = generation
+        if let current = answering[id], current.failure == nil { return false }
+        let requestId = answering[id].flatMap { $0.verdict == verdict ? $0.requestId : nil } ?? "ios-\(UUID().uuidString.lowercased())"
+        answering[id] = PendingAnswer(verdict: verdict, requestId: requestId, failure: nil)
         do {
-            let result = try await session.post("/api/keir/app/decisions/\(id)", ["verdict": .string(verdict), "text": .string(text)])
+            let result = try await session.post("/api/keir/app/decisions/\(id)", ["verdict": .string(verdict), "text": .string(text), "requestId": .string(requestId)])
             guard epoch == generation else { return false }
-            answerReceipt = result
-            decisions.removeAll { $0["id"].string == id }
-            rebuildAttention()
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            confirmAnswer(id, receipt: result)
             return true
-        } catch { guard epoch == generation else { return false }; self.error = error.displayMessage; UINotificationFeedbackGenerator().notificationOccurred(.error); return false }
+        } catch {
+            guard epoch == generation else { return false }
+            if let failure = error as? AppFailure, failure.statusCode == 409,
+               failure.message == "already \(Self.answeredState(verdict))" {
+                confirmAnswer(id, receipt: .object(["id": .string(id), "state": .string(Self.answeredState(verdict))]))
+                return true
+            }
+            var reason = error.displayMessage
+            if let failure = error as? AppFailure, failure.statusCode == 409, failure.message.hasPrefix("already ") {
+                reason = "This was already answered somewhere else. Pull to refresh to see where it stands."
+            }
+            answering[id] = PendingAnswer(verdict: verdict, requestId: requestId, failure: reason)
+            self.error = reason
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return false
+        }
+    }
+
+    private func confirmAnswer(_ id: String, receipt: JSONValue) {
+        answering[id] = nil
+        answered.insert(id)
+        answerReceipt = receipt
+        decisions.removeAll { $0["id"].string == id }
+        rebuildAttention()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 }
 
@@ -294,7 +380,7 @@ import LakesideCore
         generation = UUID(); messages = []; tasks = []; backgroundTasks = []; questions = []; team = .null
         threads = []; thread = "main"; connected = false; working = false; sending = false; queued = 0
         models = []; modelSelection = "auto"; selectingModel = false; controls = .null; controlling = false
-        error = nil; lastSentJob = nil; pending = nil; cursor = 0; version = ""; steeringTask = nil; sendMode = "new"
+        error = nil; lastSentJob = nil; pending = nil; outgoing = []; sendEpoch = nil; cursor = 0; version = ""; steeringTask = nil; sendMode = "new"
         AttentionCenter.shared.setQuestions([])
     }
     var stopped: Bool { controls["stopped"].bool }
@@ -409,6 +495,12 @@ import LakesideCore
         // the row in place so the same message grows into the fuller answer.
         let rows = isSupervisor ? view["messages"].array.map(KeirSupervisor.timelineRow) : view["messages"].array
         if merge(rows, view["revised"].array) { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+        // The conversation poll can deliver the owner's own message before the
+        // post returns; the server copy then replaces the "Sending" one.
+        if !outgoing.isEmpty {
+            let echoed = Set(rows.filter { $0["role"].string == "owner" }.map { $0["text"].string.trimmingCharacters(in: .whitespacesAndNewlines) })
+            outgoing.removeAll { $0.failure == nil && $0.thread == thread && !$0.text.isEmpty && echoed.contains($0.text) }
+        }
         if view["controls"] != .null { controls = view["controls"] }
         if isSupervisor { supervisor.apply(view) }
         tasks = isSupervisor ? view["jobs"].array.map(KeirSupervisor.jobRow) : view["tasks"].array
@@ -428,42 +520,113 @@ import LakesideCore
         Task { await KeirLiveActivity.shared.sync(snapshot, session: OpsServices.shared.session) }
     }
 
+    /// A message the owner sent that the server has not confirmed yet. It is
+    /// drawn in the conversation at once, marked "Sending", and becomes the
+    /// server's own message when the post returns. A failed one stays with
+    /// its reason and a retry that reuses the same send id.
+    struct Outgoing: Identifiable, Equatable {
+        let id: String
+        let clientId: String
+        let text: String
+        let thread: String
+        let attachments: Int
+        var failure: String?
+    }
+    @Published private(set) var outgoing: [Outgoing] = []
+    private var sendEpoch: UUID?
+
     func send(_ text: String, _ session: AppSession, voice: Bool = false, attachments: JSONValue = .array([])) async -> Bool {
+        guard let item = beginSend(text, voice: voice, attachments: attachments, session) else { return false }
+        return await deliver(item, session)
+    }
+
+    /// Every check that decides whether a message may leave the phone, then
+    /// the message appears in the conversation as "Sending". Synchronous, so
+    /// the tap paints in the same frame. Returns nil when the message may not
+    /// be sent; `error` says why and the draft should stay where it is.
+    /// `optimistic` is false while the conversation is not connected: the
+    /// outcome is not near certain then, so nothing is drawn and the draft
+    /// stays in the box until the server confirms.
+    func beginSend(_ text: String, voice: Bool = false, attachments: JSONValue = .array([]), optimistic: Bool = true, _ session: AppSession) -> Outgoing? {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!body.isEmpty || !attachments.array.isEmpty), !sending else { return false }
+        guard (!body.isEmpty || !attachments.array.isEmpty), !sending else { return nil }
         if isSupervisor, session.profile["ownerSupervisorReady"] == .bool(false) {
             error = session.profile["ownerSupervisorIssue"].string.nonempty ?? "Private Keir is offline. Your draft is still here."
-            return false
+            return nil
         }
         // The one place that decides whether a message may leave the phone.
         if case .withheld(let reason) = KeirSupervisor.destination(thread: thread, supervisorAvailable: supervisorAvailable, resolved: homeResolved, chosen: threadChosen) {
-            error = reason; return false
+            error = reason; return nil
         }
-        if isSupervisor, let setup = supervisor.setup { error = "\(setup.message). Nothing was sent."; return false }
-        let epoch = generation
-        sending = true; defer { if epoch == generation { sending = false } }
+        if isSupervisor, let setup = supervisor.setup { error = "\(setup.message). Nothing was sent."; return nil }
+        if isSupervisor && !attachments.array.isEmpty {
+            error = "This conversation currently accepts text and voice. Your attachments are still here."; return nil
+        }
+        sending = true; sendEpoch = generation
         let selected = thread, mode = voice ? "new" : sendMode, target = voice ? nil : steeringTask
         if pending?.text != body || pending?.thread != selected || pending?.mode != mode || pending?.task != target || pending?.voice != voice || pending?.attachments != attachments {
             pending = (body, selected, mode, target, voice, attachments, UUID().uuidString)
         }
+        let id = pending!.id
+        let item = Outgoing(id: id, clientId: selected == Self.supervisorThread ? KeirSupervisor.clientId(id) : id,
+                            text: body, thread: selected, attachments: attachments.array.count, failure: nil)
+        // A retry replaces its failed bubble instead of adding a second one.
+        outgoing.removeAll { $0.id == id }
+        if optimistic { outgoing.append(item) }
+        return item
+    }
+
+    /// Posts a message `beginSend` accepted. The confirmed message only ever
+    /// comes from the server's answer.
+    func deliver(_ item: Outgoing, _ session: AppSession) async -> Bool {
+        let epoch = sendEpoch ?? generation
+        defer { if epoch == generation { sending = false } }
+        guard epoch == generation, let request = pending, request.id == item.id else {
+            outgoing.removeAll { $0.id == item.id }
+            return false
+        }
+        let selected = request.thread
         do {
             let result: JSONValue
             if selected == Self.supervisorThread {
-                guard attachments.array.isEmpty else { throw AppFailure(message: "This conversation currently accepts text and voice. Your attachments are still here.") }
-                result = try await session.post("\(KeirSupervisor.base)/messages", ["text": .string(body), "clientId": .string(KeirSupervisor.clientId(pending!.id))])
+                result = try await session.post("\(KeirSupervisor.base)/messages", ["text": .string(request.text), "clientId": .string(item.clientId)])
             } else {
-                result = try await session.post("/api/keir/app/messages", ["text": .string(body), "clientId": .string(pending!.id), "thread": .string(selected), "mode": .string(mode), "taskId": target.map(JSONValue.string) ?? .null, "voice": .bool(voice), "attachments": attachments])
+                result = try await session.post("/api/keir/app/messages", ["text": .string(request.text), "clientId": .string(request.id), "thread": .string(selected), "mode": .string(request.mode), "taskId": request.task.map(JSONValue.string) ?? .null, "voice": .bool(request.voice), "attachments": request.attachments])
             }
             guard generation == epoch else { return false }
             pending = nil; error = nil; lastSentJob = (selected == Self.supervisorThread ? result["job"]["id"] : result["jobId"]).string.nonempty
+            // The server's message replaces the "Sending" one in the same update.
+            outgoing.removeAll { $0.id == item.id }
             guard thread == selected else { return true }
-            if !voice { steeringTask = nil; sendMode = "new" }
+            if !request.voice { steeringTask = nil; sendMode = "new" }
             if !isSupervisor, let created = result["thread"].string.nonempty { await loadThreads(session); select(created); return true }
             if result["controls"] != .null { controls = result["controls"] }
             let message = isSupervisor ? KeirSupervisor.timelineRow(result["message"]) : result["message"]
             if result["message"] != .null, !messages.contains(where: { $0["id"] == message["id"] }) { messages.append(message); if !isSupervisor { cursor = max(cursor, Int(message["seq"].number ?? 0)) } }
             return true
-        } catch { if generation == epoch { self.error = error.displayMessage }; return false }
+        } catch {
+            guard generation == epoch else { return false }
+            let reason = error.displayMessage
+            self.error = reason
+            if let index = outgoing.firstIndex(where: { $0.id == item.id }) { outgoing[index].failure = reason }
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return false
+        }
+    }
+
+    /// Sends a failed message again with the same send id, so if the first
+    /// attempt did reach the server it is not posted twice.
+    func retryOutgoing(_ id: String, _ session: AppSession) async -> Bool {
+        guard let request = pending, request.id == id, let item = outgoing.first(where: { $0.id == id }), item.failure != nil else { return false }
+        return await send(request.text, session, voice: request.voice, attachments: request.attachments)
+    }
+
+    /// Drops a failed message from the conversation and returns its text, so
+    /// the owner can edit it in the composer.
+    func discardOutgoing(_ id: String) -> String? {
+        guard let item = outgoing.first(where: { $0.id == id }), item.failure != nil else { return nil }
+        outgoing.removeAll { $0.id == id }
+        return item.text
     }
 
     /// Switches the visible thread because the owner (or a notification they

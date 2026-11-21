@@ -55,8 +55,19 @@ struct KeirView: View {
                     }
                     ForEach(timelineRows) { row in
                         if let mark = row.mark { KeirTimeMark(date: mark) }
-                        KeirMessage(message: row.message)
+                        // Equatable: a message only re-renders (and re-parses
+                        // its markdown) when it changed, not on every keystroke.
+                        KeirMessage(message: row.message).equatable()
                             .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity), removal: .opacity))
+                    }
+                    ForEach(keir.outgoing.filter { $0.thread == keir.thread }) { item in
+                        KeirOutgoingBubble(item: item, retry: {
+                            OpsTap.tap()
+                            Task { _ = await keir.retryOutgoing(item.id, session) }
+                        }, edit: {
+                            if let text = keir.discardOutgoing(item.id), draftIsEmpty { draft = text; composing = true }
+                        })
+                        .transition(.opacity)
                     }
                     ForEach(keir.questions.filter { $0["state"].string == "pending" }, id: \.["id"].string) {
                         KeirQuestions(panel: $0).keirObjectCard()
@@ -80,6 +91,7 @@ struct KeirView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: keir.messages.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
+            .onChange(of: keir.outgoing.count) { _, _ in withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
             .onChange(of: keir.live.count) { _, _ in guard !keir.messages.isEmpty else { return }; withAnimation(reduceMotion ? nil : .snappy) { proxy.scrollTo("end", anchor: .bottom) } }
         }
     }
@@ -328,15 +340,25 @@ struct KeirView: View {
         } else { plusMenu }
     }
 
+    /// The tap path, all in this frame: the checks, the haptic, the message
+    /// in the conversation marked "Sending" and an empty box. Only then the
+    /// post. While the conversation is not connected the outcome is not near
+    /// certain, so the draft stays in the box until the server confirms.
     private func send() {
         voice.stopListening()
         composing = false
         let text = draft, files = attachments.payload, selected = keir.thread
+        let optimistic = keir.connected
+        guard let item = keir.beginSend(text, attachments: files, optimistic: optimistic, session) else { return }
+        OpsTap.tap()
+        if optimistic { draft = "" }
         Task {
-            if await keir.send(text, session, attachments: files) {
+            if await keir.deliver(item, session) {
                 attachments.sent(files, in: selected)
-                if keir.thread == selected && draft == text { draft = "" }
-                else if drafts[selected] == text { drafts[selected] = "" }
+                if !optimistic {
+                    if keir.thread == selected && draft == text { draft = "" }
+                    else if drafts[selected] == text { drafts[selected] = "" }
+                }
             }
         }
     }
@@ -597,7 +619,53 @@ struct KeirObjectRow: View {
 }
 
 
-private struct KeirMessage: View {
+/// The owner's message before the server confirms it: the same bubble,
+/// faded, with the working spinner and "Sending" under it. If it failed it is
+/// at full strength with a red edge, the reason in plain words, Try again
+/// (same send id, so never posted twice) and Edit.
+private struct KeirOutgoingBubble: View {
+    let item: KeirStore.Outgoing
+    let retry: () -> Void
+    let edit: () -> Void
+    var body: some View {
+        HStack {
+            Spacer(minLength: 56)
+            VStack(alignment: .trailing, spacing: 4) {
+                if !item.text.isEmpty {
+                    Text(item.text)
+                        .foregroundStyle(KeirChatTheme.ownerInk)
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(KeirChatTheme.ownerBubble, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(item.failure == nil ? Color.clear : OpsTheme.danger.opacity(0.6)))
+                        .opacity(item.failure == nil ? 0.7 : 1)
+                }
+                if item.attachments > 0 {
+                    Text(item.attachments == 1 ? "1 attachment" : "\(item.attachments) attachments").font(.caption).foregroundStyle(OpsTheme.muted)
+                }
+                if let failure = item.failure {
+                    OpsIconLine(text: "Not sent. " + failure, icon: "exclamationmark.circle.fill", color: OpsTheme.danger)
+                        .multilineTextAlignment(.trailing)
+                        .accessibilityIdentifier("keir-outgoing-failure")
+                    HStack(spacing: 16) {
+                        Button("Edit", action: edit).accessibilityIdentifier("keir-outgoing-edit")
+                        Button("Try again", action: retry).fontWeight(.semibold).accessibilityIdentifier("keir-outgoing-retry")
+                    }
+                    .font(.caption).foregroundStyle(OpsTheme.sky).buttonStyle(.plain)
+                } else {
+                    OpsWorkingLabel(text: "Sending", tint: OpsTheme.sky, accessibilityText: "Sending your message")
+                        .font(.caption)
+                        .accessibilityIdentifier("keir-outgoing-sending")
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("keir-outgoing")
+    }
+}
+
+private struct KeirMessage: View, Equatable {
+    static func == (lhs: KeirMessage, rhs: KeirMessage) -> Bool { lhs.message == rhs.message }
     @EnvironmentObject private var session: AppSession
     let message: JSONValue
     private var owner: Bool { message["role"].string == "owner" }
@@ -630,13 +698,9 @@ private struct KeirMessage: View {
                 // Keir revises this same message with the fuller answer; the line
                 // underneath says what he is doing meanwhile.
                 if let progress = message["progress"].string.nonempty {
-                    HStack(spacing: 6) {
-                        ProgressView().controlSize(.mini)
-                        LoadingShimmer(text: progress).font(.caption)
-                    }
-                    .padding(.leading, 6)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Keir is working: \(progress)")
+                    OpsWorkingLabel(text: progress, accessibilityText: "Keir is working: \(progress)")
+                        .font(.caption)
+                        .padding(.leading, 6)
                 }
                 if !message["chart"].string.isEmpty { KeirChart(name: message["chart"].string) }
                 if !message["cards"].array.isEmpty { KeirCards(cards: message["cards"].array) }
@@ -758,7 +822,13 @@ struct DecisionCard: View {
     @State private var actionError: String?
     @State private var explaining = false
     @State private var note = ""
-    @State private var busy = false
+    /// Set in the same frame as the tap, before any request starts.
+    @State private var tapped: String?
+    @State private var lastText = ""
+    private var pending: OpsStore.PendingAnswer? { ops.answering[decision["id"].string] }
+    /// The verdict being sent right now, from the tap until the server answers.
+    private var sending: String? { tapped ?? (pending?.failure == nil ? pending?.verdict : nil) }
+    private var busy: Bool { sending != nil }
     private var question: String { OpsText.scrub(decision["question"].string) }
     private var checksStatus: String { decision["checksStatus"].string }
     private var staleChecks: Bool { checksStatus == "Checks need a fresh run" }
@@ -827,15 +897,33 @@ struct DecisionCard: View {
                 }
             }
             if !decision["reason"].string.isEmpty { Text(decision["reason"].string).font(.caption).foregroundStyle(OpsTheme.warn) }
-            if let actionError { Text(actionError).font(.caption).foregroundStyle(OpsTheme.warn) }
+            if let actionError {
+                // The rollback: the buttons are back, with the reason in plain
+                // words and the same request one tap away.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(actionError).font(.caption).foregroundStyle(OpsTheme.danger).fixedSize(horizontal: false, vertical: true)
+                    if let failed = pending, failed.failure != nil {
+                        Button { act(failed.verdict, lastText) } label: {
+                            Label("Try again", systemImage: "arrow.clockwise").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.sky)
+                        }.accessibilityIdentifier("decision-retry")
+                    }
+                }.accessibilityIdentifier("decision-failure")
+            }
             if decision["type"].string == "choice" {
                 ForEach(decision["options"].array, id: \.["id"].string) { option in
-                    Button { act("choose:" + option["id"].string) } label: {
+                    let verdict = "choose:" + option["id"].string
+                    Button { act(verdict) } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(option["label"].string + (option["recommended"].bool ? " (recommended)" : "")).fontWeight(.semibold)
-                            if !option["detail"].string.isEmpty { Text(option["detail"].string).font(.caption) }
+                            HStack(spacing: 6) {
+                                if sending == verdict { OpsSpinner(tint: OpsTheme.ink, size: 14) }
+                                Text(option["label"].string + (option["recommended"].bool ? " (recommended)" : "")).fontWeight(.semibold)
+                            }
+                            if sending == verdict { Text(OpsStore.progressWord(verdict)).font(.caption).foregroundStyle(OpsTheme.muted) }
+                            else if !option["detail"].string.isEmpty { Text(option["detail"].string).font(.caption) }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
-                    }.background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous)).disabled(busy || decision["canAnswer"] == .bool(false))
+                    }.background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .opacity(busy && sending != verdict ? 0.5 : 1)
+                    .disabled(busy || decision["canAnswer"] == .bool(false))
                 }
                 Text("Your choice gives direction. Actions needing permission get a separate approval.").font(.caption).foregroundStyle(OpsTheme.muted)
                 Button("Ask a question or give another answer") { explaining = true }.disabled(busy)
@@ -855,6 +943,10 @@ struct DecisionCard: View {
             if decision["canRefresh"].bool && !(staleChecks && decision["type"].string != "choice") {
                 refreshButton(primary: false)
             }
+            if sending == "explain" {
+                OpsWorkingLabel(text: OpsStore.progressWord("explain"), tint: OpsTheme.sky).font(.caption)
+                    .accessibilityIdentifier("decision-in-flight")
+            }
             if decision["canAnswer"] == .bool(false) {
                 OwnerDirectionButton(title: "Ask Keir to recover this work", context: "Decision \(decision["id"].string) for task \(decision["jobId"].string): \(decision["question"].string)")
             }
@@ -871,7 +963,16 @@ struct DecisionCard: View {
     }
     private func refreshButton(primary: Bool) -> some View {
         Button { act("refresh") } label: {
-            Label(staleChecks ? "Request fresh checks" : "Request a fresh proposal", systemImage: "arrow.clockwise")
+            Group {
+                if sending == "refresh" {
+                    HStack(spacing: 8) {
+                        OpsSpinner(tint: primary ? OpsTheme.onAccent : OpsTheme.sky, size: 15)
+                        Text(OpsStore.progressWord("refresh"))
+                    }
+                } else {
+                    Label(staleChecks ? "Request fresh checks" : "Request a fresh proposal", systemImage: "arrow.clockwise")
+                }
+            }
                 .font(.callout.weight(.semibold))
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .foregroundStyle(primary ? OpsTheme.onAccent : OpsTheme.sky)
@@ -881,17 +982,33 @@ struct DecisionCard: View {
     private var approveLocked: Bool { decision["canApprove"] == .bool(false) }
     @ViewBuilder private var decisionButtons: some View {
         Button { act("reject") } label: {
-            Text("Decline").fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
+            Group {
+                if sending == "reject" {
+                    HStack(spacing: 8) { OpsSpinner(tint: OpsTheme.ink, size: 15); Text(OpsStore.progressWord("reject")) }
+                } else { Text("Decline") }
+            }
+            .fontWeight(.semibold).frame(maxWidth: .infinity, minHeight: 44)
                 .background(OpsTheme.raised, in: Capsule())
                 .overlay(Capsule().strokeBorder(OpsTheme.hairline))
+                .opacity(busy && sending != "reject" ? 0.5 : 1)
         }
+        .accessibilityIdentifier("decision-decline")
         Button { act("approve") } label: {
-            Label("Approve", systemImage: approveLocked ? "lock.fill" : "checkmark")
+            // While in flight the button itself says "Approving" with the
+            // spinner: the request is on its way, not approved.
+            Group {
+                if sending == "approve" {
+                    HStack(spacing: 8) { OpsSpinner(tint: OpsTheme.onAccent, size: 15); Text(OpsStore.progressWord("approve")) }
+                } else {
+                    Label("Approve", systemImage: approveLocked ? "lock.fill" : "checkmark")
+                }
+            }
                 .fontWeight(.semibold).lineLimit(1).minimumScaleFactor(0.8).multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 8)
                 .background(approveLocked ? Color.clear : OpsTheme.sky, in: Capsule())
                 .overlay(Capsule().strokeBorder(approveLocked ? OpsTheme.muted.opacity(0.45) : .clear, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
                 .foregroundStyle(approveLocked ? OpsTheme.muted : OpsTheme.onAccent)
+                .opacity(busy && sending != "approve" ? 0.5 : 1)
         }
         .disabled(approveLocked).accessibilityIdentifier("decision-approve")
         Button { explaining = true } label: {
@@ -899,14 +1016,23 @@ struct DecisionCard: View {
                 .overlay(Circle().strokeBorder(OpsTheme.hairline))
         }.accessibilityLabel("Reply or ask why")
     }
+    /// The tap path: guard against a second tap, haptic, in-progress state,
+    /// all in this frame; then the request. The confirmed outcome only comes
+    /// from the server's answer.
     private func act(_ verdict: String, _ text: String = "") {
-        busy = true
+        guard !busy else { return }
+        OpsTap.commit()
+        tapped = verdict; lastText = text; actionError = nil
+        let id = decision["id"].string
         Task {
-            if await ops.answer(decision["id"].string, verdict: verdict, text: text, session) {
+            if await ops.answer(id, verdict: verdict, text: text, session) {
                 outcome = verdict == "approve" ? "Approval saved. Keir will report the execution result." : verdict == "reject" ? "Rejection saved" : verdict == "refresh" ? "Fresh review requested. No action was approved." : verdict.hasPrefix("choose:") ? "Choice saved. Keir will continue with your selection." : "Reply sent"
+                tapped = nil
                 await changed()
-            } else { actionError = ops.error ?? "The decision could not be saved. Refresh and try again." }
-            busy = false
+            } else {
+                if let failure = ops.answering[id]?.failure { actionError = failure }
+                tapped = nil
+            }
         }
     }
 }

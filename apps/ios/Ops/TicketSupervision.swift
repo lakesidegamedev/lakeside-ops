@@ -18,6 +18,9 @@ final class TicketSupervisionModel: ObservableObject {
     @Published var busy = false
     @Published var draft = ""
     @Published var confirming: SupervisionAction?
+    /// The write the owner just confirmed, from the tap until the server
+    /// answers, so the screen says "Taking over" at once.
+    @Published private(set) var sendingAction: SupervisionAction?
     /// Request ids for writes that have not been confirmed yet, keyed by action
     /// and content, so a retry replays rather than repeats.
     private var requestIds: [String: String] = [:]
@@ -30,7 +33,7 @@ final class TicketSupervisionModel: ObservableObject {
     var directionTarget: String { state["canMessage"].bool ? worker["id"].string : "" }
     /// Directions for the current worker only; earlier sessions' notes are history.
     var directions: [JSONValue] { state["directions"].array.filter { $0["workerId"] == worker["id"] } }
-    var canSend: Bool { !busy && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var canSend: Bool { !busy && sendingAction == nil && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     /// Compact owner name: Keir, or the worker the owner supervises.
     var ownerWord: String {
@@ -56,7 +59,20 @@ final class TicketSupervisionModel: ObservableObject {
         requestIds = requestIds.filter { !$0.key.hasPrefix("\(SupervisionAction.message.rawValue)|") }
     }
 
+    /// Called in the same frame as the tap: haptic and the in-progress state,
+    /// before the request starts. A second tap while one is in flight is ignored.
+    func begin(_ action: SupervisionAction) -> Bool {
+        guard !busy, sendingAction == nil else { return false }
+        OpsTap.commit()
+        sendingAction = action
+        return true
+    }
+
     func send(_ action: SupervisionAction, text: String, _ session: AppSession) async {
+        guard !busy else { return }
+        if sendingAction == nil { sendingAction = action }
+        // Every way out of here, including the early ones, clears the in-progress state.
+        defer { sendingAction = nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // A direction names the worker it was written for; with no worker to
         // name there is nobody to send it to.
@@ -69,7 +85,7 @@ final class TicketSupervisionModel: ObservableObject {
         if !trimmed.isEmpty { body["text"] = .string(trimmed) }
         if action != .message { body["revision"] = state["revision"] }
         if action == .message { body["workerId"] = .string(target) }
-        busy = true; defer { busy = false; confirming = nil }
+        busy = true; defer { busy = false; confirming = nil; sendingAction = nil }
         do {
             let result = try await session.post(path, body)
             requestIds[key] = nil
@@ -96,7 +112,10 @@ struct TicketSupervisionPolling: ViewModifier {
             // screen when they are offered.
             .confirmationDialog(model.confirming?.title ?? "", isPresented: Binding(get: { model.confirming != nil }, set: { if !$0 { model.confirming = nil } }), titleVisibility: .visible) {
                 if let action = model.confirming {
-                    Button(action.title) { Task { await model.send(action, text: "", session) } }
+                    Button(action.title) {
+                        guard model.begin(action) else { return }
+                        Task { await model.send(action, text: "", session) }
+                    }
                     Button("Cancel", role: .cancel) { model.confirming = nil }
                 }
             } message: { Text(model.confirming?.detail ?? "") }
@@ -121,6 +140,12 @@ struct TicketOwnershipActions: View {
                     Label(blocker["text"].string, systemImage: "hand.raised").font(.caption).foregroundStyle(OpsTheme.warn)
                 }
             }
+            if let action = model.sendingAction, action != .message {
+                // The confirmed write is on its way; the buttons come back if it fails.
+                OpsWorkingLabel(text: action == .take ? "Taking over" : "Handing back", tint: OpsTheme.accent)
+                    .font(.callout.weight(.semibold)).padding(.vertical, 4)
+                    .accessibilityIdentifier("supervision-in-flight")
+            } else {
             HStack(spacing: 12) {
                 if model.state["canTake"].bool {
                     Button { model.confirming = .take } label: { Label("Take over", systemImage: "person.badge.key") }
@@ -132,6 +157,7 @@ struct TicketOwnershipActions: View {
                         .buttonStyle(.plain).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.accent).padding(.vertical, 4)
                         .disabled(model.busy).accessibilityIdentifier("supervision-handback")
                 }
+            }
             }
             if let error = model.error {
                 Text(error).font(.caption).foregroundStyle(OpsTheme.warn)
@@ -171,8 +197,15 @@ struct TicketDirectionComposer: View {
                     .padding(.leading, 14)
                     .accessibilityIdentifier("supervision-direction")
             } trailing: {
-                Button { Task { await model.send(.message, text: model.draft, session) } } label: {
-                    KeirComposerIcon(system: "arrow.up", filled: model.canSend)
+                Button {
+                    guard model.begin(.message) else { return }
+                    Task { await model.send(.message, text: model.draft, session) }
+                } label: {
+                    if model.sendingAction == .message {
+                        OpsSpinner(tint: OpsTheme.sky, size: 18).frame(width: 44, height: 44)
+                    } else {
+                        KeirComposerIcon(system: "arrow.up", filled: model.canSend)
+                    }
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.canSend)
