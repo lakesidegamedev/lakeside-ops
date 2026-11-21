@@ -12,6 +12,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 
 const ci = require("./code-index");
+const { createCheckoutScanner } = require("./checkout-scan");
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "code-index-test-"));
@@ -64,6 +65,35 @@ function gameGen(dir = tmpDir()) {
   return { gen: ci.createGenerationReader(file).get(), file, dir };
 }
 
+// The game index plus the checkout it is built from: a git repository holding
+// the indexed code files and files the index leaves out (UI strings, a
+// script, an image), so exact lookup can scan what the index does not hold.
+const UNINDEXED = {
+  "messages/en/centralBank.json": '{\n  "rateCooldown": "Another rate change occurred too recently.",\n  "invite": "Invite players with your link"\n}\n',
+  "scripts/sim/run.mjs": "export const SIM_ONLY_FLAG = true;\n",
+};
+function gameRepo() {
+  const { execFileSync } = require("child_process");
+  const repo = tmpDir();
+  const git = (...args) => execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { encoding: "utf8" });
+  git("init", "-q");
+  const files = { ...Object.fromEntries(Object.entries(GAME_FILES).filter(([, v]) => !v.source).map(([k, v]) => [k, v.text])), ...UNINDEXED };
+  for (const [p, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(repo, p)), { recursive: true }); fs.writeFileSync(path.join(repo, p), text); }
+  fs.writeFileSync(path.join(repo, "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]));
+  git("add", "-A");
+  git("commit", "-q", "-m", "x");
+  return { repo, revision: git("rev-parse", "HEAD").trim(), git };
+}
+function gameGenWithRepo() {
+  const { repo, revision, git } = gameRepo();
+  const file = path.join(tmpDir(), "index.db");
+  buildIndex(file, GAME_FILES, { revision });
+  const gen = ci.createGenerationReader(file).get();
+  const indexed = new Set(Object.keys(GAME_FILES).filter(k => !GAME_FILES[k].source));
+  const scanner = createCheckoutScanner({ gitDir: repo, revision, indexed });
+  return { gen, scanner, repo, revision, git };
+}
+
 test("parseExactQuery separates symbols, phrases, paths and ignored words", () => {
   assert.deepStrictEqual(ci.parseExactQuery("US_NATIONAL_CONFIG").terms, [{ term: "US_NATIONAL_CONFIG", kind: "symbol" }]);
   assert.deepStrictEqual(ci.parseExactQuery("calculate").terms, [{ term: "calculate", kind: "symbol" }]);
@@ -77,9 +107,9 @@ test("parseExactQuery separates symbols, phrases, paths and ignored words", () =
   assert.deepStrictEqual(ci.parseExactQuery("src/app/corporation/[id]/page.tsx:42").terms, [{ term: "src/app/corporation/[id]/page.tsx", kind: "path" }]);
 });
 
-test("a symbol is found as a whole identifier, with its definition first and real line numbers", () => {
-  const { gen } = gameGen();
-  const out = ci.exactLookup(gen, "US_NATIONAL_CONFIG");
+test("a symbol is found as a whole identifier, with its definition first and real line numbers", async () => {
+  const { gen, scanner } = gameGenWithRepo();
+  const out = (await ci.exactLookup(gen, "US_NATIONAL_CONFIG", { scanner }));
   const r = out.results[0];
   assert.strictEqual(r.found, true);
   assert.strictEqual(r.complete, true);
@@ -91,63 +121,65 @@ test("a symbol is found as a whole identifier, with its definition first and rea
   assert.strictEqual(out.files[0], "src/lib/countries/us/elections/billLifecycle.ts");
 });
 
-test("whole-identifier matching ignores longer names and the model-written chunk header", () => {
+test("whole-identifier matching ignores longer names and the model-written chunk header", async () => {
   const { gen } = gameGen();
-  const r = ci.exactLookup(gen, "ownSitesFirst").results[0];
+  const r = (await ci.exactLookup(gen, "ownSitesFirst")).results[0];
   assert.strictEqual(r.totalFiles, 1);
   assert.strictEqual(r.totalOccurrences, 2); // the property and the use, not ownSitesFirstPolicy
   assert.strictEqual(r.definitions[0].kind, "property");
-  const header = ci.exactLookup(gen, "FakeHeaderSymbol").results[0];
+  const { gen: g2, scanner } = gameGenWithRepo();
+  const header = (await ci.exactLookup(g2, "FakeHeaderSymbol", { scanner })).results[0];
   assert.strictEqual(header.found, false, "header text is not file content");
   assert.strictEqual(header.complete, true);
 });
 
-test("a missing literal is a complete not-found, and the FTS prefilter agrees with a full scan", () => {
-  const { gen } = gameGen();
+test("a missing literal is a complete not-found, and the FTS prefilter agrees with a full scan", async () => {
+  const { gen, scanner } = gameGenWithRepo();
   for (const term of ["capacityUtilizationPct", "US_NATIONAL_CONFIG", "ownSitesFirst", "chamber"]) {
-    const fast = ci.exactLookup(gen, term).results[0];
+    const fast = (await ci.exactLookup(gen, term)).results[0];
     process.env.RAG_EXACT_SCAN = "1";
-    const scan = ci.exactLookup(gen, term).results[0];
+    const scan = (await ci.exactLookup(gen, term)).results[0];
     delete process.env.RAG_EXACT_SCAN;
     assert.strictEqual(fast.totalFiles, scan.totalFiles, term);
     assert.strictEqual(fast.totalOccurrences, scan.totalOccurrences, term);
   }
-  const none = ci.exactLookup(gen, "capacityUtilizationPct");
+  const none = (await ci.exactLookup(gen, "capacityUtilizationPct", { scanner }));
   assert.strictEqual(none.found, false);
   assert.strictEqual(none.complete, true);
   assert.strictEqual(none.count, 0);
+  assert.match(none.results[0].notFoundIn, /every text file of the repository at revision/);
 });
 
-test("a short sentence is one phrase, matched case-insensitively when the exact case is absent", () => {
+test("a short sentence is one phrase, matched case-insensitively when the exact case is absent", async () => {
   const { gen } = gameGen();
-  const r = ci.exactLookup(gen, "cannot be merged yet").results[0];
+  const r = (await ci.exactLookup(gen, "cannot be merged yet")).results[0];
   assert.strictEqual(r.kind, "phrase");
   assert.strictEqual(r.found, true);
   assert.strictEqual(r.caseInsensitive, true);
   assert.strictEqual(r.files[0].path, "src/app/ForSalePanel.tsx");
-  assert.strictEqual(ci.exactLookup(gen, "put marines ashore").results[0].found, false);
+  assert.strictEqual((await ci.exactLookup(gen, "put marines ashore")).results[0].found, false);
 });
 
-test("a listing cut by the limit says so and keeps the exact total", () => {
+test("a listing cut by the limit says so and keeps the exact total", async () => {
   const { gen } = gameGen();
-  const r = ci.exactLookup(gen, "US_NATIONAL_CONFIG", { limit: 1 }).results[0];
+  const r = (await ci.exactLookup(gen, "US_NATIONAL_CONFIG", { limit: 1 })).results[0];
   assert.strictEqual(r.complete, false);
   assert.strictEqual(r.totalFiles, 4);
   assert.strictEqual(r.files.length, 1);
   assert.match(r.truncated, /4 files contain this; 1 are listed/);
 });
 
-test("a path returns that file whole; a bare file name resolves or lists the candidates", () => {
+test("a path returns that file whole; a bare file name resolves or lists the candidates", async () => {
   const { gen } = gameGen();
-  const exact = ci.exactLookup(gen, "src/lib/turn/billLifecycle/configs/us.ts").results[0];
+  const exact = (await ci.exactLookup(gen, "src/lib/turn/billLifecycle/configs/us.ts")).results[0];
   assert.strictEqual(exact.found, true);
   assert.match(exact.content, /^\/\/ Forwarder\./);
-  const bare = ci.exactLookup(gen, "ForSalePanel.tsx").results[0];
+  const bare = (await ci.exactLookup(gen, "ForSalePanel.tsx")).results[0];
   assert.strictEqual(bare.files[0].path, "src/app/ForSalePanel.tsx");
-  const ambiguous = ci.exactLookup(gen, "us.ts").results[0];
+  const ambiguous = (await ci.exactLookup(gen, "us.ts")).results[0];
   assert.strictEqual(ambiguous.ambiguous, true);
   assert.strictEqual(ambiguous.totalFiles, 2);
-  assert.strictEqual(ci.exactLookup(gen, "src/nope.ts").results[0].found, false);
+  assert.strictEqual((await ci.exactLookup(gen, "src/nope.ts")).results[0].found, false);
 });
 
 test("readFile reassembles every chunk and pages by line", () => {
@@ -162,7 +194,7 @@ test("readFile reassembles every chunk and pages by line", () => {
   assert.ok(ci.readFile(gen, "../etc/passwd").error);
 });
 
-test("the reader serves a new generation after a rename swap and keeps the old one when the new is broken", () => {
+test("the reader serves a new generation after a rename swap and keeps the old one when the new is broken", async () => {
   const dir = tmpDir();
   const file = path.join(dir, "index.db");
   buildIndex(file, GAME_FILES, { generation: "g1" });
@@ -180,7 +212,7 @@ test("the reader serves a new generation after a rename swap and keeps the old o
   const kept = reader.get();
   assert.strictEqual(kept.generation, "g2");
   assert.strictEqual(kept.servedFrom, "current");
-  assert.ok(ci.exactLookup(kept, "US_NATIONAL_CONFIG").results[0].found);
+  assert.ok((await ci.exactLookup(kept, "US_NATIONAL_CONFIG")).results[0].found);
 });
 
 test("with nothing in hand the reader falls back to .previous, then reports a retryable error", () => {
@@ -276,7 +308,7 @@ const WRAPPED_FILES = {
   "src/components/Scrambled.tsx": { text: "// home affiliation party a with\n" },
 };
 
-test("B1: a phrase wrapped across lines, split between chunks or re-spaced is found", () => {
+test("B1: a phrase wrapped across lines, split between chunks or re-spaced is found", async () => {
   const dir = tmpDir();
   const file = path.join(dir, "index.db");
   buildIndex(file, WRAPPED_FILES);
@@ -288,7 +320,7 @@ test("B1: a phrase wrapped across lines, split between chunks or re-spaced is fo
     '"party  affiliation"': ["src/app/about/page.tsx", 2],
   };
   for (const [q, want] of Object.entries(cases)) {
-    const r = ci.exactLookup(gen, q).results[0];
+    const r = (await ci.exactLookup(gen, q)).results[0];
     if (!want) continue;
     assert.strictEqual(r.found, true, q);
     assert.strictEqual(r.files[0].path, want[0], q);
@@ -298,33 +330,33 @@ test("B1: a phrase wrapped across lines, split between chunks or re-spaced is fo
   const parts = gen.db.prepare("SELECT text FROM chunks WHERE path='src/components/GranularPollPanel.tsx' ORDER BY ord").all().map(r => ci.chunkBody(r.text));
   assert.deepStrictEqual(parts, ["line one\n<p>The share below splits\n", "between you and\nend\n"]);
   // A phrase that starts or ends mid-word is still found.
-  assert.strictEqual(ci.exactLookup(gen, '"arty affiliation, ho"').results[0].found, true);
+  assert.strictEqual((await ci.exactLookup(gen, '"arty affiliation, ho"')).results[0].found, true);
 });
 
-test("B1 opposite: the same words in another order or apart are not a match", () => {
+test("B1 opposite: the same words in another order or apart are not a match", async () => {
   const dir = tmpDir();
   const file = path.join(dir, "index.db");
   buildIndex(file, WRAPPED_FILES);
   const gen = ci.createGenerationReader(file).get();
-  const r = ci.exactLookup(gen, "with a party home affiliation").results[0];
+  const r = (await ci.exactLookup(gen, "with a party home affiliation")).results[0];
   assert.strictEqual(r.found, false);
-  const s = ci.exactLookup(gen, "you between splits").results[0];
+  const s = (await ci.exactLookup(gen, "you between splits")).results[0];
   assert.strictEqual(s.found, false);
   // Words in the model-written header never count.
-  assert.strictEqual(ci.exactLookup(gen, "summary mentions FakeHeaderSymbol").results[0].found, false);
+  assert.strictEqual((await ci.exactLookup(gen, "summary mentions FakeHeaderSymbol")).results[0].found, false);
 });
 
-test("M1: a single word in the wrong case is found ignoring case, and says so", () => {
+test("M1: a single word in the wrong case is found ignoring case, and says so", async () => {
   const { gen } = gameGen();
-  const r = ci.exactLookup(gen, "us_national_config").results[0];
+  const r = (await ci.exactLookup(gen, "us_national_config")).results[0];
   assert.strictEqual(r.found, true);
   assert.strictEqual(r.matchedCase, "case-insensitive");
   assert.strictEqual(r.files[0].path, "src/lib/countries/us/elections/billLifecycle.ts");
   assert.strictEqual(r.definitions[0].line, 3);
-  assert.match(ci.exactLookup(gen, "us_national_config").context, /no exact-case match, matched ignoring case/);
+  assert.match((await ci.exactLookup(gen, "us_national_config")).context, /no exact-case match, matched ignoring case/);
 });
 
-test("M1 opposite: an exact-case match is preferred and other-case names are not mixed in", () => {
+test("M1 opposite: an exact-case match is preferred and other-case names are not mixed in", async () => {
   const dir = tmpDir();
   const file = path.join(dir, "index.db");
   buildIndex(file, {
@@ -332,13 +364,69 @@ test("M1 opposite: an exact-case match is preferred and other-case names are not
     "src/b.ts": { text: "const ordnance = 'shells';\n" },
   });
   const gen = ci.createGenerationReader(file).get();
-  const upper = ci.exactLookup(gen, "Ordnance").results[0];
+  const upper = (await ci.exactLookup(gen, "Ordnance")).results[0];
   assert.strictEqual(upper.matchedCase, "exact");
   assert.deepStrictEqual(upper.files.map(f => f.path), ["src/a.ts"]);
-  const lower = ci.exactLookup(gen, "ordnance").results[0];
+  const lower = (await ci.exactLookup(gen, "ordnance")).results[0];
   assert.deepStrictEqual(lower.files.map(f => f.path), ["src/b.ts"]);
   // Whole identifiers only, in either case: ordnanceDepot is not ordnance.
   buildIndex(file, { "src/c.ts": { text: "const ordnanceDepot = 2;\n" } });
   const gen2 = ci.createGenerationReader(file).get();
-  assert.strictEqual(ci.exactLookup(gen2, "ORDNANCE").results[0].found, false);
+  assert.strictEqual((await ci.exactLookup(gen2, "ORDNANCE")).results[0].found, false);
+});
+
+test("B2: text in files the index leaves out is found by a scan of the indexed revision", async () => {
+  const { gen, scanner, revision, git, repo } = gameGenWithRepo();
+  // The working tree moves on after the index was built: the scan must read
+  // the indexed commit, not the working tree.
+  fs.writeFileSync(path.join(repo, "messages/en/centralBank.json"), "{}\n");
+  git("commit", "-q", "-am", "later");
+  const out = await ci.exactLookup(gen, "Another rate change occurred too recently", { scanner });
+  const r = out.results[0];
+  assert.strictEqual(r.found, true);
+  assert.strictEqual(r.foundBy, "repository scan");
+  assert.deepStrictEqual(r.files.map(f => [f.path, f.inIndex, f.lines[0].line]), [["messages/en/centralBank.json", false, 2]]);
+  assert.strictEqual(out.scope.revision, revision);
+  assert.match(out.scope.searched, /indexed files, and a literal scan of the \d+ other text files/);
+  assert.match(out.scope.notSearched, /binary and media files \(1\)/);
+  const sym = (await ci.exactLookup(gen, "SIM_ONLY_FLAG", { scanner })).results[0];
+  assert.strictEqual(sym.files[0].path, "scripts/sim/run.mjs");
+  const p = (await ci.exactLookup(gen, "messages/en/centralBank.json", { scanner })).results[0];
+  assert.strictEqual(p.found, true);
+  assert.match(p.content, /Invite players with your link/);
+  assert.match(p.note, /not in the index/);
+  const gone = (await ci.exactLookup(gen, "messages/en/nope.json", { scanner })).results[0];
+  assert.strictEqual(gone.found, false);
+  assert.strictEqual(gone.complete, true);
+});
+
+test("B2 opposite: without a usable scan a miss is never complete, and says what was not searched", async () => {
+  const { gen } = gameGen();
+  const out = await ci.exactLookup(gen, "Another rate change occurred too recently");
+  const r = out.results[0];
+  assert.strictEqual(r.found, false);
+  assert.strictEqual(r.complete, false);
+  assert.strictEqual(out.complete, false);
+  assert.match(r.incomplete, /messages\/ with the UI strings/);
+  assert.match(r.hint, /on-screen text/);
+  assert.match(out.context, /NOT a complete search/);
+  assert.strictEqual((await ci.exactLookup(gen, "messages/en/centralBank.json")).results[0].complete, false);
+  // A checkout that does not hold the indexed revision is not trusted.
+  const { repo } = gameRepo();
+  const stale = createCheckoutScanner({ gitDir: repo, revision: "0".repeat(40), indexed: new Set() });
+  const s = await ci.exactLookup(gen, "Another rate change occurred too recently", { scanner: stale });
+  assert.strictEqual(s.results[0].complete, false);
+  assert.match(s.results[0].incomplete, /does not hold the indexed revision/);
+  // A listing cut to fit maxChars is truncated, never complete.
+  const g = gameGenWithRepo();
+  const cut = await ci.exactLookup(g.gen, "US_NATIONAL_CONFIG", { scanner: g.scanner, maxChars: 60 });
+  assert.strictEqual(cut.complete, false);
+  assert.match(cut.truncated, /cut to fit maxChars/);
+});
+
+test("m3: exact lookup stops at its time budget and says the result is truncated", async () => {
+  const { gen } = gameGen();
+  const r = (await ci.exactLookup(gen, "US_NATIONAL_CONFIG", { timeBudgetMs: -1 })).results[0];
+  assert.strictEqual(r.complete, false);
+  assert.match(r.truncated, /time limit/);
 });

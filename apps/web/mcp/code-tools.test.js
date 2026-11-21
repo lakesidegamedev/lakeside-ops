@@ -29,17 +29,17 @@ function index(file, files, { revision = "rev1", visibility } = {}) {
   db.close();
 }
 
-function setup({ grant = false, retrieve } = {}) {
+function setup({ grant = false, retrieve, checkout = "off", gameRevision = "gamerev" } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "code-tools-test-"));
   const game = path.join(dir, "index-dev.db");
-  index(game, { "src/lib/rules.ts": "export const GAME_RULE = 1; // national chamber rule\n" }, { revision: "gamerev" });
+  index(game, { "src/lib/rules.ts": "export const GAME_RULE = 1; // national chamber rule\n" }, { revision: gameRevision });
   const internal = path.join(dir, "internal");
   fs.mkdirSync(internal);
   index(path.join(internal, "keir.db"), { "apps/agent/lib/brief.js": "const OPENER_TEXT = 'Thanks for the report';\n" }, { revision: "keirrev", visibility: "internal" });
   const handlers = {};
   const server = { tool: (name, _desc, _schema, fn) => { handlers[name] = fn; } };
   const auth = { name: grant ? "keir" : "someone", scopes: { collections: ["docs"] } };
-  const env = { CODE_INDEX_INTERNAL_DIR: internal, CODE_INDEX_INTERNAL_READERS: "keir" };
+  const env = { CODE_INDEX_INTERNAL_DIR: internal, CODE_INDEX_INTERNAL_READERS: "keir", CODE_INDEX_GAME_CHECKOUT_DEV: checkout };
   const calls = [];
   registerCodeTools(server, {
     auth, env,
@@ -128,4 +128,46 @@ test("with the grant an internal repo is searchable and every result names its r
   const only = await handlers.code_search({ question: "q", repo: "client", topK: 2, maxChars: 30000 });
   assert.match(only.error, /code index not available: client: no index has been built/);
   assert.strictEqual(notBuilt.complete, false, "a repo that could not be read makes the answer incomplete");
+});
+
+// A checkout holding the indexed game file and UI strings the index leaves out.
+function checkoutRepo() {
+  const { execFileSync } = require("child_process");
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "code-tools-repo-"));
+  const git = (...args) => execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { encoding: "utf8" });
+  git("init", "-q");
+  fs.mkdirSync(path.join(repo, "src/lib"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "messages/en"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "src/lib/rules.ts"), "export const GAME_RULE = 1; // national chamber rule\n");
+  fs.writeFileSync(path.join(repo, "messages/en/bank.json"), '{ "cooldown": "Another rate change occurred too recently." }\n');
+  git("add", "-A");
+  git("commit", "-q", "-m", "x");
+  return { repo, revision: git("rev-parse", "HEAD").trim() };
+}
+
+test("B2: code_exact and code_read reach game files the index leaves out, at the indexed revision", async () => {
+  const { repo, revision } = checkoutRepo();
+  const { handlers } = setup({ checkout: repo, gameRevision: revision });
+  const exact = (await handlers.code_exact({ question: "Another rate change occurred too recently", limit: 8, maxChars: 18000, source: "dev" })).json;
+  assert.strictEqual(exact.found, true);
+  assert.strictEqual(exact.complete, true);
+  assert.deepStrictEqual(exact.files, ["messages/en/bank.json"]);
+  assert.strictEqual(exact.results[0].foundBy, "repository scan");
+  assert.strictEqual(exact.scope.revision, revision);
+  const read = (await handlers.code_read({ path: "messages/en/bank.json", maxChars: 40000, source: "dev" })).json;
+  assert.strictEqual(read.inIndex, false);
+  assert.match(read.content, /rate change/);
+  const missing = await handlers.code_read({ path: "messages/en/none.json", maxChars: 40000, source: "dev" });
+  assert.match(missing.error, /no file messages\/en\/none\.json in the dev game repository at revision/);
+});
+
+test("B2 opposite: with no checkout the tools say only the indexed files were searched", async () => {
+  const { handlers } = setup({ checkout: "off" });
+  const exact = (await handlers.code_exact({ question: "Another rate change occurred too recently", limit: 8, maxChars: 18000, source: "dev" })).json;
+  assert.strictEqual(exact.found, false);
+  assert.strictEqual(exact.complete, false);
+  assert.match(exact.scope.searched, /indexed files only/);
+  assert.match(exact.results[0].hint, /messages\/<locale>/);
+  const read = await handlers.code_read({ path: "messages/en/bank.json", maxChars: 40000, source: "dev" });
+  assert.match(read.error, /files the index leaves out were not searched/);
 });

@@ -287,22 +287,54 @@ const SOURCE_RANK = { code: 0, wiki: 1, docs: 2 };
  * Up to maxFiles matching files are reassembled for line numbers; beyond
  * that the response says the listing is truncated.
  */
-function exactLookup(gen, question, { limit = 8, maxChars = 18000, maxFiles = 300, maxLinesPerFile = 6, kinds = null } = {}) {
+async function exactLookup(gen, question, { limit = 8, maxChars = 18000, maxFiles = 300, maxLinesPerFile = 6, kinds = null, scanner = null, timeBudgetMs = 3000 } = {}) {
   const { sourceAware } = gen;
   const parsed = parseExactQuery(question);
   const kindFilter = sourceAware && kinds && kinds.length ? ` AND source_kind IN (${kinds.map(() => "?").join(",")})` : "";
   const kindArgs = sourceAware && kinds && kinds.length ? kinds : [];
   const projection = sourceAware ? "path, ord, text, source_kind source, revision, repository" : "path, ord, text, 'code' source, '' revision, '' repository";
+  // The work runs inside the shared MCP process: bound it so one broad
+  // question cannot stall every other tool.
+  const deadline = Date.now() + timeBudgetMs;
+  const scan = scanner ? await scanner.prepare().catch((e) => ({ ok: false, reason: e.message })) : null;
   const results = [];
 
   for (const { term, kind } of parsed.terms) {
-    if (kind === "path") { results.push(pathLookup(gen, term, { maxChars, kinds })); continue; }
+    if (kind === "path") { results.push(await pathLookup(gen, term, { maxChars, kinds, scanner: scan && scan.ok ? scanner : null })); continue; }
     const found = kind === "phrase"
-      ? phraseFiles(gen, term, { kindFilter, kindArgs, maxFiles })
-      : symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles });
-    results.push(describeTerm(term, kind, found, { limit, maxLinesPerFile }));
+      ? phraseFiles(gen, term, { kindFilter, kindArgs, maxFiles, deadline })
+      : symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles, deadline });
+    // The files the index leaves out, at the same revision.
+    let scanned = null;
+    if (scan && scan.ok) scanned = await scanUnindexed(scanner, term, kind, found.caseInsensitive);
+    results.push(describeTerm(term, kind, found, scanned, { limit, maxLinesPerFile, coverage: coverageOf(gen, scan) }));
   }
-  return finishExact(gen, parsed, results, { maxChars });
+  return finishExact(gen, parsed, results, { maxChars, scope: scopeOf(gen, scan) });
+}
+
+// A whitespace-free piece of the literal that every match contains verbatim
+// (the longest one, so the scan's candidate list stays short).
+function scanNeedle(term, kind) {
+  if (kind === "symbol") return term;
+  return term.trim().split(/\s+/).sort((x, y) => y.length - x.length)[0];
+}
+
+// Scans the unindexed files. When the index already matched in exact case,
+// only exact-case matches count here too, so the two lists agree.
+async function scanUnindexed(scanner, term, kind, indexMatchedIgnoringCase) {
+  const out = await scanner.find(scanNeedle(term, kind));
+  const passes = indexMatchedIgnoringCase === false ? [false] : [false, true];
+  let files = [], caseInsensitive = false;
+  for (const ci of passes) {
+    const re = occurrenceRegex(term, kind, { caseInsensitive: ci });
+    files = [];
+    for (const c of out.candidates) {
+      const { hits, occurrences } = hitsIn(c.text, re, term, kind);
+      if (hits.length) files.push({ path: c.path, source: "code", hits, occurrences, test: isTestPath(c.path), inIndex: false });
+    }
+    if (files.length) { caseInsensitive = ci; break; }
+  }
+  return { status: out.status, reason: out.reason, files, caseInsensitive };
 }
 
 const fileKey = (r) => `${r.source}\u0000${r.path}`;
@@ -335,11 +367,17 @@ function hitsIn(text, re, term, kind) {
 }
 
 // Confirms candidate files with exact case first, then case-insensitively.
-function confirmFiles(gen, term, kind, candidates, { maxFiles }) {
+// Stops reassembling files at the deadline; the caller reports the cut.
+function confirmFiles(gen, term, kind, candidates, { maxFiles, deadline = Infinity, passes = [false, true] }) {
   const ordered = [...candidates].sort(fileOrder);
-  const scanned = ordered.slice(0, maxFiles);
-  const texts = scanned.map(f => fileText(gen.db, f.path, gen.sourceAware ? { sourceKind: f.source } : {}) || "");
-  for (const caseInsensitive of [false, true]) {
+  const texts = [];
+  for (const f of ordered.slice(0, maxFiles)) {
+    if (Date.now() > deadline) break;
+    texts.push(fileText(gen.db, f.path, gen.sourceAware ? { sourceKind: f.source } : {}) || "");
+  }
+  const scanned = ordered.slice(0, texts.length);
+  const cutBy = texts.length < Math.min(maxFiles, ordered.length) ? "time" : ordered.length > maxFiles ? "files" : null;
+  for (const caseInsensitive of passes) {
     const re = occurrenceRegex(term, kind, { caseInsensitive });
     const files = [];
     let occurrences = 0;
@@ -347,16 +385,19 @@ function confirmFiles(gen, term, kind, candidates, { maxFiles }) {
       const { hits, occurrences: n } = hitsIn(texts[i], re, term, kind);
       if (!hits.length) return;
       occurrences += n;
-      files.push({ ...f, hits, test: isTestPath(f.path) });
+      files.push({ ...f, hits, occurrences: n, test: isTestPath(f.path) });
     });
-    if (files.length || caseInsensitive) {
-      return { files, occurrences, caseInsensitive: caseInsensitive && files.length > 0, candidates: ordered.length, scanned: scanned.length };
+    if (files.length || caseInsensitive || passes.length === 1) {
+      return { files, occurrences, caseInsensitive: caseInsensitive && files.length > 0, candidates: ordered.length, scanned: scanned.length, cutBy };
     }
   }
 }
 
-function symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles }) {
-  const rows = candidateRows(gen, term, "symbol", { projection, kindFilter, kindArgs });
+const MAX_CANDIDATE_CHUNKS = 5000;
+function symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles, deadline }) {
+  const rows = candidateRows(gen, term, "symbol", { projection, kindFilter, kindArgs, limit: MAX_CANDIDATE_CHUNKS });
+  // A very common word: the totals are not known, only that it is everywhere.
+  const capped = rows.length >= MAX_CANDIDATE_CHUNKS;
   // Chunk-level confirmation (a symbol never spans lines). Exact case first;
   // a name typed from a screenshot or a player's message in another case is
   // then matched ignoring case, and the result says which one matched.
@@ -368,7 +409,8 @@ function symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles }) 
       if (re.test(chunkBody(r.text)) && !byFile.has(fileKey(r))) byFile.set(fileKey(r), { path: r.path, source: r.source, revision: r.revision, repository: r.repository });
     }
     if (byFile.size || caseInsensitive) {
-      const out = confirmFiles(gen, term, "symbol", [...byFile.values()], { maxFiles });
+      const out = confirmFiles(gen, term, "symbol", [...byFile.values()], { maxFiles, deadline, passes: [caseInsensitive] });
+      if (capped) return { ...out, totalFiles: null, scanned: out.scanned, candidates: out.candidates + 1, cutBy: "chunks", caseInsensitive: caseInsensitive && byFile.size > 0 };
       return { ...out, totalFiles: byFile.size, caseInsensitive: caseInsensitive && byFile.size > 0 };
     }
   }
@@ -392,7 +434,7 @@ function phraseWordQueries(term) {
   return [...new Set(out)];
 }
 
-function phraseFiles(gen, term, { kindFilter, kindArgs, maxFiles }) {
+function phraseFiles(gen, term, { kindFilter, kindArgs, maxFiles, deadline }) {
   const { db, sourceAware } = gen;
   const queries = hasFts(gen) && process.env.RAG_EXACT_SCAN !== "1" ? phraseWordQueries(term) : [];
   const src = sourceAware ? "c.source_kind" : "'code'";
@@ -417,14 +459,32 @@ function phraseFiles(gen, term, { kindFilter, kindArgs, maxFiles }) {
     const rows = db.prepare(`SELECT DISTINCT path, ${sourceAware ? "source_kind source, revision, repository" : "'code' source, '' revision, '' repository"} FROM chunks WHERE instr(lower(text), lower(?)) > 0${kindFilter}`).all(needle, ...kindArgs);
     candidates = new Map(rows.map(r => [fileKey(r), r]));
   }
-  const out = confirmFiles(gen, term, "phrase", [...candidates.values()], { maxFiles });
+  const out = confirmFiles(gen, term, "phrase", [...candidates.values()], { maxFiles, deadline });
   return { ...out, totalFiles: out.scanned < out.candidates ? null : out.files.length };
 }
 
 // Builds the per-term result: ranked listing, definitions, completeness.
-function describeTerm(term, kind, found, { limit, maxLinesPerFile }) {
-  const { files: scanned, occurrences, caseInsensitive, candidates, scanned: scannedCount } = found;
-  const totalFiles = found.totalFiles;
+//
+// "complete" is true only when every text file of the repository at this
+// revision was searched (the index, plus the scan of what it leaves out) and
+// nothing was cut by a limit. A miss over the indexed files alone is reported
+// as found: false, complete: false with the reason.
+function describeTerm(term, kind, found, scan, { limit, maxLinesPerFile, coverage }) {
+  const { occurrences, candidates, scanned: scannedCount, cutBy } = found;
+  let caseInsensitive = found.caseInsensitive;
+  let scanned = found.files;
+  let totalFiles = found.totalFiles;
+  const reasons = [];
+  // Merge the scan of the unindexed files. Same-case rule: exact-case matches
+  // anywhere win over case-insensitive ones.
+  if (scan && scan.files.length) {
+    if (!scanned.length || (caseInsensitive && !scan.caseInsensitive)) {
+      scanned = scan.files; totalFiles = totalFiles === 0 || caseInsensitive ? scan.files.length : totalFiles; caseInsensitive = scan.caseInsensitive;
+    } else if (scan.caseInsensitive === caseInsensitive) {
+      scanned = [...scanned, ...scan.files];
+      totalFiles = totalFiles != null ? totalFiles + scan.files.length : null;
+    }
+  }
   const definitions = [];
   for (const f of scanned) for (const h of f.hits) if (h.definition) definitions.push({ path: f.path, line: h.line, kind: h.definition, text: h.text, source: f.source });
   // Rank files: definition sites (non-test) first, then code uses by count, then tests and docs.
@@ -433,25 +493,101 @@ function describeTerm(term, kind, found, { limit, maxLinesPerFile }) {
   const listed = ranked.slice(0, Math.max(1, limit));
   const allScanned = scannedCount === candidates;
   const knownTotal = totalFiles != null ? totalFiles : scanned.length;
-  const complete = allScanned && totalFiles != null && listed.length === totalFiles;
-  let truncated;
-  if (!allScanned) truncated = `${candidates} candidate files; only the first ${scannedCount} were checked, ${scanned.length} contain it, ${listed.length} are listed. Narrow the term.`;
-  else if (!complete) truncated = `${knownTotal} files contain this; ${listed.length} are listed. Raise limit to see more, or narrow the term.`;
+  if (!allScanned) reasons.push(cutBy === "time"
+    ? `the lookup hit its time limit after checking ${scannedCount} of ${candidates} candidate files`
+    : cutBy === "chunks" ? `this occurs in more than ${MAX_CANDIDATE_CHUNKS} indexed chunks; only the first ${scannedCount} files were checked. Narrow the term`
+    : `${candidates} candidate files; only the first ${scannedCount} were checked`);
+  if (allScanned && totalFiles != null && listed.length < totalFiles) reasons.push(`${knownTotal} files contain this; ${listed.length} are listed. Raise limit to see more, or narrow the term`);
+  if (scan && scan.status === "truncated") reasons.push(`scan of the files the index leaves out was cut: ${scan.reason}`);
+  const searchedAll = coverage.repository && !!scan && scan.status === "scanned";
+  const complete = allScanned && totalFiles != null && listed.length === totalFiles && searchedAll && !reasons.length;
+  const why = coverage.repository && scan && scan.status === "skipped" ? `only the indexed files were searched; the repository scan was skipped: ${scan.reason}` : coverage.why;
+  const fromScan = scanned.filter(f => f.inIndex === false).length;
+  const foundBy = knownTotal > 0 ? (fromScan === 0 ? "index" : fromScan === scanned.length ? "repository scan" : "index and repository scan") : null;
   return {
     term, kind, found: knownTotal > 0,
+    ...(foundBy ? { foundBy } : {}),
     caseInsensitive: caseInsensitive || undefined,
     ...(knownTotal > 0 ? { matchedCase: caseInsensitive ? "case-insensitive" : "exact" } : {}),
     totalFiles: totalFiles != null ? totalFiles : undefined,
-    totalOccurrences: allScanned && totalFiles === scanned.length ? occurrences : undefined,
+    totalOccurrences: allScanned && totalFiles === scanned.length ? scanned.reduce((n, f) => n + (f.occurrences ?? f.hits.length), 0) : undefined,
     complete,
-    ...(truncated ? { truncated } : {}),
+    ...(reasons.length ? { truncated: reasons.join("; ") } : {}),
+    ...(!complete && !reasons.length && why ? { incomplete: why } : {}),
+    ...(knownTotal === 0 ? { notFoundIn: complete ? coverage.allText : coverage.indexOnly } : {}),
+    ...(knownTotal === 0 && !complete && kind === "phrase" && coverage.phraseHint ? { hint: coverage.phraseHint } : {}),
     definitions: definitions.filter(d => listed.some(f => f.path === d.path)).slice(0, 20),
     files: listed.map(f => ({
       path: f.path, source: f.source, test: f.test || undefined,
+      ...(f.inIndex === false ? { inIndex: false } : {}),
       occurrences: f.hits.length,
       lines: f.hits.slice(0, maxLinesPerFile),
     })),
   };
+}
+
+// What a lookup in this generation covers. The game is AHDGame plus the
+// engineering docs; a repository scan (scan.ok) covers the AHDGame files the
+// index leaves out. Internal repositories record what they excluded.
+function coverageOf(gen, scan) {
+  const rev = revisionOf(gen);
+  const short = rev ? String(rev).slice(0, 10) : "unknown";
+  if (scan && scan.ok) {
+    return {
+      repository: true,
+      allText: `every text file of the repository at revision ${short} (the index plus a scan of the files it leaves out)`,
+      indexOnly: `the indexed files at revision ${short}`,
+      why: null,
+    };
+  }
+  const excluded = excludedSummary(gen);
+  const isGame = !gen.visibility || gen.visibility === "public";
+  return {
+    repository: false,
+    allText: null,
+    indexOnly: `the indexed files at revision ${short} only`,
+    why: isGame
+      ? `only the indexed files were searched; ${GAME_INDEX_OMITS} were not${scan && scan.reason ? ` (repository scan skipped: ${scan.reason})` : ""}`
+      : `only the indexed files were searched; ${excluded.total} files of this repository are not indexed (${excluded.text}) and were not searched`,
+    phraseHint: isGame
+      ? "This looks like on-screen text. The game's UI strings live in messages/<locale>/*.json, which this index does not include and which were not searched, so this is not evidence that the game never shows it."
+      : excluded.total ? `Text can also live in the ${excluded.total} files this index leaves out (${excluded.text}); not finding it here is not evidence that it does not exist.` : null,
+  };
+}
+
+const GAME_INDEX_OMITS = "files the game index leaves out (messages/ with the UI strings, scripts/, content/changelog, migrations, .mjs, CSS, shell and workflow files, files over 400 KB)";
+
+function excludedSummary(gen) {
+  if (gen._excluded) return gen._excluded;
+  let rows = [];
+  try { if (hasTable(gen.db, "excluded")) rows = gen.db.prepare("SELECT reason, COUNT(*) n FROM excluded GROUP BY reason").all(); } catch {}
+  const byCategory = new Map();
+  for (const r of rows) {
+    const key = String(r.reason).replace(/\s*\([^)]*\)\s*$/, "").replace(/^possible secret: .*/, "possible secrets").replace(/^larger than .*/, "large files");
+    byCategory.set(key, (byCategory.get(key) || 0) + r.n);
+  }
+  const total = [...byCategory.values()].reduce((a, b) => a + b, 0);
+  gen._excluded = { total, categories: Object.fromEntries(byCategory), text: [...byCategory].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}: ${n}`).join(", ") || "none recorded" };
+  return gen._excluded;
+}
+
+function scopeOf(gen, scan) {
+  const rev = revisionOf(gen);
+  const files = (() => { try { return gen.db.prepare("SELECT COUNT(DISTINCT path) n FROM chunks").get().n; } catch { return null; } })();
+  const scope = { revision: rev, indexedFiles: files };
+  if (scan && scan.ok) {
+    scope.searched = `the ${files} indexed files, and a literal scan of the ${scan.unindexed.length} other text files of the repository at this revision (read from the commit, not a working tree)`;
+    scope.notSearched = `binary and media files (${scan.skipped.binary}), files over 1 MB (${scan.skipped.large}), files named like credentials (${scan.skipped.secretName})`;
+    scope.unindexedWhere = scan.categories.slice(0, 8).map(c => `${c.dir} (${c.files})`).join(", ");
+  } else if (!gen.visibility || gen.visibility === "public") {
+    scope.searched = `the ${files} indexed files only`;
+    scope.notSearched = GAME_INDEX_OMITS + (scan && scan.reason ? `; the repository scan was skipped: ${scan.reason}` : "");
+  } else {
+    const ex = excludedSummary(gen);
+    scope.searched = `the ${files} indexed files only`;
+    scope.notSearched = `${ex.total} files excluded from this index (${ex.text})`;
+  }
+  return scope;
 }
 
 // Candidate chunks for one symbol. The FTS index is a prefilter: unicode61
@@ -460,16 +596,16 @@ function describeTerm(term, kind, found, { limit, maxLinesPerFile }) {
 // identifier also holds its token sequence, and the phrase query returns a
 // superset (in any case) that the exact regex then confirms. RAG_EXACT_SCAN=1
 // forces a case-insensitive instr() scan (the test suite checks the two agree).
-function candidateRows(gen, term, kind, { projection, kindFilter, kindArgs }) {
+function candidateRows(gen, term, kind, { projection, kindFilter, kindArgs, limit = MAX_CANDIDATE_CHUNKS }) {
   const { db } = gen;
   if (kind === "symbol" && /^[\w$]+$/.test(term) && /[A-Za-z0-9]/.test(term) && process.env.RAG_EXACT_SCAN !== "1" && hasFts(gen)) {
     const cols = projection.split(",").map(c => "c." + c.trim().replace(/^'([^']*)'/, "'$1'")).map(c => c.replace(/^c\.'/, "'")).join(", ");
     try {
-      return db.prepare(`SELECT ${cols} FROM chunks_fts f JOIN chunks c ON c.id=f.rowid WHERE chunks_fts MATCH ?${kindFilter.replace(/source_kind/g, "c.source_kind")}`)
-        .all(`"${term.replace(/"/g, '""')}"`, ...kindArgs);
+      return db.prepare(`SELECT ${cols} FROM chunks_fts f JOIN chunks c ON c.id=f.rowid WHERE chunks_fts MATCH ?${kindFilter.replace(/source_kind/g, "c.source_kind")} LIMIT ?`)
+        .all(`"${term.replace(/"/g, '""')}"`, ...kindArgs, limit);
     } catch { /* fall through to the scan */ }
   }
-  return db.prepare(`SELECT ${projection} FROM chunks WHERE instr(lower(text), lower(?)) > 0${kindFilter}`).all(term, ...kindArgs);
+  return db.prepare(`SELECT ${projection} FROM chunks WHERE instr(lower(text), lower(?)) > 0${kindFilter} LIMIT ?`).all(term, ...kindArgs, limit);
 }
 
 function hasFts(gen) {
@@ -477,7 +613,7 @@ function hasFts(gen) {
   return gen._hasFts;
 }
 
-function pathLookup(gen, term, { maxChars, kinds }) {
+async function pathLookup(gen, term, { maxChars, kinds, scanner = null }) {
   const { db, sourceAware } = gen;
   const kindFilter = sourceAware && kinds && kinds.length ? ` AND source_kind IN (${kinds.map(() => "?").join(",")})` : "";
   const kindArgs = sourceAware && kinds && kinds.length ? kinds : [];
@@ -487,7 +623,26 @@ function pathLookup(gen, term, { maxChars, kinds }) {
     : db.prepare(`SELECT DISTINCT path${sourceAware ? ", source_kind source" : ", 'code' source"} FROM chunks WHERE (path LIKE ? ESCAPE '\\')${kindFilter} ORDER BY path LIMIT 50`)
       .all(`%/${term.replace(/[\\%_]/g, m => "\\" + m)}`, ...kindArgs);
   if (!candidates.length) {
-    return { term, kind: "path", found: false, totalFiles: 0, complete: true, definitions: [], files: [] };
+    // Not indexed: read it from the indexed revision when the repository can be scanned.
+    if (scanner) {
+      const r = await scanner.read(term);
+      if (r.status === "found") {
+        const truncated = r.text.length > maxChars;
+        return {
+          term, kind: "path", found: true, foundBy: "repository scan", totalFiles: 1, complete: true, definitions: [],
+          files: [{ path: r.path, source: "code", inIndex: false, lines: undefined }],
+          content: truncated ? r.text.slice(0, maxChars) : r.text,
+          contentTruncated: truncated ? `file is ${r.text.length} characters; ${maxChars} shown. Use code_read with startLine to page.` : undefined,
+          lineCount: r.text.split("\n").length,
+          note: "this file is not in the index; it was read from the repository at the indexed revision",
+        };
+      }
+      if (r.status === "ambiguous") return { term, kind: "path", found: true, foundBy: "repository scan", ambiguous: true, totalFiles: r.paths.length, complete: r.paths.length < 50, definitions: [], files: r.paths.map(p => ({ path: p, source: "code", inIndex: false })) };
+      if (r.status === "excluded") return { term, kind: "path", found: true, foundBy: "repository scan", totalFiles: 1, complete: true, definitions: [], files: [{ path: r.path, source: "code", inIndex: false }], note: `the file exists at this revision but is ${r.reason}` };
+      if (r.status === "absent") return { term, kind: "path", found: false, totalFiles: 0, complete: true, notFoundIn: `every path of the repository at revision ${String(revisionOf(gen) || "").slice(0, 10)}`, definitions: [], files: [] };
+      return { term, kind: "path", found: false, totalFiles: 0, complete: false, incomplete: `not in the index; the repository scan was skipped: ${r.reason}`, definitions: [], files: [] };
+    }
+    return { term, kind: "path", found: false, totalFiles: 0, complete: false, notFoundIn: "the indexed files only", incomplete: "not in the index, and the files the index leaves out were not searched", definitions: [], files: [] };
   }
   if (candidates.length > 1) {
     return {
@@ -508,7 +663,7 @@ function pathLookup(gen, term, { maxChars, kinds }) {
   };
 }
 
-function finishExact(gen, parsed, results, { maxChars }) {
+function finishExact(gen, parsed, results, { maxChars, scope = null }) {
   // Ranked union of files for callers that only read `files`.
   const files = [];
   for (const r of results) for (const f of r.files) if (!files.includes(f.path)) files.push(f.path);
@@ -518,7 +673,7 @@ function finishExact(gen, parsed, results, { maxChars }) {
   for (const r of results) {
     let block;
     if (r.kind === "path" && r.content != null) block = `--- ${r.files[0].path} (whole file, ${r.lineCount} lines) ---\n${r.content}`;
-    else if (!r.found) block = `--- "${r.term}": not found in any indexed file at this revision ---`;
+    else if (!r.found) block = `--- "${r.term}": not found in ${r.notFoundIn || "the indexed files"}${r.complete ? "" : `. NOT a complete search: ${r.incomplete || r.truncated}`} ---${r.hint ? `\n${r.hint}` : ""}`;
     else {
       const lines = r.files.map(f => `${f.path}${f.test ? " (test)" : ""}${f.source && f.source !== "code" ? ` [${f.source}]` : ""}: ${f.occurrences} line(s)\n` +
         (f.lines || []).map(h => `  ${h.line ?? "?"}${h.definition ? ` [${h.definition}]` : ""}: ${h.text}`).join("\n"));
@@ -528,16 +683,28 @@ function finishExact(gen, parsed, results, { maxChars }) {
     if (block.length > budget) { blocks.push(block.slice(0, Math.max(0, budget))); budget = 0; break; }
     blocks.push(block); budget -= block.length;
   }
+  const contextCut = budget === 0;
+  // The structured listing is bounded too: line samples shrink before files go.
+  let linesTrimmed;
+  if (JSON.stringify(results).length > maxChars * 3) {
+    for (const r of results) for (const f of r.files) if (f.lines) f.lines = f.lines.slice(0, 1);
+    linesTrimmed = "line samples cut to one per file to fit maxChars; occurrences counts are unchanged";
+  }
+  const truncated = [...new Set(results.map(r => r.truncated).filter(Boolean))];
+  if (contextCut) truncated.push("the readable listing was cut to fit maxChars");
   return {
     terms: results.map(r => r.term),
     ignoredWords: parsed.ignored.length ? parsed.ignored : undefined,
-    complete: results.every(r => r.complete),
+    complete: results.every(r => r.complete) && !contextCut,
+    ...(truncated.length ? { truncated: truncated.join("; ") } : {}),
     found: results.some(r => r.found),
+    ...(scope ? { scope } : {}),
     count: files.length,
     files,
     results,
     context: blocks.join("\n\n"),
-    contextTruncated: budget === 0 ? "raise maxChars to see the whole listing" : undefined,
+    contextTruncated: contextCut ? "raise maxChars to see the whole listing" : undefined,
+    linesTrimmed,
   };
 }
 
@@ -552,6 +719,11 @@ function readFile(gen, filePath, { maxChars = 40000, startLine = null, endLine =
   if (rows.length > 1 && !rows.every(r => r.path === rows[0].path)) return { ambiguous: rows.map(r => r.path) };
   const row = rows.find(r => r.source === "code") || rows[0];
   const text = fileText(db, row.path, sourceAware ? { sourceKind: row.source } : {}) || "";
+  return { path: row.path, source: row.source, ...pageText(text, { maxChars, startLine, endLine }) };
+}
+
+/** One page of a file's text by line range and character budget. */
+function pageText(text, { maxChars = 40000, startLine = null, endLine = null } = {}) {
   const lines = text.split("\n");
   const from = Math.max(1, Number(startLine) || 1);
   const to = Math.min(lines.length, Number(endLine) || lines.length);
@@ -560,7 +732,7 @@ function readFile(gen, filePath, { maxChars = 40000, startLine = null, endLine =
   if (truncated) body = body.slice(0, maxChars);
   const shownTo = truncated ? from - 1 + body.split("\n").length : to;
   return {
-    path: row.path, source: row.source, lineCount: lines.length, startLine: from, endLine: shownTo,
+    lineCount: lines.length, startLine: from, endLine: shownTo,
     complete: !truncated && from === 1 && to === lines.length,
     ...(truncated || to < lines.length ? { more: `lines ${shownTo + 1}-${lines.length} not shown; call again with startLine: ${shownTo + 1}` } : {}),
     content: body,
@@ -688,6 +860,7 @@ module.exports = {
   parseExactQuery,
   exactLookup,
   readFile,
+  pageText,
   keywordSearch,
   applyBudget,
   resolveRepos,

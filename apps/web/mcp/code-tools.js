@@ -15,6 +15,7 @@
 const path = require("path");
 const { z } = require("zod");
 const ci = require("./code-index");
+const { createCheckoutScanner } = require("./checkout-scan");
 
 const REPO_DESCRIPTION = [
   `Which code to search. Default "game": A House Divided (the game's code, engineering docs and player wiki).`,
@@ -54,6 +55,24 @@ function registerCodeTools(server, {
 
   function generation(t) {
     return pool.reader(t.file).get();
+  }
+
+  // The checkout each game index is built from. Exact lookup scans the files
+  // the index leaves out by reading the indexed commit from its object store.
+  // "off" disables the scan (lookups then say they covered indexed files only).
+  const GAME_CHECKOUTS = {
+    prod: env.CODE_INDEX_GAME_CHECKOUT_PROD || "/root/projects/LSGD-ops-dash/ahd-sandbox",
+    dev: env.CODE_INDEX_GAME_CHECKOUT_DEV || "/root/projects/LSGD-ops-dash/ahd-sandbox-dev",
+  };
+  function scannerFor(t, gen) {
+    if (t.repo !== ci.GAME || !gen.sourceAware) return null;
+    if (gen._scanner !== undefined) return gen._scanner;
+    const dir = GAME_CHECKOUTS[t.source];
+    const row = (gen.revisions || []).find((r) => r.kind === "code");
+    if (!dir || dir === "off" || !row) return (gen._scanner = null);
+    const indexed = new Set(gen.db.prepare("SELECT DISTINCT path FROM chunks WHERE repository=?").pluck().all(row.repository));
+    gen._scanner = createCheckoutScanner({ gitDir: dir, revision: row.revision, indexed });
+    return gen._scanner;
   }
 
   function indexInfo(t, gen) {
@@ -155,7 +174,7 @@ function registerCodeTools(server, {
 
   server.tool(
     "code_exact",
-    "Exact lookup of literal symbols, phrases and paths. A single word or identifier (US_NATIONAL_CONFIG, ownSitesFirst) is matched as a whole identifier; a short sentence with no identifiers (an error message or UI text) is matched as one phrase; quoted text is a phrase; a path or file name returns that file. For every term it reports the definition sites with line numbers, the files that use it ranked definitions first, and whether the listing is complete. found:false with complete:true means the literal occurs in no indexed file at that revision. Default repo is the game; `repo` selects other studio code.",
+    "Exact lookup of literal symbols, phrases and paths. A single word or identifier (US_NATIONAL_CONFIG, ownSitesFirst) is matched as a whole identifier; a short sentence with no identifiers (an error message or UI text) is matched as one phrase; quoted text is a phrase; a path or file name returns that file. Phrases match across line breaks and spacing; a name in another case is matched ignoring case when the exact case is absent (matchedCase says which). For every term it reports the definition sites with line numbers and the files that use it, ranked definitions first. `scope` states the revision and what was searched. For the game, files the index leaves out (UI strings in messages/, scripts/) are scanned at the same revision and marked inIndex:false. complete:true means every text file of that repository at that revision was searched and nothing was cut; complete:false with found:false is NOT evidence that the text does not exist (read `incomplete` or `truncated`). Default repo is the game; `repo` selects other studio code.",
     {
       question: z.string().describe("Identifiers, a quoted phrase, an error message, or a repository path"),
       limit: z.number().int().min(1).max(50).optional().default(8).describe("Files listed per term"),
@@ -172,7 +191,7 @@ function registerCodeTools(server, {
         const t = target(name, source);
         let gen;
         try { gen = generation(t); } catch (e) { failures.push(unavailable(t, e)); continue; }
-        const out = ci.exactLookup(gen, question, { limit, maxChars: Math.floor(maxChars / chosen.repos.length) });
+        const out = await ci.exactLookup(gen, question, { limit, maxChars: Math.floor(maxChars / chosen.repos.length), scanner: scannerFor(t, gen) });
         perRepo.push({ ...indexInfo(t, gen), ...out });
       }
       if (!perRepo.length) return errorResult(unavailableMessage(failures));
@@ -209,7 +228,22 @@ function registerCodeTools(server, {
       try { gen = generation(t); } catch (e) { return errorResult(unavailableMessage([unavailable(t, e)])); }
       if (/(?:^|\/)\.env|\.(?:pem|key|p12|pfx)$/i.test(filePath)) return errorResult("secret files are never indexed");
       const out = ci.readFile(gen, filePath, { maxChars, startLine, endLine });
-      if (!out) return errorResult(`not in the ${t.repo === ci.GAME ? t.source + " " : ""}${t.repo} index at revision ${ci.revisionOf(gen) || "unknown"}: ${filePath}`);
+      if (!out) {
+        // Not indexed: a game file can still be read from the indexed revision.
+        const scanner = scannerFor(t, gen);
+        const key = String(filePath || "").trim().replace(/^\.\//, "").replace(/:\d+$/, "");
+        if (scanner && key && !key.includes("..") && !key.startsWith("/")) {
+          const r = await scanner.read(key);
+          if (r.status === "found") {
+            const page = ci.pageText(r.text, { maxChars, startLine, endLine });
+            return jsonResult({ ...indexInfo(t, gen), path: r.path, source: "code", inIndex: false, note: "this file is not in the index; it was read from the repository at the indexed revision", ...page, files: [r.path], count: 1, context: page.content });
+          }
+          if (r.status === "ambiguous") return errorResult(`several files match ${filePath}: ${r.paths.join(", ")}`);
+          if (r.status === "excluded") return errorResult(`${r.path} exists at revision ${ci.revisionOf(gen)} but is ${r.reason}`);
+          if (r.status === "absent") return errorResult(`no file ${filePath} in the ${t.source} game repository at revision ${ci.revisionOf(gen) || "unknown"}`);
+        }
+        return errorResult(`not in the ${t.repo === ci.GAME ? t.source + " " : ""}${t.repo} index at revision ${ci.revisionOf(gen) || "unknown"}: ${filePath} (files the index leaves out were not searched)`);
+      }
       if (out.error) return errorResult(out.error);
       if (out.ambiguous) return errorResult(`several indexed files match ${filePath}: ${out.ambiguous.join(", ")}`);
       // Back-compat fields: files/count/context as before.
