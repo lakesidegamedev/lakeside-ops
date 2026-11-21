@@ -2346,6 +2346,40 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     return parts.join(" ") || null;
   }
+  // Keir 11.4: one implementation for the add_to_ticket tool and for ticket_command add_person from the owner app supervisor.
+  async function addToTicket(job, input) {
+    const staffAsk = [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && job.role !== "player";
+    if (!developerTask(job) && !(job.kind === "conversation" && staffAsk) && ticketCommands.refusal(job)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
+    const ticketNo = Number(input.ticket) || ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
+    if (!ticketNo) throw new Error("name the ticket number to add them to");
+    const channelId = (job.channelId && snowflake(job.channelId) && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
+      : d.jobs[d.seen[`ticket:${ticketNo}`]]?.channelId;
+    const ch = channelId && await discord("GET", `/channels/${channelId}`);
+    if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== ticketNo) throw new Error(`no open channel found for ticket ${ticketNo}`);
+    const raw = String(input.user || "").trim();
+    const id = /^<@!?(\d{17,20})>$/.exec(raw)?.[1] || (/^\d{17,20}$/.test(raw) ? raw : null);
+    let member;
+    if (id) member = await discord("GET", `/guilds/${config.guildId}/members/${id}`);
+    else {
+      const q = raw.replace(/^@/, "");
+      if (q.length < 2) throw new Error("give the player's Discord name");
+      const found = await discord("GET", `/guilds/${config.guildId}/members/search?query=${encodeURIComponent(q)}&limit=10`) || [];
+      const names = (m) => [m.user?.username, m.user?.global_name, m.nick].filter(Boolean).map((x) => x.toLowerCase());
+      const exact = found.filter((m) => names(m).includes(q.toLowerCase()));
+      const pick = exact.length === 1 ? exact : found.length === 1 ? found : exact.length ? exact : found;
+      if (pick.length !== 1) throw new Error(pick.length ? `several members match "${q}": ${pick.slice(0, 6).map((m) => `${m.user.username}${m.user.global_name ? ` (${m.user.global_name})` : ""}`).join(", ")}. Ask which one.` : `no server member matches "${q}"`);
+      member = pick[0];
+    }
+    const uid = member?.user?.id; if (!uid) throw new Error("that member could not be found");
+    if (member.user.bot) throw new Error("bots are not added to tickets");
+    const allow = String((1n << 10n) | (1n << 11n) | (1n << 16n) | (1n << 15n));
+    await effect(job, `add-to-ticket:${ticketNo}:${uid}`, async () => {
+      await discord("PUT", `/channels/${channelId}/permissions/${uid}`, { type: 1, allow, deny: "0" });
+      return discord("POST", `/channels/${channelId}/messages`, { content: `<@${uid}> has been added to this ticket.`, allowed_mentions: { users: [uid] } });
+    });
+    ledger.audit("added_to_ticket", { job: job.id, ticket: ticketNo, user: uid, by: job.actorId }); ledger.save();
+    return { added: member.user.username, ticket: ticketNo };
+  }
   async function tool(job, name, input, signal) {
     require("./roles").roleGuard(job, name, input, ledger.data.jobs);
     if (signal?.aborted) throw new Error("activation aborted");
@@ -4161,39 +4195,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // Owner, 2026-10-19 (incident 1628): "Add enigma here" got "I can't add
     // people to this channel myself". A developer can now have Keir add a
     // player to a ticket or incident channel by name.
-    if (name === "add_to_ticket") {
-      const staffAsk = [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && job.role !== "player";
-      if (!developerTask(job) && !(job.kind === "conversation" && staffAsk) && ticketCommands.refusal(job)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
-      const ticketNo = Number(input.ticket) || ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
-      if (!ticketNo) throw new Error("name the ticket number to add them to");
-      const channelId = (job.channelId && snowflake(job.channelId) && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
-        : d.jobs[d.seen[`ticket:${ticketNo}`]]?.channelId;
-      const ch = channelId && await discord("GET", `/channels/${channelId}`);
-      if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== ticketNo) throw new Error(`no open channel found for ticket ${ticketNo}`);
-      const raw = String(input.user || "").trim();
-      const id = /^<@!?(\d{17,20})>$/.exec(raw)?.[1] || (/^\d{17,20}$/.test(raw) ? raw : null);
-      let member;
-      if (id) member = await discord("GET", `/guilds/${config.guildId}/members/${id}`);
-      else {
-        const q = raw.replace(/^@/, "");
-        if (q.length < 2) throw new Error("give the player's Discord name");
-        const found = await discord("GET", `/guilds/${config.guildId}/members/search?query=${encodeURIComponent(q)}&limit=10`) || [];
-        const names = (m) => [m.user?.username, m.user?.global_name, m.nick].filter(Boolean).map((x) => x.toLowerCase());
-        const exact = found.filter((m) => names(m).includes(q.toLowerCase()));
-        const pick = exact.length === 1 ? exact : found.length === 1 ? found : exact.length ? exact : found;
-        if (pick.length !== 1) throw new Error(pick.length ? `several members match "${q}": ${pick.slice(0, 6).map((m) => `${m.user.username}${m.user.global_name ? ` (${m.user.global_name})` : ""}`).join(", ")}. Ask which one.` : `no server member matches "${q}"`);
-        member = pick[0];
-      }
-      const uid = member?.user?.id; if (!uid) throw new Error("that member could not be found");
-      if (member.user.bot) throw new Error("bots are not added to tickets");
-      const allow = String((1n << 10n) | (1n << 11n) | (1n << 16n) | (1n << 15n));
-      await effect(job, `add-to-ticket:${ticketNo}:${uid}`, async () => {
-        await discord("PUT", `/channels/${channelId}/permissions/${uid}`, { type: 1, allow, deny: "0" });
-        return discord("POST", `/channels/${channelId}/messages`, { content: `<@${uid}> has been added to this ticket.`, allowed_mentions: { users: [uid] } });
-      });
-      ledger.audit("added_to_ticket", { job: job.id, ticket: ticketNo, user: uid, by: job.actorId }); ledger.save();
-      return { added: member.user.username, ticket: ticketNo };
-    }
+    if (name === "add_to_ticket") return addToTicket(job, input);
     if (name === "open_channel") {
       if (!developerTask(job) || !job.replyChannel) throw new Error("only a developer's channel task can open a channel to players");
       const minutes = Math.max(5, Math.min(240, Number(input.minutes) || 30));
@@ -5453,7 +5455,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { ticketCommandAllowed: (job) => !ticketCommands.refusal(job), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { ticketCommandAllowed: (job) => !ticketCommands.refusal(job), ownerAppTicketCommand: (body, signal) => ticketCommands.ownerApp(body, { signal, addToTicket }), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

@@ -39,6 +39,9 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
   // Why this task may not command tickets, or null. Pure: no network.
   function refusal(job) {
     if (!job) return "no task";
+    // The owner's private app chat (the supervisor in the ops web app) reaches this through /api/keir/app/ticket-commands.
+    // Its request object lives in d.ownerAppCommands, never in d.jobs, so no model activation can carry it.
+    if (job.ownerAppCommand) return d.ownerAppCommands?.[job.ownerAppCommand.id] === job && job.actorId === config.ownerId && job.role === "owner" && job.kind === "command" ? null : "This request did not come from the owner's authenticated app session.";
     if (job.kind === "finding") return "Monitoring findings never change tickets.";
     if (job.role === "player" || job.role === "moderator") return "Only the owner or staff can direct ticket changes; a player cannot merge, close or reopen tickets, including their own or someone else's.";
     if (job.codingParent || job.prMention || job.internalProbe || job.investigation) return "Workers and internal checks never change tickets.";
@@ -58,6 +61,7 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
 
   // The authenticated request texts, re-read from their source. Throws when the author cannot be confirmed.
   async function requestTexts(job) {
+    if (job.ownerAppCommand) return { texts: [job.ownerAppCommand.text], requestId: job.ownerAppCommand.id };
     if (isAppJob(job)) {
       const o = require("./ownermuse-policy").origin(d, job);
       const receipt = d.ownerMuseOrigins?.[o.root];
@@ -97,6 +101,7 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
   // One confirmation with the owner for a batch the request did not name, or a close over a waiting player.
   function confirmation(job, op, list, target, why) {
     const key = `ticket-command:${op}:${hash([list, target || null])}`;
+    if (job.ownerAppCommand) return appConfirmation(job, op, list, target, why);
     const done = Object.values(d.decisions || {}).find((x) => x.jobId === job.id && x.decisionKey === key && !["pending"].includes(x.state));
     if (done) {
       if (done.state === "selected" && done.selectedOption?.id === "1") return { ok: true };
@@ -107,6 +112,99 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
     job.ownerDecisionPending = true; ledger.save();
     ledger.audit("ticket_command_confirm", { job: job.id, op, tickets: list, target: target || null, decision: x.id });
     return { ok: false, result: { confirming: true, decision: x.id, tickets: list, instruction: `The owner has one question with the exact list. Tell the requester in one line that you are confirming ${list.length} tickets with the owner, then finish waiting; when the answer arrives, call ticket_command again with the same op and tickets.` } };
+  }
+
+  // The app chat cannot show an operator decision card, so the owner confirms in that chat. The confirmation is bound
+  // to a digest of the exact operation and list: the supervisor sends it back only when the owner's own message carries
+  // the code it showed with that list, and only within an hour. A different list, op or target is a new confirmation.
+  function appConfirmation(job, op, list, target, why) {
+    const digest = crypto.createHash("sha256").update(JSON.stringify([op, [...list].sort((a, b) => a - b), target || null])).digest("hex");
+    const store = (d.ownerAppConfirmations ||= {});
+    for (const [k, v] of Object.entries(store)) if (now() - v.at > 86400000) delete store[k];
+    const held = store[digest];
+    if (job.ownerAppCommand.preconfirmed === digest || (job.ownerAppCommand.confirm === digest && held?.state === "pending" && now() - held.at < 3600000)) {
+      if (held) { held.state = "confirmed"; held.confirmedAt = now(); }
+      ledger.audit("ticket_command_confirmed", { command: job.ownerAppCommand.id, op, tickets: list, target: target || null }); ledger.save();
+      return { ok: true };
+    }
+    store[digest] = { op, tickets: list, target: target || null, command: job.ownerAppCommand.id, at: now(), state: "pending" };
+    ledger.audit("ticket_command_confirm", { command: job.ownerAppCommand.id, op, tickets: list, target: target || null, via: "owner-app" }); ledger.save();
+    const verb = op === "merge" ? `Merge tickets ${list.join(", ")} into ${target ? `ticket ${target}` : "a new incident"}` : `Close tickets ${list.join(", ")}`;
+    return { ok: false, result: { confirming: true, confirmation: digest, op, tickets: list, target: target || null, question: `${verb}? ${why}`.slice(0, 440) } };
+  }
+
+  // One owner command from the private app chat. The HTTP layer has already checked the owner's own sign-in cookie
+  // against the ops dashboard (createAuthenticator); this validates the structured command, keeps one durable request
+  // record per command id (its effect journal makes a retry or a resend after a restart do nothing twice) and runs it
+  // through run(), the same checks, limits, confirmations and records as the operator's own ticket_command tool.
+  const COMMAND_ID = /^[A-Za-z0-9_-]{8,80}$/;
+  const FIELDS = new Set(["commandId", "op", "tickets", "target", "title", "description", "message", "reason", "user", "request", "confirm"]);
+  async function ownerApp(body, { signal, addToTicket } = {}) {
+    const bad = (m) => Object.assign(new Error(m), { status: 400 });
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw bad("JSON object required");
+    const extra = Object.keys(body).filter((k) => !FIELDS.has(k));
+    if (extra.length) throw bad(`unknown fields: ${extra.join(", ")}`);
+    if (!COMMAND_ID.test(String(body.commandId || ""))) throw bad("commandId must be 8-80 letters, digits, _ or -");
+    if (!OPS.includes(body.op)) throw bad(`op must be one of ${OPS.join(", ")}`);
+    const req = body.request;
+    if (!req || typeof req !== "object" || typeof req.text !== "string" || !req.text.trim() || req.text.length > 8000 || !/^[A-Za-z0-9_-]{4,80}$/.test(String(req.messageId || ""))) throw bad("request must carry the owner's message id and text");
+    if (body.tickets !== undefined && (!Array.isArray(body.tickets) || body.tickets.length > 25 || body.tickets.some((n) => !Number.isSafeInteger(n) || n < 1))) throw bad("tickets must be up to 25 ticket numbers");
+    if (body.target !== undefined && body.target !== null && (!Number.isSafeInteger(body.target) || body.target < 1)) throw bad("target must be a ticket number");
+    for (const k of ["title", "description", "message", "reason", "user"]) if (body[k] !== undefined && (typeof body[k] !== "string" || body[k].length > 4800)) throw bad(`${k} must be text`);
+    if (body.confirm !== undefined && !/^[a-f0-9]{64}$/.test(String(body.confirm))) throw bad("confirm must be a confirmation digest");
+    const held = ctl().held?.() || (d.paused ? "Keir is paused" : null);
+    if (held) return { done: false, refused: `Nothing was changed: ${held === "Keir is paused" ? "Keir is stopped from the app (paused)" : held}. Ticket commands resume when Keir is started again.` };
+    const store = (d.ownerAppCommands ||= {});
+    for (const [k, v] of Object.entries(store)) if (now() - (v.at || 0) > 7 * 86400000 && v.state !== "running") delete store[k];
+    const textHash = hash(req.text);
+    let job = store[body.commandId];
+    if (job && job.ownerAppCommand.textHash !== textHash) throw Object.assign(new Error("commandId was already used for a different owner message"), { status: 409 });
+    // A record left running by a restart is past its deadline; the effect journal then reports any uncertain step honestly.
+    if (job?.state === "running" && job.deadline > now()) return { done: false, refused: "This exact command is already running. Wait for its result; nothing will be done twice." };
+    if (!job) {
+      job = store[body.commandId] = { id: `oac-${body.commandId}`, kind: "command", role: "owner", actorId: config.ownerId, at: now(), effects: {}, history: [],
+        source: { channelId: "owner-app-supervisor", messageId: req.messageId, authorId: config.ownerId },
+        ownerAppCommand: { id: body.commandId, messageId: req.messageId, text: req.text, textHash } };
+    }
+    if (["blocked"].includes(job.state)) return { done: false, refused: `An earlier attempt at this exact command ended uncertain (${String(job.summary || "").slice(0, 200)}). Nothing more was done. Check the tickets before asking again.` };
+    Object.assign(job, { state: "running", deadline: now() + 10 * 60000 });
+    job.ownerAppCommand.confirm = body.confirm || null;
+    ledger.save();
+    const input = Object.fromEntries(["op", "tickets", "target", "title", "description", "message", "reason", "user"].filter((k) => body[k] !== undefined && body[k] !== null).map((k) => [k, body[k]]));
+    try {
+      let result;
+      if (body.op === "open_incident" && input.tickets?.length) {
+        // Opening an incident for named tickets: confirm the merge list first, so nothing opens on a list the owner may refuse.
+        const list = [...new Set(input.tickets)];
+        const named = namedNumbers([req.text]);
+        if (list.length > BULK && !list.every((n) => named.has(n))) {
+          const c = confirmation(job, "merge", list, null, "The request did not name them by number.");
+          if (!c.ok) return { done: false, ...c.result };
+          job.ownerAppCommand.preconfirmed = crypto.createHash("sha256").update(JSON.stringify(["merge", [...list].sort((a, b) => a - b), null])).digest("hex");
+        }
+        const opened = await run(job, { op: "open_incident", title: input.title, description: input.description || input.reason }, signal);
+        const target = opened.incident;
+        // The merge list was confirmed (or needed none) against "a new incident"; bind it to the incident just opened.
+        if (job.ownerAppCommand.preconfirmed) job.ownerAppCommand.preconfirmed = crypto.createHash("sha256").update(JSON.stringify(["merge", list.filter((n) => n !== target).sort((a, b) => a - b), target])).digest("hex");
+        const merged = await run(job, { op: "merge", tickets: list, target, reason: input.reason || input.description || input.title }, signal);
+        result = { incident: target, opened: true, ...merged };
+      } else if (body.op === "add_person") {
+        const r = await run(job, input, signal);
+        if (!addToTicket) throw new Error("Adding a person is not available here.");
+        result = await addToTicket(job, { user: String(r.user || ""), ...(r.ticket ? { ticket: r.ticket } : {}) });
+      } else result = await run(job, input, signal);
+      if (result?.confirming) return { done: false, ...result };
+      job.history.push({ at: new Date(now()).toISOString(), kind: "ticket_command", op: body.op });
+      ledger.audit("ticket_command_owner_app", { command: body.commandId, op: body.op, tickets: input.tickets || [], target: input.target || result?.target || result?.incident || null });
+      return { done: true, result: { ...result, instruction: undefined } };
+    } catch (e) {
+      if (e.status) throw e;
+      return { done: false, refused: String(e.message || e).replace(/^Not done: /, "").slice(0, 600) };
+    } finally {
+      if (job.state === "running") job.state = "done";
+      delete job.ownerAppCommand.confirm; delete job.ownerAppCommand.preconfirmed;
+      ledger.save();
+    }
   }
 
   async function run(job, input, signal) {
@@ -203,7 +301,7 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
     return { results, instruction: "Tell the requester in one line which tickets were reopened, and any that were not with the reason." };
   }
 
-  return { run, refusal, namedNumbers, settle, BULK };
+  return { run, ownerApp, refusal, namedNumbers, settle, BULK };
 }
 
 module.exports = { createTicketCommands, namedNumbers, BULK, OPS };
