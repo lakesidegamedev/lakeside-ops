@@ -41,7 +41,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.lakesidegames.ops
-        MARKETING_VERSION: '2.6.0'
+        MARKETING_VERSION: '2.7.0'
         INFOPLIST_KEY_LakesideOpsServerURL: "$(OPS_SERVER_URL)"
         INFOPLIST_KEY_CFBundleDisplayName: Keir
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Talk to Keir using your microphone.
@@ -61,7 +61,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.lakesidegames.ops.widgets
-        MARKETING_VERSION: '2.6.0'
+        MARKETING_VERSION: '2.7.0'
         INFOPLIST_KEY_CFBundleDisplayName: Keir
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES
