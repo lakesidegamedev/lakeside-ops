@@ -2,8 +2,10 @@
 // HTTP surface of the private owner supervisor on the existing ops web server:
 // /api/keir/supervisor/*. Owner only: a valid admin session whose identity is
 // the same owner identity the Keir operator accepts for /api/keir/app/*.
-// Another admin is refused. Writes need JSON and a same-origin (or absent,
-// native) Origin. Creating a private side chat uses the authenticated app route.
+// Another admin is refused. This is the one hard boundary for a chat that runs
+// a full Claude Code agent as root, because these routes are reachable from the
+// internet. Writes need JSON and a same-origin (or absent, native) Origin.
+// Creating a private side chat uses the authenticated app route.
 const path = require("node:path");
 
 function ownerIdentity(env = process.env) {
@@ -106,6 +108,7 @@ async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, g
       return reply(200, view);
     }
     if (route === "/proposals") return reply(200, { proposals: s.proposals() });
+    if (route === "/attention") return reply(200, s.attention());
     return reply(404, { error: "not found" });
   } catch (error) {
     if (error.status) return reply(error.status, { error: error.message, ...(error.proposal ? { proposal: error.proposal } : {}) });
@@ -126,32 +129,32 @@ function createSupervisorHost({ env = process.env, log = (m) => console.log(m), 
     else if (!path.isAbsolute(dir)) missing.push("KEIR_SUPERVISOR_DIR (must be absolute)");
     if (missing.length) { built = { configured: false, missing }; return built; }
     const { resolveRepos, publicRepo } = require("./repos");
-    const { createSandbox } = require("./sandbox");
     const { createClaudeExecutor } = require("./executor");
     const { createSupervisor, createPublisher } = require("./supervisor");
     const { createAttention } = require("./attention");
     const repos = overrides.repos || resolveRepos(env);
-    const sandbox = overrides.sandbox || createSandbox(path.join(dir, "workspaces"));
     const executor = overrides.executor || createClaudeExecutor({ env, stateDir: dir });
-    // Optional: without an explicit directory no push alert is projected and the in-app proposal card is unaffected.
+    // Push alerts for proposals from the earlier design; nothing creates new ones.
     let attention = overrides.attention || null, attentionIssue = null;
     if (!attention && env.KEIR_APPROVAL_ATTENTION_DIR) {
       try { attention = createAttention({ dir: env.KEIR_APPROVAL_ATTENTION_DIR, log }); } catch (e) { attentionIssue = e.message; log(`keir-supervisor: ${e.message}`); }
     }
     const publishEnabled = env.KEIR_SUPERVISOR_PUBLISH === "1";
     const guardianDir = env.KEIR_GUARDIAN_DIR || "/var/lib/keir-guardian";
-    // Read-only ticket and game evidence through the ops web MCP client, with this host's own credentials.
+    const jobTimeoutMs = Math.max(1, Number(env.KEIR_SUPERVISOR_JOB_TIMEOUT_MIN) || 60) * 60000;
+    // The ticket queue card and ticket chronology, read with this host's own MCP credentials.
     const hub = require("../keir-hub-data");
     const evidence = overrides.evidence || (() => {
       return require("./studio-evidence").createStudioEvidence({ mcpCall: hub._mcpCall, configPath: hub.PATHS.mcp, ledgerPath: hub.PATHS.ledger });
     })();
-    const studioMcp = require("./studio-mcp").createStudioMcp({ configPath: hub.PATHS.mcp });
-    const instance = createSupervisor({ studioMcp, stateDir: dir, repos, sandbox, executor, guardianDir, publishEnabled, evidence, attention,
+    const { readOwnerAttention } = require("./owner-attention");
+    const attentionRead = overrides.attentionRead || (() => readOwnerAttention({ ledgerPath: hub.PATHS.ledger }));
+    const instance = createSupervisor({ stateDir: dir, repos, executor, guardianDir, publishEnabled, evidence, attention, attentionRead, jobTimeoutMs,
       publisher: overrides.publisher || (publishEnabled ? createPublisher({ env }) : null), log, ...(overrides.supervisor || {}) });
     const ready = instance.start().catch((e) => log(`keir-supervisor: start failed: ${e.message}`));
     built = { configured: true, missing: [], instance, ready,
       async status() {
-        return { configured: true, missing: [], executor: executor.available(), sandbox: await sandbox.available(),
+        return { configured: true, missing: [], executor: executor.available(),
           repos: Object.values(repos).map((r) => publicRepo(r, publishEnabled)), runner: instance.status(), guardian: instance.guardian(),
           approvalAlerts: attention ? { enabled: true } : { enabled: false, ...(attentionIssue ? { issue: attentionIssue } : {}) } };
       } };
@@ -172,10 +175,9 @@ async function supervisorProfile(session, host, env = process.env) {
     if (!sup.configured) issue = "The private supervisor configuration is incomplete.";
     else {
       await sup.ready;
-      const { executor, sandbox } = await sup.status();
+      const { executor } = await sup.status();
       if (!sup.instance.owner) issue = "The private supervisor is waiting for its runner.";
       else if (!executor.available) issue = executor.reason;
-      else if (!sandbox.available) issue = sandbox.reason;
       else return { ownerSupervisor: true, ownerSupervisorReady: true };
     }
   } catch { /* an unavailable supervisor must not break sign-in */ }

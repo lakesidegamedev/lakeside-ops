@@ -1,16 +1,20 @@
 "use strict";
-// Model executor for the private owner supervisor: headless Claude Code with
-// every built-in tool switched off. Its only tools are the supervisor's
-// per-job loopback MCP endpoint, which runs file and command work inside the
-// bubblewrap sandbox. The model process gets a throwaway HOME (credentials
-// symlinked read-only, no host memories, plugins or settings) and an
-// environment of HOME, PATH and LANG only, so no server secret reaches it.
-// Same launch profile as the operator's proven activation runner
-// (apps/cli/headless/claude.js), restated because apps/web ships alone.
+// Model executor for the private owner supervisor: a full Claude Code agent on
+// this box, the same reach as the owner's own interactive root session. All
+// built-in tools, permissions skipped, real network, the host's own settings,
+// CLAUDE.md files, memory and every MCP server registered for the account in
+// ~/.claude.json. The only additions are the supervisor's per-job loopback MCP
+// endpoint (progress lines, conversation recall, the owner attention list) and
+// the brief appended to Claude Code's own system prompt.
+//
+// Limits that are not restrictions: each run lives in its own transient systemd
+// scope with a memory cap (so a runaway job cannot take the web service or the
+// box down), a hard runtime cap, and a stop that kills the whole process tree.
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const crypto = require("node:crypto");
+const { spawn, execFile } = require("node:child_process");
 
 const SECRET = [/gh[pousr]_[A-Za-z0-9]{20,}/g, /github_pat_[A-Za-z0-9_]{20,}/g, /sk-[A-Za-z0-9_-]{20,}/g, /xox[abpr]-[A-Za-z0-9-]{10,}/g,
   /AKIA[0-9A-Z]{16}/g, /Bearer\s+[A-Za-z0-9._~+/-]{16,}=*/g, /(mongodb(?:\+srv)?:\/\/)[^@\s/]+@/g];
@@ -30,61 +34,143 @@ function findClaude(env = process.env) {
   return null;
 }
 
-function createClaudeExecutor({ env = process.env, model = env.KEIR_SUPERVISOR_MODEL || "claude-opus-5-5", effort = env.KEIR_SUPERVISOR_EFFORT || "high", stateDir, spawnImpl = spawn } = {}) {
+// Names (never headers or tokens) of the MCP servers Claude Code will load for
+// this account: user scope plus the project scope of the run directory.
+function hostMcpServers(home, cwd) {
+  try {
+    const conf = JSON.parse(fs.readFileSync(path.join(home, ".claude.json"), "utf8"));
+    return [...new Set([...Object.keys(conf.mcpServers || {}), ...Object.keys(conf.projects?.[cwd]?.mcpServers || {})])].sort();
+  } catch { return []; }
+}
+
+// Claude Code keeps a session transcript at ~/.claude/projects/<cwd with
+// every non-alphanumeric character as "-">/<id>.jsonl. A resume needs it.
+function sessionFile(home, cwd, sessionId) {
+  return path.join(home, ".claude", "projects", cwd.replace(/[^A-Za-z0-9]/g, "-"), `${sessionId}.jsonl`);
+}
+
+// What a tool call looks like on the phone while it runs: short, no secrets.
+function describeTool(name, input = {}) {
+  const short = (s, n = 90) => redact(String(s || "")).replace(/\s+/g, " ").trim().slice(0, n);
+  if (name === "Bash") return `Running: ${short(input.description || input.command)}`;
+  if (["Read", "Edit", "Write", "NotebookEdit"].includes(name)) return `${name === "Read" ? "Reading" : "Editing"} ${short(path.basename(String(input.file_path || input.notebook_path || "")), 60)}`;
+  if (name === "Grep" || name === "Glob") return `Searching for ${short(input.pattern, 60)}`;
+  if (name === "WebFetch" || name === "WebSearch") return `Looking up ${short(input.url || input.query, 70)}`;
+  if (name === "Agent" || name === "Task") return `Delegating: ${short(input.description, 70)}`;
+  const mcp = /^mcp__([^_]+(?:[-_][^_]+)*?)__(.+)$/.exec(name);
+  if (mcp) return `Using ${mcp[1]} ${mcp[2].replace(/_/g, " ")}`;
+  return `Using ${short(name, 60)}`;
+}
+
+function createClaudeExecutor({ env = process.env, model = env.KEIR_SUPERVISOR_MODEL || "claude-opus-5-5", effort = env.KEIR_SUPERVISOR_EFFORT || "high",
+  stateDir, spawnImpl = spawn, execFileImpl = execFile, cwd = env.KEIR_SUPERVISOR_CWD || env.HOME || os.homedir(),
+  memoryMax = env.KEIR_SUPERVISOR_MEMORY_MAX || "16G", systemdRun = env.KEIR_SUPERVISOR_SYSTEMD_RUN ?? "/usr/bin/systemd-run",
+  systemctl = env.KEIR_SUPERVISOR_SYSTEMCTL || "/usr/bin/systemctl" } = {}) {
   const home = env.HOME || os.homedir();
   const credentials = path.join(home, ".claude/.credentials.json");
+  const scoped = Boolean(systemdRun) && executable(systemdRun);
 
   function available() {
     const bin = findClaude(env);
-    if (!bin || !executable(bin)) return { available: false, reason: "Claude Code CLI not installed for the web service account", runner: "claude", model };
-    if (!fs.existsSync(credentials)) return { available: false, reason: "Claude subscription is not signed in for the web service account", runner: "claude", model };
-    return { available: true, reason: null, runner: "claude", model };
+    const base = { runner: "claude", model, effort, cwd, memoryMax: scoped ? memoryMax : null, scope: scoped ? "systemd" : "process-group", mcpServers: hostMcpServers(home, cwd) };
+    if (!bin || !executable(bin)) return { available: false, reason: "Claude Code CLI not installed for the web service account", ...base };
+    if (!fs.existsSync(credentials)) return { available: false, reason: "Claude subscription is not signed in for the web service account", ...base };
+    return { available: true, reason: null, ...base };
   }
 
-  async function run({ brief, prompt, toolUrl, toolNames, signal, timeoutMs = 30 * 60000, maxTurns = 120 }) {
+  // The environment of a root login, not the web service's: the service's own
+  // secrets (session keys, bot tokens) are not passed through. Tools that need
+  // credentials find them the way an interactive session does (gh, git, files).
+  function childEnv(jobId) {
+    const extra = [path.join(home, ".local/bin"), path.join(home, "bin"), path.join(home, ".hermes/node/bin")];
+    const PATH = [...new Set([...extra, ...String(env.PATH || "/usr/local/bin:/usr/bin:/bin").split(path.delimiter)])].filter(Boolean).join(path.delimiter);
+    return { HOME: home, USER: env.USER || "root", LOGNAME: env.USER || "root", SHELL: "/bin/bash", PATH, LANG: "C.UTF-8", TERM: "dumb",
+      TZ: "America/New_York", IS_SANDBOX: "1", DISABLE_AUTOUPDATER: "1", KEIR_SUPERVISOR_JOB: jobId,
+      PLAYWRIGHT_BROWSERS_PATH: env.PLAYWRIGHT_BROWSERS_PATH || path.join(home, ".cache/ms-playwright") };
+  }
+
+  // Stop a scope left behind by a previous web process (a scope is its own
+  // cgroup, so it outlives the service that started it).
+  function reap(unit) {
+    if (!unit || !scoped || !/^keir-supervisor-[A-Za-z0-9_-]{1,80}\.scope$/.test(unit)) return Promise.resolve(false);
+    return new Promise((resolve) => execFileImpl(systemctl, ["kill", "--kill-whom=all", "--signal=SIGKILL", unit], { timeout: 15000 }, () =>
+      execFileImpl(systemctl, ["stop", unit], { timeout: 15000 }, (e) => resolve(!e))));
+  }
+
+  async function run({ jobId, attempt = 1, brief, prompt, toolUrl, signal, timeoutMs = 60 * 60000, sessionId = null, resume = false, onStart = () => {}, onActivity = () => {} }) {
     const state = available();
     if (!state.available) throw Object.assign(new Error(state.reason), { unavailable: true });
-    const scratchRoot = path.join(stateDir, "model-homes");
-    fs.mkdirSync(scratchRoot, { recursive: true, mode: 0o700 });
-    const scratch = fs.mkdtempSync(path.join(scratchRoot, "home-"));
-    fs.mkdirSync(path.join(scratch, ".claude"), { mode: 0o700 });
-    fs.symlinkSync(credentials, path.join(scratch, ".claude/.credentials.json"));
-    const cwd = path.join(scratch, "cwd"); fs.mkdirSync(cwd, { mode: 0o700 });
-    const args = ["-p", "--system-prompt", brief, "--model", model, "--effort", effort, "--setting-sources", "", "--tools", "",
-      "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: { supervisor: { type: "http", url: toolUrl } } }),
-      "--allowedTools", toolNames.map((n) => `mcp__supervisor__${n}`).join(","),
-      "--max-turns", String(maxTurns), "--no-session-persistence", "--output-format", "json"];
-    const childEnv = { HOME: scratch, PATH: env.PATH || "/usr/local/bin:/usr/bin:/bin", LANG: "C.UTF-8", DISABLE_AUTOUPDATER: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" };
+    const runs = path.join(stateDir, "runs");
+    fs.mkdirSync(runs, { recursive: true, mode: 0o700 });
+    const canResume = resume && sessionId && fs.existsSync(sessionFile(home, cwd, sessionId));
+    const session = canResume ? sessionId : crypto.randomUUID();
+    // Only the supervisor's own endpoint is added; host servers come from the
+    // account's normal configuration, exactly as in an interactive session.
+    const mcpFile = path.join(runs, `${jobId}-${attempt}-mcp.json`);
+    fs.writeFileSync(mcpFile, JSON.stringify({ mcpServers: { supervisor: { type: "http", url: toolUrl } } }), { mode: 0o600 });
+    const claudeArgs = ["-p", "--model", model, "--effort", effort, "--dangerously-skip-permissions", "--append-system-prompt", brief,
+      "--mcp-config", mcpFile, "--output-format", "stream-json", "--verbose", ...(canResume ? ["--resume", session] : ["--session-id", session])];
+    const unit = `keir-supervisor-${String(jobId).replace(/[^A-Za-z0-9_-]/g, "")}-a${attempt}.scope`;
+    const bin = findClaude(env);
+    const [cmd, args] = scoped
+      ? [systemdRun, ["--scope", "--quiet", "--collect", `--unit=${unit}`, "-p", `MemoryMax=${memoryMax}`, "-p", "MemorySwapMax=0", "--", bin, ...claudeArgs]]
+      : [bin, claudeArgs];
     try {
       return await new Promise((resolve, reject) => {
-        const child = spawnImpl(findClaude(env), args, { cwd, env: childEnv, detached: true, stdio: ["pipe", "pipe", "pipe"] });
-        let out = "", err = "", timedOut = false;
-        const kill = () => { try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* gone */ } } };
+        const child = spawnImpl(cmd, args, { cwd, env: childEnv(jobId), detached: true, stdio: ["pipe", "pipe", "pipe"] });
+        let buf = "", err = "", timedOut = false, result = null, init = null, lastText = "", killed = false;
+        const kill = () => {
+          if (killed) return; killed = true;
+          try { process.kill(-child.pid, "SIGKILL"); } catch { try { child.kill("SIGKILL"); } catch { /* gone */ } }
+          // Anything that left the process group (setsid, double fork) is still in the scope.
+          if (scoped) execFileImpl(systemctl, ["kill", "--kill-whom=all", "--signal=SIGKILL", unit], { timeout: 15000 }, () => {});
+        };
         const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
         signal?.addEventListener?.("abort", kill, { once: true });
-        child.stdout.on("data", (c) => { out += c; if (out.length > 4e6) kill(); });
+        if (signal?.aborted) kill();
+        onStart({ unit: scoped ? unit : null, pid: child.pid, sessionId: session, resumed: Boolean(canResume) });
+        const line = (raw) => {
+          let ev; try { ev = JSON.parse(raw); } catch { return; }
+          if (ev.type === "system" && ev.subtype === "init") {
+            init = { tools: (ev.tools || []).length, mcpServers: (ev.mcp_servers || []).map((s) => ({ name: String(s.name || ""), status: String(s.status || "") })) };
+            onActivity({ init });
+          } else if (ev.type === "assistant") {
+            for (const part of ev.message?.content || []) {
+              if (part.type === "tool_use") onActivity({ line: describeTool(part.name, part.input) });
+              if (part.type === "text" && part.text) lastText = part.text;
+            }
+          } else if (ev.type === "result") result = ev;
+        };
+        child.stdout.on("data", (c) => {
+          buf += c;
+          let i;
+          while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) line(l); }
+          if (buf.length > 8e6) buf = "";
+        });
         child.stderr.on("data", (c) => { err = (err + c).slice(-4000); });
         child.stdin.on("error", () => {});
         child.on("error", (e) => { clearTimeout(timer); reject(e); });
         child.on("close", (code, sig) => {
           clearTimeout(timer); signal?.removeEventListener?.("abort", kill);
-          if (signal?.aborted) return resolve({ cancelled: true });
-          if (timedOut) return resolve({ timedOut: true });
-          if (code === null) return resolve({ interrupted: true, reason: `model process stopped by ${sig}` });
-          let parsed; try { parsed = JSON.parse(out.trim().split("\n").at(-1)); } catch { /* below */ }
-          if (!parsed || typeof parsed !== "object") return resolve({ interrupted: true, reason: `model exited ${code}: ${redact(err).slice(-400) || "no result"}` });
-          if (parsed.is_error) return resolve({ interrupted: true, reason: `model ended with ${parsed.subtype || "an error"}`, text: typeof parsed.result === "string" ? parsed.result : "" });
-          resolve({ text: String(parsed.result || ""), usage: parsed.usage || null, turns: parsed.num_turns || null });
+          if (buf.trim()) line(buf);
+          const meta = { sessionId: session, unit: scoped ? unit : null, init };
+          if (signal?.aborted) return resolve({ cancelled: true, ...meta });
+          if (timedOut) return resolve({ timedOut: true, ...meta });
+          if (!result) {
+            const why = code === null ? `model process stopped by ${sig}` : `model exited ${code}: ${redact(err).slice(-400) || "no result"}`;
+            return resolve({ interrupted: true, reason: why, text: lastText, ...meta });
+          }
+          if (result.is_error) return resolve({ interrupted: true, reason: `model ended with ${result.subtype || "an error"}`, text: typeof result.result === "string" ? result.result : lastText, ...meta });
+          resolve({ text: String(result.result || ""), usage: result.usage || null, turns: result.num_turns || null, costUsd: result.total_cost_usd ?? null, ...meta });
         });
         child.stdin.end(prompt);
       });
     } finally {
-      // rmSync does not follow the credentials symlink.
-      fs.rmSync(scratch, { recursive: true, force: true });
+      fs.rmSync(mcpFile, { force: true });
     }
   }
 
-  return { available, run, name: "claude", model };
+  return { available, run, reap, name: "claude", model };
 }
 
-module.exports = { createClaudeExecutor, redact, findClaude };
+module.exports = { createClaudeExecutor, redact, findClaude, describeTool, hostMcpServers, sessionFile };
