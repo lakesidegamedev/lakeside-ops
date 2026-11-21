@@ -872,19 +872,28 @@ final class LaunchTests: XCTestCase {
     /// Taps an Inbox filter chip, first dragging the chip row toward it when
     /// it is off screen. The drag runs along the chip row itself, at the
     /// chip's own height, so it never lands on the search field or a list row.
+    /// Visibility comes from the chip's frame: XCUITest cannot compute a hit
+    /// point for a chip that is wholly off screen, so asking `isHittable`
+    /// there fails the test instead of answering. Once the chip is inside
+    /// the screen (clear of the trailing fade) it is tapped by coordinate.
     private func goToFilter(_ app: XCUIApplication, _ identifier: String) {
         let chip = app.buttons[identifier]
         XCTAssertTrue(chip.waitForExistence(timeout: 10))
-        for _ in 0..<8 where !chip.isHittable {
+        func onScreen() -> Bool {
+            let frame = chip.frame, width = app.frame.width
+            return frame.minX >= 0 && frame.maxX <= width - 24
+        }
+        for _ in 0..<8 where !onScreen() {
             let screen = app.frame
             let y = chip.frame.midY / max(screen.height, 1)
             let towardRight = chip.frame.midX > screen.width / 2
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.85 : 0.15, dy: y))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.25 : 0.75, dy: y))
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.7 : 0.3, dy: y))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.35 : 0.65, dy: y))
             start.press(forDuration: 0.05, thenDragTo: end)
+            sleep(1)
         }
-        XCTAssertTrue(chip.isHittable)
-        if chip.isHittable { chip.tap() }
+        XCTAssertTrue(onScreen(), "\(identifier) could not be scrolled into view")
+        chip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
     func testReviewScreensInLight() { captureReviewScreens("light", "Light") }
