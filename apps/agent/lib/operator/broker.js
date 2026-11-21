@@ -601,7 +601,46 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   const surge = createSurge({ ledger, mcp, discord, config, now, ...(config.jevAsk ? { ask: config.jevAsk } : {}) });
   let issueFlight = Promise.resolve();
   // Keir 11.4: owner and staff act on tickets by number (ticketcommands.js); authority is checked there from the real author.
-  const ticketCommands = require("./ticketcommands").createTicketCommands({ ledger, config, mcp, discord, effect: (...a) => effect(...a), now, ticketOf: (j) => j.ticket || ticketNumberOf(j.source?.channelName), ctl: () => ctl(), publicText: (t) => publicText(t) });
+  const ticketCommands = require("./ticketcommands").createTicketCommands({ ledger, config, mcp, discord, effect: (...a) => effect(...a), now, ticketOf: (j) => j.ticket || ticketNumberOf(j.source?.channelName), ctl: () => ctl(), publicText: (t) => publicText(t),
+    callSupport: (...a) => callSupport(...a), closureRefusal: (...a) => commandClosureRefusal(...a) });
+  // Keir 11.4 review (M2): ticket_command resolve passes the closure guards the single-ticket resolve uses: moderation
+  // tickets, the owner's closure hold, a pending owner decision or a rule that hurts the player, the advice redirect, a
+  // ticket a staff member has claimed, the player's newest message still unanswered (read live from Discord), and the
+  // grace period after the final answer. Returns why ticket n must not be closed now, or null.
+  async function commandClosureRefusal(job, n, message, { named = false } = {}, signal) {
+    const t = await mcp.call("support", "support_get", { kind: "ticket", number: n }, false, signal).catch(() => null);
+    if (!t?.number) return "not found";
+    if (["resolved", "closed"].includes(t.status)) return `already ${t.status}`;
+    const jobs = Object.values(d.jobs).filter((j) => Number(ticketOf(j)) === Number(n));
+    const tj = d.jobs[d.seen[`ticket:${n}`]] || jobs.find((j) => j.kind === "ticket") || null;
+    if (["moderation", "investigation"].includes(t.category) || (tj?.channelId && isModerationChannel(ledger, tj.channelId))) return "moderators handle moderation tickets; Keir does not close them";
+    if (jobs.some((j) => j.ownerClosureHold) && !(job.actorId === config.ownerId && named)) return "the owner put a hold on closing it; only the owner can lift it, by naming the ticket";
+    const ids = new Set(jobs.map((j) => j.id));
+    const mine = Object.values(d.decisions || {}).filter((x) => ids.has(x.jobId));
+    const ev = ticketEvidence(n);
+    const lastPost = (d.ticketPosts?.[n] || []).filter((p) => !isCardPost(p)).at(-1);
+    const policy = replyPolicy.resolveRefusal({ pendingDecision: mine.some((x) => x.state === "pending"), decided: job.actorId === config.ownerId || mine.some((x) => x.type !== "approval" && ["approved", "selected"].includes(x.state)),
+      fixed: ev.written.done || ev.main.done || ev.money.done, texts: t.category === "suggestion" ? [] : [message, lastPost?.text] });
+    if (policy) return policy.replace(/^Not (?:closed|resolved)[:.]?\s*/i, "");
+    if (tj) { try { require("./advicerouting").guardResolution(tj, d, { message }); } catch (e) { return String(e.message); } }
+    const staffIds = new Set([config.ownerId, ...(config.staffIds || [])].filter(Boolean));
+    if (jobs.some((j) => j.kind === "ticket" && !JOB_TERMINAL.includes(j.state) && Math.max(j.lastPlayerAt || 0, j.observedPlayerAt || 0) > (j.lastPublishedAt || 0))) return "the player is still waiting for an answer";
+    const channels = await discord("GET", `/guilds/${config.guildId}/channels`).catch(() => null);
+    const channel = Array.isArray(channels) ? channels.find((c) => (!tj?.channelId || c.id === tj.channelId) && String(c.name || "").endsWith(`-${n}`)) : null;
+    if (channel) {
+      const rows = await discord("GET", `/channels/${channel.id}/messages?limit=100`).catch(() => null);
+      if (!Array.isArray(rows)) return "its channel could not be read, so a newer player message cannot be ruled out";
+      const claimant = rows.map((m) => ticketClaim(m, config, d.channels[channel.id]?.claimReleasedAt)).find(Boolean) || d.channels[channel.id]?.claimedBy;
+      if (claimant && claimant !== job.actorId) return "a staff member has claimed it; they close it";
+      const ordered = rows.filter((m) => m?.author && m.id).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+      const lastHuman = ordered.filter((m) => !m.author.bot).at(-1);
+      if (lastHuman && !staffIds.has(lastHuman.author.id) && !ordered.some((m) => BigInt(m.id) > BigInt(lastHuman.id) && (m.author.bot || staffIds.has(m.author.id))))
+        return "the player's newest message has no answer yet";
+    }
+    const answerAt = tj?.resolutionReadyAt || 0;
+    if (answerAt && now() - answerAt < config.closeGraceMs) return `the player got the final answer ${Math.max(1, Math.round((now() - answerAt) / 60000))} minutes ago; the closure grace period has ${Math.ceil((config.closeGraceMs - (now() - answerAt)) / 60000)} minutes left`;
+    return null;
+  }
   const ownerDirected = (job) => job.kind === "command" && job.role === "owner" && job.actorId === config.ownerId && job.source?.authorId === config.ownerId;
   const developerTask = (job) => job.kind === "command" && [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && ["owner", "support"].includes(job.role);
   // A ticket a developer opened for their own internal work (its opening request

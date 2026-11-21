@@ -11,9 +11,9 @@
 // authenticated owner app message, or a Discord message re-read from Discord whose author is the owner or a configured
 // staff member. Ticket tasks, findings, players and anything a player's message could steer are refused.
 //
-// Bulk and destructive steps keep a guard: more than BULK tickets, or closing a ticket whose player is still waiting for
-// an answer, is confirmed with the owner once (one choice through the decision path) unless the request named every
-// ticket by number. Every step runs through the effect journal, so a retry never merges or closes twice, and is audited.
+// Bulk and destructive steps keep a guard: merging more than BULK tickets the request did not name, or closing any ticket
+// it did not name, is confirmed with the owner once (one choice through the decision path); a close also passes the
+// single-ticket closure guards (unanswered player, grace period, claimed or held tickets, moderation). Every step runs through the effect journal, so a retry never merges or closes twice, and is audited.
 // The ticket tasks of the affected tickets are told what happened so they stop (merged, closed) or wake (reopened).
 const crypto = require("node:crypto");
 const { JOB_TERMINAL } = require("./machines");
@@ -32,7 +32,7 @@ function namedNumbers(texts) {
   return out;
 }
 
-function createTicketCommands({ ledger, config, mcp, discord, effect, now = () => Date.now(), ticketOf = (j) => j.ticket, openDecision = require("./decisions").openDecision, ctl = () => config.controls || controlsLib.DEFAULT_CONTROLS, publicText = (s) => String(s || "") }) {
+function createTicketCommands({ ledger, config, mcp, discord, effect, now = () => Date.now(), ticketOf = (j) => j.ticket, openDecision = require("./decisions").openDecision, ctl = () => config.controls || controlsLib.DEFAULT_CONTROLS, publicText = (s) => String(s || ""), callSupport = (tool, args, write, signal) => mcp.call("support", tool, args, write, signal), closureRefusal = async () => null }) {
   const d = ledger.data;
   const staff = () => [config.ownerId, ...(config.staffIds || [])].filter(Boolean);
 
@@ -90,9 +90,6 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
     }
     ledger.save();
   }
-
-  const playerWaiting = (n) => Object.values(d.jobs).some((j) => j.kind === "ticket" && Number(j.ticket) === Number(n) && !JOB_TERMINAL.includes(j.state) &&
-    Math.max(j.lastPlayerAt || 0, j.observedPlayerAt || 0) > (j.lastPublishedAt || 0));
 
   // One confirmation with the owner for a batch the request did not name, or a close over a waiting player.
   function confirmation(job, op, list, target, why) {
@@ -171,14 +168,19 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
     }
 
     if (op === "resolve") {
+      // Keir 11.4 review (M2): a close the requester did not name by number in their own words is always confirmed with the
+      // owner, however few (a player's text in the thread could otherwise choose which tickets a vague "do what they asked"
+      // closes). Each ticket then passes the single-ticket closure guards, and the call goes through callSupport.
       const message = publicText(input.message || "").trim();
       if (message.length < 8) throw new Error("Give the player-facing closing message.");
-      const waiting = tickets.filter(playerWaiting);
-      if ((tickets.length > BULK || waiting.length) && !allNamed) { const c = confirmation(job, "resolve", tickets, null, waiting.length ? `Players are still waiting for an answer on ${waiting.join(", ")}.` : "The request did not name them by number."); if (!c.ok) return c.result; }
+      if (!allNamed) { const c = confirmation(job, "resolve", tickets, null, `The request did not name ${tickets.filter((n) => !named.has(n)).join(", ")} by number.`); if (!c.ok) return c.result; }
       const results = [];
       for (const n of tickets) {
+        const no = await closureRefusal(job, n, message, { named: named.has(n) }, signal);
+        if (no) { results.push({ ticket: n, closed: false, why: no }); ledger.audit("ticket_command_resolve_refused", { job: job.id, ticket: n, by: job.actorId, why: no.slice(0, 160) }); continue; }
         try {
-          await effect(job, `ticket-command:resolve:${n}`, () => mcp.call("support", "support_resolve", { number: n, message, source: "agent", attribution: { agent: "keir", evidence: `Closed on the ${by} instruction`, jobId: job.id } }, true, signal));
+          const r = await effect(job, `ticket-command:resolve:${n}`, () => callSupport("support_resolve", { number: n, message, source: "agent", attribution: { agent: "keir", evidence: `Closed on the ${by} instruction`, jobId: job.id } }, true, signal));
+          if (r && r.ok === false) throw new Error(r.error || "the support service did not confirm the close");
           results.push({ ticket: n, closed: true }); ledger.audit("ticket_command_resolved", { job: job.id, ticket: n, by: job.actorId });
           settle(job, n, "closed", { by });
         } catch (e) { results.push({ ticket: n, closed: false, why: String(e.message).slice(0, 160) }); }
