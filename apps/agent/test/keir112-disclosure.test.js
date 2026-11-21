@@ -36,12 +36,13 @@ test("publish_patch: an engineering PR body the model wrote without the section 
 });
 
 // Item 7: a merge Keir was asked to carry out and GitHub refuses is never a silent dead end.
-function mergeFixture(pr, checks) {
+function mergeFixture(pr, checks, { token = "keir-bot-token" } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-deadend-")); dirs.push(dir);
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { ownerId: "1", staffIds: ["2"], botId: "3", guildId: "4", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { ownerId: "1", staffIds: ["2"], botId: "3", guildId: "4", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false, githubReviewerToken: token };
   const writes = [];
-  const exec = async (cmd, args) => {
+  const exec = async (cmd, args, opts = {}) => {
+    if (args.includes("-X") && args.includes("PATCH")) writes.push(`as:${opts.env?.GH_TOKEN ? "keir" : "default"}`);
     if (cmd !== "/usr/bin/gh") return "";
     const route = args.filter((a) => !a.startsWith("-") && a !== "api" && !/^[a-z_]+=/.test(a)).at(-1);
     if (args.includes("-X")) { writes.push(args.join(" ")); return "{}"; }
@@ -84,4 +85,17 @@ test("an adopted Keir PR whose verify check is red gets one owner line", async (
   const job = f.ledger.createJob("keirpr:6853", { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", adoptedPr: 6853, source: {}, deadline: 9e15 }); job.state = "running";
   await f.broker.tool(job, "github", { action: "merge", number: 6853, changeClass: "display" });
   assert.match(f.ledger.data.outbox["pr-blocked:6853:verify:h6853"].content, /blocked: the build and test check failed/);
+});
+
+test("m6 and N7: without Keir's own token the description is not edited under the owner's account; the owner hears instead", async () => {
+  const f = mergeFixture(keirDocPr(6784, "Corrects the guide."), [["verify", "success"], ["dependency-review", "success"], ["custom-rules", "failure"]], { token: "" });
+  const job = f.ledger.createJob("keirpr:6784", { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", adoptedPr: 6784, source: {}, deadline: 9e15 }); job.state = "running";
+  await f.broker.tool(job, "github", { action: "merge", number: 6784, changeClass: "display" });
+  assert.ok(!f.writes.some((x) => /body=/.test(x)), f.writes.join("\n"));
+  assert.match(f.ledger.data.outbox["pr-blocked:6784:custom-rules:h6784"].content, /Keir has no token of its own to add it/);
+  // With the token the repair goes out as Keir.
+  const g = mergeFixture(keirDocPr(6791, "Corrects the guide."), [["verify", "success"], ["dependency-review", "success"], ["custom-rules", "failure"]]);
+  const j2 = g.ledger.createJob("keirpr:6791", { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", adoptedPr: 6791, source: {}, deadline: 9e15 }); j2.state = "running";
+  await g.broker.tool(j2, "github", { action: "merge", number: 6791, changeClass: "display" });
+  assert.ok(g.writes.includes("as:keir"));
 });

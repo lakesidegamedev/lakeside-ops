@@ -159,7 +159,11 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
   }
   const key = askKey(d, { actionId, binds });
   let replacedFor = null;
-  if (key) {
+  // Keir 11.2 fourth pass (review N7): the one-ask rule has a switch (KEIR_ONE_ASK). Off: every task asks as before. Preview:
+  // what it would have done is recorded and the ask goes ahead.
+  const og = (config?.controls || require("./controls").DEFAULT_CONTROLS).gate("oneAsk");
+  if (key && og.run && !og.act && Object.values(d.decisions).some((y) => y.askKey === key && y.jobId !== jobId && ["pending", "approve"].includes(y.state))) require("./controls").preview(d, "one-ask", "join, refuse or replace", key, `task ${jobId} asks again about ${key}`);
+  if (key && og.act) {
     const head = (binds?.head || prOfAction(actionId && d.actions[actionId])?.head) || null;
     const same = Object.values(d.decisions).filter((y) => y.askKey === key && y.jobId !== jobId);
     // Already approved on another task and not yet carried out: that task runs it. Asking again is the double approval.
@@ -173,14 +177,15 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
       throw new Error(`The owner already approved this exact request on another Keir task (${carried.jobId}). That task carries it out. Do not ask again and do not run it here; tell the player only what is verified.`);
     }
     const open = same.find((y) => y.state === "pending");
-    if (open && (prOfDecision(d, open)?.head || null) === head) {
+    // Review suspicion 5: a pending ask whose task has ended is not joined (nobody would carry out its answer); it is replaced.
+    if (open && alive(open) && (prOfDecision(d, open)?.head || null) === head) {
       open.followers = [...(open.followers || []).filter((f) => f.jobId !== jobId), { jobId, actionId, at: Date.now() }];
       ledger.audit("decision_joined", { decision: open.id, job: jobId, key });
       return open;
     }
     if (open) {
       // A new head replaces the old ask: one live question per PR.
-      open.state = "superseded"; open.withdrawnReason = "A newer version of this change replaced it";
+      open.state = "superseded"; open.withdrawnReason = alive(open) ? "A newer version of this change replaced it" : "The task that asked it ended; a new ask replaced it";
       if (open.actionId && d.actions[open.actionId]?.state === "pending") d.actions[open.actionId].state = "superseded";
       ledger.audit("decision_superseded_by_new_head", { decision: open.id, key });
       // Review m7: the task that asked the old question follows the new one, so it hears how it ends instead of waiting on

@@ -1764,9 +1764,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
 
     // Keir 11.2: one live notice per ticket per shipped change (main release receipt). A model post that already said it is
     // live for this release counts: the card notice and the model never both announce the same thing (ticket 1868).
+    // Fourth pass (review N7): this suppression belongs to the post budget switch; off or in preview the notice goes out as
+    // before (preview records that it would have been held).
+    const pbGate = ctl().gate("postBudget");
     const receipt = require("./postbudget").mainReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo));
-    const announced = receipt && (card.liveReceipts || []).includes(receipt.key);
-    const saidSince = receipt && (d.ticketPosts?.[ticketNo] || []).some((p) => p.at >= receipt.at && !isCardPost(p) && require("./postbudget").liveClaim(p.text));
+    const announcedRaw = receipt && (card.liveReceipts || []).includes(receipt.key);
+    const saidSinceRaw = receipt && (d.ticketPosts?.[ticketNo] || []).some((p) => p.at >= receipt.at && !isCardPost(p) && require("./postbudget").liveClaim(p.text));
+    if ((announcedRaw || saidSinceRaw) && pbGate.run && !pbGate.act) controlsLib.preview(d, "post-rules", "would hold live notice", `ticket ${ticketNo}`, announcedRaw ? "this release was already announced" : "the model already said it is live", {}, now());
+    const announced = pbGate.act && announcedRaw, saidSince = pbGate.act && saidSinceRaw;
     const said = announced || saidSince || (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { delete card.pendingLiveNotice; card.liveNotified = [...told, ...fresh.map(i => statusCard.cleanName(i.name))].slice(-20); ledger.save(); ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
@@ -3963,14 +3968,18 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           const names = g.failed.map((f) => String(f).split(":")[0]);
           const keirPrs = require("./keirprs");
           const why = keirPrs.plainReason(names, g.mergeable);
+          // Fourth pass (review N7, m6): a switch (KEIR_MERGE_DEAD_END), preview, and the repair only as Keir's own account.
+          const dg = ctl().gate("mergeDeadEnd");
+          if (!dg.run) return;
           if (why.key === "custom-rules" && !require("./prdisclosure").hasDisclosure(pr.body)) {
-            if (keirPrs.isKeirPr(pr, d)) {
-              await effect(job, `disclosure:${n}:${head}`, () => api(["-X", "PATCH", `repos/${repo}/pulls/${n}`, "-f", `body=${withDisclosure(pr.body)}`]), { kind: "github", text: `describe PR ${n}` });
+            if (keirPrs.isKeirPr(pr, d) && dg.act && config.githubReviewerToken) {
+              await effect(job, `disclosure:${n}:${head}`, async () => JSON.parse(await exec("/usr/bin/gh", ["api", "-X", "PATCH", `repos/${repo}/pulls/${n}`, "-f", `body=${withDisclosure(pr.body)}`], asKeir({ timeout: 60000 })) || "null"), { kind: "github", text: `describe PR ${n}` });
               ledger.audit("keir_pr_description_repaired", { job: job.id, pr: n, head });
               return;
             }
-            why.text = "its description is missing the Conflict of interest section, which its author has to add";
+            why.text = keirPrs.isKeirPr(pr, d) ? "its description is missing the Conflict of interest section, and Keir has no token of its own to add it" : "its description is missing the Conflict of interest section, which its author has to add";
           }
+          if (!dg.act) { controlsLib.preview(d, "merge-dead-end", "owner line", `#${n}`, `ready but blocked: ${why.text}`, {}, now()); return; }
           ledger.notify(`pr-blocked:${n}:${why.key}:${head}`, "owner", `PR #${n} (${String(pr.title || "").slice(0, 100)}) is ready to merge but blocked: ${why.text}. Nothing was merged.`);
           ledger.audit("merge_dead_end_reported", { job: job.id, pr: n, head, reason: why.key });
         } catch (e) { ledger.audit("merge_dead_end_report_failed", { job: job.id, pr: Number(pr.number), reason: String(e.message).slice(0, 200) }); }
@@ -5338,7 +5347,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

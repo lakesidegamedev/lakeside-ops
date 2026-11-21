@@ -146,3 +146,31 @@ test("first start: an owner sentence 11.1 took as an answer keeps its DM buttons
   assert.equal(t.messages["m-old"].content, "old", "untouched");
   assert.notEqual(t.messages["m-new"].content, "new");
 });
+
+test("N7: the one-ask rule has a switch; off, a second task asks as before; preview records it and still asks", () => {
+  const { openDecision } = require("../lib/operator/decisions");
+  const { staticControls } = require("../lib/operator/controls");
+  for (const [mode, previewed] of [["off", false], ["preview", true]]) {
+    const data = { jobs: { j1: { id: "j1", state: "waiting" }, j2: { id: "j2", state: "running" } }, actions: {}, decisions: {}, outbox: {}, audit: [] };
+    const ledger = { data, save() {}, audit() {}, notify() {} };
+    const config = { ownerId: "o", staffIds: [], controls: staticControls({ oneAsk: mode }) };
+    const binds = { repository: "lakesidegamedev/AHDGame", number: 7001, head: "h1" };
+    const a = openDecision(ledger, config, { jobId: "j1", question: "Merge PR 7001?", binds, signoff: true });
+    const b = openDecision(ledger, config, { jobId: "j2", question: "Merge PR 7001?", binds, signoff: true });
+    assert.notEqual(a.id, b.id, mode);
+    assert.equal(a.state, "pending");
+    assert.equal(Boolean(data.preview?.items && Object.keys(data.preview.items).some((k) => k.startsWith("one-ask:"))), previewed);
+  }
+});
+
+test("suspicion 5: a pending ask whose task ended is replaced, not joined", () => {
+  const { openDecision } = require("../lib/operator/decisions");
+  const data = { jobs: { j1: { id: "j1", state: "dismissed" }, j2: { id: "j2", state: "running" } }, actions: {}, decisions: {}, outbox: {}, audit: [] };
+  const ledger = { data, save() {}, audit() {}, notify() {} };
+  const binds = { repository: "lakesidegamedev/AHDGame", number: 7001, head: "h1" };
+  const a = openDecision(ledger, { ownerId: "o", staffIds: [] }, { jobId: "j1", question: "Merge PR 7001?", binds, signoff: true });
+  const b = openDecision(ledger, { ownerId: "o", staffIds: [] }, { jobId: "j2", question: "Merge PR 7001?", binds, signoff: true });
+  assert.notEqual(a.id, b.id);
+  assert.equal(a.state, "superseded");
+  assert.match(a.withdrawnReason, /task that asked it ended/);
+});

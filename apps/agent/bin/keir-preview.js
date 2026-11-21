@@ -80,10 +80,13 @@ async function buildPreview({ data, settings, api, now = Date.now(), env = proce
   }
   const items = [...Object.values(data.preview.items), ...extra];
   const refused = Object.entries(data.refusedPosts || {}).flatMap(([ticket, rows]) => rows.map((r) => ({ ticket: Number(ticket), ...r })));
-  return { items, unchecked: [...unchecked], live, refused, notes };
+  const doubts = Object.entries(data.postDoubts || {}).flatMap(([ticket, rows]) => rows.map((r) => ({ ticket: Number(ticket), ...r })));
+  // Waits that are parked or slowed now, with what wakes them and what the player is owed (review N1).
+  const parked = Object.values(data.jobs || {}).filter((j) => j.closing?.parked || j.closing?.slowed).map((j) => ({ job: j.id, ticket: j.ticket || null, ...require("../lib/operator/closing").describe(j) }));
+  return { items, unchecked: [...unchecked], live, refused, doubts, parked, notes };
 }
 
-function render({ items, unchecked, live, refused }, { settings, killSwitch, paused, github }) {
+function render({ items, unchecked, live, refused, doubts = [], parked = [] }, { settings, killSwitch, paused, github }) {
   const out = [];
   out.push(`Keir preview, ${new Date().toISOString()}. Nothing was changed.`);
   out.push("");
@@ -109,6 +112,16 @@ function render({ items, unchecked, live, refused }, { settings, killSwitch, pau
     out.push("");
     out.push(`Posts refused by the post rules in the last 7 days (${refused.length}):`);
     for (const r of refused.slice(-50)) out.push(`  - ticket ${r.ticket}, ${new Date(r.at).toISOString().slice(0, 16)}, ${r.rule}: ${String(r.text).replace(/\s+/g, " ").slice(0, 200)}`);
+  }
+  if (doubts.length) {
+    out.push("");
+    out.push(`Posts let through with a doubt in the last 7 days (${doubts.length}):`);
+    for (const r of doubts.slice(-50)) out.push(`  - ticket ${r.ticket}, ${new Date(r.at).toISOString().slice(0, 16)}, ${r.rule}: ${String(r.text).replace(/\s+/g, " ").slice(0, 200)}`);
+  }
+  if (parked.length) {
+    out.push("");
+    out.push(`Parked or slowed waits (${parked.length}):`);
+    for (const p of parked) out.push(`  - ${p.ticket ? `ticket ${p.ticket}` : `job ${p.job}`}: ${p.parked ? `parked since ${p.parked.since.slice(0, 16)}, wakes when ${p.parked.wakesWhen || "something changes"}` : `slowed: ${p.slowed.why}`}; waiting on ${String(p.waitingOn).slice(0, 120)}${p.parked?.owed ? `; the player is owed ${p.parked.owed}` : ""}`);
   }
   out.push("");
   out.push(unchecked.length ? `Could not check (${unchecked.length}):` : "Everything the passes needed was read.");

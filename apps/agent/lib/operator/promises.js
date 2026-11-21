@@ -142,7 +142,10 @@ function notePost(d, ticket, job, message, now, { askedAt = 0 } = {}) {
 function createPromises({ ledger, now = () => Date.now(), log = () => {}, held = () => null, post = null, retryMs = RETRY_MS, controls = controlsLib.DEFAULT_CONTROLS }) {
   const d = ledger.data;
   // Per-ticket bound over a rolling day, kept on the ledger so it survives restarts.
+  // Review N7: in preview it only reads (act false), so the budget record is never created or trimmed by a preview.
+  let acting = true;
   function spent(ticket, kind) {
+    if (!acting) return (d.promiseBudget?.[ticket]?.[kind] || []).filter((t) => now() - t < DAY);
     const b = ((d.promiseBudget ||= {})[ticket] ||= { wakes: [], fallbacks: [] });
     b[kind] = (b[kind] || []).filter((t) => now() - t < DAY);
     return b[kind];
@@ -171,6 +174,7 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
     let woke = 0, changed = false;
     const g = controls.gate("promiseWakes");
     if (!g.run) return { woke, skipped: g.why };
+    acting = g.act;
     const preview = (action, ticket, p, reason) => controlsLib.preview(d, "promises", action, `ticket ${ticket}`, `${reason}: "${String(p.text).slice(0, 160)}"`, {}, now());
     for (const [ticket, rows] of Object.entries(d.ticketPromises || {})) {
       for (const p of rows) {
