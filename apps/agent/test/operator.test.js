@@ -209,7 +209,7 @@ test("a call after the task stopped running says it is over and to stop", async 
 test("waiting on the player needs a post to them since they last wrote", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   j.lastPlayerAt = 1; j.observedPlayerAt = 1;
-  await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /nothing has been posted to them since they last wrote/);
+  await assert.rejects(f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /nothing has been posted to them since they last wrote/);
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Were you on the phone app or the website when it happened?" } });
   assert.ok(j.lastAskAt >= j.lastPlayerAt);
 });
@@ -219,33 +219,33 @@ test("a refused first reply does not let the task wait on the player (KBX3 probe
   // lastPlayerAt. A shape-refused reply posts nothing, so a player_reply wait would leave them unanswered.
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   delete j.lastPlayerAt; delete j.lastAskAt; j.observedPlayerAt = Date.now() - 1000;
-  await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." }), /nothing has been posted to them since they last wrote/);
+  await assert.rejects(f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered." }), /nothing has been posted to them since they last wrote/);
 });
 
 test("a finding an open issue already covers asks once for the new evidence before finishing done", async () => {
   const f = fixture(), j = running(f, { kind: "finding", role: "support", finding: "fp2" });
-  await assert.rejects(f.broker.tool(j, "finish", { state: "done", summary: "Already tracked as #4311; no duplicate filed." }), /issueNumber 4311/);
+  await assert.rejects(f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Already tracked as #4311; no duplicate filed." }), /issueNumber 4311/);
   // Asked once: a model that judges nothing new to add can still finish.
-  await f.broker.tool(j, "finish", { state: "done", summary: "Already tracked as #4311; no duplicate filed." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Already tracked as #4311; no duplicate filed." });
   assert.equal(j.state, "done");
 });
 
 test("waiting on a developer with only a filed bug report is a quiet wait, not a six-hour poll (ticket 1749)", async () => {
   const f = fixture(), j = running(f, { kind: "command", role: "owner" });
   j.raisedToDevelopers = [{ id: 254949, title: "Withdraw gives no warning", kind: "bug", blocking: false, at: 1000 }];
-  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Issue filed, nobody assigned." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Issue filed, nobody assigned." });
   assert.equal(j.wakeAt - 5000, 360 * 60000);
   // Nothing changed and nobody wrote: the next wait backs off instead of polling every six hours.
   j.state = "running";
-  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still nothing." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Still nothing." });
   const secondWake = j.wakeAt - 5000;
   // A real handoff someone owes an answer on keeps the six-hour reply wait.
   const g = fixture(), k = running(g, { kind: "command", role: "owner" });
   k.raisedToDevelopers = [{ id: 7, title: "Which rate applies?", kind: "question", blocking: true, at: 1000 }];
-  await g.broker.tool(k, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Asked the developers." });
+  await g.broker.tool(k, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Asked the developers." });
   assert.equal(k.wakeAt - 5000, 360 * 60000);
   k.state = "running";
-  await g.broker.tool(k, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still asked." });
+  await g.broker.tool(k, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Still asked." });
   assert.equal(k.wakeAt - 5000, 360 * 60000);
   assert.equal(secondWake, 720 * 60000);
 });
@@ -453,13 +453,13 @@ test("a network failure leaves a write uncertain and blocks blind retries", asyn
 
 test("an unresolved ticket cannot be forgotten by marking its task done", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123 });
-  await f.broker.tool(j, "finish", { state: "done", summary: "PR exists" });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "PR exists" });
   assert.equal(j.state, "waiting"); assert.ok(j.wakeAt > 5000);
 });
 
 test("a developer's task in a ticket channel can finish; the ticket's own task keeps ownership", async () => {
   const f = fixture(), j = running(f, { ticket: 123 });
-  await f.broker.tool(j, "finish", { state: "done", summary: "Answered the joke" });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered the joke" });
   assert.equal(j.state, "done");
 });
 
@@ -515,7 +515,7 @@ test("delegate investigation runs during a support shift but mutations remain he
   const result = await f.broker.tool(j, "shell", { command: "echo fixture" });
   assert.equal(result.output, "sandbox result");
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "fixture" } }), /coordinator/);
-  await f.broker.tool(j, "finish", { state: "done", summary: "Investigated controls" });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Investigated controls" });
   assert.equal(f.ledger.data.outbox[`finish:${j.id}:${j.rounds}`].destination, actor);
 });
 
@@ -553,7 +553,7 @@ test("player conversation permits safe channel replies but no decisions or privi
   await assert.rejects(f.broker.tool(j, "channel_reply", { message: "Server /root/private has details" }), /private/);
   await f.broker.tool(j, "channel_reply", { message: "You can challenge that answer. What happens when you open the page?" });
   const entry = Object.values(f.ledger.data.outbox)[0]; assert.equal(entry.destination, `channel:${j.id}`);
-  await f.broker.tool(j, "finish", { state: "done", summary: "Discussed the report" });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Discussed the report" });
   assert.equal(j.state, "done"); assert.equal(Object.values(f.ledger.data.outbox).length, 1);
 });
 
@@ -681,7 +681,7 @@ test("handoff retains authenticated role, source and follow-ups without granting
 
 test("a follow-up arriving during a reply survives finish and remains queued", async () => {
   const f = fixture(), j = running(f, { kind: "conversation", inbox: [{ content: "but what about the other number?" }] });
-  await f.broker.tool(j, "finish", { state: "done", summary: "Answered original question" });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered original question" });
   assert.equal(j.state, "queued"); assert.equal(j.inbox.length, 1);
 });
 
@@ -745,7 +745,7 @@ test("owner-requested intake is idempotent and leaves the source conversation in
   assert.equal(a.number, b.number); assert.equal(f.calls.length, 1);
   assert.equal(Object.values(f.ledger.data.jobs).filter((j) => j.kind === "ticket").length, 1);
   assert.equal(f.j.channelId, f.ch.id); assert.equal(f.j.kind, "command");
-  await f.broker.tool(f.j, "finish", { state: "done", summary: "Ticket opened and answer given" });
+  await f.broker.tool(f.j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Ticket opened and answer given" });
   assert.equal(f.j.state, "done");
   assert.equal(f.ledger.data.jobs[a.supportTaskId].state, "queued");
 });
@@ -801,9 +801,9 @@ test("automatic intake cannot replace the original reporter with a model-chosen 
 
 test("a two-part owner request cannot finish by answering the question but dropping its ticket", async () => {
   const f = requestedIntakeFixture();
-  await assert.rejects(f.broker.tool(f.j, "finish", { state: "done", summary: "Answered question, could not open a ticket" }), /ticket request is not fulfilled/);
+  await assert.rejects(f.broker.tool(f.j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered question, could not open a ticket" }), /ticket request is not fulfilled/);
   assert.equal(f.j.state, "running");
-  await f.broker.tool(f.j, "finish", { state: "waiting", summary: "Preserved pending ticket request", wakeAfterMinutes: 1 });
+  await f.broker.tool(f.j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Preserved pending ticket request", wakeAfterMinutes: 1 });
   assert.equal(f.j.state, "waiting");
 });
 
@@ -1052,7 +1052,7 @@ function fakeClaude(script, seen = []) {
 test("an activation runs on the subscription CLI with only Keir's tools and finishes through the broker", async () => {
   const f = fixture(), j = running(f), seen = [];
   const agent = createAgent({ ledger: f.ledger, broker: f.broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "done", summary: "Verified fixture result" }); return {}; }, seen) });
+    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Verified fixture result" }); return {}; }, seen) });
   await agent.run(j, new AbortController().signal);
   assert.equal(j.state, "done"); assert.equal(f.calls.length, 0);
   assert.match(Object.values(f.ledger.data.outbox)[0].content, /Verified fixture result/);
@@ -1076,7 +1076,7 @@ test("internal evidence wakes do not become unanswered player replies, including
       inbox: [{ ...internal, at: new Date(at).toISOString(), content: "New internal evidence" }],
       lastPublishedAt: 2000, lastPlayerAt: at, observedPlayerAt: at });
     const agent = createAgent({ ledger: f.ledger, broker: f.broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-      spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "waiting", waitFor: "developer_reply", summary: "Waiting for actual evidence" }); return {}; }, seen) });
+      spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Waiting for actual evidence" }); return {}; }, seen) });
     await agent.run(j, new AbortController().signal);
     assert.equal(j.observedPlayerAt, 1000);
     assert.equal(j.wakeAt, 5000 + 360 * 60000, "internal updates must not force minute polling");
@@ -1092,7 +1092,7 @@ test("a real human reply still prevents sleeping after an internal wake", async 
     inbox: [{ authorId: "888888888888888888", at: new Date(4000).toISOString(), content: "Still broken" },
       { role: "system", at: new Date(4000).toISOString(), content: "Internal wake at same time" }] });
   const agent = createAgent({ ledger: f.ledger, broker: f.broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "waiting", waitFor: "developer_reply", summary: "Waiting" }); return {}; }, seen) });
+    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Waiting" }); return {}; }, seen) });
   await agent.run(j, new AbortController().signal);
   assert.equal(j.observedPlayerAt, 4000);
   assert.equal(j.wakeAt, 65000);
@@ -1103,7 +1103,7 @@ test("a ticket activation without a progress card is told to create one", async 
   const f = fixture(), seen = [];
   const j = running(f, { kind: "ticket", role: "support", ticket: 1540, channelId: "777777777777777777" });
   const agent = createAgent({ ledger: f.ledger, broker: f.broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "waiting", summary: "checked" }); return { result: "checked" }; }, seen) });
+    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "checked" }); return { result: "checked" }; }, seen) });
   await agent.run(j, new AbortController().signal);
   assert.match(JSON.parse(seen[0].prompt).statusCard, /^missing: create/);
   f.ledger.data.statusCards = { 1540: { status: "", items: [{ name: "Fix", stage: "found" }], at: Date.now() } };
@@ -1117,7 +1117,7 @@ test("screenshots reach the model as MCP image content and never enter the ledge
   const broker = { ...f.broker, tool: async (job, name, input, signal) => name === "view_attachment" ? { image: { type: "base64", media_type: "image/webp", data: bytes } } : f.broker.tool(job, name, input, signal) };
   let image;
   const agent = createAgent({ ledger: f.ledger, broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-    spawnImpl: fakeClaude(async ({ call }) => { image = (await call("view_attachment", { index: 0 })).content.find((c) => c.type === "image"); await call("finish", { state: "done", summary: "Screenshot inspected" }); return {}; }) });
+    spawnImpl: fakeClaude(async ({ call }) => { image = (await call("view_attachment", { index: 0 })).content.find((c) => c.type === "image"); await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Screenshot inspected" }); return {}; }) });
   await agent.run(j, new AbortController().signal);
   assert.equal(image.data, bytes); assert.equal(image.mimeType, "image/png"); assert.equal(j.state, "done");
   assert.ok(!fs.readFileSync(path.join(f.dir, "ledger.json"), "utf8").includes(bytes));
@@ -1128,7 +1128,7 @@ test("players get only conversation tools; a tool outside the task's list is ref
   const quick = f.ledger.createJob("quick", { kind: "conversation", role: "player", source: { channelId: f.ch.id }, channelId: f.ch.id, replyChannel: f.ch.id, deadline: 9999999999999 });
   let tools, refused;
   const agent = createAgent({ ledger: f.ledger, broker: f.broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-    spawnImpl: fakeClaude(async ({ prompt, call, tools: t }) => { tools = t; assert.equal(prompt.lane, "quick"); refused = await call("shell", { command: "id" }); await call("finish", { state: "done", summary: "Answered" }); return {}; }) });
+    spawnImpl: fakeClaude(async ({ prompt, call, tools: t }) => { tools = t; assert.equal(prompt.lane, "quick"); refused = await call("shell", { command: "id" }); await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered" }); return {}; }) });
   await agent.run(quick, new AbortController().signal);
   assert.ok(!tools.includes("shell") && !tools.includes("handoff") && !tools.includes("github"));
   assert.equal(refused.isError, true); assert.equal(quick.state, "done");
@@ -1207,7 +1207,7 @@ test("a developer's ticket request hands their ask to the ticket and releases th
   assert.match(r.instruction, /Move the conversation to the ticket/);
   const ticketTask = f.ledger.data.jobs[r.supportTaskId];
   assert.ok(ticketTask.inbox.some((x) => x.developerRequest && x.messageId === f.j.source.messageId));
-  await f.broker.tool(f.j, "finish", { state: "done", summary: "Opened" });
+  await f.broker.tool(f.j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Opened" });
   assert.equal(f.ledger.data.conversations[f.ch.id], undefined);
 });
 
@@ -1224,7 +1224,7 @@ test("in a ticket channel, developer-task replies are player register and attach
 
 test("a ticket task cannot dismiss itself; it stays owned and wakes again", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123 });
-  await f.broker.tool(j, "finish", { state: "dismissed", summary: "owner is chatting, standing down" });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "dismissed", summary: "owner is chatting, standing down" });
   assert.equal(j.state, "waiting"); assert.ok(j.wakeAt > 5000);
 });
 
@@ -1581,7 +1581,7 @@ test("activation telemetry pins the build before a release flip and preserves un
   fs.writeFileSync(releaseFile, `${before.sha} ${before.version}`);
   const agent = createAgent({ ledger: f.ledger, broker: f.broker,
     config: { releaseFile, briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "done", summary: "Verified fixture result" }); return { usage: { input_tokens: 10, output_tokens: 20 } }; }) });
+    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Verified fixture result" }); return { usage: { input_tokens: 10, output_tokens: 20 } }; }) });
   fs.writeFileSync(releaseFile, `${"b".repeat(40)} 5.10.0`);
   await agent.run(j, new AbortController().signal);
   const record = JSON.parse(fs.readFileSync(path.join(f.dir, "usage.jsonl"), "utf8").trim());
@@ -1628,14 +1628,14 @@ test("a ticket task waits half an hour while a developer's own task holds the ti
   const f=fixture(),owner=f.config.ownerId;
   f.ledger.createJob("cmd:x",{kind:"command",role:"owner",actorId:owner,ticket:7001,state:"waiting",source:{authorId:owner},deadline:9999999999999}).state="waiting";
   const t=f.ledger.createJob("ticket:7001",{kind:"ticket",role:"support",ticket:7001,source:{content:"q"},deadline:9999999999999});t.state="running";
-  await f.broker.tool(t,"finish",{state:"waiting",summary:"deferring to the developer task",wakeAfterMinutes:1});
+  await f.broker.tool(t,"finish",{closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state:"waiting",summary:"deferring to the developer task",wakeAfterMinutes:1});
   assert.ok(t.wakeAt>=5000+30*60000-1);
 });
 
 test("a ticket whose channel was closed by hand stays done", async () => {
   const f=fixture();
   const t=f.ledger.createJob("ticket:7100",{kind:"ticket",role:"support",ticket:7100,source:{content:"q"},deadline:9999999999999});t.state="running";t.channelClosed=true;
-  await f.broker.tool(t,"finish",{state:"done",summary:"closed"});
+  await f.broker.tool(t,"finish",{closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state:"done",summary:"closed"});
   assert.equal(t.state,"done");
 });
 
@@ -1722,7 +1722,7 @@ test("a task waiting on an open owner decision sleeps until the answer wakes it"
   const f=fixture();
   const t=f.ledger.createJob("ticket:7200",{kind:"ticket",role:"support",ticket:7200,source:{content:"q"},deadline:9999999999999});t.state="running";
   f.ledger.data.decisions={x1:{id:"x1",jobId:t.id,state:"pending",sent:{}}};
-  await f.broker.tool(t,"finish",{state:"waiting",summary:"waiting on the owner",wakeAfterMinutes:10});
+  await f.broker.tool(t,"finish",{closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state:"waiting",summary:"waiting on the owner",wakeAfterMinutes:10});
   assert.ok(t.wakeAt>=5000+6*3600000-1);
 });
 
@@ -1792,7 +1792,7 @@ test("Keir 2.0: the ticket record is shared across tasks and its facts count as 
 test("KBX3: finish accepts idleReason as the idle-fix review", async () => {
   const f = fixture(), j = running(f, { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777" });
   f.ledger.data.statusCards = { 123: { items: [{ name: "Slow groups", stage: "found" }] } };
-  const r = await f.broker.tool(j, "finish", { state: "waiting", summary: "Asked the developers; waiting on their review of the found fix.", idleReason: "Slow groups waits on a developer review of the raised fix." }).catch((e) => e);
+  const r = await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Asked the developers; waiting on their review of the found fix.", idleReason: "Slow groups waits on a developer review of the raised fix." }).catch((e) => e);
   assert.doesNotMatch(String(r?.message || ""), /not moving/);
   assert.ok(j.history.some((h) => h.kind === "idle_review"));
 });
@@ -1847,7 +1847,7 @@ test("automatic ticket completions never DM the owner, even when the unresolved 
   const job = running(f, { kind: "ticket", role: "support", ticket: 1528, channelId: "777777777777777777", rounds: 41 });
   for (const summary of ["Nothing has changed on ticket 1528. Ariane owns it.", "Nothing new has happened on ticket 1528. Ariane is handling it."]) {
     job.state = "running";
-    await f.broker.tool(job, "finish", { state: "done", summary });
+    await f.broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary });
     assert.equal(job.state, "waiting");
     assert.equal(Object.values(f.ledger.data.outbox).filter(o => o.destination === "owner").length, 0);
     job.rounds++;
@@ -1865,11 +1865,11 @@ test("the ticket bot's interaction-webhook claim defers automatic work but other
   assert.equal(f.ledger.data.channels[ch.id]?.claimedBy, undefined);
   g.ingest(ch, claim);
   assert.equal(f.ledger.data.channels[ch.id]?.claimedBy, f.config.staffIds[0]);
-  await f.broker.tool(job, "finish", { state: "done", summary: "Staff owns this ticket; nothing changed." });
+  await f.broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Staff owns this ticket; nothing changed." });
   assert.equal(job.state, "deferred");
   assert.equal(Object.keys(f.ledger.data.outbox).length, 0);
   job.state = "running";
-  await f.broker.tool(job, "finish", { state: "blocked", needsOwner: true, summary: "Staff owns the ticket, waiting for review." });
+  await f.broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "blocked", needsOwner: true, summary: "Staff owns the ticket, waiting for review." });
   assert.equal(job.state, "deferred");
   assert.equal(Object.keys(f.ledger.data.decisions || {}).length, 0);
   assert.equal(Object.keys(f.ledger.data.outbox).length, 0);
@@ -1904,7 +1904,7 @@ test("player pressure cannot authorize patches, game healing or merges", async (
 test("a delivered ticket update is not repeated by the automatic finish reply", async () => {
   const f = fixture(); f.ledger.data.disclosed = { 123: { at: 0 } }; const j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" } });
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Found more hidden subsidiary views. The fixes are built and are going through review." } });
-  await f.broker.tool(j, "finish", { state: "done", summary: "Found more hidden subsidiary views. The fixes are built and are going through review." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Found more hidden subsidiary views. The fixes are built and are going through review." });
   assert.equal(f.calls.filter(c => c[1] === "support_public_update").length, 1);
   assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
 });
@@ -1912,7 +1912,7 @@ test("a delivered ticket update is not repeated by the automatic finish reply", 
 test("a ticket finish fallback cannot bypass another task's recent public update", async () => {
   const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id, channelName: "ticket-bug-fixture-123" } });
   f.ledger.data.ticketPosts = { 123: [{ at: 4500, jobId: "other", text: "Found more hidden subsidiary views. The fixes are being reviewed." }] };
-  await f.broker.tool(j, "finish", { state: "done", summary: "Found more hidden subsidiary views. The fixes are being reviewed." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Found more hidden subsidiary views. The fixes are being reviewed." });
   assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
 });
 
@@ -1938,7 +1938,7 @@ test("a bare mention can point to the same author's recent unanswered question",
 
 test("ticket developer finish summaries stay private even when the finding looks safe", async () => {
   const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
-  await f.broker.tool(j, "finish", { state: "done", summary: "The subsidiary history is hidden from the parent company. I am checking the correction." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "The subsidiary history is hidden from the parent company. I am checking the correction." });
   assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
   assert.equal(f.ledger.data.ticketPosts?.[123], undefined);
 });
@@ -1946,7 +1946,7 @@ test("ticket developer finish summaries stay private even when the finding looks
 test("ticket finish fallback refuses unverified releases and technical copy", async () => {
   for (const summary of ["The fix is live on the main server.", "Both fixes are published; CI is pending."]) {
     const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
-    await f.broker.tool(j, "finish", { state: "done", summary });
+    await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary });
     assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
   }
 });
@@ -2580,7 +2580,7 @@ test("an authenticated owner claim defers automatic work and history reconciles 
   }
   g.ingest(ch, claim);
   assert.equal(f.ledger.data.channels[ch.id].claimedBy, f.config.ownerId);
-  await f.broker.tool(job, "finish", { state: "waiting", summary: "Owner claimed this ticket." });
+  await f.broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Owner claimed this ticket." });
   assert.equal(job.state, "deferred");
   assert.equal(Object.keys(f.ledger.data.outbox).length, 0);
   delete f.ledger.data.channels[ch.id].claimedBy;
@@ -2637,7 +2637,7 @@ test("voice activation preloads reviewed reads and limits discovery rounds witho
   const schemas = [{server:"ops-knowledge",tool:"kanban_get",schema:{type:"object"}}];
   f.broker.voiceReads = async () => schemas;
   const agent = createAgent({ledger:f.ledger,broker:f.broker,config:{briefFile:path.join(__dirname,"../KEIR.md"),model:"claude-opus-5-5",quickProvider:"claude",quickMaxRounds:6,quickMaxTurnMs:10000,maxRounds:12,maxTurnMs:10000,stateDir:f.dir,tagIntake:async()=>{classified++;return null;}},
-    spawnImpl:fakeClaude(async({prompt,call,args})=>{assert.deepEqual(prompt.voiceReadSchemas,schemas);assert.equal(prompt.voiceTurn.jobId,j.id);assert.equal(args[args.indexOf("--max-turns")+1],"4");await call("channel_reply",{message:"The current evidence is incomplete."});await call("finish",{state:"done",summary:"Answered current voice turn."});return{};},seen)});
+    spawnImpl:fakeClaude(async({prompt,call,args})=>{assert.deepEqual(prompt.voiceReadSchemas,schemas);assert.equal(prompt.voiceTurn.jobId,j.id);assert.equal(args[args.indexOf("--max-turns")+1],"4");await call("channel_reply",{message:"The current evidence is incomplete."});await call("finish",{closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state:"done",summary:"Answered current voice turn."});return{};},seen)});
   await agent.run(j,new AbortController().signal);assert.equal(j.state,"done");assert.equal(seen.length,1);assert.equal(classified,0);
 });
 
@@ -2649,7 +2649,7 @@ test("a waiting app task does not repost the same answer on every wake, and wait
   assert.equal(posted(), 1);
   const again = await f.broker.tool(j, "channel_reply", { message: "Railway is still unverified: the status read returned Not Authorized again. The engine is separately healthy at turn 366." });
   assert.match(again.skipped, /Nothing materially new/); assert.equal(posted(), 1); assert.equal(j.appRepeats, 1);
-  await f.broker.tool(j, "finish", { state: "waiting", summary: "Rechecking Railway", wakeAfterMinutes: 15 });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Rechecking Railway", wakeAfterMinutes: 15 });
   assert.equal(j.wakeAt - f.now(), 30 * 60000, "one repeat doubles the requested wait");
   j.state = "running";
   await f.broker.tool(j, "channel_reply", { message: "Turn 367 failed in bond processing; I opened a fix for the null value." });
@@ -2724,7 +2724,7 @@ for (const delivery of [{ posted: true, via: "intake-card" }, { posted: false, d
 
 test("internal developer finish notes never become ticket replies", async () => {
   const f = fixture(), j = running(f, { kind: "command", role: "owner", actorId: f.config.ownerId, ticket: 123, channelId: f.ch.id, replyChannel: f.ch.id, source: { channelId: f.ch.id } });
-  await f.broker.tool(j, "finish", { state: "done", summary: "egg3901: dig done. Portal or env mismatch; fix options are in your decision DM." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "egg3901: dig done. Portal or env mismatch; fix options are in your decision DM." });
   assert.equal(Object.values(f.ledger.data.outbox).filter(e => e.destination.startsWith("channel:")).length, 0);
 });
 
@@ -2747,7 +2747,7 @@ test("newer player input removes the old developer sibling wake delay", async ()
   const t = f.ledger.createJob("ticket:7002", { kind: "ticket", role: "support", ticket: 7002,
     observedPlayerAt: 4000, source: { content: "new question" }, deadline: 9999999999999 }); t.state = "running";
   f.ledger.data.ticketPosts = { 7002: [{ at: 4500, jobId: "other", text: "Your question is with the developers, who are checking it." }] };
-  await f.broker.tool(t, "finish", { state: "waiting", summary: "Waiting briefly for an independent check", wakeAfterMinutes: 1 });
+  await f.broker.tool(t, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Waiting briefly for an independent check", wakeAfterMinutes: 1 });
   assert.ok(t.wakeAt < 5000 + 30 * 60000);
 });
 
@@ -2792,7 +2792,7 @@ test("new shared ticket evidence prevents a stale public answer until reread", a
   await f.broker.tool(investigator, "ticket_record", { op: "add", kind: "fact", text: "Regional workforce fell to 580762 workers", source: "macro_history" });
   await assert.rejects(f.broker.tool(coordinator, "support_action", { tool: "support_public_update", args: { message: "All operations are profitable; please supply the workforce figures." } }), /ticket record.*changed/i);
   assert.equal(f.calls.length, 0);
-  await assert.rejects(f.broker.tool(coordinator, "finish", { state: "waiting", summary: "Waiting for the player", waitFor: "player_reply" }), /ticket record.*changed/i);
+  await assert.rejects(f.broker.tool(coordinator, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Waiting for the player", waitFor: "player_reply" }), /ticket record.*changed/i);
   await assert.rejects(f.broker.tool(coordinator, "status_card", { status: "paused", items: [] }), /ticket record.*changed/i);
   await f.broker.tool(coordinator, "ticket_record", { op: "read" });
   await f.broker.tool(coordinator, "support_action", { tool: "support_public_update", args: { message: "The regional workforce fell to 580762 workers; I am checking why." } });
@@ -2822,7 +2822,7 @@ test("DeepSeek malformed-tool exhaustion falls back once with the same checkpoin
   invokeImpl: async ({ runner, prompt }) => {
    attempts.push({runner,context:JSON.parse(prompt)});
    if (runner === "deepseek") return { subtype: "success", result: '<｜｜DSML｜｜ calls>', num_turns: 1 };
-   await f.broker.tool(j, "finish", { state: "done", summary: "Allocation verified from current evidence." });
+   await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Allocation verified from current evidence." });
    return { subtype: "success", result: "", num_turns: 1 };
   } });
  for (let i=0; i<3; i++) { j.state="queued"; await agent.run(j,new AbortController().signal); }
@@ -2894,7 +2894,7 @@ test("an internal conversation wake cannot republish old findings after only too
   responses.push(r);
   await call("read_tool",{server:"gamestate",tool:"game_overview",args:{}});
   responses.push(await call("channel_reply",{message:"The current turn is ready for the next check."}));
-  await call("finish",{state:"done",summary:"No newly verified finding to publish."});return {};
+  await call("finish",{closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state:"done",summary:"No newly verified finding to publish."});return {};
  })});
  await agent.run(j,new AbortController().signal);
  assert.equal(responses[1].isError,undefined);
@@ -2951,7 +2951,7 @@ test("a read the schema rejects for a number-for-string or an under-minimum size
 test("the owner's own request that ends blocked tells the owner why in its channel (KBX3 owner-merge-red)", async () => {
   const f = fixture(), ch = "888888888888888881";
   const j = running(f, { actorId: f.config.ownerId, channelId: ch, replyChannel: ch, source: { channelId: ch, authorId: f.config.ownerId } });
-  await f.broker.tool(j, "finish", { state: "blocked", summary: "I haven't merged PR 4530: the verify check is red and its failure output is empty, so I can't tell whether the PR caused it." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "blocked", summary: "I haven't merged PR 4530: the verify check is red and its failure output is empty, so I can't tell whether the PR caused it." });
   const sent = Object.entries(f.ledger.data.outbox).filter(([k]) => k.startsWith(`finish:${j.id}`));
   assert.equal(sent.length, 1);
   assert.equal(sent[0][1].destination, `channel:${j.id}`);
@@ -2963,7 +2963,7 @@ test("a refused answer blocks finishing done or waiting until an answer is poste
   const long = "Coal is short. Your contract ended. Supply is 80%. Coal is up. Iron is down. Steel is flat. Renew the contract.";
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: long } }));
   assert.equal(j.replyRefusedPending, true);
-  await assert.rejects(f.broker.tool(j, "finish", { state: "done", summary: "Answered." }), /last answer to the player was refused/);
+  await assert.rejects(f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered." }), /last answer to the player was refused/);
   await f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "Coal is the short input: your coal contract ended, so supply is at 80%. Renewing it restores full output." } });
   assert.equal(j.replyRefusedPending, undefined);
 });
@@ -3011,7 +3011,7 @@ test("a not-now refusal (enough posts already) does not leave Keir unable to pos
   (f.ledger.data.monologue ||= {})[123] = { humanAt: 0, count: 3, at: 5000 };
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "One more thing about your coal contract." } }), /Keir has posted 3 times/);
   assert.equal(j.replyRefusedPending, undefined, "the player is owed nothing new");
-  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting for the player." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered; waiting for the player." });
   assert.equal(j.state, "waiting");
 });
 
@@ -3019,7 +3019,7 @@ test("an approved action the task has not run keeps it on a short wake, not a qu
   const f = fixture(), j = running(f, { kind: "command", role: "owner" });
   j.raisedToDevelopers = [{ id: 254949, title: "Bank withdraw cap", kind: "bug", blocking: false, at: 1000 }];
   f.ledger.data.actions = { a1: { id: "a1", jobId: j.id, kind: "heal", state: "approved" } };
-  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Heal approved; a turn is running." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Heal approved; a turn is running." });
   assert.ok(j.wakeAt - 5000 <= 15 * 60000, `woke in ${(j.wakeAt - 5000) / 60000} min`);
 });
 
@@ -3087,15 +3087,15 @@ test("a task that just promised the player more checking cannot park for six hou
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   j.startedAt = 4000;
   (f.ledger.data.ticketPosts ||= {})[123] = [{ at: 4500, jobId: j.id, text: "Another clinic bought its supplies. I am still checking what stopped the buying." }];
-  await assert.rejects(f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Posted." }), /still checking something/);
-  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", wakeAfterMinutes: 20, summary: "Checking again in 20 minutes." });
+  await assert.rejects(f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Posted." }), /still checking something/);
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", wakeAfterMinutes: 20, summary: "Checking again in 20 minutes." });
   assert.equal(j.state, "waiting");
 });
 
 test("a ticket waiting out its closure grace wakes when the grace ends, not hours later (ticket 1755)", async () => {
   const f = fixture(), j = running(f, { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777" });
   j.closeReadyAt = 5000 + 30 * 60000;
-  await f.broker.tool(j, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; closing after the grace period." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered; closing after the grace period." });
   assert.ok(j.wakeAt <= j.closeReadyAt + 60000, `wakes at +${(j.wakeAt - 5000) / 60000} min`);
 });
 
@@ -3103,10 +3103,10 @@ test("done refuses unpublished snapshot changes, so housekeeping cannot delete t
   const f = fixture(), j = running(f, { repository: "AHDGame" });
   let porcelain = " M src/lib/turn/corporation/sectorCalculations.ts\n?? content/changelog/unreleased/bond.md\n";
   const b = createBroker({ ...f, sandbox: { run: async () => ({ code: 0, output: porcelain }) }, now: () => 5000 });
-  await assert.rejects(b.tool(j, "finish", { state: "done", summary: "Written and tested, left uncommitted." }), /unpublished changes.*sectorCalculations\.ts.*publish_patch/s);
+  await assert.rejects(b.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Written and tested, left uncommitted." }), /unpublished changes.*sectorCalculations\.ts.*publish_patch/s);
   assert.equal(j.state, "running");
   porcelain = "";
-  await b.tool(j, "finish", { state: "done", summary: "Reverted the experiment; nothing to publish." });
+  await b.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Reverted the experiment; nothing to publish." });
   assert.equal(j.state, "done");
 });
 
@@ -3175,7 +3175,7 @@ test("a provider usage limit moves the job to the fallback route and cools the r
  const attempts = []; let current = null; const running_job = () => current;
  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
   config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash", fallbackProvider: "ollama:deepseek-v4.1-flash@low" },
-  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "opencode") return { subtype: "error", is_error: true, result: "Error: Go usage limit exceeded", num_turns: 1 }; await f.broker.tool(running_job(), "finish", { state: "done", summary: "Checked." }); return { subtype: "success", result: "", num_turns: 1 }; } });
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "opencode") return { subtype: "error", is_error: true, result: "Error: Go usage limit exceeded", num_turns: 1 }; await f.broker.tool(running_job(), "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Checked." }); return { subtype: "success", result: "", num_turns: 1 }; } });
  current = j; await agent.run(j, new AbortController().signal);
  assert.equal(j.state, "queued");
  assert.equal(j.provider.runner, "ollama");
@@ -3250,7 +3250,7 @@ test("Keir 9: a forced provider still falls back when its route hits a usage lim
  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
   config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
    providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
-  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "opencode") return { subtype: "error", is_error: true, result: "GoUsageLimitError: Go usage limit exceeded (monthly)", num_turns: 1 }; await f.broker.tool(current, "finish", { state: "done", summary: "Answered." }); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "opencode") return { subtype: "error", is_error: true, result: "GoUsageLimitError: Go usage limit exceeded (monthly)", num_turns: 1 }; await f.broker.tool(current, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered." }); return { subtype: "success", result: "ok", num_turns: 1 }; } });
  current = j; await agent.run(j, new AbortController().signal);
  assert.equal(j.state, "queued");
  assert.equal(j.provider.runner, "ollama");
@@ -3278,9 +3278,9 @@ test("Keir 9: a fallback on the same runner as the forced provider is never used
 test("a direct owner message is answered before the task can finish quietly (ticket 1763)", async () => {
   const f = fixture(), ch = "777777777777777777";
   const job = running(f, { role: "owner", kind: "conversation", ticket: 123, actorId: f.config.ownerId, channelId: ch, replyChannel: ch, source: { channelId: ch, authorId: f.config.ownerId, at: new Date(4000).toISOString(), content: "<@333333333333333333> check directly for resolution" } });
-  await assert.rejects(() => f.broker.tool(job, "finish", { state: "waiting", summary: "Nothing posted." }), /addressed you directly/);
+  await assert.rejects(() => f.broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Nothing posted." }), /addressed you directly/);
   await f.broker.tool(job, "channel_reply", { message: "I checked: the fix is in testing and goes live on the main server next." });
-  const r = await f.broker.tool(job, "finish", { state: "waiting", summary: "Replied." });
+  const r = await f.broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Replied." });
   assert.equal(r.state, "waiting");
 });
 
@@ -3312,7 +3312,7 @@ test("Keir 9: player tickets run on the ticket route at its own effort, other wo
  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
   config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
    providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", effortOverride: "high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
-  invokeImpl: async ({ runner, model, effort }) => { seen.push([current.id, runner, model, effort]); await f.broker.tool(current, "finish", { state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+  invokeImpl: async ({ runner, model, effort }) => { seen.push([current.id, runner, model, effort]); await f.broker.tool(current, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
  current = t; await agent.run(t, new AbortController().signal);
  current = other; await agent.run(other, new AbortController().signal);
  const forT = seen.filter((x) => x[0] === t.id), forOther = seen.filter((x) => x[0] === other.id);
@@ -3327,7 +3327,7 @@ test("Keir 9: a ticket on the ticket route falls back to the main route when the
  const agent = createAgent({ ledger: f.ledger, broker: f.broker,
   config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
    providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
-  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "agy") return { subtype: "error", is_error: true, result: "RESOURCE_EXHAUSTED: quota exceeded (429)", num_turns: 1 }; await f.broker.tool(current, "finish", { state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+  invokeImpl: async ({ runner }) => { attempts.push(runner); if (runner === "agy") return { subtype: "error", is_error: true, result: "RESOURCE_EXHAUSTED: quota exceeded (429)", num_turns: 1 }; await f.broker.tool(current, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Waiting on the player." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
  current = j; await agent.run(j, new AbortController().signal);
  assert.equal(j.provider.runner, "opencode");
  current = j; j.state = "running"; await agent.run(j, new AbortController().signal);
@@ -3349,13 +3349,13 @@ test("Keir 9: a ticket on the ticket route falls back to the main route when the
 test("a finished ticket where Keir spoke last enters the closing grace without a checkpoint", async () => {
   const f = fixture(), j = runningAs(f, "ticket:1833", { role: "support", kind: "ticket", ticket: 1833, channelId: "777777777777777777" });
   j.observedPlayerAt = 100; j.lastPublishedAt = 200;
-  await f.broker.tool(j, "finish", { state: "done", summary: "Answered: expected before the first turn." });
+  await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered: expected before the first turn." });
   assert.equal(j.state, "waiting");
   assert.equal(j.resolutionReadyAt, 200);
   // A player message after Keir's last post is still owed an answer.
   const k = runningAs(f, "ticket:1834", { role: "support", kind: "ticket", ticket: 1834, channelId: "777777777777777778" });
   k.observedPlayerAt = 300; k.lastPublishedAt = 200;
-  await f.broker.tool(k, "finish", { state: "done", summary: "Done." });
+  await f.broker.tool(k, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Done." });
   assert.equal(k.resolutionReadyAt, undefined);
 });
 
@@ -3413,7 +3413,7 @@ test("an image reference reaches a staff implementation activation before it can
   const images = [{ messageId: "666666666666666667", author: "Staff", index: 0, name: "mockup.png" }];
   const broker = { ...f.broker, recentImages: () => images };
   const agent = createAgent({ ledger: f.ledger, broker, config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir },
-    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { state: "done", summary: "Checked the fixture." }); return {}; }, seen) });
+    spawnImpl: fakeClaude(async ({ call }) => { await call("finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Checked the fixture." }); return {}; }, seen) });
   await agent.run(job, new AbortController().signal);
 
   const prompt = JSON.parse(seen[0].prompt);

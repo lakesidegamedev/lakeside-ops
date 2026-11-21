@@ -144,7 +144,7 @@ test("review_item: resolves only its own Ask item, with the right body", async (
   const tool = createReviewItemTool({ config, fetcher, ledger, now: () => T0 });
   const job = { id: "j9", reviewItem: { source: "ask", kind: "doc_conflict", id: "4", key: "ask:doc_conflict:4" } };
   job.raisedToDevelopers = [{ id: 700 }];
-  await assert.rejects(tool.call(job, { action: "resolve", kind: "doc_conflict", id: 4, note: "wiki wrong, card filed", outcome: "fixed" }), /verified deployment/);
+  await assert.rejects(tool.call(job, { action: "resolve", kind: "doc_conflict", id: 4, note: "wiki wrong, card filed", outcome: "fixed" }), /fix in review" until its PR is merged and a deploy receipt shows it live/);
   assert.equal(calls.length, 0);
   job.reviewFixLive = { number: 42, at: T0 };
   assert.deepEqual(await tool.call(job, { action: "resolve", kind: "doc_conflict", id: 4, note: "wiki correction verified live", outcome: "fixed" }), { resolved: true, status: "fixed" });

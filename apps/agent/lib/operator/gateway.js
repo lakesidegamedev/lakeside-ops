@@ -46,7 +46,7 @@ async function catchUp(call, channelId, cursor, ingest, maxPages = 10) {
   return after;
 }
 
-function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null, onWake = null }) {
+function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null, onWake = null, controls = require("./controls").DEFAULT_CONTROLS }) {
   const d = ledger.data;
   d.conversations ||= {};
   d.summonedChannels ||= {};
@@ -232,10 +232,30 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     if (!historical && nTicket && d.channels[channel.id]?.keirStopped && role === "player") {
       d.seen[`discord:${message.id}`] = "ticket-stopped"; ledger.save(); return;
     }
-    // Keir 10.1.14 (ticket 1842): the owner answered in the ticket channel after a decision was raised. That is the answer,
-    // whether or not the message is phrased as a direction to Keir.
+    // Keir 10.1.14 (ticket 1842), narrowed in 11.2: an owner message answers an open question only as a Discord reply to
+    // it or by naming one of its options (standdown.js). Anything else is context and the question stays open.
     if (!historical && !summonTask && nTicket && actor === config.ownerId) {
-      try { const answered = require("./standdown").applyOwnerChannelAnswer(d, { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now() }); if (answered.length) { ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save(); } } catch {}
+      // Keir 11.2 third pass (M2): a message that looked meant for an open question but did not count tells the owner once.
+      const gate = controls.gate("ownerAnswerNotice");
+      // A preview notice returns false, so the question's one real notice is not used up (review N7).
+      const notify = !gate.run ? null : gate.act ? (key, line) => { ledger.notify(key, "owner", line); return true; } : (key, line) => { require("./controls").preview(d, "channel-answers", "tell owner", key, line); return false; };
+      // Fourth pass (review N7): recording a channel message as an answer has its own switch (KEIR_CHANNEL_ANSWERS). Off: no
+      // channel message answers anything (buttons only). Preview: worked out on a copy of the ticket's jobs and open
+      // questions and recorded, nothing changed.
+      const ag = controls.gate("channelAnswers");
+      const args = { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now(), botId: config.botId,
+        replyTo: message.referenced_message ? { id: message.referenced_message.id, authorId: message.referenced_message.author?.id, content: message.referenced_message.content } : message.message_reference?.message_id ? { id: message.message_reference.message_id } : null };
+      try {
+        if (ag.act) {
+          const answered = require("./standdown").applyOwnerChannelAnswer(d, { ...args, notify });
+          if (answered.length) ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save();
+        } else if (ag.run) {
+          const pick = (o, f) => JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(o || {}).filter(([, v]) => f(v)))));
+          const shadow = { jobs: pick(d.jobs, (j) => Number(j.ticket) === Number(nTicket)), decisions: pick(d.decisions, (x) => x.state === "pending") };
+          for (const id of require("./standdown").applyOwnerChannelAnswer(shadow, args)) require("./controls").preview(d, "channel-answers", "record answer", `decision ${id}`, `${shadow.decisions[id].state}: "${String(s.content).slice(0, 160)}"`);
+          ledger.save();
+        }
+      } catch {}
     }
     if (!historical && explicit && nTicket && authority.granter(config, actor) && authority.isDirection(s.content)) {
       delete d.channels[channel.id]?.keirStopped;

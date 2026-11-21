@@ -172,6 +172,8 @@ function createFastLane({ ledger, broker, config, fetcher, numbersIn, tagIntake,
     lane.answers += 1;
     await broker.tool(job, "finish", {
       state: "waiting", waitFor: "player_reply",
+      // Keir 11.2: a wait carries its closing condition (closing.js).
+      closesWhen: "closes when the player confirms the answer helped or asks nothing more", waitingOn: "the player's reply", waitOn: { kind: "player" },
       summary: p.kind === "redirect" ? "Directed gameplay advice to Ask." : "Answered the player's question from Ask Keir; waiting for the player.",
     }, signal);
     note("answered", { ms: now() - started, model: lane.model || null });

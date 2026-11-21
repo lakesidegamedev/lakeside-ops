@@ -101,10 +101,10 @@ test("a developer's ping cannot restate the answer another task posted seconds a
 test("a ticket cannot park on developers while its own last word is 'cause not found' (owner, 2026-11-05)", async () => {
   const f = setup();
   await f.broker.tool(f.job, "channel_reply", { message: "I haven't yet confirmed why the tile read 100% for this sector." });
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Raised; waiting." }), /nobody is looking for it/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Raised; waiting." }), /nobody is looking for it/);
   const child = f.ledger.createJob("inv2", { kind: "coding", investigation: true, codingParent: f.job.id, deadline: 9e15 });
   f.job.investigations = [child.id];
-  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Investigator on it." });
+  const r = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Investigator on it." });
   assert.equal(r.state, "waiting");
 });
 
@@ -113,7 +113,7 @@ test("a developer talking to the player is not a ping Keir must answer (ticket 1
   const ch = "777777777777777777", owner = "111111111111111111";
   const j = f.ledger.createJob("own", { role: "owner", kind: "command", ticket: 123, actorId: owner, channelId: ch, replyChannel: ch, source: { channelId: ch, channelName: "ticket-bug-fixture-123", authorId: owner, at: new Date(f.now()).toISOString(), content: "sorry\ni will unban and add a note" }, deadline: 9e15 });
   j.state = "running"; f.advance(1);
-  const r = await f.broker.tool(j, "finish", { state: "done", summary: "Owner handling the unban; nothing to add." });
+  const r = await f.broker.tool(j, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Owner handling the unban; nothing to add." });
   assert.equal(r.state, "done");
 });
 
@@ -134,10 +134,10 @@ test("Keir 9: a ticket cannot park with the player unanswered; refused twice, th
   const f = setup(); f.job.lastGameReadAt = 1;
   f.job.observedPlayerAt = f.now() - 60000;
   // No reads needed: the obligation is the ticket's, not the job's.
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found the cause; will post next." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Found the cause; will post next." }), /no answer since they last wrote/);
   // A wait on the developers does not excuse it, and a second job on the same ticket shares the count.
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still checking." }), /no answer since they last wrote/);
-  const r = await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Still checking." });
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Still checking." }), /no answer since they last wrote/);
+  const r = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Still checking." });
   assert.match(JSON.stringify(r), /waiting/);
   const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message);
   assert.equal(sent.length, 1);
@@ -150,21 +150,21 @@ test("Keir 9: a ticket cannot park with the player unanswered; refused twice, th
 test("Keir 9: the refusal count is per ticket, so a fresh job cannot reset it", async () => {
   const f = setup(); f.job.lastGameReadAt = 1;
   f.job.observedPlayerAt = f.now() - 60000;
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "x." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "x." }), /no answer since they last wrote/);
   const other = f.ledger.createJob("t2", { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" }, deadline: 9e15 });
   other.state = "running"; other.observedPlayerAt = f.job.observedPlayerAt;
-  await f.broker.tool(other, "finish", { state: "waiting", summary: "x." });
+  await f.broker.tool(other, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "x." });
   assert.equal(f.calls.filter((c) => c[1] === "support_public_update").length, 1);
 });
 
 test("Keir 9: when the escalation cannot be filed the limitation does not claim the developers have it", async () => {
   const f = setup(); f.job.lastGameReadAt = 1;
   f.job.observedPlayerAt = f.now() - 60000;
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "done", summary: "x." }), /no answer/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "x." }), /no answer/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "x." }), /no answer/);
   f.mcpFail = true;
-  await f.broker.tool(f.job, "finish", { state: "done", summary: "x." });
+  await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "x." });
   const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2].message).join(" ");
   assert.match(sent, /haven't got a confirmed answer/);
   assert.doesNotMatch(sent, /developers/);
@@ -174,7 +174,7 @@ test("Keir 9: after the player is answered, the ticket may park waiting", async 
   const f = setup();
   f.job.observedPlayerAt = f.now() - 60000; f.job.lastCodeReadAt = 1;
   await f.broker.tool(f.job, "channel_reply", { message: "Your sold line is the right figure: 139 of 195 sold." });
-  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." });
+  const r = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered." });
   assert.match(JSON.stringify(r), /waiting/);
 });
 
@@ -183,7 +183,7 @@ test("Keir 9: a holding line is not an answer once the ticket has read data", as
   f.job.observedPlayerAt = f.now() - 60000;
   await f.broker.tool(f.job, "channel_reply", { message: "I'm looking into your sector history now." }).catch(() => {});
   f.job.lastGameReadAt = f.now() + 1; f.advance(1);
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "Found it; will post." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Found it; will post." }), /no answer since they last wrote/);
 });
 
 test("audit: negated fix claims are not fix claims; a negation in another clause does not hide one", () => {
@@ -201,7 +201,7 @@ test("Keir 9: a refused first answer then a wait behind the introduction alone i
   f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 30000, text: "Hi, I'm Keir, the support assistant for A House Divided. I can look into this." }] };
   // The answer is refused (any post rule: here the pacing rule, in the replay the rule lookup), nothing has been read.
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Supplying yourself lowers your margin because the charge is counted against your revenue." }), /Not posted/);
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Asked the player." }), /no answer since they last wrote/);
 });
 
 test("Keir 9: an ordinary wait with no refused answer and no reads is still allowed", async () => {
@@ -209,7 +209,7 @@ test("Keir 9: an ordinary wait with no refused answer and no reads is still allo
   f.job.observedPlayerAt = f.now() - 60000;
   f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 30000, text: "Which corporation is this about?" }] };
   f.job.lastAskAt = f.now() - 30000; f.job.lastPlayerAt = f.now() - 60000;
-  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked which corporation." });
+  const r = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Asked which corporation." });
   assert.match(JSON.stringify(r), /waiting/);
 });
 
@@ -219,17 +219,17 @@ test("Keir 10: a bare acknowledgement after a real answer owes no reply (replay 
   f.advance(5);
   f.job.observedPlayerAt = f.now(); f.job.requestInbox = [{ role: "player", content: "Ok.", at: new Date(f.now()).toISOString() }];
   f.advance(1);
-  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; the player acknowledged." });
+  const r = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered; the player acknowledged." });
   assert.equal(r.state, "waiting");
   // The stricter player_reply wait also accepts a bare thanks (it fired three times in the howto-drift replay).
   f.job.state = "running"; f.job.lastPlayerAt = f.now(); f.job.lastAskAt = f.now() - 60000;
-  const r2 = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Still answered." });
+  const r2 = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Still answered." });
   assert.equal(r2.state, "waiting");
   // A real follow-up question is still owed an answer.
   f.job.state = "running";
   f.job.observedPlayerAt = f.now(); f.job.requestInbox.push({ role: "player", content: "Ok but why is it low?", at: new Date(f.now()).toISOString() });
   f.advance(1);
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", summary: "x." }), /no answer since they last wrote/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "x." }), /no answer since they last wrote/);
 });
 
 test("Keir 10.2 (ticket 1837): one reply per player message until findings, no 'not confirmed' line after an answer", async () => {
@@ -244,6 +244,6 @@ test("Keir 10.2 (ticket 1837): one reply per player message until findings, no '
 test("Keir 10.2 (ticket 1837): a bug task cannot finish naming a read it has not done", async () => {
   const f = setup();
   f.job.lane = "bug"; f.job.lastRunStartedAt = f.now();
-  for (let i = 0; i < 2; i++) await assert.rejects(f.broker.tool(f.job, "finish", { state: "blocked", summary: "Blocked on reading the build dialog footer in the next activation." }), /names work you have not done/);
+  for (let i = 0; i < 2; i++) await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "blocked", summary: "Blocked on reading the build dialog footer in the next activation." }), /names work you have not done/);
   assert.equal(f.job.namedWorkRefusals.n, 2);
 });

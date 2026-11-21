@@ -80,7 +80,8 @@ const MACHINES = {
     },
     terminal: ["done", "rejected", "withdrawn", "expired", "superseded", "cancelled"],
     transitions: {
-      pending: ["approved", "rejected", "expired", "superseded", "withdrawn", "cancelled"],
+      // done: the change it asked about was carried out elsewhere (merged on GitHub by someone else; prtruth.js)
+      pending: ["approved", "done", "rejected", "expired", "superseded", "withdrawn", "cancelled"],
       // back to pending: the approval was undone or has to be asked again
       approved: ["executing", "done", "pending", "expired", "superseded", "withdrawn", "cancelled"],
       executing: ["done", "failed"],

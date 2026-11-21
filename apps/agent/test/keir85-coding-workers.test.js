@@ -389,3 +389,18 @@ test("raise_to_developers with a gated class or a worker that skips falls back t
   const r2 = await f2.broker.tool(f2.job, "raise_to_developers", { title: "Factory output panel shows zero after a retool", detail: detailText, kind: "bug", issue });
   assert.equal(r2.raised, true); assert.equal(r2.codingWorker, undefined);
 });
+
+// Keir 11.2: a worker writes its own PR text; five PRs failed custom-rules for a missing Conflict of interest section.
+test("a worker PR without the Conflict of interest section gets it added once, and promotion PRs carry it", async () => {
+  const w = world(), s = build(w), job = ticketJob(); s.ledgerData.jobs.job1 = job;
+  const r = (await dispatchOne(s.cw, job)).run;
+  finish(w, r);
+  await s.cw.tick(); assert.equal(r.pr, 7);
+  const patches = w.calls.filter((c) => c.method === "PATCH" && /pulls\/7$/.test(c.route));
+  assert.equal(patches.length, 1);
+  assert.match(patches[0].args.join("\n"), /body=Change-class: bugfix\n\n## Conflict of interest\n/);
+  await s.cw.tick(); await s.cw.tick(); await s.cw.tick();
+  assert.equal(w.calls.filter((c) => c.method === "PATCH" && /pulls\/7$/.test(c.route)).length, 1, "checked once per PR");
+  const promote = w.calls.find((c) => c.method === "POST" && c.route.endsWith("/pulls"));
+  assert.match(promote.args.join("\n"), /## Conflict of interest/);
+});

@@ -304,6 +304,21 @@ function deflection(d, ticket, message) {
 }
 const deflectionBudgetLeft = (d, ticket) => (get(d, ticket)?.askedRefusals || 0) < MAX_ASKED_REFUSALS;
 function noteDeflectionRefusal(d, ticket) { const c = get(d, ticket); if (c) c.askedRefusals = (c.askedRefusals || 0) + 1; }
+// Keir 11.2 fourth pass (review N10): the player's open questions, and whether this post answers one of them.
+// { open: n, answers: bool }.
+// The player's latest question still counts for RECENT_ASK_MS after it was asked even once a first finding answered it:
+// a second, fuller answer on the same subject is still an answer (the reviewer's factory case).
+const RECENT_ASK_MS = 6 * 3600000;
+function openAsk(d, ticket, message, now = Date.now()) {
+  const c = get(d, ticket);
+  const asked = c?.asked || [];
+  const open = asked.filter((x) => !x.answeredAt);
+  const latest = asked.reduce((a, x) => (!a || (x.at || 0) > (a.at || 0) ? x : a), null);
+  if (!open.length && !latest) return { open: 0, answers: false };
+  const words = subjectWords(message);
+  const recent = Boolean(latest && now - (latest.at || 0) < RECENT_ASK_MS && addresses(words, latest));
+  return { open: open.length, answers: recent || open.some((a) => addresses(words, a)) };
+}
 function deflectionRefusal(hit) {
   return `Not posted: the player asked "${clip(hit.asked.text, 160)}" and this post does not answer it (it says "${hit.phrase}" instead). Answer what they asked first, in their own words, in the first sentence or two. Do not call their report the wrong problem. Other findings, such as a different blocker, go after that answer.`;
 }
@@ -373,4 +388,4 @@ function render(d, ticket, { cap = CAP_CHARS } = {}) {
   return out.slice(0, cap);
 }
 
-module.exports = { get, recordPost, syncActivation, contradiction, contradictionRefusal, deflection, deflectionRefusal, deflectionBudgetLeft, noteDeflectionRefusal, playerUnhelpful, addLesson, addAsked, render, readClaim, sameSubject, prune, CAP_CHARS, CORRECTION };
+module.exports = { openAsk, get, recordPost, syncActivation, contradiction, contradictionRefusal, deflection, deflectionRefusal, deflectionBudgetLeft, noteDeflectionRefusal, playerUnhelpful, addLesson, addAsked, render, readClaim, sameSubject, prune, CAP_CHARS, CORRECTION };

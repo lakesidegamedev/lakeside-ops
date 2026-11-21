@@ -240,3 +240,17 @@ test("a saved model choice whose route no longer exists falls back to Auto and t
   assert.ok(Object.values(ledger.data.outbox || {}).some((o) => o.destination === "owner" && /not available any more/.test(o.content || "")));
   assert.ok(job.history.some((h) => h.kind === "route-fallback"));
 });
+test("the voice lane's default label follows the configured voice route, not a fixed string", t => {
+  const { app, config } = setup(t);
+  config.voiceProvider = "codex:gpt-6.1-sol@low";
+  assert.equal(app.controls.view().defaults.voice, "codex:gpt-6.1-sol@low", "one route: given like the other lanes' defaults");
+  config.voiceProvider = "agy:gemini-3.8-flash, ollama:deepseek-v4.1-flash";
+  assert.equal(app.controls.view().defaults.voice, "Gemini 3.8 Flash / DeepSeek V4.1 Flash (alternating)");
+  config.voiceProvider = "codex:gpt-6.1-sol,claude:claude-sonnet-5-5@low";
+  assert.equal(app.controls.view().defaults.voice, "GPT 6.1 SOL / Claude Sonnet 5.5 (alternating)");
+  // No voice route configured: the built-in voice route.
+  delete config.voiceProvider;
+  assert.equal(app.controls.view().defaults.voice, require("../lib/operator/appmodels").VOICE[0]);
+  // The speech status no longer names a model it does not use.
+  assert.equal(require("../lib/operator/appvoice").createSpeech().status().model, undefined);
+});

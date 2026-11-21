@@ -275,7 +275,7 @@ test("finishing waiting with an open own question card dispatches an investigati
   const f = brokerFixture(t, cw);
   f.job.raisedToDevelopers = [{ id: 5, kind: "question", blocking: true, selfOwned: true, title: "q", at: 1 }];
   let finished;
-  try { finished = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "timer", wakeAfterMinutes: 30, summary: "Cause still unverified. Next: read the per-turn sector history and the clearing code." }); } catch (e) { finished = { error: e.message }; }
+  try { finished = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the cause of the sector drop is verified and the player is told", waitingOn: "the investigation worker's report", state: "waiting", waitFor: "timer", wakeAfterMinutes: 30, summary: "Cause still unverified. Next: read the per-turn sector history and the clearing code." }); } catch (e) { finished = { error: e.message }; }
   if (finished.error) t.skip(`finish gate refused in this fixture: ${finished.error.slice(0, 120)}`);
   else { assert.equal(seen.length, 1); assert.equal(seen[0].job, f.job); assert.match(seen[0].reason, /cause still unverified/); assert.ok(f.ledger.data.audit.some((a) => a.kind === "investigation_dispatched")); }
 });
@@ -284,6 +284,6 @@ test("finishing waiting on the player does not dispatch", async (t) => {
   const seen = [];
   const f = brokerFixture(t, { dispatchInvestigation: async (x) => { seen.push(x); return { skipped: true }; } });
   f.job.raisedToDevelopers = [{ id: 5, kind: "question", blocking: true, selfOwned: true, title: "q", at: 1 }];
-  try { await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Asked the player which company; cause still unverified. Next: read its sector history once they answer." }); } catch {}
+  try { await f.broker.tool(f.job, "finish", { closesWhen: "closes when the cause of the sector drop is verified and the player is told", waitingOn: "the investigation worker's report", state: "waiting", waitFor: "player_reply", summary: "Asked the player which company; cause still unverified. Next: read its sector history once they answer." }); } catch {}
   assert.equal(seen.length, 0);
 });

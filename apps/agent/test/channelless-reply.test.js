@@ -23,6 +23,6 @@ test("an undeliverable reply on a channel-less ticket does not hold finish", asy
   await broker.tool(job, "ticket_record", { op: "read" }).catch(() => {});
   await assert.rejects(broker.tool(job, "support_action", { tool: "support_public_update", args: { kind: "ticket", number: 5100, update_kind: "progress", deliver: true, message: "Checking your factory now." } }));
   assert.notEqual(job.replyRefusedPending, true, "a reply with nowhere to go is not an answer the player is owed");
-  const r = await broker.tool(job, "finish", { state: "waiting", summary: "No channel; waiting for staff." });
+  const r = await broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "No channel; waiting for staff." });
   assert.equal(r.state ?? job.state, "waiting");
 });

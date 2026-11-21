@@ -136,7 +136,7 @@ function routeFixture(job) {
   const agent = createAgent({ ledger: f.ledger, broker: f.broker,
     config: { briefFile: path.join(__dirname, "../KEIR.md"), model: "claude-opus-5-5", maxRounds: 2, maxTurnMs: 10000, stateDir: f.dir, workerProvider: "opencode:opencode-go/deepseek-v4.1-flash",
       providerOverride: "opencode:opencode-go/deepseek-v4.1-flash@high", ticketProvider: "agy:gemini-4-hydrogen-medium@medium", fallbackProvider: "ollama:deepseek-v4.1-flash@high" },
-    invokeImpl: async ({ runner, model }) => { seen.push([runner, model]); await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Waiting." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
+    invokeImpl: async ({ runner, model }) => { seen.push([runner, model]); await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Waiting." }).catch(() => {}); return { subtype: "success", result: "ok", num_turns: 1 }; } });
   return { f, agent, seen };
 }
 test("an owner task in a ticket channel runs on the ticket route; the same task elsewhere stays on the main route", async () => {

@@ -16,7 +16,7 @@ test("1812: an answer, then a refused extra post, then a paced retry: the flag n
   assert.equal(f.job.replyRefusedPending, undefined, "the player already has an answer to their latest message");
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your plant is idle because it has no coal supplier, so renew the contract and it runs next turn." }), /already got this update|this task posted/);
   assert.equal(f.job.replyRefusedPending, undefined);
-  await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting for the player." });
+  await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered; waiting for the player." });
   assert.equal(f.job.state, "waiting");
 });
 
@@ -25,7 +25,7 @@ test("1812: a stale flag is cleared at finish once the player's latest message h
   f.job.replyRefusedPending = true; // armed earlier, before the answer went out by another task
   const other = f.ledger.createJob("t2", { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777" }, deadline: 9e15 });
   (f.ledger.data.ticketPosts ||= {})[123] = [{ at: f.now() - 60000, jobId: other.id, kind: "reply", text: ANSWER }];
-  await f.broker.tool(f.job, "finish", { state: "done", summary: "Answered by the other task." });
+  await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Answered by the other task." });
   assert.equal(f.job.replyRefusedPending, undefined);
   assert.ok(["done", "waiting"].includes(f.job.state), f.job.state);
 });
@@ -40,7 +40,7 @@ test("1812: while an answer is owed, pacing lets one corrected post through and 
   await f.broker.tool(f.job, "channel_reply", { message: ANSWER });
   assert.equal(f.posts().length, 1, "the corrected answer is posted despite the monologue cap");
   assert.equal(f.job.replyRefusedPending, undefined);
-  await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered." });
+  await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered." });
   assert.equal(f.job.state, "waiting");
 });
 
