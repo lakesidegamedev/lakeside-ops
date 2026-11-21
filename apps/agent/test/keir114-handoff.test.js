@@ -143,6 +143,27 @@ test("B1: 'I cannot render' is only checked when render_preview was offered, so 
   assert.equal(truth.deflection("I cannot render a preview here, but the wording would be: Sold last turn.", { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config, renderOffered: false }), null);
 });
 
+test("M1: true sentences about past or absent developer work pass; present handoff claims are still refused", () => {
+  const f = setup();
+  const ctx = { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config };
+  for (const m of [
+    "The developers have said this is working as intended.",
+    "The developers have not changed loan interest this week; your rate rose because your credit score fell.",
+    "Your report is with the team now.",
+    "The developers decided last month that bonds pay out at the end of each turn.",
+    "This is not with the developers yet; I am still reading the code.",
+  ]) assert.equal(truth.deflection(m, ctx), null, m);
+  for (const m of ["It is with the developers now.", "The developers have it now.", "The devs are looking at your report.", "I've passed this to the developers."])
+    assert.ok(truth.deflection(m, ctx), m);
+});
+
+test("M1: in the owner's app a handoff naming a pull request goes out; a bare one is still refused", () => {
+  const f = setup({ kind: "command", role: "owner", actorId: OWNER, source: { channelId: "app", authorId: OWNER, content: "where is the loan fix?" } });
+  f.job.replyChannel = "app";
+  assert.equal(truth.deflection("The developers are reviewing PR 512 now.", { d: f.d, job: f.job, config: f.config }), null);
+  assert.match(truth.deflection("It is with the developers now.", { d: f.d, job: f.job, config: f.config }), /answers the owner/);
+});
+
 test("a refusal is never the end of the answer: the third try goes out without the false sentence", async () => {
   const f = setup(); workerOn(f);
   const draft = "The page reads a field that some companies do not have, so it shows the error panel.\n\nIt is with the developers now.";
