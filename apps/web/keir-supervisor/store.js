@@ -20,7 +20,7 @@ const sha = (text) => crypto.createHash("sha256").update(String(text)).digest("h
 
 function empty() {
   return { version: 1, session: id("s"), createdAt: Date.now(), seq: 0, rev: 0, messages: [], archived: 0,
-    clientIds: {}, jobs: {}, jobOrder: [], proposals: {}, workspaces: {} };
+    clientIds: {}, jobs: {}, jobOrder: [], proposals: {}, workspaces: {}, ticketCommands: {}, ticketConfirmations: {} };
 }
 
 function createStore(dir, { now = Date.now } = {}) {
@@ -89,7 +89,7 @@ function createStore(dir, { now = Date.now } = {}) {
   // either process memory or the next model prompt.
   async function recall(query, beforeSeq, signal) {
     const needle = String(query || "").trim().toLowerCase();
-    if (needle.length < 2 || needle.length > 160) throw new Error("Search text must be 2–160 characters.");
+    if (needle.length < 2 || needle.length > 160) throw new Error("Search text must be 2 to 160 characters.");
     const matches = [];
     function consider(row) {
       if (!Number.isSafeInteger(row.seq) || row.seq >= beforeSeq || typeof row.text !== "string") return;

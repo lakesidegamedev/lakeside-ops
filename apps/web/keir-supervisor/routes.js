@@ -3,7 +3,8 @@
 // /api/keir/supervisor/*. Owner only: a valid admin session whose identity is
 // the same owner identity the Keir operator accepts for /api/keir/app/*.
 // Another admin is refused. Writes need JSON and a same-origin (or absent,
-// native) Origin. Creating a private side chat uses the authenticated app route.
+// native) Origin. Creating a private side chat and ticket commands use the
+// operator's authenticated app routes with the owner's own session.
 const path = require("node:path");
 
 function ownerIdentity(env = process.env) {
@@ -32,12 +33,68 @@ async function readJson(req, limit = 32000) {
   try { return JSON.parse(body || "{}"); } catch { throw Object.assign(new Error("invalid json"), { status: 400 }); }
 }
 
-function sideChatCreator(req, env) {
+// The owner's link to Keir's operator for one job: the owner's own sign-in cookie from the request that created the
+// job, sent only to the operator's app server on loopback, which checks it against the ops dashboard itself. It lives
+// in memory only (never in the state file), so after a restart a job has no link and sends nothing.
+function ownerLink(req, env) {
   const session = /(?:^|;\s*)ops_session=([^;]+)/.exec(String(req.headers.cookie || ""))?.[1];
   if (!session) return undefined;
   let upstream;
   try { upstream = new URL(env.KEIR_APP_BASE_URL || "http://127.0.0.1:9768"); } catch { return undefined; }
   if (upstream.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(upstream.hostname) || upstream.username || upstream.password) return undefined;
+  return { createSideChat: sideChatCreator(session, upstream), ticketCommand: ticketCommandSender(session, upstream, env), retryTicket: ticketRetrier(session, upstream) };
+}
+
+// Retry a stalled ticket through the operator's own app routes (the Retry button on the app's ticket page): read the
+// ticket's stalled attempt, then ask for exactly that attempt to be retried. The operator applies every hold itself.
+function ticketRetrier(session, upstream) {
+  const call = async (method, route, body, signal) => {
+    const timeout = AbortSignal.timeout(15000);
+    let response;
+    try {
+      response = await fetch(new URL(`/api/keir/app${route}`, upstream), { method, redirect: "error", signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        headers: { cookie: `ops_session=${session}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    } catch { throw new Error("Keir's operator did not answer, so nothing was retried."); }
+    const out = await response.json().catch(() => null);
+    if (response.status === 401 || response.status === 403) throw new Error("Keir's operator could not verify your app sign-in, so nothing was retried.");
+    if (!response.ok) throw new Error(`${String(out?.error || "Keir's operator refused the retry").slice(0, 300)} Nothing was retried.`);
+    return out;
+  };
+  return async (number, signal) => {
+    const n = Number(number);
+    if (!Number.isSafeInteger(n) || n < 1 || n > 9999999) throw new Error("ticket must be a ticket number");
+    const detail = await call("GET", `/tickets/${n}`, null, signal);
+    if (!/^[a-f0-9]{12}$/.test(String(detail?.retryTaskId || ""))) return { retried: false, ticket: n, why: `ticket ${n} has no stalled attempt to retry${detail?.timing?.reason ? ` (${String(detail.timing.reason).slice(0, 200)})` : ""}` };
+    const r = await call("POST", `/tickets/${n}/retry`, { taskId: detail.retryTaskId }, signal);
+    return { retried: true, ticket: n, state: r?.state || "queued" };
+  };
+}
+
+// One structured ticket command to the operator (apps/agent ticketcommands.ownerApp). Refusals come back as data and
+// are relayed as given; transport failures say plainly whether anything could have been done.
+function ticketCommandSender(session, upstream, env) {
+  const endpoint = new URL("/api/keir/app/ticket-commands", upstream);
+  const timeoutMs = Math.max(1000, Number(env.KEIR_SUPERVISOR_TICKET_TIMEOUT_MS) || 90000);
+  return async (command, signal) => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    let response;
+    try {
+      response = await fetch(endpoint, { method: "POST", headers: { cookie: `ops_session=${session}`, "Content-Type": "application/json" },
+        body: JSON.stringify(command), redirect: "error", signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    } catch (e) {
+      const refused = e?.cause?.code === "ECONNREFUSED";
+      throw new Error(refused ? "Keir's operator is not running right now, so nothing was changed." : "Keir's operator did not answer in time, so I cannot tell yet whether the change was made.");
+    }
+    let body = null; try { body = await response.json(); } catch { /* below */ }
+    if (response.status === 401 || response.status === 403) throw new Error("Keir's operator could not verify your app sign-in, so nothing was changed. Sign in again and resend the request.");
+    if (response.status === 404) throw new Error("Keir's operator on this server does not take ticket commands from this chat yet (it needs its next release). Nothing was changed.");
+    if (response.status === 503) throw new Error("Keir's operator could not check your sign-in just now, so nothing was changed. Try again in a minute.");
+    if (!response.ok || !body || typeof body !== "object") throw new Error(`Keir's operator refused the command${body?.error ? `: ${String(body.error).slice(0, 200)}` : ""}. Nothing was changed.`);
+    return body;
+  };
+}
+
+function sideChatCreator(session, upstream) {
   const endpoint = new URL("/api/keir/app/threads", upstream);
   return async (title, creationKey, signal) => {
     const timeout = AbortSignal.timeout(10000);
@@ -79,7 +136,7 @@ async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, g
       if (String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase() !== "application/json") return reply(415, { error: "JSON required" });
       if (!sameOrigin(req)) return reply(403, { error: "Unexpected origin" });
       const body = await readJson(req);
-      if (route === "/messages") { const r = s.post(body.text, body.clientId, sideChatCreator(req, env)); return reply(r.duplicate ? 200 : 202, r); }
+      if (route === "/messages") { const r = s.post(body.text, body.clientId, ownerLink(req, env)); return reply(r.duplicate ? 200 : 202, r); }
       const cancel = /^\/jobs\/(j_[a-f0-9]{16})\/cancel$/.exec(route);
       if (cancel) return reply(200, s.cancel(cancel[1]));
       const decision = /^\/proposals\/(p_[a-f0-9]{16})$/.exec(route);
@@ -182,4 +239,4 @@ async function supervisorProfile(session, host, env = process.env) {
   return { ownerSupervisor: true, ownerSupervisorReady: false, ownerSupervisorIssue: issue };
 }
 
-module.exports = { handleKeirSupervisorRoute, createSupervisorHost, ownerIdentity, sameOrigin, supervisorProfile };
+module.exports = { handleKeirSupervisorRoute, createSupervisorHost, ownerIdentity, sameOrigin, supervisorProfile, ownerLink };
