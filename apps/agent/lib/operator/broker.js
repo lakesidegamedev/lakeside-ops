@@ -1942,7 +1942,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Keir 11.2: the post that goes past the hourly cap is the one merged overflow message for this player message.
       try { const pb = require("./postbudget"), h = humanAt(ticketNo); if (pb.recentRun(d.ticketPosts?.[ticketNo], h, now()).length >= (Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR)) (d.postOverflow ||= {})[ticketNo] = { at: now(), humanAt: h }; } catch {}
       // Keir 11.2: every follow-up promise Keir makes is recorded with a due time by the post path itself (promises.js).
-      if (job.kind !== "notice") { try { const p = require("./promises").notePost(d, ticketNo, job, message, now()); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt, afterTurn: p.afterTurn ?? null }); } catch {} }
+      if (job.kind !== "notice") { try { const askedAt = Math.max(humanAt(ticketNo), ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo && j.kind === "command" && !j.internalProbe).map((j) => Date.parse(j.source?.at || "") || 0)); const p = require("./promises").notePost(d, ticketNo, job, message, now(), { askedAt }); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt, afterTurn: p.afterTurn ?? null }); } catch {} }
       // Keir 11.2: the ticket's pace (posts, corrections) for the step-back threshold; a step-back posts once; a turn
       // report the closing condition called for uses that call up.
       try { closing.notePost(d, ticketNo, message, { now: now(), correction: isCorrection(message) }); } catch {}

@@ -477,10 +477,10 @@ tickers.every("answerfeedback", 10 * 60000, async () => { await answerFeedback.s
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
 // Keir 11.2: a follow-up promised to a player wakes its ticket when due, even a blocked one; two failed wakes post one plain
 // "can't confirm yet" line and tell staff once (lib/operator/promises.js).
-const promiseKeeper = require("./lib/operator/promises").createPromises({ ledger, log, held: (job) => ticketHeld(job), post: (n, text) => broker.promiseFallback(n, text) });
+const promiseKeeper = require("./lib/operator/promises").createPromises({ ledger, log, controls, held: (job) => ticketHeld(job), post: (n, text) => broker.promiseFallback(n, text) });
 // Keir 11.2: finding jobs blocked with no question, parked with nothing changing, or from an old world are closed with a record.
 tickers.every("findingexpiry", 30 * 60000, async () => { if (ledger.data.paused) return; require("./lib/operator/closing").expireFindings(ledger, { now: Date.now(), config: closingSettings }); }, { immediateMs: 5 * 60000 });
-tickers.every("promises", 5 * 60000, async () => { if (killSwitch.state()?.engaged) return; const r = await promiseKeeper.tick(); if (r.woke) drain(); }, { immediateMs: 3 * 60000 });
+tickers.every("promises", 5 * 60000, async () => { const r = await promiseKeeper.tick(); if (r.woke) drain(); }, { immediateMs: 3 * 60000 });
 // Keir 11.1: keeps live evidence trackers current, once per settled turn, silently (KEIR_EVIDENCE_MONITOR=0 turns it off).
 // Page-only: no Discord post, no model call, no job created or revived. Ends at 24 h, stop, pause, takeover, kill switch, closed ticket or a wrong world.
 const evidenceMonitor = require("./lib/operator/evidencemonitor").createMonitor({ ledger, config, log,

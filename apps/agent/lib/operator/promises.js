@@ -9,7 +9,13 @@
 // the ticket's task is woken even if it is blocked or finished, with the promise in front of it. If it still has not
 // posted after a second wake, the player gets one plain "I can't confirm this yet" line from code and staff hear once.
 // A later Keir reply on the ticket keeps the promise. Closed, stopped or staff-held tickets are never woken.
+//
+// Third pass (review B3, m2, m3): the keeper cannot feed itself. A reply made after a promise wake, before the player or
+// staff write again, never records or re-arms a promise; "I can't confirm yet" after a wake ends that promise. Each
+// promise gets at most two wakes and one fallback line, and each ticket at most MAX_TICKET_WAKES wakes and one fallback
+// line a day. Refusals, quoted speech and "we'll see" are not promises. The owner hears what actually reached the player.
 const { JOB_TERMINAL } = require("./machines");
+const controlsLib = require("./controls");
 
 const HOUR = 3600000;
 const DUE = Object.freeze({ turn: 90 * 60000, release: 4 * HOUR, today: 6 * HOUR, tomorrow: 24 * HOUR, owner: 12 * HOUR, plain: 4 * HOUR });
@@ -17,6 +23,12 @@ const RETRY_MS = 30 * 60000;
 const KEEP_AFTER_MS = 10 * 60000; // parts of the same reply and instant notices do not keep it
 const MAX_OPEN = 5;
 const FALLBACK = "I can't confirm this yet. I'm still checking and will update this ticket when I can.";
+const DAY = 24 * HOUR;
+const MAX_TICKET_WAKES = 4;
+const MAX_TICKET_FALLBACKS = 1;
+// "I can't confirm yet" and its close relatives: after a wake, that answer ends the promise.
+const CANNOT_CONFIRM = /\b(?:can(?:'|’)?t|cannot|can not|unable to|not able to)\s+(?:yet\s+)?(?:confirm|verify|say|tell you)\b|\bno confirmed answer yet\b|\bnot (?:confirmed|known) yet\b/i;
+function cannotConfirm(text) { return CANNOT_CONFIRM.test(String(text || "")); }
 // Keir 11.2 second pass: a turn promise comes due when the game's turn has actually advanced past the turn it was made
 // in, read from the turn clock the watch keeps (game_overview every 5 minutes; operator.js watchTick). When that read is
 // stale or failing, the fixed duration (DUE.turn) is the fallback. A game that is paused or stuck still brings the
@@ -43,9 +55,11 @@ function calledFor(d, ticket, now) {
 }
 
 // First person, future, a follow-up verb: "I will compare...", "I'll confirm here once...", "we'll let you know".
-const FOLLOW = /\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:\w+\s+){0,3}?(?:compare|check|confirm|update|tell|let you know|come back|follow up|get back|report back|look|post|reply|verify|read|recheck|re-check|see)\b/i;
-const NOT_PROMISE = /\b(?:if you (?:want|like|need)|if (?:that|it) helps|unless you)\b/i;
-function sentences(text) { return String(text || "").split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean); }
+const FOLLOW = /\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:\w+\s+){0,3}?(?:compare|check|confirm|update|tell|let you know|come back|follow up|get back|report back|look|post|reply|verify|read|recheck|re-check)\b/i;
+const NOT_PROMISE = /\b(?:if you (?:want|like|need)|if (?:that|it) helps|unless you)\b|\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:not|never)\b|\b(?:won(?:'|’)?t|will not|shan(?:'|’)?t)\b/i;
+// Quoted speech is somebody's words, not Keir's promise.
+const unquote = (t) => String(t || "").replace(/"[^"\n]*"|“[^”\n]*”/g, " ");
+function sentences(text) { return unquote(text).split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean); }
 
 // The promise in a post, with its due time, or null. Questions and offers are not promises.
 function detect(text, now, due = DUE) {
@@ -69,10 +83,16 @@ function overlap(a, b) { const x = words(a), y = words(b); let n = 0; for (const
 function list(d, ticket) { d.ticketPromises ||= {}; return (d.ticketPromises[ticket] ||= []); }
 
 // Called by the post path for every delivered Keir reply on a ticket (never for cards or code notices).
-function notePost(d, ticket, job, message, now) {
+// askedAt: the last time the player or staff wrote on the ticket. A reply made after a promise wake and before anyone
+// wrote again answers that wake: it keeps or ends the woken promise and never records a new one (review B3).
+function notePost(d, ticket, job, message, now, { askedAt = 0 } = {}) {
   if (!ticket || !job) return null;
   const rows = list(d, ticket);
-  const found = detect(message, now);
+  const afterWake = rows.some((p) => p.wokenAt && p.wokenAt > (askedAt || 0) && p.wokenAt <= now && now - p.wokenAt < DAY);
+  if (afterWake && cannotConfirm(message)) {
+    for (const p of rows) if (p.state === "open" && p.wokenAt) { p.state = "ended"; p.endedAt = now; p.reason = "the player was told it cannot be confirmed yet"; }
+  }
+  const found = afterWake ? null : detect(message, now);
   // A later reply keeps an open promise when it comes after the wake, at least half way to the due time, is the turn report
   // a turn promise was about, or is on the same subject.
   // Parts of the same reply and anything within ten minutes never count.
@@ -104,8 +124,14 @@ function notePost(d, ticket, job, message, now) {
 }
 
 // held(job) -> reason or null (staff claim, takeover, pause). post(ticket, text) -> resolves when delivered.
-function createPromises({ ledger, now = () => Date.now(), log = () => {}, held = () => null, post = null, retryMs = RETRY_MS }) {
+function createPromises({ ledger, now = () => Date.now(), log = () => {}, held = () => null, post = null, retryMs = RETRY_MS, controls = controlsLib.DEFAULT_CONTROLS }) {
   const d = ledger.data;
+  // Per-ticket bound over a rolling day, kept on the ledger so it survives restarts.
+  function spent(ticket, kind) {
+    const b = ((d.promiseBudget ||= {})[ticket] ||= { wakes: [], fallbacks: [] });
+    b[kind] = (b[kind] || []).filter((t) => now() - t < DAY);
+    return b[kind];
+  }
   const root = (ticket) => d.jobs?.[d.seen?.[`ticket:${ticket}`]];
   function ended(job) {
     if (!job) return "no ticket task";
@@ -124,23 +150,42 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
   }
   async function tick() {
     let woke = 0, changed = false;
+    const g = controls.gate("promiseWakes");
+    if (!g.run) return { woke, skipped: g.why };
+    const preview = (action, ticket, p, reason) => controlsLib.preview(d, "promises", action, `ticket ${ticket}`, `${reason}: "${String(p.text).slice(0, 160)}"`, {}, now());
     for (const [ticket, rows] of Object.entries(d.ticketPromises || {})) {
       for (const p of rows) {
         if (p.state !== "open" || (p.nextAt || 0) > now() || (!p.wakes && !isDue(d, p, now()))) continue;
         const job = root(ticket);
         const why = ended(job);
-        if (why) { p.state = "cancelled"; p.reason = why; changed = true; continue; }
+        if (why) { if (g.act) { p.state = "cancelled"; p.reason = why; changed = true; } continue; }
         if (held(job)) continue; // staff or the owner have the ticket; nothing is posted or woken meanwhile
-        if (job.state === "running") { p.nextAt = now() + 5 * 60000; continue; }
-        if (p.wakes < 2) { wake(job, p, p.wakes > 0); woke++; changed = true; continue; }
-        // Two wakes and still nothing: the player hears one plain line, staff hear once, and the promise is closed.
-        p.state = "failed"; p.failedAt = now(); changed = true;
-        ledger.notify(`promise-overdue:${ticket}:${p.id}`, "owner", `Ticket ${ticket}: Keir promised the player a follow-up ("${p.text.slice(0, 200)}") and two wakes did not produce it. The player was told Keir cannot confirm it yet. A person may want to look.`);
-        ledger.audit("promise_failed", { ticket: Number(ticket), promise: p.id });
-        if (post) {
-          try { await post(Number(ticket), FALLBACK); p.fallbackAt = now(); }
-          catch (e) { p.fallbackError = String(e.message).slice(0, 200); log(`promise fallback ${ticket}: ${p.fallbackError}`); }
+        if (job.state === "running") { if (g.act) p.nextAt = now() + 5 * 60000; continue; }
+        if (p.wakes < 2) {
+          if (spent(ticket, "wakes").length >= MAX_TICKET_WAKES) {
+            if (!g.act) { preview("stop", ticket, p, `${MAX_TICKET_WAKES} promise wakes on this ticket today; the promise would end`); continue; }
+            // The ticket has had its wakes for today: the promise ends, staff hear once a day.
+            p.state = "capped"; p.endedAt = now(); p.reason = `${MAX_TICKET_WAKES} promise wakes on this ticket in a day`; changed = true;
+            ledger.audit("promise_capped", { ticket: Number(ticket), promise: p.id });
+            ledger.notify(`promise-capped:${ticket}:${new Date(now()).toISOString().slice(0, 10)}`, "owner", `Ticket ${ticket}: Keir has woken ${MAX_TICKET_WAKES} times today for follow-ups it promised and stopped waking for more. Last promise: "${p.text.slice(0, 200)}". A person may want to look.`);
+            continue;
+          }
+          if (!g.act) { preview("wake", ticket, p, `promise due (wake ${p.wakes + 1} of 2)`); continue; }
+          wake(job, p, p.wakes > 0); spent(ticket, "wakes").push(now()); woke++; changed = true; continue;
         }
+        // Two wakes and still nothing: the player hears one plain line (at most one a day per ticket), staff hear once
+        // with what actually happened, and the promise is closed.
+        const fallbackOk = post && spent(ticket, "fallbacks").length < MAX_TICKET_FALLBACKS;
+        if (!g.act) { preview(fallbackOk ? "post fallback" : "end", ticket, p, fallbackOk ? `two wakes gave no follow-up; would post "${FALLBACK}"` : "two wakes gave no follow-up; the day's fallback line already went out"); continue; }
+        p.state = "failed"; p.failedAt = now(); changed = true;
+        ledger.audit("promise_failed", { ticket: Number(ticket), promise: p.id });
+        let outcome = post ? "No message was posted to the player (the ticket already had today's fallback line)." : "No message was posted to the player.";
+        if (fallbackOk) {
+          spent(ticket, "fallbacks").push(now());
+          try { await post(Number(ticket), FALLBACK); p.fallbackAt = now(); outcome = "The player was told Keir cannot confirm it yet."; }
+          catch (e) { p.fallbackError = String(e.message).slice(0, 200); log(`promise fallback ${ticket}: ${p.fallbackError}`); outcome = `The plain "cannot confirm yet" line could not be posted (${p.fallbackError}), so the player has heard nothing.`; }
+        }
+        ledger.notify(`promise-overdue:${ticket}:${p.id}`, "owner", `Ticket ${ticket}: Keir promised the player a follow-up ("${p.text.slice(0, 200)}") and two wakes did not produce it. ${outcome} A person may want to look.`);
       }
     }
     if (changed) ledger.save();
@@ -156,4 +201,4 @@ function keepForReport(d, ticket, now) {
   return p || null;
 }
 
-module.exports = { overlap, detect, notePost, createPromises, isDue, calledFor, keepForReport, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS, TURN_BACKSTOP_MS };
+module.exports = { overlap, detect, notePost, createPromises, isDue, calledFor, keepForReport, cannotConfirm, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS, TURN_BACKSTOP_MS, MAX_TICKET_WAKES };

@@ -167,3 +167,81 @@ test("a paused game still brings a turn promise due after the backstop, so the p
   const promises = require("../lib/operator/promises");
   assert.equal(promises.isDue(w.data, w.data.ticketPromises[1868][0], later), true);
 });
+
+// ---- Third pass: the review's B3, m2 and m3 ----
+const { staticControls } = require("../lib/operator/controls");
+
+test("B3: the holding line a wake asks for never re-arms a promise; \"I can't confirm yet\" ends it until the player writes", async () => {
+  const w = world();
+  w.job.state = "waiting";
+  notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("19:45"));
+  w.set("21:16"); await w.keeper.tick();
+  assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 1);
+  // The woken activation says what the wake prompt asks for, which itself sounds like a promise.
+  notePost(w.data, 1868, w.job, "I can't confirm this yet. I'm waiting for the turn to finish and I'll update you here once it has run.", at("21:20"), { askedAt: at("19:00") });
+  assert.deepEqual(w.data.ticketPromises[1868].map((p) => p.state), ["ended"], "no second promise opened");
+  w.job.state = "done";
+  for (const t of ["22:00", "23:00", "23:59"]) { w.set(t); await w.keeper.tick(); }
+  assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 1, "no wake loop");
+  assert.equal(w.posted.length, 0);
+  // Another holding post from any task before the player writes does not open one either.
+  notePost(w.data, 1868, w.job, "I'll update you once the turn has run.", at("23:30"), { askedAt: at("19:00") });
+  assert.equal(w.data.ticketPromises[1868].filter((p) => p.state === "open").length, 0);
+  // The player asks again: a new promise may be recorded.
+  notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("23:45"), { askedAt: at("23:40") });
+  assert.equal(w.data.ticketPromises[1868].filter((p) => p.state === "open").length, 1);
+});
+
+test("B3: a ticket gets at most four promise wakes a day, however many promises it collects", async () => {
+  const w = world();
+  w.job.state = "waiting";
+  let t = at("01:00");
+  for (let i = 0; i < 4; i++) {
+    notePost(w.data, 1868, w.job, "I'll check this again later and tell you what I find.", t, { askedAt: t - 60000 });
+    t += 4 * 3600000 + 60000; w.set(new Date(t).toISOString().slice(11, 16)); await w.keeper.tick();
+    // The player writes, Keir answers, and a new promise follows.
+    notePost(w.data, 1868, w.job, "Here is what I found: the price rose.", t + 60000, { askedAt: t + 30000 });
+    t += 120000;
+  }
+  assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 4);
+  notePost(w.data, 1868, w.job, "I'll check this again later and tell you what I find.", t, { askedAt: t - 60000 });
+  t += 4 * 3600000 + 60000; w.set(new Date(t).toISOString().slice(11, 16)); await w.keeper.tick();
+  assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 4, "the fifth is not woken");
+  assert.equal(w.data.ticketPromises[1868].at(-1).state, "capped");
+  assert.equal(Object.keys(w.data.outbox).filter((k) => k.startsWith("promise-capped:1868:")).length, 1);
+});
+
+test("m2: the owner hears what actually reached the player, after the post", async () => {
+  const data = { jobs: { j: { id: "j", kind: "ticket", ticket: 1868, state: "blocked" } }, seen: { "ticket:1868": "j" }, channels: {}, outbox: {}, audit: [], ticketPromises: {} };
+  let clock = at("19:45"), order = [];
+  const ledger = { data, save() {}, audit() {}, notify(key, dest, content) { order.push("notify"); data.outbox[key] = { content }; } };
+  const keeper = createPromises({ ledger, now: () => clock, post: async () => { order.push("post"); throw new Error("ticket ended (closed)"); } });
+  notePost(data, 1868, data.jobs.j, PROMISE, clock);
+  for (const t of ["21:16", "21:47", "22:18"]) { clock = at(t); data.jobs.j.state = "blocked"; await keeper.tick(); }
+  assert.deepEqual(order, ["post", "notify"]);
+  const line = Object.values(data.outbox)[0].content;
+  assert.match(line, /could not be posted \(ticket ended \(closed\)\), so the player has heard nothing/);
+  assert.doesNotMatch(line, /The player was told/);
+});
+
+test("m3: refusals, quoted speech and wait-and-see are not promises", () => {
+  const now = at("12:00");
+  assert.equal(detect("I will not check that again.", now), null);
+  assert.equal(detect("I won't look at that again.", now), null);
+  assert.equal(detect('You said "I\'ll check tomorrow" earlier.', now), null);
+  assert.equal(detect("We'll see what the turn does.", now), null);
+  assert.ok(detect("I'll check the next turn and tell you.", now));
+});
+
+test("the promise switch: off wakes nothing, preview records the wake it would make, the kill switch stops it", async () => {
+  for (const [controls, expectPreview] of [[staticControls({ promiseWakes: "off" }), false], [staticControls({}, { preview: true }), true], [staticControls({}, { held: "x" }), false]]) {
+    const data = { jobs: { j: { id: "j", kind: "ticket", ticket: 1868, state: "blocked" } }, seen: { "ticket:1868": "j" }, channels: {}, outbox: {}, audit: [], ticketPromises: {} };
+    const ledger = { data, save() {}, audit(kind) { data.audit.push({ kind }); }, notify() {} };
+    const keeper = createPromises({ ledger, now: () => at("21:16"), controls, post: async () => { throw new Error("must not post"); } });
+    notePost(data, 1868, data.jobs.j, PROMISE, at("19:45"));
+    await keeper.tick();
+    assert.equal(data.jobs.j.state, "blocked");
+    assert.equal(data.ticketPromises[1868][0].wakes, 0);
+    assert.equal(Boolean(data.preview?.items?.["promises:wake:ticket 1868"]), expectPreview);
+  }
+});
