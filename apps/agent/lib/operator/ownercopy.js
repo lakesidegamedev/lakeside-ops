@@ -3,7 +3,8 @@
 // milestone." on every row, "Reconfirmed the cause from main e67daa9db9", and "Read live turn state at 14:26Z". His
 // standing rule: nothing shown to him or to players uses UTC. Pure functions.
 //
-//   etTimes(text, now)  UTC clock times and ISO timestamps become US Eastern, labelled ET.
+//   etTimes(text, now)  clock times marked UTC (Z, UTC, GMT) and UTC timestamps become US Eastern, labelled ET. A time
+//                       with no zone is left as written.
 //   plain(text, now)    etTimes, plus commit hashes, file paths with line numbers, and task, worker and job ids are
 //                       replaced with what they mean or dropped.
 const ZONE = "America/New_York";
@@ -18,12 +19,13 @@ function et(ms, now = Date.now()) {
   return `${sameDay ? "" : `${day.format(d)}, `}${clock.format(d)} ET`;
 }
 
-// The UTC instant for an HH:MM clock time on the day of `now` (UTC), stepping back a day when that is in the future.
+// The UTC instant for an HH:MM UTC clock time: the instance nearest `now`, within 12 hours either side. Keir 11.4 review
+// (M4): it used to step back a day whenever the time was more than an hour ahead, so "I will check again at 21:00Z"
+// became yesterday afternoon.
 function utcClock(h, m, s, now) {
   const base = new Date(now);
-  let at = Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), h, m, s || 0);
-  if (at - now > 3600000) at -= 86400000;
-  return at;
+  const today = Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), h, m, s || 0);
+  return [today - 86400000, today, today + 86400000].reduce((best, at) => (Math.abs(at - now) < Math.abs(best - now) ? at : best));
 }
 
 function etTimes(text, now = Date.now()) {
@@ -34,9 +36,9 @@ function etTimes(text, now = Date.now()) {
     .replace(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?\s*(?:Z|UTC|GMT)\b/gi, (all, h, m, s, ap) => {
       let hh = Number(h); if (ap) hh = (hh % 12) + (/pm/i.test(ap) ? 12 : 0);
       return hh > 23 || Number(m) > 59 ? all : et(utcClock(hh, Number(m), Number(s), now), now);
-    })
-    // A bare 24-hour time in Keir's own notes is UTC: "since the 14:25 update". 12-hour and ET-labelled times are left alone.
-    .replace(/(?<![\d:.])([01]\d|2[0-3]):([0-5]\d)(?![\d:])(?!\s*(?:AM|PM|ET|EST|EDT)\b)/gi, (all, h, m) => et(utcClock(Number(h), Number(m), 0, now), now));
+    });
+  // Keir 11.4 review (M4): a time with no zone is left exactly as written. "09:00-23:00 ET", "10:30 a.m. ET" and "21:00
+  // their time" are not UTC; only a time the text marks as UTC, or a UTC timestamp, is converted.
 }
 
 // Players read times in Discord's own timestamp markup, which shows each reader their local time (as turn incidents do).

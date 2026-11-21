@@ -26,7 +26,7 @@ test("no row shows the placeholder 'Next' line, and a finished row has no Next l
 test("a row states what the work waits on, from its closing condition, in plain words and ET", () => {
   const j = { id: "cccccccccccc", kind: "ticket", role: "support", ticket: 1872, state: "waiting", at: NOW - 600000, wakeAt: NOW + 600000,
     summary: "Internal note: re-read src/components/corp/Detail.tsx:142 at 14:26Z, worker cw-1872-55.",
-    closing: { closesWhen: "The company page loads for the player after the fix is live.", waitingOn: "My fix reaching the main server; staging verified since the 14:25 update (commit e67daa9db9).", on: { kind: "pr", ref: 7073 } } };
+    closing: { closesWhen: "The company page loads for the player after the fix is live.", waitingOn: "My fix reaching the main server; staging verified since the 14:25Z update (commit e67daa9db9).", on: { kind: "pr", ref: 7073 } } };
   const s = workStatus(data([j]), j, { now: NOW });
   assert.match(s.reason, /^My fix reaching the main server/);
   assert.match(s.reason, /9:25 AM ET/);
@@ -57,4 +57,21 @@ test("owner DMs and app messages get ET; player messages get Discord timestamp m
   assert.match(player, /<t:\d+:t>/);
   assert.ok(!/UTC/.test(player));
   assert.deepEqual(knowledge.numbersIn(player), []);
+});
+
+// ---------- Keir 11.4 release review, M4 ----------
+test("M4: a UTC time later today stays today, and times with no zone or already in ET are left as written", () => {
+  const at1740 = Date.parse("2026-11-21T17:40:00Z");
+  assert.equal(oc.etTimes("I will check the checks again at 21:00Z.", at1740), "I will check the checks again at 4:00 PM ET.");
+  assert.equal(oc.etTimes("It ran at 23:50 UTC.", at1740), "It ran at 6:50 PM ET.");
+  assert.equal(oc.etTimes("It failed at 02:10Z.", Date.parse("2026-11-22T01:00:00Z")), "It failed at 9:10 PM ET.");
+  for (const t of ["the owner window, 09:00-23:00 ET", "10:30 a.m. ET", "it broke at 21:00 their time", "since the 14:25 update", "The turn runs at 18:00 game time."])
+    assert.equal(oc.etTimes(t, at1740), t);
+});
+
+test("M4: the original UTC leak is still converted: Z and UTC clock times and UTC timestamps never reach the owner", () => {
+  const at1740 = Date.parse("2026-11-21T17:40:00Z");
+  const out = oc.plain("Read live turn state at 14:26Z; next check 2026-11-21T19:00:00Z; deploy at 16:05 UTC.", at1740);
+  assert.ok(!/\d{1,2}:\d{2}Z|UTC/.test(out), out);
+  assert.match(out, /9:26 AM ET/); assert.match(out, /2:00 PM ET/); assert.match(out, /11:05 AM ET/);
 });
