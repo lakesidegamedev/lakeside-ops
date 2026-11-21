@@ -154,3 +154,14 @@ test("an mcp_write that merges a PR is reconciled when the PR merged (ticket 186
   await w.truth.tick();
   assert.equal(w.data.actions.m.state, "done");
 });
+
+// "Waiting on the owner" needs an open question; a question closed because its PR merged on GitHub does not count.
+const { setup: postSetup } = require("./keir10-post.helpers");
+test("post path: 'waiting on the owner' is refused once the question was closed by a merge on GitHub (ticket 1857)", async () => {
+  const f = postSetup(); f.playerWrote(5);
+  f.ledger.data.decisions = { x: { id: "x", jobId: f.job.id, ticket: 123, state: "withdrawn", withdrawnReason: "merged on GitHub", at: f.now() - 3600000, question: "Merge?", sent: {} } };
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The pricing question is waiting on the owner's decision." }), /nothing on this ticket is waiting on the owner/);
+  f.ledger.data.decisions.y = { id: "y", jobId: f.job.id, ticket: 123, state: "pending", at: f.now() - 60000, question: "Merge?", sent: {} };
+  await f.broker.tool(f.job, "channel_reply", { message: "The pricing question is waiting on the owner's decision." });
+  assert.equal(f.posts().length, 1);
+});
