@@ -7,6 +7,7 @@ const { parkedOnHandoffs } = require("./developerwatch");
 const { TIMEOUT_SUMMARY } = require("./deadline");
 const CLOSED = new Set(JOB_TERMINAL);
 const clip = (s, n = 240) => String(s || "").slice(0, n);
+const ownerLine = (text, now) => { const oc = require("./ownercopy"); return oc.oneLine(oc.plain(text, now), 220); };
 const timestamp = n => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null;
 function family(data, job) { return Object.values(data.jobs || {}).filter(j => rootJob(j, data.jobs).id === job.id); }
 function held(data, job, config, now = Date.now()) {
@@ -25,8 +26,12 @@ function workStatus(data, job, { now = Date.now(), config = {} } = {}) {
   const waiting = live.find(j => j.state === "waiting") || job;
   const hold = held(data, job, config, now);
   let state = CLOSED.has(job.state) ? "finished" : hold ? "held" : worker ? "working" : job.state === "blocked" ? "stuck" : job.state === "queued" ? "queued" : "waiting";
-  let reason = clip(worker?.liveLog?.at(-1)?.what || worker?.summary || job.summary) || "No next milestone recorded.";
-  let next = worker ? "Keir will record the next result." : "Keir must record the next milestone.";
+  // Keir 11.4 (owner, 2026-11-21): the owner reads a plain one-line state of the work, never Keir's note to itself, and no
+  // placeholder "Next" line. The closing condition (11.2) says what the work waits on; a running step is named by its title.
+  const closingOf = (CLOSED.has(job.state) ? null : waiting.closing || job.closing) || null;
+  const step0 = worker?.liveLog?.at(-1);
+  let reason = clip(ownerLine(closingOf?.waitingOn || (worker && step0?.title ? `Working: ${String(step0.title).toLowerCase()}.` : "") || worker?.summary || job.summary, now)) || (CLOSED.has(job.state) ? "Finished." : "Nothing is recorded yet about what this waits on.");
+  let next = "";
   if (hold) { reason = "Another person or agent owns the next move."; next = "Waiting for the current owner; Keir will preserve the claim."; }
   else if (uncertain) { state = "stuck"; reason = "An earlier action has an unverified outcome."; next = "Verify its receipt before any retry."; }
   else if (origin.scoped && !origin.valid && !CLOSED.has(job.state)) { state = "stuck"; reason = "The saved request needs an authenticated restart."; next = "Open the task to restart from its saved evidence."; }
@@ -35,7 +40,7 @@ function workStatus(data, job, { now = Date.now(), config = {} } = {}) {
   else if (!worker && !CLOSED.has(job.state) && (job.ownerDecisionPending || job.recoveryReviewRequired)) { state = "stuck"; reason = "Keir must review this hold; no owner approval is pending."; next = "Recover the original instruction and establish the exact next action before asking for approval."; }
   else if (state === "stuck" && job.deadlineBlockedAt) { reason = TIMEOUT_SUMMARY; next = "Recover the last saved step and establish the next action."; }
   else if (live.some(j => Object.keys(j.ciWatch || {}).length)) { reason = "Waiting for repository checks."; next = "Recheck the current PR head and act on its result."; }
-  else if (waiting.waitingFor) { reason = `Waiting for ${clip(waiting.waitingFor.kind || "an external update", 80)}.`; next = clip(waiting.summary) || "Check the dependency at the next scheduled wakeup."; }
+  else if (waiting.waitingFor) { reason = `Waiting for ${clip(waiting.waitingFor.kind || "an external update", 80)}.`; next = "Check the dependency at the next scheduled wakeup."; }
   else if (live.some(j => j.codingParent) && !worker) { reason = "Waiting for delegated work."; next = "Incorporate the worker's result before continuing."; }
   const checkAt = live.filter(j => j.state === "waiting").map(j => timestamp(j.wakeAt)).filter(Boolean).sort((a,b) => a-b)[0] || null;
   const since = timestamp(job.waitReview?.since) || timestamp(job.updatedAt) || timestamp(job.at);
@@ -49,7 +54,9 @@ function workStatus(data, job, { now = Date.now(), config = {} } = {}) {
   if (state === "stuck" && !uncertain && !orphanApproval && (job.deadlineBlockedAt || /activation aborted/i.test(job.summary || ""))) state = "stalled";
   const heartbeatAt = worker ? Math.max(...[worker.updatedAt, worker.startedAt, worker.liveLog?.at(-1)?.at].map(timestamp).filter(Boolean), 0) || null : null;
   const step = (job.plan || []).find(p => p.status === "running") || (job.plan || []).find(p => p.status !== "done");
-  return { state, reason, next, milestone: clip(step?.title || data.statusCards?.[ticketOf(job)]?.status || reason),
+  if (CLOSED.has(job.state)) next = "";
+  next = next ? clip(ownerLine(next, now)) : "";
+  return { state, reason, next, milestone: clip(ownerLine(step?.title || closingOf?.closesWhen || data.statusCards?.[ticketOf(job)]?.status || reason, now)),
     owner: hold ? "Current ticket owner" : "Keir", since, ageMs: since ? Math.max(0, now - since) : null,
     nextCheckAt: checkAt, reviewAt, heartbeatAt, deadline: timestamp(job.deadline), overdue,
     expectedDoneAt: forecast?.expectedAt || null, etaLabel: CLOSED.has(job.state) ? "Task finished" : forecast ? "Keir task estimate, not a guaranteed delivery time" : "Completion time not established", estimateBasis: forecast?.basis || null, estimateAt: forecast?.at || null, uncertain,

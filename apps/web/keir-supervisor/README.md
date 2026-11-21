@@ -15,6 +15,8 @@ chat, source work or approvals, so it keeps working while the operator is down.
 | `toolserver.js` | Loopback MCP endpoint, one unguessable path per job. |
 | `sandbox.js`, `sandbox-tool.js` | Bubblewrap workspace: no network, empty env, only the workspace writable; file operations run inside it. |
 | `repos.js` | Fixed repository allowlist. Clients and the model pick a key, never a path. |
+| `ticket-commands.js` | `ticket_command` and `retry_ticket`: ticket changes the owner asks for, handed to Keir's operator (below). |
+| `owner-words.js`, `ownercopy.js` | What the owner reads: no "with the developers", no "my ticket access is read-only", ET times, no internal ids. `ownercopy.js` copies the operator's helpers; `ticket-commands.test.js` keeps them identical. |
 | `studio-evidence.js` | Read-only `ticket_evidence` (one numbered support record: chronology, actors, verified channel delivery, what it cannot prove) and `game_health` (the phone game card's facts). Reads go through the ops web MCP client with this host's credentials; the model picks a ticket number or game id only. The game part copies `apps/agent/lib/operator/appgames.js`; `apps/agent/test/appgames-web-parity.test.js` keeps them identical. |
 
 ## Behaviour
@@ -28,6 +30,35 @@ chat, source work or approvals, so it keeps working while the operator is down.
   patch digest is the only approval path; chat text never is. Publishing is off
   unless `KEIR_SUPERVISOR_PUBLISH=1`, and then pushes one branch and opens a PR
   from a fresh clone. It never merges or deploys.
+
+## Ticket changes go through Keir's operator
+
+The owner can ask this chat to open an incident, merge tickets (into an incident
+or another ticket, adding each reporter), close, reopen or add a person, and to
+retry a stalled ticket. The supervisor never changes a ticket itself:
+
+- It posts one structured command to the operator's app server
+  (`POST /api/keir/app/ticket-commands` on `KEIR_APP_BASE_URL`, loopback only)
+  with the owner's own `ops_session` cookie from the request that created the
+  job, the same channel side chats use. The operator checks that cookie against
+  the ops dashboard itself and runs the command through its `ticket_command`
+  (authority, batch limits, confirmation, effect journal, records). The cookie is
+  held in memory per job, never written to the state file; a job resumed after a
+  restart sends nothing and asks the owner to resend.
+- A command is sent only when the owner's own message in that job asks for that
+  kind of change (`ticket-commands.js` `INTENT`; a short "yes" also reads the
+  owner's previous message). Ticket text and tool output never count.
+- A confirmation the operator asks for is shown with a six-character code bound
+  to the operator's digest of the exact list; only an owner message carrying the
+  code sends it back, once, within an hour.
+- Each command has a stable id kept in `state.json` (`ticketCommands`) before it
+  is sent, so a retry, a timeout or a resend after a restart reuses it and the
+  operator does nothing twice. Opening an incident for the same tickets within a
+  day is the same command whichever message asked.
+- Retry uses the operator's `GET /tickets/<n>` and `POST /tickets/<n>/retry`
+  (the app's Retry button) with every hold the operator applies.
+
+`KEIR_SUPERVISOR_TICKET_TIMEOUT_MS` (default 90000) bounds one command.
 
 ## Configuration
 

@@ -624,7 +624,11 @@ async function flushOutbox() {
         // Keir 11.1: a chart staged by present_evidence goes on this answer's first message, with its report link.
         require("./lib/operator/evidencedelivery").attachOutbox(ledger, key, entry, channelJob, { at: Date.now() });
         // Only Keir's own rendered charts may carry an attachment into a channel.
-        if (entry.files?.length && !(entry.chart && entry.files.every((f) => f.chart && /\/artifacts\/chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(f.path)))) throw new Error("private attachments cannot be delivered to channels");
+        // Keir 11.4: and its labelled interface previews (render_preview), while image delivery is on.
+        const ownImage = (entry.chart && entry.files.every((f) => f.chart && /\/artifacts\/chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(f.path)))
+          || (entry.preview && entry.files.every((f) => f.preview && /\/artifacts\/preview-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(f.path)));
+        if (entry.files?.length && !ownImage) throw new Error("private attachments cannot be delivered to channels");
+        if (entry.preview && !(config.controls || require("./lib/operator/controls").DEFAULT_CONTROLS).gate("imageDelivery").act) { entry.deliveredAt = Date.now(); entry.skipped = "image delivery is off"; ledger.save(); continue; }
         const channel = await discord("GET", `/channels/${channelJob.replyChannel}`);
         if (channel.guild_id !== config.guildId) throw new Error("reply channel outside configured guild");
         clean = redactSecrets(entry.content);
@@ -636,7 +640,8 @@ async function flushOutbox() {
         const recipient = entry.destination === "owner" ? config.ownerId : entry.destination;
         if (![config.ownerId, ...config.staffIds].includes(recipient)) throw new Error("untrusted notification recipient");
         dmId = await ensureDm(recipient);
-        clean = recipient === config.ownerId ? ownerText(entry.content) : redactSecrets(entry.content);
+        // Keir 11.4: owner and staff DMs never show UTC; clock times become ET.
+        clean = require("./lib/operator/ownercopy").etTimes(recipient === config.ownerId ? ownerText(entry.content) : redactSecrets(entry.content));
       }
       // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
       const text = clean.replace(/[\u2013\u2014]/g, ",");
@@ -1202,7 +1207,7 @@ updateTick();
 setInterval(updateTick, 20000).unref();
 const desktop = require("./lib/operator/desktop").createDesktopGateway({ mcp, readTools: JSON.parse(env.KEIR_DESKTOP_READ_TOOLS || "{}"), projects: () => { const file = env.KEIR_PROJECTS_MANIFEST; if (!file) return config.repositories; const entries = JSON.parse(fs.readFileSync(file, "utf8")).entries; // Only real repositories: git, a remote, not the infra/data/dormant "misc" category.
   return Object.fromEntries(Object.entries(entries).filter(([, project]) => project.git && project.remote && project.category !== "misc").map(([name, project]) => [name, project.path])); }, audit: tool => ledger.audit("desktop_tool", { tool }) });
-const appServer = createAppServer({ app: appChannel, sessionExchangeUrl: env.KEIR_APP_SESSION_EXCHANGE_URL || "http://127.0.0.1:9788/api/auth/native-session", agentRoutes: async (...args) => (await desktop.route(...args)) ?? (await appPush.route(...args)) ?? (await appQuestions.route(...args)) ?? (await appComputer.route(...args)) ?? (await ticketSupervision.route(...args)) ?? appAgent.route(...args), artifactsDir: path.join(config.stateDir, "artifacts"), log,
+const appServer = createAppServer({ app: appChannel, sessionExchangeUrl: env.KEIR_APP_SESSION_EXCHANGE_URL || "http://127.0.0.1:9788/api/auth/native-session", agentRoutes: async (...args) => (args[0] === "/ticket-commands" && args[1] === "POST" ? await broker.ownerAppTicketCommand(args[2]) : undefined) ?? (await desktop.route(...args)) ?? (await appPush.route(...args)) ?? (await appQuestions.route(...args)) ?? (await appComputer.route(...args)) ?? (await ticketSupervision.route(...args)) ?? appAgent.route(...args), artifactsDir: path.join(config.stateDir, "artifacts"), log,
   authenticate: createAuthenticator({ config, checkUrl: env.KEIR_APP_AUTH_URL || "http://127.0.0.1:9788/api/auth/admin-check" }) });
 appServer.listen(positive("KEIR_APP_PORT", 9768), "127.0.0.1", () => log("Keir app channel started"));
 // Optional, explicit path of the private supervisor's approval alert projection. Unset means no private approval pushes.

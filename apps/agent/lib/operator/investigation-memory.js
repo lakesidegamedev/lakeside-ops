@@ -7,7 +7,8 @@ function record(ledger, job, name, input, result, at) {
   if (!eligible(job) || result == null) return;
   const read = name === "read_tool" && input.server !== "support" && !/(?:_catalog|_tools|_servers)$|^heal_collections$/.test(input.tool || "");
   const githubRead = name === "github" && ["where", "deployed", "status", "ci_failures", "history"].includes(input.action);
-  if (!read && !githubRead && !["evidence_batch", "calculate", "shell"].includes(name)) return;
+  // Keir 11.4: a live look at the page is evidence too; the source line names it "a live check of the page".
+  if (!read && !githubRead && !["evidence_batch", "calculate", "shell", "view_page"].includes(name)) return;
   if (name === "evidence_batch" && !input.queries?.some(q => q.op !== "catalog" && q.op !== "receipt")) return;
   // Keep observations, not inferred conclusions. An empty search is still a
   // completed attempt; a returned error is never evidence of a successful check.

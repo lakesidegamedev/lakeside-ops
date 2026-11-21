@@ -118,7 +118,8 @@ function guard(ledger, config, job, name, input) {
   }
   if (!p.valid || p.actorId !== config.ownerId) deny(p.reason || "Authenticated origin no longer matches the configured owner. Start a new app task.");
   if (name === "github" && ["merge", "promote"].includes(input.action)) return p;
-  if (PRIVATE.has(name) || ["support_directive", "ticket_record", "open_ticket", "open_suggestion"].includes(name)) return p;
+  // Keir 11.4: the owner's ticket commands (ticketcommands.js re-checks the origin) and labelled previews.
+  if (PRIVATE.has(name) || ["support_directive", "ticket_record", "open_ticket", "open_suggestion", "ticket_command", "add_to_ticket", "render_preview"].includes(name)) return p;
   if (name === "chart" && job.replyChannel === "app" && job.source?.channelId === "app") return p;
   if (name === "request_heal" || name === "execute_action") return p;
   if (name === "shell" || name === "request_action") deny("Owner Muse cannot run arbitrary commands, host actions, remote workflows or iOS builds/uploads. Use local_file for isolated drafts; unreviewed MCP writes are unsupported.");
