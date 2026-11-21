@@ -161,8 +161,15 @@ final class LaunchTests: XCTestCase {
     /// A tap outside an open menu closes it without reaching what is under it.
     /// Pass an item of the menu to wait until the menu has really closed: the
     /// next menu opened while this one still animates out can swallow its tap.
+    ///
+    /// The tap goes on the side of the screen the menu does not cover. Keir's
+    /// tools menu opens from the top right and the composer menu from the
+    /// bottom left, and a tap at a fixed right-hand point landed on
+    /// "Connected games" inside the tools menu and opened that sheet.
     private func dismissMenu(_ app: XCUIApplication, closing item: XCUIElement? = nil, file: StaticString = #filePath, line: UInt = #line) {
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.35)).tap()
+        var side: CGFloat = 0.95
+        if let item, item.exists, item.frame.midX > app.frame.midX { side = 0.05 }
+        app.coordinate(withNormalizedOffset: CGVector(dx: side, dy: 0.35)).tap()
         if let item, item.exists {
             XCTAssertTrue(item.waitForNonExistence(timeout: 5), "the menu closed", file: file, line: line)
             usleep(300_000)
@@ -385,9 +392,14 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<4 where !dismiss.exists { app.swipeUp() }
         XCTAssertTrue(dismiss.waitForExistence(timeout: 15))
         XCTAssertTrue(find(app, "Merged PR #210").exists)
+        // The heading is sentence case since section headers stopped being
+        // uppercased (7c880b1); the label must exist first so its absence
+        // after dismissing proves something.
+        let heading = find(app, "While you were away", timeout: 5)
+        XCTAssertTrue(heading.exists, "the recap heading is on screen")
         capture(app, "While you were away")
         dismiss.tap()
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "WHILE YOU WERE AWAY")).firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(heading.waitForNonExistence(timeout: 5))
     }
 
     func testOpsSystemsDrillDowns() {
@@ -701,7 +713,8 @@ final class LaunchTests: XCTestCase {
         let details = app.buttons["Details"].firstMatch
         XCTAssertTrue(reveal(app, details))
         details.tap()
-        XCTAssertTrue(find(app, "Last worker").exists, "the retired worker stays visible in Details")
+        XCTAssertTrue(find(app, "Previous takeover").exists, "the retired worker stays visible in Details")
+        XCTAssertFalse(find(app, "Takeover session", timeout: 1).exists, "the handed back session is not shown as current")
 
         // Taking it again starts a clean session: the unsent note went nowhere.
         button("supervision-take").tap()
