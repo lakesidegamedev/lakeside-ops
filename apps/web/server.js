@@ -3011,6 +3011,34 @@ const { makeEngineBody } = require('./engine-page');
 const { handleEconomyRoute } = require('./economy/routes');
 const { makeTrackerBody } = require('./tracker-page');
 const { handleKanbanRoute } = require("./kanban-routes");
+// Kanban cards show their ticket's live status and follow it. The reader is
+// shared by the page, the API and the reconcile timer (short cache). The pass
+// runs every KANBAN_TICKET_RECONCILE_MS (default 10 minutes);
+// KANBAN_TICKET_RECONCILE=off stops it, =dry logs what it would change.
+const { createTicketStatusReader, runTicketReconcile } = require("./kanban-tickets");
+const kanbanTicketStatus = createTicketStatusReader({ getDb: () => getDb() });
+{
+  const mode = String(process.env.KANBAN_TICKET_RECONCILE || "on").toLowerCase();
+  const every = Math.max(60_000, Number(process.env.KANBAN_TICKET_RECONCILE_MS) || 10 * 60_000);
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      const out = await runTicketReconcile({ store: require("./kanban-store").sharedKanban(), reader: kanbanTicketStatus, dryRun: mode === "dry" });
+      // Quiet when there is nothing to do.
+      if (out.changed || out.ticket_error) console.log(`[kanban-tickets] ${JSON.stringify({ dry_run: out.dry_run, counts: out.counts, changed: out.changed, deferred: out.deferred, error: out.ticket_error || null })}`);
+    } catch (error) {
+      console.warn("[kanban-tickets] reconcile failed:", error.message);
+    } finally {
+      running = false;
+    }
+  };
+  if (mode !== "off" && process.env.NODE_ENV !== "test") {
+    setTimeout(tick, 2 * 60_000).unref?.();
+    setInterval(tick, every).unref?.();
+  }
+}
 const { handleSuggestionSwipeRoute } = require("./suggestion-swipe-routes");
 const { handleKeirInboxRoute } = require("./keir-inbox-routes");
 const { handleCwTelemetryRoute, makeLimiter: makeCwTelemetryLimiter } = require("./cw-telemetry-routes");
@@ -4232,7 +4260,7 @@ const server = http.createServer(async (req, res) => {
   if (await handleHubRoute(req, res, url, {
     resolveSession, addSecurityHeaders, getDb, knowledgeStore, getConfig,
     publishedDir: PUBLISHED_REPORTS_DIR, legacyDir: require("path").join(__dirname, "reports"),
-    kanban: require("./kanban-store").sharedKanban,
+    kanban: require("./kanban-store").sharedKanban, ticketStatus: kanbanTicketStatus,
   })) return;
 
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/") {
@@ -4508,7 +4536,7 @@ const server = http.createServer(async (req, res) => {
 
   // ─── KANBAN ──────────────────────────────────────────────────────
   // Admin product kanban (/kanban, /api/kanban/*). Store: kanban-store.js.
-  if (await handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell })) return;
+  if (await handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, ticketStatus: kanbanTicketStatus })) return;
 
   // ─── SUGGESTION SWIPE ────────────────────────────────────────────
   // Blind two-person triage of unreviewed suggestions (/suggestions/swipe,
@@ -5366,7 +5394,12 @@ const server = http.createServer(async (req, res) => {
       const db = await getDb();
       const status = url.searchParams.get("status");
       const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
-      const filter = status && status !== "all" ? { status } : {};
+      // Open and Closed are what people see; older ?status=<stored value> links still work.
+      const { CLOSED_STATUSES } = require("./ticket-status");
+      const closedList = [...CLOSED_STATUSES];
+      const filter = status === "closed" ? { $or: [{ status: { $in: closedList } }, { mergedInto: { $exists: true, $ne: null } }] }
+        : status === "open" ? { status: { $nin: closedList }, $or: [{ mergedInto: { $exists: false } }, { mergedInto: null }] }
+        : status && status !== "all" ? { status } : {};
       const total = await db.collection("tickets").countDocuments(filter);
       const totalPages = Math.max(1, Math.ceil(total / COMMUNITY_PAGE_SIZE));
       const tickets = await db.collection("tickets").find(filter)

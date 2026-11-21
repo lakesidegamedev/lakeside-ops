@@ -344,7 +344,7 @@ function makeTicketReportBody(r, opts = {}) {
   const cards = [
     statCard(String(r.total), "Total tickets", `${r.openedLast30d} opened · ${r.closedLast30d} closed in last 30d`),
     statCard(String(r.outstandingCount), "Outstanding now", `peak ${r.peakOutstanding} over period`),
-    statCard(fmtDur(t.medianHours), "Median resolution", t.n ? `over ${t.n} resolved` : "no resolved yet"),
+    statCard(fmtDur(t.medianHours), "Median time to close", t.n ? `over ${t.n} closed` : "none closed yet"),
     statCard(fmtDur(t.meanHours), "Mean resolution", t.p90Hours != null ? `p90 ${fmtDur(t.p90Hours)}` : ""),
     statCard(fmtPct(t.within24h), "Closed in 24h", fmtPct(t.within7d) + " within 7 days"),
     statCard(String(r.openedLast7d), "Opened last 7d", String(r.closedLast7d) + " closed last 7d"),
@@ -375,9 +375,9 @@ function makeTicketReportBody(r, opts = {}) {
   const body = `<div class="tr-wrap">
   <div class="tr-head"><h1>Ticket Report</h1><p>Support ticket analytics — backlog, flow, categories and resolution times. Generated ${esc(r.generatedAt)}.</p></div>
   <div class="tr-cards">${cards}</div>
-  <div class="tr-panel"><h2>Outstanding tickets over time</h2><p class="sub">Open backlog at end of each day (opened minus resolved, cumulative). Peak ${r.peakOutstanding}.</p>${lineChart(r.daily.map((d) => ({ label: d.label, value: d.outstanding })))}</div>
-  <div class="tr-panel"><h2>Opened vs resolved per week</h2><p class="sub">Monday-start weeks across the whole period.</p>${groupBars(flow)}</div>
-  <div class="tr-panel"><h2>Median resolution time by week opened</h2><p class="sub">Weeks with no resolved tickets are omitted.</p>${resolutionBars || '<p class="sub">No resolved tickets yet.</p>'}</div>
+  <div class="tr-panel"><h2>Outstanding tickets over time</h2><p class="sub">Open backlog at end of each day (opened minus closed, cumulative). Peak ${r.peakOutstanding}.</p>${lineChart(r.daily.map((d) => ({ label: d.label, value: d.outstanding })))}</div>
+  <div class="tr-panel"><h2>Opened vs closed per week</h2><p class="sub">Monday-start weeks across the whole period.</p>${groupBars(flow)}</div>
+  <div class="tr-panel"><h2>Median time to close by week opened</h2><p class="sub">Weeks with no closed tickets are omitted.</p>${resolutionBars || '<p class="sub">No closed tickets yet.</p>'}</div>
   <div class="tr-panel"><h2>Tickets by category</h2><p class="sub">Total, still-open count, and median resolution per category.</p>${categoryBars}</div>
   <div class="tr-panel"><h2>Top tags</h2><p class="sub">Most-used triage tags across all tickets.</p>${tagBars}</div>
   <div class="tr-panel"><h2>Currently outstanding</h2><p class="sub">${r.backlog.length} ticket(s) awaiting resolution, oldest first.</p>

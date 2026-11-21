@@ -18,10 +18,11 @@ const PUBLIC_STATUS_LABELS = {
   assessed: "Review complete",
   fixing: "Work in progress",
   in_progress: "Work in progress",
-  resolved: "Resolved",
+  // A finished ticket reads Closed, whatever word the database stored.
+  resolved: "Closed",
   closed: "Closed",
-  wont_fix: "Review complete",
-  rejected: "Review complete",
+  wont_fix: "Closed",
+  rejected: "Closed",
   completed: "Completed",
   done: "Completed",
 };

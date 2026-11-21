@@ -104,7 +104,7 @@ describe("makeTicketReportBody", () => {
     ], { now: NOW });
     const { extraCss, body } = makeTicketReportBody(r);
     assert.ok(extraCss.includes(".tr-wrap"));
-    for (const h of ["Outstanding tickets over time", "Opened vs resolved per week", "Median resolution time", "Tickets by category", "Top tags", "Currently outstanding"]) {
+    for (const h of ["Outstanding tickets over time", "Opened vs closed per week", "Median time to close", "Tickets by category", "Top tags", "Currently outstanding"]) {
       assert.ok(body.includes(h), "missing panel: " + h);
     }
     assert.ok(!body.includes("<b>evil</b>"), "title must be escaped");

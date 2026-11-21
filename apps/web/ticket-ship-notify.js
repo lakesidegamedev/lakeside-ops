@@ -282,7 +282,7 @@ function formatResolutionNotice({ message, actions, followUp } = {}) {
   const safeActions = normalizeActions(actions);
   const next = String(followUp || "").trim();
   const lines = [
-    "Your support report has been resolved.",
+    "Your support report is closed.",
     "",
     summary || "We completed the support work for this report.",
   ];

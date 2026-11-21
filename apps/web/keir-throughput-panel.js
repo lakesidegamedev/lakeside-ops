@@ -19,7 +19,7 @@ function createThroughputPanel(root, { onJob = () => {} } = {}) {
     lane.append(heading, el("small", "kt-lanehint", hint), list, empty); map.append(lane); columns.set(id, { lane, list, empty });
   }
   const branches = el("div", "kt-branches");
-  for (const [id, label, hint] of [["approval", "Owner gate", "A decision is the next move"], ["unknown", "Other waits", "Next step not yet recorded"], ["monitoring", "Under observation", "Resolved or in closure grace"]]) {
+  for (const [id, label, hint] of [["approval", "Owner gate", "A decision is the next move"], ["unknown", "Other waits", "Next step not yet recorded"], ["monitoring", "Under observation", "Closed or in closure grace"]]) {
     const lane = el("section", "kt-branch"); lane.dataset.stage = id;
     const heading = el("div", "kt-branch-title"); heading.append(el("i", "kt-station"), el("b", "", label), el("small", "", hint));
     const list = el("div", "kt-branch-list"), empty = el("span", "kt-lane-empty", "Clear"); lane.append(heading, list, empty); branches.append(lane); columns.set(id, { lane, list, empty });

@@ -121,7 +121,7 @@ function factsText(data) {
     tr.ok ? `Traffic (Cloudflare): ${tr.uniquesToday} visitors today, ${tr.uniques7d} in 7d, ${tr.pageViews7d} pageviews/7d, ${tr.requests7d} requests/7d, ${tr.cacheHit}% cache hit` : "",
     `Errors (Sentry): ${gt.ok ? `${gt.count} open issues` : "n/a"}${gt.ok && (gt.issues || []).length ? " — top: " + gt.issues.slice(0, 5).map((i) => `[${i.level}] ${i.title}${i.seen ? ` ×${i.seen}` : ""}`).join(" | ") : ""}`,
     `Deploys (Railway): ${rw.ok ? (rw.services || []).map((s) => `${s.name}=${(s.status || "?").toLowerCase()}`).join(", ") : "n/a"}`,
-    `Support: ${tk.newTickets24h || 0} NEW tickets + ${tk.newSuggestions24h || 0} NEW suggestions opened in the last 24h. ${tk.outstandingTickets} open tickets, ${tk.outstandingSuggestions} open suggestions total, ${tk.completedTickets} resolved all-time, avg ${tk.avgDuration || "n/a"}`,
+    `Support: ${tk.newTickets24h || 0} NEW tickets + ${tk.newSuggestions24h || 0} NEW suggestions opened in the last 24h. ${tk.outstandingTickets} open tickets, ${tk.outstandingSuggestions} open suggestions total, ${tk.completedTickets} closed all-time, avg ${tk.avgDuration || "n/a"}`,
     sec ? `Security (Semgrep): ${sec.total} findings — ${sec.errors} errors, ${sec.warnings} warnings` : "Security: no recent scan",
     `Infra: ${inf.memAvailMb}MB RAM available, ${inf.swapUsedMb}MB swap in use, load ${inf.load1}`,
     lu ? `LLM usage (7d): Kimi ${(lu.kimi || {}).calls || 0} calls, Ollama ${(lu.ollama || {}).calls || 0} calls` : "",
