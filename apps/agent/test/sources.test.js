@@ -184,3 +184,25 @@ test("M3: the original 1872 bad line is still impossible: no rules label on a pa
   const rule = codeObs("code_read", { path: "src/lib/corporations/founding.ts" }, { path: "src/lib/corporations/founding.ts", text: "x" });
   assert.ok(!/game's rules/.test(sources.appendChecked("The company page crashes because the page reads a field that is missing.", [rule])));
 });
+
+test("M7: a rule answer resting on a cut code_search result keeps its line, from the stored files or the cut text", () => {
+  const full = { index: "dev", count: 3, files: ["src/lib/corporations/founding.ts", "src/app/corporation/[id]/page.tsx"], hits: [{ path: "src/lib/corporations/founding.ts", text: "x".repeat(4000) }] };
+  const cut = JSON.stringify(full).slice(0, 1800);
+  assert.throws(() => JSON.parse(cut));
+  const msg = "You cannot create a second company while your first one is still listed.";
+  assert.equal(sources.checkedLine(msg, [codeObs("code_search", { question: "second company" }, cut)]), "From: the game's rules.");
+  assert.equal(sources.checkedLine(msg, [codeObs("code_search", { question: "second company" }, "{\"index\":\"dev\",\"cou", { files: ["src/lib/corporations/founding.ts"] })]), "From: the game's rules.");
+  // A search whose top hit is plumbing gives no line, even if a rules file comes second.
+  assert.equal(sources.checkedLine(msg, [codeObs("code_exact", { question: "x" }, { files: ["src/lib/api/accessLog.ts", "src/lib/corporations/founding.ts"] })]), null);
+});
+
+test("M7: the observation journal keeps a code read's files beside its cut result", () => {
+  const memory = require("../lib/operator/investigation-memory");
+  const ledger = { data: {}, save() {} };
+  const job = { id: "j", role: "support", ticket: 1900 };
+  memory.record(ledger, job, "read_tool", { server: "ops-knowledge", tool: "code_search", args: { question: "q" } }, { files: ["src/lib/corporations/founding.ts"], hits: [{ path: "src/lib/corporations/founding.ts", text: "y".repeat(5000) }] }, 1);
+  const row = ledger.data.ticketObservations[1900][0];
+  assert.equal(row.truncated, true);
+  assert.deepEqual(row.files, ["src/lib/corporations/founding.ts"]);
+  assert.equal(sources.describe(row), sources.RULES_LABEL);
+});

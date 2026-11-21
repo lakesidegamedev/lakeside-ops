@@ -17,12 +17,22 @@ function record(ledger, job, name, input, result, at) {
     ["image", "_images"].includes(key) || key === "data" && typeof value === "string" && value.length > 2000 ? undefined : value));
   const args = encode(input), text = encode(result);
   if (!text) return;
+  // Keir 11.4 review (M7): the result is cut to MAX_TEXT below, which usually breaks its JSON. The files a code read
+  // returned are kept beside it, so the source line can still name what was read.
+  let files = null;
+  try {
+    const codeTools = ["code_search", "code_read", "code_exact"];
+    const { codeFiles } = require("./sources");
+    if (read && codeTools.includes(input.tool)) files = codeFiles(input.args, result);
+    else if (name === "evidence_batch") files = (input.queries || []).flatMap((q, i) => codeTools.includes(q?.tool) ? codeFiles(q.args, result.results?.[i] ?? null) : []);
+    files = files?.length ? [...new Set(files)].slice(0, 12).map((f) => String(f).slice(0, 200)) : null;
+  } catch { files = null; }
   const key = crypto.createHash("sha256").update(name + args).digest("hex").slice(0, 24);
   const all = (ledger.data.ticketObservations ||= {}), rows = all[job.ticket] || [];
   all[job.ticket] = [...rows.filter(row => row.key !== key), {
     key, task: job.id, tool: name, at, historical: true,
     input: args.slice(0, 600), result: text.slice(0, MAX_TEXT), truncated: text.length > MAX_TEXT,
-    ...(result.receipt ? { receipt: result.receipt } : {}),
+    ...(result.receipt ? { receipt: result.receipt } : {}), ...(files ? { files } : {}),
   }].slice(-MAX_ROWS);
   ledger.save();
 }

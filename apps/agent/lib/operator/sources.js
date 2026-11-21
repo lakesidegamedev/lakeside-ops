@@ -68,11 +68,14 @@ function fileKind(file) {
   if (lib) return lib[1] && PLUMBING_DIRS.has(lib[1]) ? null : RULES_LABEL;
   return null;
 }
-// Files a code read touched, top hit first: the path it asked for, then the files its result names.
-function codeFiles(args, result) {
+// Files a code read touched, top hit first: the path it asked for, then the files its result names. Keir 11.4 review
+// (M7): stored observations are cut to 1,800 characters, so the JSON often does not parse; the file list stored beside
+// the observation is used first, and the paths are read out of the cut text when there is none.
+function codeFiles(args, result, files = null) {
   const out = [];
   const push = (v) => { if (typeof v === "string" && v && !out.includes(v)) out.push(v); };
   push(args?.path);
+  for (const f of Array.isArray(files) ? files : []) push(f);
   const r = typeof result === "string" ? parse(result) : result;
   const scan = (v, depth = 0) => {
     if (!v || typeof v !== "object" || depth > 3) return;
@@ -80,20 +83,25 @@ function codeFiles(args, result) {
     for (const f of Array.isArray(v.files) ? v.files : []) push(typeof f === "string" ? f : f?.path);
     for (const k of ["hits", "results", "chunks", "matches", "items"]) for (const x of Array.isArray(v[k]) ? v[k] : []) scan(x, depth + 1);
   };
-  scan(r);
+  if (r) scan(r);
+  else if (typeof result === "string") {
+    const list = /"files"\s*:\s*\[([^\]]*)/.exec(result)?.[1] || "";
+    for (const m of list.matchAll(/"((?:[^"\\]|\\.)+)"/g)) push(m[1]);
+    for (const m of result.matchAll(/"path"\s*:\s*"((?:[^"\\]|\\.)+)"/g)) push(m[1]);
+  }
   return out;
 }
 // The label for a read: a read of one file is named by that file; a search is named by its top hit only, since the
 // answer rests on what it found first. A top hit that cannot be told apart gives no label.
-function codeLabel(args, result) {
-  const list = codeFiles(args, result);
+function codeLabel(args, result, files = null) {
+  const list = codeFiles(args, result, files);
   return list.length ? fileKind(list[0]) : null;
 }
 const CODE_TOOLS = new Set(["code_search", "code_read", "code_exact"]);
 const TABLE = {
-  code_search: (a, result) => codeLabel(a, result),
-  code_read: (a, result) => codeLabel(a, result),
-  code_exact: (a, result) => codeLabel(a, result),
+  code_search: (a, result, files) => codeLabel(a, result, files),
+  code_read: (a, result, files) => codeLabel(a, result, files),
+  code_exact: (a, result, files) => codeLabel(a, result, files),
   trace_sector: (a) => {
     const sector = title(a.sector || a.sectorId || a.name), region = title(a.region || a.regionId);
     if (sector && region) return `your ${sector} page in ${region}`;
@@ -116,17 +124,20 @@ function describe(obs) {
     // A batch of code reads is named like a single one: by the first file whose kind is clear.
     const input = parse(obs.input), result = parse(obs.result);
     const queries = (input?.queries || []).filter((q) => CODE_TOOLS.has(q?.tool));
-    if (!queries.length) return null;
+    if (!queries.length && !(input == null && /"tool"\s*:\s*"code_(?:search|read|exact)"/.test(String(obs.input || "")))) return null;
+    if (!result) return codeLabel(queries[0]?.args, String(obs.result || ""), obs.files); // cut text: stored files, then paths in the text
     for (const [i, q] of queries.entries()) { const k = codeLabel(q.args, result?.results?.[i] ?? null); if (k) return k; }
     for (const x of result?.results || []) { const k = codeLabel(null, x); if (k) return k; }
     return null;
   }
   if (obs.tool !== "read_tool") return null;
-  const input = parse(obs.input);
+  // The stored input is cut to 600 characters; a cut code read still names its tool and path.
+  const raw = String(obs.input || "");
+  const input = parse(raw) || (/"tool"\s*:\s*"(code_(?:search|read|exact))"/.test(raw) ? { tool: /"tool"\s*:\s*"(code_(?:search|read|exact))"/.exec(raw)[1], args: { path: /"path"\s*:\s*"((?:[^"\\]|\\.)+)"/.exec(raw)?.[1] } } : null);
   const fn = input && TABLE[input.tool];
   if (!fn) return null;
   let words;
-  try { words = fn(input.args && typeof input.args === "object" ? input.args : {}, obs.result); } catch { return null; }
+  try { words = fn(input.args && typeof input.args === "object" ? input.args : {}, obs.result, obs.files); } catch { return null; }
   return words || null;
 }
 
