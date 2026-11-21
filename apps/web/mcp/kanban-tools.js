@@ -5,13 +5,21 @@
 // token; writes need a token with write scope.
 
 const { z } = require("zod");
+const { decorateItem, decorateList, decorateBrief, runTicketReconcile } = require("../kanban-tickets");
 const { sharedKanban, OPEN_LANES, LANES, REPORT_EVENTS, KINDS, CLASSES, AREAS, WIP_CAP, RELEASE_DAYS, normalizeActor } = require("../kanban-store");
 const AREA_HELP = "Area inside the product. " + Object.entries(AREAS).map(([p, a]) => `${p}: ${Object.keys(a).join("/")}`).join("; ");
 const CLASS_HELP = "project (multi-step program; other cards can name it as parent_id), issue (something broken or owed: bug, ticket follow-up, release step) or idea (a proposal nobody committed to)";
 
 const PRODUCT_HELP = 'Product slug or alias, e.g. "a-house-divided" (aliases: ahd, AHDGame, adhd-bot), "margin-of-victory" (mov), "metroforge" (mf), "grand-century" (gc), "foreshore", "verdigris", "lakeside-mcp" (mcp: MCP/tool capability requests, kind capability).';
 
-function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sharedKanban }) {
+const TICKET = z.union([z.number().int().positive(), z.array(z.number().int().positive()).max(20)]).optional()
+  .describe("The support ticket number (or numbers) this card comes from. Its live status is shown on the card, and the card follows the ticket: see ticket_role.");
+const TICKET_ROLE = z.enum(["own", "follow_up"]).optional()
+  .describe("own (default while the ticket is open): the ticket's own work or question, closed automatically when the ticket closes. follow_up: work that outlives the ticket; stays open, labelled 'Follow-up from closed ticket N'.");
+
+// ticketStatus: a reader from kanban-tickets.createTicketStatusReader. Without
+// one, linked cards say "ticket status unknown" instead of guessing.
+function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sharedKanban, ticketStatus = null }) {
   const canWrite = auth && auth.scopes && auth.scopes.write === true;
   // The token name is shared by many agents, so it is never used as an actor.
   const actorFor = (actor) => normalizeActor(actor) || "unnamed";
@@ -37,7 +45,7 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       limit: z.number().int().min(1).max(50).optional().default(10),
       actor: ACTOR,
     },
-    async ({ product, limit, actor }) => guarded((k) => k.brief({ product, limit, actor })),
+    async ({ product, limit, actor }) => guarded((k) => decorateBrief(k.brief({ product, limit, actor }), ticketStatus)),
   );
 
   server.tool(
@@ -57,14 +65,14 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       q: z.string().optional().describe("Substring match on title, detail, progress"),
       limit: z.number().int().min(1).max(500).optional().default(100),
     },
-    async (args) => guarded((k) => k.list(args)),
+    async (args) => guarded((k) => decorateList(k.list(args), ticketStatus)),
   );
 
   server.tool(
     "kanban_get",
-    "Fetch one kanban item with full detail and recent event history. Accepts legacy Lakeside Hub ids (merged duplicates resolve to the survivor).",
+    "Fetch one kanban item with full detail and recent event history. Accepts legacy Lakeside Hub ids (merged duplicates resolve to the survivor). A card linked to a support ticket shows the ticket's live status (Open or Closed); ticket_warning, when present, comes first and says the ticket is closed while the card is not.",
     { id: z.number().int().positive() },
-    async ({ id }) => guarded((k) => k.get(id, { events: 40 })),
+    async ({ id }) => guarded((k) => decorateItem(k.get(id, { events: 40 }), ticketStatus)),
   );
 
   server.tool(
@@ -85,12 +93,14 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       area: z.string().optional().describe(AREA_HELP),
       class: z.enum(CLASSES).optional().describe(CLASS_HELP),
       parent_id: z.number().int().positive().optional().describe("The project card this belongs to"),
+      ticket: TICKET,
+      ticket_role: TICKET_ROLE,
       force: z.boolean().optional().describe("Add even if a similar open card exists or you are at the in-progress cap"),
       actor: ACTOR,
     },
     // Agents never flag owner decisions here: the owner is asked in chat and the
     // answer is recorded on the card afterwards (owner rule, 2026-10-17).
-    async ({ actor, ...input }) => guarded((k) => withWarning(k.add({ ...input, needs_owner: false }, { actor: actorFor(actor) }), actor), { write: true }),
+    async ({ actor, ...input }) => guarded(async (k) => withWarning(await decorateItem(k.add({ ...input, needs_owner: false }, { actor: actorFor(actor) }), ticketStatus), actor), { write: true }),
   );
 
   server.tool(
@@ -112,10 +122,12 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       area: z.string().optional().describe(AREA_HELP + ". Empty string clears."),
       class: z.enum(CLASSES).optional(),
       parent_id: z.number().int().min(0).optional().describe("Project card id; 0 clears"),
+      ticket: z.union([z.number().int().positive(), z.array(z.number().int().positive()).max(20)]).optional().describe("Link the card to this support ticket (or tickets); an empty array unlinks"),
+      ticket_role: TICKET_ROLE,
       force: z.boolean().optional().describe("Move into now even at the in-progress cap"),
       actor: ACTOR,
     },
-    async ({ id, actor, ...patch }) => guarded((k) => withWarning(k.update(id, patch.needs_owner === true ? { ...patch, needs_owner: undefined } : patch, { actor: actorFor(actor) }), actor), { write: true }),
+    async ({ id, actor, ...patch }) => guarded(async (k) => withWarning(await decorateItem(k.update(id, patch.needs_owner === true ? { ...patch, needs_owner: undefined } : patch, { actor: actorFor(actor) }), ticketStatus), actor), { write: true }),
   );
 
   server.tool(
@@ -128,12 +140,27 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
       evidence_url: z.string().url().optional(),
       no_evidence_reason: z.string().max(300).optional().describe("Required on completed when there is no evidence_url: why there is no link"),
       force: z.boolean().optional().describe("started even at the in-progress cap"),
+      ticket: TICKET,
+      ticket_role: TICKET_ROLE,
       actor: ACTOR,
       idempotency_key: z.string().max(200).optional(),
     },
     async ({ actor, ...input }) => guarded((k) => withWarning(k.report(input.event === "decision_requested"
       ? { ...input, event: "progress", summary: `Decision pending with the owner in chat: ${input.summary}`.slice(0, 4000), actor: actorFor(actor) }
       : { ...input, actor: actorFor(actor) }), actor), { write: true }),
+  );
+
+  server.tool(
+    "kanban_ticket_reconcile",
+    "Make cards agree with their support tickets now (the ops web app also runs this every 10 minutes). A card that is a ticket's own work closes when the ticket closes; a follow-up stays open, relabelled, with a quiet assignee removed; a reopened ticket reopens its most recent card; a Now card with no progress for 24 hours goes back to Next, unassigned. dry_run (default true here) lists what would change without changing anything.",
+    {
+      dry_run: z.boolean().optional().default(true),
+      limit: z.number().int().min(1).max(500).optional().describe("At most this many cards changed (default 50)"),
+    },
+    async ({ dry_run, limit }) => {
+      if (!ticketStatus) return errorResult("ticket records are not connected to this server");
+      return guarded((k) => runTicketReconcile({ store: k, reader: ticketStatus, dryRun: dry_run !== false, limit }), { write: dry_run === false });
+    },
   );
 
   server.tool(

@@ -91,7 +91,7 @@ async function route(req, res, url, ctx) {
   const pathname = url.pathname;
   if (!(req.method === "GET" || req.method === "HEAD")) return false;
   if (!isHubPath(pathname)) return false;
-  const { resolveSession, addSecurityHeaders, getDb, knowledgeStore, publishedDir, legacyDir, kanban, getConfig } = ctx;
+  const { resolveSession, addSecurityHeaders, getDb, knowledgeStore, publishedDir, legacyDir, kanban, getConfig, ticketStatus = null } = ctx;
   if (Object.prototype.hasOwnProperty.call(STATIC, pathname)) {
     const [file, type] = STATIC[pathname];
     let buf = staticCache.get(file);
@@ -176,7 +176,7 @@ async function route(req, res, url, ctx) {
   }
 
   if (pathname === "/kanban" || pathname === "/api/hub/board") {
-    const data = board.buildBoard(kanban());
+    const data = await board.addTicketStatus(board.buildBoard(kanban()), ticketStatus);
     if (pathname !== "/kanban") return json(200, data);
     const { extraCss, body } = board.makeBoardBody(data);
     return html(renderHubPage({ title: "Work board", active: "board", extraCss, body }));

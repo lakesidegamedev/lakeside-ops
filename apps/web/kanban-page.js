@@ -99,12 +99,14 @@ function card(i,showLane){
   const moves=ALL_LANES.map(([k,l])=>'<option value="'+k+'"'+(k===i.lane?' selected':'')+'>'+l+'</option>').join('');
   return '<div class="kb-card'+(i.stale?' stale':'')+'" data-id="'+i.id+'">'
    +'<button class="t" data-open="'+i.id+'">'+esc(i.title)+'</button>'
+   +(i.ticket_warning?'<div class="kb-progress" style="color:var(--danger,#dc4444)">'+esc(i.ticket_warning)+'</div>':'')
+   +(i.ticket_status&&i.ticket_status.length?'<div class="kb-meta">'+(i.ticket_label?'<span class="kb-chip">'+esc(i.ticket_label)+'</span>':'')+i.ticket_status.map(t=>'<span class="kb-chip" title="'+esc(t.summary)+'">Ticket '+esc(t.number)+': '+esc(t.status==='unknown'?'ticket status unknown':t.status)+'</span>').join('')+'</div>':'')
    +(i.progress_summary?'<div class="kb-progress">'+esc(i.progress_summary)+'</div>':'')
    +'<div class="kb-meta">'
    +(showLane?'<span class="kb-chip lane">'+esc(i.lane)+'</span>':'')
    +(st.product?'':'<span class="kb-chip">'+esc(productName(i.product))+'</span>')
    +(i.impact!=='medium'?'<span class="kb-chip '+esc(i.impact)+'">'+esc(i.impact)+'</span>':'')
-   +(i.stale?'<span class="kb-chip stale" title="'+esc(i.stale_reason)+'">stale</span>':'')
+   +(i.stale?'<span class="kb-chip stale" title="'+esc(i.stale_reason)+'">'+(i.activity?'no recent activity':'stale')+'</span>':'')
    +(gh?'<a href="'+esc(gh)+'" target="_blank" rel="noopener">'+esc(i.github.repo.split('/')[1])+'#'+esc(i.github.number)+'</a>':'')
    +(ev?'<a href="'+esc(ev)+'" target="_blank" rel="noopener">evidence</a>':'')
    +(i.assigned_to?'<span>'+esc(i.assigned_to)+'</span>':'')
@@ -144,7 +146,7 @@ async function openItem(id){
   f.elements.needs_owner.checked=item.needs_owner;f.elements.assigned_to.value=item.assigned_to||'';
   f.elements.github.value=item.github?item.github.url:'';f.elements.evidence_url.value=item.evidence_url||'';
   f.elements.note.value='';
-  const headHtml='#'+esc(item.id)+(item.stale?' <span class="kb-chip stale">stale: '+esc(item.stale_reason)+'</span>':'')+(item.aliases&&item.aliases.length?' <span class="kb-sub">merged from '+item.aliases.map(a=>'#'+esc(a.alias_id)).join(', ')+'</span>':'');
+  const headHtml=(item.ticket_warning?'<div class="kb-err">'+esc(item.ticket_warning)+'</div>':'')+(item.ticket_status&&item.ticket_status.length?'<div class="kb-sub">'+item.ticket_status.map(t=>esc(t.summary)).join(' · ')+'</div>':'')+'#'+esc(item.id)+(item.stale?' <span class="kb-chip stale">stale: '+esc(item.stale_reason)+'</span>':'')+(item.aliases&&item.aliases.length?' <span class="kb-sub">merged from '+item.aliases.map(a=>'#'+esc(a.alias_id)).join(', ')+'</span>':'');
   $('#kb-edit-head').innerHTML=headHtml;
   const histHtml=(item.events||[]).map(e=>'<div><time>'+esc((e.created_at||'').slice(0,16).replace('T',' '))+'</time> <b>'+esc(e.event_type)+'</b> '+esc(e.actor)+': '+esc(e.summary)+(safeUrl(e.evidence_url)?' <a href="'+esc(e.evidence_url)+'" target="_blank" rel="noopener">evidence</a>':'')+'</div>').join('')||'<div>No history.</div>';
   $('#kb-hist').innerHTML=histHtml;

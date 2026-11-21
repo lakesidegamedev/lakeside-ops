@@ -13,10 +13,12 @@
 
 const { sharedKanban } = require("./kanban-store");
 const { makeKanbanBody } = require("./kanban-page");
+const { decorateItem, decorateList, decorateBrief, runTicketReconcile } = require("./kanban-tickets");
 
 const ITEM_RE = /^\/api\/kanban\/items\/(\d+)$/;
 const REPORT_RE = /^\/api\/kanban\/items\/(\d+)\/report$/;
 const COLLABORATE_RE = /^\/api\/kanban\/items\/(\d+)\/collaborate$/;
+const RECONCILE_PATH = "/api/kanban/ticket-reconcile";
 
 function isKanbanPath(pathname) {
   return pathname === "/kanban" || pathname === "/api/kanban" || pathname.startsWith("/api/kanban/");
@@ -40,7 +42,9 @@ async function readJson(req, limit = 64 * 1024) {
   try { return JSON.parse(raw || "{}"); } catch { const e = new Error("Invalid JSON"); e.status = 400; throw e; }
 }
 
-async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, store = sharedKanban }) {
+// ticketStatus: a kanban-tickets reader; linked cards show the live ticket
+// status from it, or "ticket status unknown" without it.
+async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, store = sharedKanban, ticketStatus = null }) {
   if (!isKanbanPath(pathname)) return false;
 
   const send = (status, data) => {
@@ -86,17 +90,29 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
     if ((req.method === "GET" || req.method === "HEAD") && isPage) {
       let board = null;
       let error = null;
-      try { board = store().board(); } catch (e) { error = e.message; }
+      try { board = await decorateList(store().board(), ticketStatus); } catch (e) { error = e.message; }
       const { extraCss, body } = makeKanbanBody({ board, error, readOnly, collaborator: readOnly ? actor : "" });
       addSecurityHeaders(res);
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
       res.end(req.method === "HEAD" ? "" : renderShell({ title: "Work board", active: "/kanban", role: session.role, extraCss, body }));
       return true;
     }
-    if (req.method === "GET" && pathname === "/api/kanban") return send(200, store().board());
-    if (req.method === "GET" && pathname === "/api/kanban/brief") return send(200, store().brief({}));
+    if (req.method === "GET" && pathname === "/api/kanban") return send(200, await decorateList(store().board(), ticketStatus));
+    if (req.method === "GET" && pathname === "/api/kanban/brief") return send(200, await decorateBrief(store().brief({}), ticketStatus));
     const itemMatch = pathname.match(ITEM_RE);
-    if (req.method === "GET" && itemMatch) return send(200, store().get(Number(itemMatch[1]), { events: 60 }));
+    if (req.method === "GET" && itemMatch) return send(200, await decorateItem(store().get(Number(itemMatch[1]), { events: 60 }), ticketStatus));
+    // Ticket reconcile: GET is the dry run (changes nothing), POST applies.
+    // Admin only.
+    if (pathname === RECONCILE_PATH) {
+      if (session.role !== "admin") return send(404, { error: "Not found" });
+      if (!ticketStatus) return send(503, { error: "ticket records are not connected to this server" });
+      if (req.method === "GET") return send(200, await runTicketReconcile({ store: store(), reader: ticketStatus, dryRun: true }));
+      if (req.method === "POST") {
+        if (!sameOrigin(req)) return send(403, { error: "Invalid request origin" });
+        const body = await readJson(req);
+        return send(200, await runTicketReconcile({ store: store(), reader: ticketStatus, dryRun: body.dry_run !== false, limit: body.limit }));
+      }
+    }
 
     if (req.method === "POST") {
       if (!sameOrigin(req)) return send(403, { error: "Invalid request origin" });
@@ -108,8 +124,8 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
         return send(200, store().collaborate({ id: Number(collaborationMatch[1]), action: body.action,
           summary: body.summary, evidence_url: body.evidence_url, actor }));
       }
-      if (pathname === "/api/kanban/items") return send(201, store().add(body, { actor }));
-      if (itemMatch) return send(200, store().update(Number(itemMatch[1]), body, { actor }));
+      if (pathname === "/api/kanban/items") return send(201, await decorateItem(store().add(body, { actor }), ticketStatus));
+      if (itemMatch) return send(200, await decorateItem(store().update(Number(itemMatch[1]), body, { actor }), ticketStatus));
       const reportMatch = pathname.match(REPORT_RE);
       if (reportMatch) return send(200, store().report({ ...body, id: Number(reportMatch[1]), actor }));
     }

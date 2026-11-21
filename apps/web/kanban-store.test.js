@@ -332,7 +332,7 @@ describe("kanban MCP tools", () => {
 
   it("registers the agent verbs and gates writes on scope", async () => {
     const t = tools(false);
-    assert.deepEqual(Object.keys(t).sort(), ["kanban_add", "kanban_brief", "kanban_get", "kanban_github_sync", "kanban_list", "kanban_update", "work_report"]);
+    assert.deepEqual(Object.keys(t).sort(), ["kanban_add", "kanban_brief", "kanban_get", "kanban_github_sync", "kanban_list", "kanban_ticket_reconcile", "kanban_update", "work_report"]);
     assert.equal((await t.kanban_add({ product: "ahd", title: "x" })).ok, false);
     assert.equal((await t.kanban_list({})).ok, true);
     const w = tools(true);

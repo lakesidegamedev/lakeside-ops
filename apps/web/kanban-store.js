@@ -12,13 +12,20 @@
 // work so history survives. "Needs owner" is a flag, not a lane: the board
 // pulls flagged items out of their lane into one section so owner decisions
 // are never scattered. "Stale" is derived: an item in `now` with no update for
-// STALE_DAYS days, or one explicitly flagged (stale_flagged_at). Any update
-// clears the explicit flag.
+// STALE_DAYS days, one whose assignee has reported no progress for
+// ACTIVITY_HOURS ("no recent activity"), or one explicitly flagged
+// (stale_flagged_at). Any update clears the explicit flag.
+//
+// Ticket links: a card can name the support tickets it came from
+// (ticket_refs) and whether it is the ticket's own work or a follow-up
+// (ticket_role). kanban-tickets.js reads the tickets' live status for display
+// and runs reconcileTickets so cards follow their tickets.
 
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
+const { ticketNumbersFromText, ticketNumbersFromDetail, normalizeTicketInput } = require("./ticket-refs");
 
 // inbox: filed but not picked up (automatic intake). next: committed, has an owner.
 const OPEN_LANES = ["now", "next", "blocked", "inbox", "backlog"];
@@ -33,6 +40,15 @@ const INBOX_AFTER_DAYS = 1; // unassigned, untouched Next cards fall back to Inb
 const WIP_CAP = Number(process.env.KANBAN_WIP_CAP || 3);
 const WIP_EXEMPT = /^(keir|system|github-sync)\b/;
 const MONITOR_EVENT_EVERY_MS = 60 * 60_000;
+// "Assigned" means a live session (owner, 2026-11-21): a Now card whose
+// assignee has reported nothing for this long shows "no recent activity" and
+// the ticket reconcile pass moves it back to Next with the assignee cleared.
+const ACTIVITY_HOURS = 24;
+const HOUR_MS = 3_600_000;
+// A card linked to a support ticket is either the ticket's own work or
+// question (it ends when the ticket does) or a follow-up that outlives it.
+const TICKET_ROLES = ["own", "follow_up"];
+const RECONCILE_LIMIT = 50;
 // Grouping: a card is a project (multi-step program, may have child cards),
 // an issue (something broken or owed: a bug, a ticket follow-up, a release
 // step) or an idea (a proposal nobody has committed to). Areas group cards
@@ -108,6 +124,73 @@ function similar(a, b) {
 }
 const DAY_MS = 86_400_000;
 
+// Ticket links. A card the caller linked explicitly keeps its link; one read
+// from its own words is re-read when the title or detail changes.
+const FOLLOW_UP_RE = /^\s*follow[- ]?up\b|\bfollow[- ]?up from (?:a )?closed (?:ticket|incident)\b/i;
+function followUpTitle(title) {
+  return FOLLOW_UP_RE.test(String(title || ""));
+}
+// A capability request, an idea or a project outlives the ticket that
+// prompted it, so a link read from its words makes it a follow-up.
+function outlivesTicket(kind, cls) {
+  return kind === "capability" || cls === "idea" || cls === "project";
+}
+function inferTicketLink(title, detail, { kind = null, cls = null } = {}) {
+  const refs = [...ticketNumbersFromText(title)];
+  for (const n of ticketNumbersFromDetail(detail)) if (!refs.includes(n)) refs.push(n);
+  return { refs, role: refs.length ? (followUpTitle(title) || outlivesTicket(kind, cls) ? "follow_up" : "own") : null };
+}
+function parseTicketRefs(value) {
+  try {
+    const list = JSON.parse(value || "[]");
+    return Array.isArray(list) ? list.filter((n) => Number.isSafeInteger(n) && n > 0) : [];
+  } catch {
+    return [];
+  }
+}
+function ticketRoleFor(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const v = String(value).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const role = v === "followup" ? "follow_up" : v === "ticket" || v === "ticket_own" ? "own" : v;
+  if (!TICKET_ROLES.includes(role)) throw badInput(`ticket_role must be one of ${TICKET_ROLES.join(", ")} (own: the ticket's own work, ends with it; follow_up: work that outlives the ticket)`);
+  return role;
+}
+// Cards that predate the link (or were scanned before) get one, read
+// conservatively from their title and detail. Runs on every open; only rows
+// never scanned are touched, so it is cheap after the first run.
+function backfillTicketRefs(db) {
+  const rows = db.prepare("SELECT id, title, detail, kind, class FROM kanban_items WHERE ticket_refs IS NULL").all();
+  if (!rows.length) return 0;
+  const set = db.prepare("UPDATE kanban_items SET ticket_refs = ?, ticket_role = ?, ticket_link = ? WHERE id = ?");
+  db.transaction(() => {
+    for (const row of rows) {
+      const { refs, role } = inferTicketLink(row.title, row.detail, { kind: row.kind, cls: row.class });
+      set.run(JSON.stringify(refs), role, refs.length ? "inferred" : null, row.id);
+    }
+  })();
+  return rows.length;
+}
+function shortDay(value, at = Date.now()) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  const day = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  return new Date(at).getUTCFullYear() === d.getUTCFullYear() ? day : `${day} ${d.getUTCFullYear()}`;
+}
+// "Ticket 1852 was closed on 17 Nov (Fixed. The free technology ...)."
+function ticketClosedSentence(number, status, at) {
+  const day = status && status.closed_at ? shortDay(status.closed_at, at) : null;
+  const merged = status && status.merged_into != null ? `, merged into ticket ${status.merged_into}` : "";
+  const how = status && status.resolution ? ` (${String(status.resolution).replace(/\s+/g, " ").trim().slice(0, 200).replace(/[.!?]+$/, "")})` : "";
+  return `Ticket ${number} was closed${day ? ` on ${day}` : ""}${merged}${how}.`;
+}
+
+// When the assignee last showed signs of life: the last progress report, else
+// when the card was created (add with start:true records progress from now on).
+function activityAt(row) {
+  const at = Date.parse(row.last_progress_at || row.created_at);
+  return Number.isFinite(at) ? at : null;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS kanban_products (
   slug        TEXT PRIMARY KEY,
@@ -151,7 +234,10 @@ CREATE TABLE IF NOT EXISTS kanban_items (
   closed_at        TEXT,
   area             TEXT,
   class            TEXT,
-  parent_id        INTEGER
+  parent_id        INTEGER,
+  ticket_refs      TEXT,
+  ticket_role      TEXT,
+  ticket_link      TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS kanban_items_github ON kanban_items(github_repo, github_number) WHERE github_repo IS NOT NULL;
 CREATE INDEX IF NOT EXISTS kanban_items_lane ON kanban_items(lane, updated_at);
@@ -334,6 +420,13 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   if (!cols.has("area")) db.exec("ALTER TABLE kanban_items ADD COLUMN area TEXT");
   if (!cols.has("class")) db.exec("ALTER TABLE kanban_items ADD COLUMN class TEXT");
   if (!cols.has("parent_id")) db.exec("ALTER TABLE kanban_items ADD COLUMN parent_id INTEGER");
+  // Ticket link: ticket_refs is a JSON array of ticket numbers ('[]' once a
+  // card has been scanned and names none), ticket_role own | follow_up,
+  // ticket_link explicit (given by the caller) | inferred (read from the text).
+  if (!cols.has("ticket_refs")) db.exec("ALTER TABLE kanban_items ADD COLUMN ticket_refs TEXT");
+  if (!cols.has("ticket_role")) db.exec("ALTER TABLE kanban_items ADD COLUMN ticket_role TEXT");
+  if (!cols.has("ticket_link")) db.exec("ALTER TABLE kanban_items ADD COLUMN ticket_link TEXT");
+  backfillTicketRefs(db);
 
   const iso = () => now().toISOString();
 
@@ -380,6 +473,13 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     const updated = Date.parse(row.updated_at);
     const ageDays = Number.isFinite(updated) ? Math.floor((at - updated) / DAY_MS) : null;
     const staleByAge = row.lane === "now" && ageDays != null && ageDays >= STALE_DAYS;
+    const active = activityAt(row);
+    const quietHours = active == null ? null : Math.floor((at - active) / HOUR_MS);
+    // The assignee of a Now card has reported nothing for a day: the card no
+    // longer shows someone working it right now.
+    const quiet = row.lane === "now" && row.kind !== "monitor" && Boolean(row.assigned_to) && quietHours != null && quietHours >= ACTIVITY_HOURS;
+    const quietText = quiet ? `no recent activity: ${row.assigned_to} has reported nothing for ${quietHours >= 48 ? `${Math.floor(quietHours / 24)} days` : `${quietHours} hours`}` : null;
+    const tickets = parseTicketRefs(row.ticket_refs);
     const item = {
       id: row.id,
       product: row.product,
@@ -388,11 +488,16 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       impact: row.impact,
       kind: row.kind,
       needs_owner: Boolean(row.needs_owner),
-      stale: Boolean(row.stale_flagged_at) || staleByAge,
-      stale_reason: row.stale_flagged_at ? `flagged ${row.stale_flagged_at.slice(0, 10)}` : staleByAge ? `no update in ${ageDays} days` : null,
+      stale: Boolean(row.stale_flagged_at) || staleByAge || quiet,
+      stale_reason: row.stale_flagged_at ? `flagged ${row.stale_flagged_at.slice(0, 10)}` : quiet ? quietText : staleByAge ? `no update in ${ageDays} days` : null,
       assigned_to: row.assigned_to || null,
+      activity: quiet ? "no recent activity" : null,
       progress_summary: row.progress_summary || "",
       last_progress_at: row.last_progress_at || null,
+      last_activity_at: active == null ? null : new Date(active).toISOString(),
+      tickets,
+      ticket_role: tickets.length ? (row.ticket_role || "own") : null,
+      ticket_link: tickets.length ? (row.ticket_link || "inferred") : null,
       evidence_url: row.evidence_url || null,
       source: row.source,
       github: row.github_repo ? { repo: row.github_repo, number: row.github_number, url: row.github_url, state: row.github_state } : null,
@@ -423,7 +528,8 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(item_id, product, event_type, actor, summary, evidence_url, idempotency_key, created_at);
   }
 
-  const STALE_SQL = `(stale_flagged_at IS NOT NULL OR (lane = 'now' AND julianday(?) - julianday(updated_at) >= ${STALE_DAYS}))`;
+  const QUIET_SQL = `(lane = 'now' AND kind != 'monitor' AND assigned_to IS NOT NULL AND assigned_to != '' AND (julianday(?) - julianday(COALESCE(last_progress_at, created_at))) * 24 >= ${ACTIVITY_HOURS})`;
+  const STALE_SQL = `(stale_flagged_at IS NOT NULL OR (lane = 'now' AND julianday(?) - julianday(updated_at) >= ${STALE_DAYS}) OR ${QUIET_SQL})`;
 
   function list({ product, lane, lanes, stale, needs_owner, include_done = false, q, source, assigned_to, kind, include_monitors = true, area, class: cls, parent_id, limit = 200 } = {}) {
     const where = [];
@@ -437,8 +543,8 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     } else if (!include_done) {
       where.push("lane != 'done'");
     }
-    if (stale === true) { where.push(STALE_SQL); params.push(iso()); }
-    if (stale === false) { where.push(`NOT ${STALE_SQL}`); params.push(iso()); }
+    if (stale === true) { where.push(STALE_SQL); params.push(iso(), iso()); }
+    if (stale === false) { where.push(`NOT ${STALE_SQL}`); params.push(iso(), iso()); }
     if (needs_owner === true) where.push("needs_owner = 1");
     if (needs_owner === false) where.push("needs_owner = 0");
     if (source) { where.push("source = ?"); params.push(source); }
@@ -492,6 +598,32 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       .sort((a, b) => b.score - a.score).slice(0, 3);
   }
 
+  // The ticket link a write asks for. An explicit ticket (or tickets) wins;
+  // otherwise the link is read from the card's own words. ticket_role alone
+  // re-labels whatever link the card already has.
+  function ticketLinkFor(input, title, detail, row = null) {
+    const given = input.tickets !== undefined ? input.tickets : input.ticket;
+    const role = ticketRoleFor(input.ticket_role);
+    if (given !== undefined) {
+      const refs = normalizeTicketInput(given);
+      return { refs, role: refs.length ? (role || (followUpTitle(title) ? "follow_up" : "own")) : null, source: refs.length ? "explicit" : null };
+    }
+    if (row && row.ticket_link === "explicit") {
+      const refs = parseTicketRefs(row.ticket_refs);
+      return { refs, role: role || row.ticket_role || "own", source: "explicit" };
+    }
+    const inferred = inferTicketLink(title, detail, { kind: normalizeKind(input.kind ?? (row ? row.kind : null)), cls: input.class ?? (row ? row.class : null) });
+    const keepRole = row && parseTicketRefs(row.ticket_refs).length ? row.ticket_role : null;
+    // A title that now says "Follow-up from closed ticket N" (the hand sweep
+    // relabels cards that way) makes the card a follow-up.
+    const titleRole = followUpTitle(title) ? "follow_up" : null;
+    return { refs: inferred.refs, role: inferred.refs.length ? (role || titleRole || keepRole || inferred.role) : null, source: inferred.refs.length ? "inferred" : null };
+  }
+  function describeLink(link) {
+    const names = link.refs.map((n) => `ticket ${n}`).join(", ");
+    return link.role === "follow_up" ? `follow-up from ${names}` : `the ${link.refs.length > 1 ? "tickets'" : "ticket's"} own work (${names})`;
+  }
+
   function add(input = {}, { actor = "agent" } = {}) {
     actor = normalizeActor(actor) || "unnamed";
     const product = resolveProduct(input.product);
@@ -519,26 +651,28 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     if (start) { lane = "now"; checkWip(actor, { force: input.force }); }
     const stamp = iso();
     const assigned = normalizeActor(clean(input.assigned_to, 120)) || clean(input.assigned_to, 120) || (start ? actor : null);
+    const link = ticketLinkFor(input, title, clean(input.detail, 20000) || "");
     let laneNote = "";
     // Next means committed: someone owns it. Unowned filings wait in the inbox.
     if (lane === "next" && !assigned) { lane = "inbox"; laneNote = " (Next needs an owner, so this waits in the inbox)"; }
     const id = db.transaction(() => {
       const parent = input.parent_id ? resolveId(input.parent_id) : null;
       const info = db.prepare(`INSERT INTO kanban_items (product, title, detail, lane, impact, kind, needs_owner, assigned_to, evidence_url,
-          github_repo, github_number, github_url, github_state, created_at, updated_at, area, class, parent_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          github_repo, github_number, github_url, github_state, created_at, updated_at, area, class, parent_id, ticket_refs, ticket_role, ticket_link, last_progress_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(product, title, clean(input.detail, 20000) || "", lane, impact, normalizeKind(input.kind), input.needs_owner ? 1 : 0,
           assigned, checkUrl(input.evidence_url, "evidence_url"), github?.repo || null, github?.number || null, github?.url || null,
-          github ? "open" : null, stamp, stamp, areaFor(product, input.area), classFor(input.class), parent);
+          github ? "open" : null, stamp, stamp, areaFor(product, input.area), classFor(input.class), parent,
+          JSON.stringify(link.refs), link.role, link.source, start ? stamp : null);
       const newId = Number(info.lastInsertRowid);
-      logEvent({ item_id: newId, product, event_type: "created", actor, summary: `Added to ${lane}${laneNote}`, created_at: stamp });
+      logEvent({ item_id: newId, product, event_type: "created", actor, summary: `Added to ${lane}${laneNote}${link.refs.length ? `; ${describeLink(link)}` : ""}`, created_at: stamp });
       if (start) logEvent({ item_id: newId, product, event_type: "started", actor, summary: clean(input.summary, 4000) || "Started", created_at: stamp });
       return newId;
     })();
     return get(id, { events: 5 });
   }
 
-  const UPDATABLE = ["title", "detail", "lane", "impact", "kind", "needs_owner", "assigned_to", "evidence_url", "github", "product", "progress_summary", "stale", "force", "area", "class", "parent_id"];
+  const UPDATABLE = ["title", "detail", "lane", "impact", "kind", "needs_owner", "assigned_to", "evidence_url", "github", "product", "progress_summary", "stale", "force", "area", "class", "parent_id", "ticket", "tickets", "ticket_role"];
 
   function update(id, patch = {}, { actor = "agent" } = {}) {
     actor = normalizeActor(actor) || "unnamed";
@@ -571,6 +705,15 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     if (patch.evidence_url !== undefined) changes.evidence_url = checkUrl(patch.evidence_url, "evidence_url");
     if (patch.progress_summary !== undefined) { changes.progress_summary = clean(patch.progress_summary, 4000) || ""; changes.last_progress_at = iso(); }
     if (patch.product !== undefined) changes.product = resolveProduct(patch.product);
+    // Moving a card into Now is its assignee saying they are on it.
+    if (changes.lane === "now" && row.lane !== "now") changes.last_progress_at = iso();
+    if (patch.ticket !== undefined || patch.tickets !== undefined || patch.ticket_role !== undefined || changes.title !== undefined || changes.detail !== undefined) {
+      const link = ticketLinkFor(patch, changes.title ?? row.title, changes.detail ?? row.detail, row);
+      const refs = JSON.stringify(link.refs);
+      if (refs !== (row.ticket_refs || "[]") || link.role !== row.ticket_role || link.source !== row.ticket_link) {
+        changes.ticket_refs = refs; changes.ticket_role = link.role; changes.ticket_link = link.source;
+      }
+    }
     if (patch.github !== undefined) {
       const github = patch.github ? parseGithubRef(patch.github) : null;
       if (github) {
@@ -588,7 +731,9 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     const stamp = iso();
     changes.updated_at = stamp;
     const described = Object.keys(changes).filter((k) => !["updated_at", "closed_at", "stale_flagged_at", "last_progress_at", "github_number", "github_url", "github_state"].includes(k))
-      .map((k) => (k === "lane" ? `lane ${row.lane} -> ${changes.lane}` : k === "needs_owner" ? `needs_owner ${changes.needs_owner ? "on" : "off"}` : k === "github_repo" ? "github link" : k));
+      .filter((k) => !["ticket_role", "ticket_link"].includes(k))
+      .map((k) => (k === "lane" ? `lane ${row.lane} -> ${changes.lane}` : k === "needs_owner" ? `needs_owner ${changes.needs_owner ? "on" : "off"}` : k === "github_repo" ? "github link"
+        : k === "ticket_refs" ? (changes.ticket_refs === "[]" ? "ticket link removed" : `ticket link: ${describeLink({ refs: parseTicketRefs(changes.ticket_refs), role: changes.ticket_role })}`) : k));
     if (patch.stale !== undefined) described.push(patch.stale ? "flagged stale" : "stale cleared");
     db.transaction(() => {
       const keys = Object.keys(changes);
@@ -602,7 +747,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return db.transaction(() => recordReport(input)).immediate();
   }
 
-  function recordReport({ id, event, summary, evidence_url = null, actor = "agent", idempotency_key = null, no_evidence_reason = null, force = false }) {
+  function recordReport({ id, event, summary, evidence_url = null, actor = "agent", idempotency_key = null, no_evidence_reason = null, force = false, ticket, tickets, ticket_role }) {
     if (!REPORT_EVENTS.includes(event)) throw badInput(`event must be one of ${REPORT_EVENTS.join(", ")}`);
     actor = normalizeActor(actor) || "unnamed";
     let text = clean(summary, 4000);
@@ -646,10 +791,16 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     if (event === "blocked") set.lane = "blocked";
     if (event === "decision_requested") set.needs_owner = 1;
     if (event === "completed") { set.lane = "done"; set.closed_at = stamp; set.needs_owner = 0; }
+    let linkNote = "";
+    if (ticket !== undefined || tickets !== undefined || ticket_role !== undefined) {
+      const link = ticketLinkFor({ ticket, tickets, ticket_role }, row.title, row.detail, row);
+      set.ticket_refs = JSON.stringify(link.refs); set.ticket_role = link.role; set.ticket_link = link.source;
+      if (link.refs.length) linkNote = ` [${describeLink(link)}]`;
+    }
     db.transaction(() => {
       const keys = Object.keys(set);
       db.prepare(`UPDATE kanban_items SET ${keys.map((k) => `${k} = @${k}`).join(", ")} WHERE id = @id`).run({ ...set, id: realId });
-      logEvent({ item_id: realId, product: row.product, event_type: event, actor, summary: text, evidence_url: evidence, idempotency_key: key, created_at: stamp });
+      logEvent({ item_id: realId, product: row.product, event_type: event, actor, summary: `${text}${linkNote}`.slice(0, 4000), evidence_url: evidence, idempotency_key: key, created_at: stamp });
     })();
     return { duplicate: false, item: get(realId, { events: 5 }) };
   }
@@ -687,7 +838,8 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     const me = normalizeActor(actor);
     const pick = (opts) => list({ ...opts, product: slug || undefined, include_monitors: false, limit }).items.map(line);
     const line = (it) => ({ id: it.id, title: it.title, product: it.product, lane: it.lane, owner: it.assigned_to, impact: it.impact,
-      age_days: it.age_days, stale: it.stale, progress: looksLikeJson(it.progress_summary) ? "" : String(it.progress_summary || "").slice(0, 160), github: it.github ? `${it.github.repo}#${it.github.number}` : null });
+      age_days: it.age_days, stale: it.stale, ...(it.activity ? { activity: it.stale_reason } : {}), progress: looksLikeJson(it.progress_summary) ? "" : String(it.progress_summary || "").slice(0, 160), github: it.github ? `${it.github.repo}#${it.github.number}` : null,
+      ...(it.tickets.length ? { tickets: it.tickets, ticket_role: it.ticket_role, last_progress_at: it.last_progress_at } : {}) });
     const count = (where, ...params) => db.prepare(`SELECT COUNT(*) AS n FROM kanban_items WHERE ${where} AND kind != 'monitor' ${slug ? "AND product = ?" : ""}`).get(...params, ...(slug ? [slug] : [])).n;
     const since3 = new Date(now().getTime() - 3 * DAY_MS).toISOString();
     const stamp = iso();
@@ -696,10 +848,10 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return {
       scope: slug || "all products",
       generated_at: stamp,
-      rules: `Add with start:true before you write code. Send actor as your name (claude, codex, keir, muse, deepseek), with :session if several run at once. Cap: ${WIP_CAP} cards in progress per actor. Cards quiet ${RELEASE_DAYS} days go back to Next automatically. completed needs evidence_url or no_evidence_reason. Ask the owner in chat, never in a card.`,
+      rules: `Add with start:true before you write code. Pass ticket (and ticket_role own or follow_up) when a card comes from a support ticket; a ticket's own card closes when the ticket closes. A Now card with no progress for ${ACTIVITY_HOURS} hours goes back to Next, unassigned. Send actor as your name (claude, codex, keir, muse, deepseek), with :session if several run at once. Cap: ${WIP_CAP} cards in progress per actor. Cards quiet ${RELEASE_DAYS} days go back to Next automatically. completed needs evidence_url or no_evidence_reason. Ask the owner in chat, never in a card.`,
       counts: {
         now: count("lane = 'now'"), next: count("lane = 'next'"), blocked: count("lane = 'blocked'"),
-        inbox: count("lane = 'inbox'"), backlog: count("lane = 'backlog'"), stale: count(`lane != 'done' AND ${STALE_SQL}`, stamp),
+        inbox: count("lane = 'inbox'"), backlog: count("lane = 'backlog'"), stale: count(`lane != 'done' AND ${STALE_SQL}`, stamp, stamp),
         shipped_3d: count("lane = 'done' AND closed_at >= ?", since3),
       },
       ...(me ? { mine: list({ assigned_to: me, product: slug || undefined, include_monitors: false, limit }).items.filter((it) => it.lane !== "done").map(line) } : {}),
@@ -758,6 +910,189 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       }
     })();
     return out;
+  }
+
+  // ── Cards follow their ticket ────────────────────────────────────────────
+  // Ticket numbers whose status the reconcile pass needs: every ticket named
+  // by an open card, plus tickets whose cards this pass closed recently (to
+  // notice a reopened ticket).
+  function ticketNumbersToCheck({ reopenWindowDays = 30 } = {}) {
+    const numbers = new Set();
+    for (const row of db.prepare("SELECT ticket_refs FROM kanban_items WHERE lane != 'done' AND kind != 'monitor' AND ticket_refs IS NOT NULL AND ticket_refs != '[]'").all())
+      for (const n of parseTicketRefs(row.ticket_refs)) numbers.add(n);
+    const since = new Date(now().getTime() - reopenWindowDays * DAY_MS).toISOString();
+    for (const row of db.prepare("SELECT i.ticket_refs FROM kanban_events e JOIN kanban_items i ON i.id = e.item_id WHERE e.event_type = 'ticket_closed' AND e.created_at >= ?").all(since))
+      for (const n of parseTicketRefs(row.ticket_refs)) numbers.add(n);
+    return [...numbers].sort((a, b) => a - b);
+  }
+
+  // One pass that makes linked cards agree with their tickets.
+  //
+  // statuses: Map(ticket number -> { state: "open" | "closed" | "unknown",
+  //   closed_at, merged_into, resolution }) read fresh from the ticket record.
+  //   A ticket missing from the map, or "unknown", is never acted on.
+  // dryRun: report what would change, change nothing.
+  // limit: at most this many cards changed per run; the rest wait for the next.
+  //
+  // Rules (owner, 2026-11-21):
+  // - a card that is the ticket's own work closes when every ticket it names
+  //   is closed, with a note saying how the ticket closed;
+  // - a follow-up stays open, is relabelled "Follow-up from closed ticket N"
+  //   and loses an assignee who has reported nothing for a day (never assigns);
+  //   a card linked to a GitHub issue, or filed after the ticket closed, is
+  //   always treated as a follow-up;
+  // - a reopened ticket notes the reopening on every card this pass closed for
+  //   it and reopens only the most recent one, into the inbox;
+  // - a Now card whose assignee has been quiet for a day moves to Next,
+  //   unassigned. This last rule reads no ticket, so it also runs when the
+  //   ticket service cannot be read (ticketsReadable: false skips the rest).
+  // Every change is logged on the card with an idempotency key tied to the
+  // ticket's closure, so a second run, or a card already relabelled by hand,
+  // changes nothing.
+  function reconcileTickets({ statuses = new Map(), ticketsReadable = true, dryRun = false, limit = RECONCILE_LIMIT, actor = "ticket-sync" } = {}) {
+    const at = now().getTime();
+    const stamp = iso();
+    const max = Math.min(Math.max(Number(limit) || RECONCILE_LIMIT, 1), 500);
+    const plans = [];
+    const touched = new Set();
+    let deferred = 0;
+    const skippedUnknown = new Set();
+    const keyUsed = db.prepare("SELECT 1 FROM kanban_events WHERE idempotency_key = ?");
+    const statusOf = (n) => {
+      const st = statuses instanceof Map ? statuses.get(n) : statuses[n];
+      return st && (st.state === "open" || st.state === "closed") ? st : null;
+    };
+    const live = (row) => { const a = activityAt(row); return a != null && at - a < ACTIVITY_HOURS * HOUR_MS; };
+    const quietFor = (row) => { const a = activityAt(row); return a == null ? "a long time" : `${Math.floor((at - a) / HOUR_MS)} hours`; };
+    const plan = (p) => {
+      if (plans.length >= max) { deferred += 1; return false; }
+      p.expect = rowById(p.id).updated_at;
+      plans.push(p); touched.add(p.id); return true;
+    };
+
+    if (ticketsReadable) {
+      const rows = db.prepare("SELECT * FROM kanban_items WHERE lane != 'done' AND kind != 'monitor' AND ticket_refs IS NOT NULL AND ticket_refs != '[]' ORDER BY id").all();
+      for (const row of rows) {
+        const refs = parseTicketRefs(row.ticket_refs);
+        if (!refs.length) continue;
+        const known = refs.map((n) => [n, statusOf(n)]);
+        const unknown = known.filter(([, st]) => !st).map(([n]) => n);
+        if (unknown.length) { unknown.forEach((n) => skippedUnknown.add(n)); continue; }
+        const closed = known.filter(([, st]) => st.state === "closed");
+        if (!closed.length) continue;
+        const lastClosed = closed.map(([, st]) => Date.parse(st.closed_at) || 0).reduce((a, b) => Math.max(a, b), 0);
+        const filedAfter = lastClosed > 0 && Date.parse(row.created_at) > lastClosed;
+        // Work reported on the card after its ticket closed is leftover work:
+        // the card is kept as a follow-up rather than closed.
+        const workedAfter = lastClosed > 0 && Date.parse(row.last_progress_at || "") > lastClosed;
+        const role = row.github_repo || filedAfter || workedAfter || followUpTitle(row.title) ? "follow_up" : (row.ticket_role || "own");
+        const closedLine = closed.map(([n, st]) => ticketClosedSentence(n, st, at)).join(" ");
+        if (role === "own") {
+          if (closed.length !== refs.length) continue; // waits for its other tickets
+          const key = `tkt:${row.id}:close:${refs.join(",")}:${closed.map(([, st]) => st.closed_at || "").join(",")}`.slice(0, 200);
+          if (keyUsed.get(key)) continue;
+          plan({
+            id: row.id, title: row.title, action: "completed", tickets: refs,
+            reason: `${closedLine} This card was the ${refs.length > 1 ? "tickets'" : "ticket's"} own work, so it closes with ${refs.length > 1 ? "them" : "it"}. If work remains, reopen it as a follow-up.`,
+            set: { lane: "done", closed_at: stamp, needs_owner: 0, stale_flagged_at: null, updated_at: stamp },
+            event: "ticket_closed", key,
+          });
+          continue;
+        }
+        const key = `tkt:${row.id}:follow:${closed.map(([n, st]) => `${n}@${st.closed_at || ""}`).join(",")}`.slice(0, 200);
+        if (keyUsed.get(key)) continue;
+        const set = {};
+        const notes = [];
+        if (!row.github_repo && !followUpTitle(row.title)) {
+          const names = closed.map(([n]) => n);
+          set.title = `Follow-up from closed ticket${names.length > 1 ? "s" : ""} ${names.join(", ")}: ${row.title}`.slice(0, 300);
+          notes.push("relabelled as a follow-up");
+        }
+        if (row.assigned_to && !live(row)) {
+          set.assigned_to = null;
+          notes.push(`${row.assigned_to} unassigned (nothing reported for ${quietFor(row)})`);
+          if (row.lane === "now") { set.lane = "next"; notes.push("moved from Now to Next"); }
+        }
+        if (!Object.keys(set).length) continue; // already labelled by hand and still live: nothing to do
+        set.updated_at = stamp;
+        set.stale_flagged_at = null;
+        if (row.ticket_role !== "follow_up") set.ticket_role = "follow_up";
+        plan({
+          id: row.id, title: row.title, action: "follow_up", tickets: refs,
+          reason: `${closedLine} This card stays open as follow-up work from it, not the ticket: ${notes.join("; ")}.${row.github_repo && !set.title ? " Its GitHub issue decides when it closes." : ""}`,
+          set, event: "ticket_follow_up", key,
+        });
+      }
+
+      // Reopened tickets: cards this pass closed for a ticket that is open again.
+      const reopenedTickets = new Map();
+      for (const ev of db.prepare(`SELECT e.id AS event_id, e.idempotency_key, i.* FROM kanban_events e JOIN kanban_items i ON i.id = e.item_id
+          WHERE e.event_type = 'ticket_closed' AND e.idempotency_key LIKE 'tkt:%' ORDER BY e.id`).all()) {
+        for (const n of parseTicketRefs(ev.ticket_refs)) {
+          const st = statusOf(n);
+          if (!st || st.state !== "open") continue;
+          const key = `tkt:${ev.id}:reopen:${n}:${ev.event_id}`;
+          if (keyUsed.get(key)) continue;
+          if (!reopenedTickets.has(n)) reopenedTickets.set(n, []);
+          reopenedTickets.get(n).push({ row: ev, key });
+        }
+      }
+      for (const [n, entries] of reopenedTickets) {
+        const latest = new Map();
+        for (const e of entries) latest.set(e.row.id, e); // one entry per card, its latest closure
+        const cards = [...latest.values()].sort((a, b) => Date.parse(b.row.created_at) - Date.parse(a.row.created_at) || b.row.id - a.row.id);
+        const humanReopened = cards.some((c) => c.row.lane !== "done");
+        cards.forEach((c, index) => {
+          const reopen = !humanReopened && index === 0;
+          plan({
+            id: c.row.id, title: c.row.title, action: reopen ? "reopened" : "noted", tickets: parseTicketRefs(c.row.ticket_refs),
+            reason: reopen
+              ? `Ticket ${n} was reopened. This is the most recent card closed with it, so it is back in the inbox for someone to pick up.`
+              : `Ticket ${n} was reopened. This card stays closed${humanReopened ? " because another card for the ticket is already open" : `; card #${cards[0].row.id} was reopened instead`}.`,
+            set: reopen ? { lane: "inbox", closed_at: null, assigned_to: null, updated_at: stamp } : null,
+            event: "ticket_reopened", key: c.key,
+          });
+        });
+      }
+    }
+
+    // "Assigned" means a live session.
+    for (const row of db.prepare(`SELECT * FROM kanban_items WHERE lane = 'now' AND kind != 'monitor' AND assigned_to IS NOT NULL AND assigned_to != '' ORDER BY id`).all()) {
+      if (touched.has(row.id) || live(row)) continue;
+      plan({
+        id: row.id, title: row.title, action: "released", tickets: parseTicketRefs(row.ticket_refs),
+        reason: `No recent activity: ${row.assigned_to} has reported nothing for ${quietFor(row)}. Moved from Now to Next and unassigned; send work_report started to pick it up again.`,
+        set: { lane: "next", assigned_to: null, stale_flagged_at: null, updated_at: stamp },
+        event: "released", key: null,
+      });
+    }
+
+    if (!dryRun && plans.length) {
+      const apply = db.transaction(() => {
+        for (const p of plans) {
+          if (p.key && keyUsed.get(p.key)) continue;
+          const row = rowById(p.id);
+          // Changed by someone else since this pass looked: leave it for the next pass.
+          if (!row || row.updated_at !== p.expect) { p.skipped = true; continue; }
+          if (p.set) {
+            const keys = Object.keys(p.set);
+            db.prepare(`UPDATE kanban_items SET ${keys.map((k) => `${k} = @${k}`).join(", ")} WHERE id = @id`).run({ ...p.set, id: p.id });
+          }
+          const before = p.set && p.set.title ? ` Title was: "${row.title}".` : "";
+          logEvent({ item_id: p.id, product: row.product, event_type: p.event, actor, summary: `${p.reason}${before}`.slice(0, 4000), idempotency_key: p.key, created_at: stamp });
+        }
+      });
+      apply.immediate();
+    }
+    const counts = plans.reduce((c, p) => ({ ...c, [p.action]: (c[p.action] || 0) + 1 }), {});
+    return {
+      dry_run: Boolean(dryRun), tickets_readable: Boolean(ticketsReadable), generated_at: stamp,
+      counts, changed: plans.filter((p) => !p.skipped).length, deferred,
+      skipped_unknown_tickets: [...skippedUnknown].sort((a, b) => a - b),
+      changes: plans.map((p) => ({ id: p.id, title: p.title, action: p.action, tickets: p.tickets, reason: p.reason,
+        ...(p.set && p.set.title ? { new_title: p.set.title } : {}), ...(p.set && "lane" in p.set ? { lane: p.set.lane } : {}),
+        ...(p.set && "assigned_to" in p.set ? { assigned_to: p.set.assigned_to } : {}) })),
+    };
   }
 
   function board() {
@@ -867,6 +1202,8 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     board,
     syncGithub,
     logEvent,
+    ticketNumbersToCheck,
+    reconcileTickets,
   };
 }
 
@@ -880,6 +1217,11 @@ function sharedKanban() {
 
 module.exports = {
   openKanban,
+  ticketClosedSentence,
+  shortDay,
+  inferTicketLink,
+  TICKET_ROLES,
+  ACTIVITY_HOURS,
   sharedKanban,
   defaultDbPath,
   parseGithubRef,

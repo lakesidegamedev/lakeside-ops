@@ -89,6 +89,11 @@ async function embedText(text, isQuery = false) {
   return Array.from(out.data);
 }
 
+// Live ticket status on kanban cards, read from the same tickets collection the
+// support tools read. One reader per process so its short cache is shared.
+const { createTicketStatusReader } = require("../kanban-tickets");
+const kanbanTicketStatus = createTicketStatusReader({ getDb: () => store.getDb(MONGODB_URI) });
+
 async function main() {
   const db = await store.getDb(MONGODB_URI);
   await store.ensureIndexes(db);
@@ -466,7 +471,7 @@ async function main() {
     }
 
     // Product kanban (same store as the dashboard /kanban page).
-    registerKanbanTools(server, { auth, jsonResult, errorResult });
+    registerKanbanTools(server, { auth, jsonResult, errorResult, ticketStatus: kanbanTicketStatus });
     registerCwTelemetryTools(server, { jsonResult, errorResult });
 
     // The fleet describing itself, read live from every hosted server.
