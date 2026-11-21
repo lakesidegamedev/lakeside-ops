@@ -49,6 +49,7 @@ function replay(ticket, { cap = 4, close = null } = {}) {
         if (!r.allow) why = "hourly cap";
         else if (r.overflow) overflowAt = e.t;
         else if (e.via === "closing") closing.noteTurnReport(d, job, e.t);
+        else if (e.via === "promise") promises.keepForReport(d, ticket, e.t);
       }
     }
     if (why) { suppressed.push({ at: e.at, kind: e.kind, why, text: e.text.slice(0, 80) }); continue; }
@@ -83,30 +84,31 @@ test("ticket 1845: eight 'now live' notices become four, the repeated model anno
   for (const k of ["11-17T18:12", "11-17T19:04", "11-17T22:04"]) assert.match(why[`${k} notice`] || "", /already announced|already said/, k);
   // 20:55 next day: the model had already said it at 20:36, so the card notice stays quiet (one voice).
   assert.equal(why["11-18T20:55 notice"], "the model already said it is live");
-  // Keir 11.2 second pass: a turn having run is not a reason to post. Ten unprompted per-turn reports are held back.
+  // Keir 11.2 second pass: a turn having run is not a reason to post. Seven unprompted per-turn reports are held back.
   assert.deepEqual(r.suppressed.filter((s) => s.why === "turn not called for").map((s) => hhmm(s.at)),
-    ["11-17T19:04", "11-17T21:07", "11-17T22:04", "11-18T00:31", "11-18T04:52", "11-18T10:59", "11-18T13:46", "11-18T19:52", "11-18T21:06"]);
-  assert.equal(r.suppressed.length, 14);
-  assert.equal(r.accepted.length, 19);
+    ["11-17T22:04", "11-17T23:12", "11-18T00:31", "11-18T04:52", "11-18T13:46", "11-18T19:52", "11-18T21:06"]);
+  assert.equal(r.suppressed.length, 12);
+  assert.equal(r.accepted.length, 21);
   // Corrections are never suppressed.
   assert.ok(!r.suppressed.some((s) => isCorrection(s.text)));
 });
 
 test("ticket 1845 through the wake path: every turn report that goes out was called for, and one step-back comes at the threshold", () => {
   const r = replay(1845, { close: CLOSE_1845 });
-  // Why each turn report went out, as the rule decided it: the closing condition's one turn (21), a promise Keir made that
-  // was due, the player had just written, or a correction.
+  // Why each turn report went out, as the rule decided it: a promise Keir had made (each promise licenses one report), the
+  // closing condition's one turn, the player had just written, or a correction.
   const reasons = r.accepted.filter((p) => p.via).map((p) => [new Date(p.at).toISOString().slice(5, 16), p.via]);
-  assert.deepEqual(reasons, [["11-17T17:07", "correction"], ["11-17T18:03", "closing"], ["11-17T23:12", "promise"], ["11-18T04:58", "answer"], ["11-18T23:08", "promise"]]);
+  assert.deepEqual(reasons, [["11-17T17:07", "correction"], ["11-17T18:03", "promise"], ["11-17T19:04", "closing"], ["11-17T21:07", "promise"],
+    ["11-18T04:58", "answer"], ["11-18T10:59", "promise"], ["11-18T23:08", "promise"]]);
   // The promises those posts kept were recorded by the post path, not by the model.
   assert.ok(r.promises.some((p) => p.state === "kept" && /\bI will check\b|\bI will\b/i.test(p.text)));
-  // Exactly one step-back activation at the threshold (the 10th post, which is also the 3rd correction).
+  // Exactly one step-back activation at the threshold (the 10th Keir post).
   assert.equal(r.stepBacks.length, 1, JSON.stringify(r.stepBacks));
   assert.equal(r.stepBacks[0].level, 1);
   assert.match(r.stepBacks[0].why, /10 Keir posts/);
-  // Without the closing condition, turn 21's report is held back too: only a promise, the player or the condition opens one.
+  // Without the closing condition one more report (turn 22) is held back: only a promise, the player or the condition opens one.
   const bare = replay(1845);
-  assert.equal(bare.suppressed.filter((s) => s.why === "turn not called for").length, 10);
+  assert.equal(bare.suppressed.filter((s) => s.why === "turn not called for").length, 8);
 });
 
 test("ticket 1859: the live notice with no release of its own is suppressed; corrections and answers still go out", () => {

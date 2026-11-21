@@ -36,9 +36,10 @@ function isDue(d, p, now) {
   }
   return p.dueAt <= now;
 }
-// A recorded promise the next post may keep: due now, about to be due, or already woken for.
+// A recorded promise the next post may keep: a turn promise once its turn has run (or it was woken for it); any other
+// open promise at any time, since coming back early with the answer keeps it.
 function calledFor(d, ticket, now) {
-  return (d.ticketPromises?.[ticket] || []).some((p) => p.state === "open" && (p.wokenAt || isDue(d, p, now) || (!Number.isFinite(p.afterTurn) && p.dueAt <= now + 30 * 60000)));
+  return (d.ticketPromises?.[ticket] || []).some((p) => p.state === "open" && (p.wokenAt || isDue(d, p, now) || !(p.kind === "turn" && Number.isFinite(p.afterTurn))));
 }
 
 // First person, future, a follow-up verb: "I will compare...", "I'll confirm here once...", "we'll let you know".
@@ -50,7 +51,7 @@ function sentences(text) { return String(text || "").split(/(?<=[.!?])\s+|\n+/).
 function detect(text, now, due = DUE) {
   for (const s of sentences(text)) {
     if (s.endsWith("?") || !FOLLOW.test(s) || NOT_PROMISE.test(s)) continue;
-    const kind = /\b(?:next|a|the|another|each|every)\s+turn\b|\bturn (?:has )?(?:run|processed|passes|finishes)\b|\bafter turn \d+/i.test(s) ? "turn"
+    const kind = /\b(?:next|a|the|another|each|every)\s+turn\b|\bnext (?:few|couple of|two|three) turns\b|\bturn (?:has )?(?:run|processed|passes|finishes)\b|\bafter turn \d+/i.test(s) ? "turn"
       : /\b(?:deploy\w*|released?|goes live|is live|reaches the main server|on the main server|ships?)\b/i.test(s) ? "release"
       : /\btomorrow\b/i.test(s) ? "tomorrow"
       : /\b(?:later today|this (?:evening|afternoon|morning)|tonight|in a few hours)\b/i.test(s) ? "today"
@@ -148,4 +149,11 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
   return { tick };
 }
 
-module.exports = { overlap, detect, notePost, createPromises, isDue, calledFor, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS, TURN_BACKSTOP_MS };
+// A turn report that went out on a promise's account keeps that promise: one report per promise.
+function keepForReport(d, ticket, now) {
+  const p = (d.ticketPromises?.[ticket] || []).find((x) => x.state === "open" && (x.wokenAt || isDue(d, x, now) || !(x.kind === "turn" && Number.isFinite(x.afterTurn))));
+  if (p) { p.state = "kept"; p.keptAt = now; p.keptBy = "turn report"; }
+  return p || null;
+}
+
+module.exports = { overlap, detect, notePost, createPromises, isDue, calledFor, keepForReport, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS, TURN_BACKSTOP_MS };

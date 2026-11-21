@@ -68,3 +68,16 @@ test("a step-back activation checkpoints first and posts at most once", async ()
   assert.equal(f.job.stepBack.done, true);
   assert.equal(closing.stepBack(d, f.job, f.now(), closing.DEFAULTS), false);
 });
+
+test("a recorded promise opens one turn report, through the real post path", async () => {
+  const f = setup(); f.playerWrote(30);
+  const d = f.ledger.data;
+  d.watch = { turnClock: { turn: 40, iteration: 3, at: f.now() } };
+  await f.broker.tool(f.job, "channel_reply", { message: "Your plant has no coal supplier yet. I will check its output after the next turn." });
+  assert.equal(d.ticketPromises[123][0].afterTurn, 41);
+  f.advance(65); d.watch.turnClock = { turn: 41, iteration: 3, at: f.now() }; f.job.lastGameReadAt = f.now();
+  await f.broker.tool(f.job, "channel_reply", { message: "Turn 41: the coal contract started and your plant produced its first output." });
+  assert.equal(d.ticketPromises[123][0].state, "kept");
+  f.advance(65); d.watch.turnClock = { turn: 42, iteration: 3, at: f.now() }; f.job.lastGameReadAt = f.now();
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Turn 42: your plant kept producing and made a profit." }), /a turn having run is not a reason to post/);
+});

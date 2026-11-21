@@ -1340,14 +1340,15 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       }
       // Keir 11.2: one turn rule (postbudget.turnPostRule): turn commentary only when the player asked, a recorded promise is
       // due, or the closing condition calls for that turn's result; and never the same answer twice.
-      const promiseDue = require("./promises").calledFor(d, ticketNo, now());
+      // An answer the player is owed (owedNow) passes like a due promise: it answers them.
+      const promiseDue = require("./promises").calledFor(d, ticketNo, now()) || owedNow;
       const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]];
       const calledFor = closing.closingCallsForTurn(d, job, now()) || (root && root !== job && closing.closingCallsForTurn(d, root, now()));
       const lastKeirAt = Math.max(d.ticketPace?.[ticketNo]?.log?.at(-1)?.at || 0, d.lastSubstantive?.[ticketNo]?.at || 0);
       const turnArgs = { posts, humanAt: h, message, correction: isCorrection(message), promiseDue, calledFor, lastKeirAt };
       const turnRule = pb.turnPostRule(turnArgs);
       if (turnRule) { ledger.audit(turnRule.why === "same turn answer" ? "turn_repeat_refused" : "turn_post_not_called_for", { job: job.id, ticket: ticketNo }); refuse(turnRule.refusal); }
-      else if (!opts.collect && pb.turnPostVia(turnArgs) === "closing") job.turnReportViaClosing = true; // it uses up the closing condition's call
+      else if (!opts.collect) { const via = pb.turnPostVia(turnArgs); if (via === "closing") job.turnReportViaClosing = true; else if (via === "promise" && !owedNow) job.turnReportViaPromise = true; } // a report uses up what called for it
       const cap = Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR;
       const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || isCorrection(message), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
       if (!r.allow) { ledger.audit("hourly_post_cap_refused", { job: job.id, ticket: ticketNo, count: r.count }); refuse(pb.hourlyRefusal(r, cap)); }
@@ -1946,6 +1947,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // report the closing condition called for uses that call up.
       try { closing.notePost(d, ticketNo, message, { now: now(), correction: isCorrection(message) }); } catch {}
       if (job.stepBack && !job.stepBack.done) job.stepBack.posted = (job.stepBack.posted || 0) + 1;
+      if (job.turnReportViaPromise) { delete job.turnReportViaPromise; require("./promises").keepForReport(d, ticketNo, now()); }
       if (job.turnReportViaClosing) { delete job.turnReportViaClosing; const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]]; for (const j of [job, root]) if (j && closing.closingCallsForTurn(d, j, now())) closing.noteTurnReport(d, j, now()); }
     }
     try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); } catch {}
