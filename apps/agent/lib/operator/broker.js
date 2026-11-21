@@ -345,6 +345,7 @@ const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_b
 const REPORTER_BOUND = new Set(["reporter_operating_results", "reporter_action_points"]);
 const IDENTITY_ARGS = ["character", "characterId", "character_id", "sequentialId", "id", "name", "player", "playerId", "username", "user", "userId", "account", "accountId", "reporter", "ticket"];
 const NOT_FOUND_LIKE = /outside support scope|not a \S+ read|unknown tool|tool not found|method not found|not available to this task/i;
+const handoffTruth = require("./handofftruth");
 const QUICK_TOOLS = ["conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
@@ -775,7 +776,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       // decision; "handed to an investigator" needs a real investigation job. Nobody-assigned handoffs
       // were posted on 1766 and 1773.
       // Keir 10.1 (ticket 1834): Keir's own self-assigned card reaches nobody, so it is not proof.
-      escalated: { done: jobs.some((j) => (j.raisedToDevelopers || []).some((r) => r.id && !r.selfOwned) || (j.pullRequests || []).length || j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
+      // Keir 11.4 (ticket 1872): a card Keir's own coding worker took, and Keir's own pull request, are Keir's work, not the developers'.
+      escalated: { done: handoffTruth.developerReceipts(d, ticketNo, jobs).length > 0 || jobs.some((j) => j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
       investigating: { done: jobs.some((j) => (j.investigations || []).some((id) => d.jobs[id])) },
     };
   }
@@ -789,7 +791,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     main: "\"live\" needs github where to show the fix on main (and turn-worker/production for turn fixes).",
     verified: "saying it is fixed, working, gone or now shows correctly needs the fix live on main, a turn processed on it, and a read of this player's own figures after that turn and after their last message. Until then say it is released and ask them to check after the next turn, or check it yourself first.",
     investigating: "\"handed to an investigator\" needs a real investigation job: call delegate_investigation with one bounded question first. Until then say you are digging into it yourself.",
-    escalated: "\"the developers have it\" needs something that reached them: call raise_to_developers (or sync the ticket tracker, or open a decision). Until then say you will pass it on.",
+    escalated: "\"the developers have it\" needs a handoff a person holds: a raised item no Keir worker took, a question with needsHuman, or an open owner decision. If your own coding worker or pull request has it, say \"I am preparing a fix\" or \"My fix is in testing\" instead.",
   };
   // One public voice per ticket: no near-duplicate updates, and no second task
   // talking over the one that just posted (tickets 1500, 1506, 1507).
@@ -1332,6 +1334,12 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (job.kind === "ticket") {
       const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !JOB_TERMINAL.includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
       if (dev) refuse(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
+    }
+    // Keir 11.4 (owner, 2026-11-21): "with the developers" only when a person holds it and never to the person who asked;
+    // no blanket "I cannot render" or "read-only". Each refusal names the true sentence to use.
+    if (!opts.system) {
+      const t = handoffTruth.deflection(message, { d, job, ticketNo, jobs: Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo), config, previewFailed: Boolean(job.previewFailure) });
+      if (t) { ledger.audit("deflection_refused", { job: job.id, ticket: ticketNo, kind: /render/.test(t) ? "render" : /ticket_command/.test(t) ? "read_only" : "handoff" }); refuse(t); }
     }
     const ev = ticketEvidence(ticketNo);
     const claims = outcomeClaims(message);
@@ -2628,7 +2636,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (out.skipped) { ledger.save(); return null; }
         if (rec) { rec.workerRun = out.run.id; rec.workerSeen = true; }
         ledger.save();
-        return { codingWorker: out.run.id, instruction: `Filed, and a coding worker (${out.run.id}) is building the fix now. Keir merges it, promotes it and verifies it live on its own once the required checks are green; you will be woken at each end state. Tell the player a fix is being built, not that it is live. Say it is live only after the wake that says it is live.` };
+        return { codingWorker: out.run.id, instruction: `Filed, and a coding worker (${out.run.id}) is building the fix now. Keir merges it, promotes it and verifies it live on its own once the required checks are green; you will be woken at each end state. Tell the player in the first person: "I am preparing a fix", not that it is live and never that the developers have it (no developer does). Say it is live only after the wake that says it is live.` };
       }
       async function ensureIssueCard(number, url, issueTitle, fresh = false) {
         const issue = d.keirIssues[number];
@@ -2900,6 +2908,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (job.replyChannel !== "app" && Boolean(job.ticket || job.source?.channelName) && /\bintake\s+persisted|\b(?:support|ticket['’]s own)\s+task\b|receipt and intake card|intake card delivered/i.test(message))
         throw new Error("Public ticket acknowledgements should give the ticket link in one short sentence. Keep intake bookkeeping and task handoffs private.");
       require("./advicerouting").guard(job, d, message);
+      if (!(job.ticket || ticketNumberOf(job.source?.channelName))) {
+        const t = handoffTruth.deflection(message, { d, job, config, previewFailed: Boolean(job.previewFailure) });
+        if (t) { ledger.audit("deflection_refused", { job: job.id, ticket: null }); throw new Error(t); }
+      }
       if (/^(?:i['’]m on it|on it|looking into it|will do)[.!]*$/i.test(message.trim())) return { skipped: "generic acknowledgment suppressed; use progress_update with a specific line" };
       const ticketNo = job.ticket || ticketNumberOf(job.source?.channelName);
       if (ticketNo) message = shapeTicketPost(message); // short, in paragraphs, or refused

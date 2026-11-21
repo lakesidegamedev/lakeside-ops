@@ -76,7 +76,8 @@ function detect(text, now, due = DUE) {
     const m = FOLLOW.exec(s);
     if (s.endsWith("?") || !m || NOT_PROMISE.test(s) || NEGATED.test(m[1] || "")) continue;
     const kind = /\b(?:next|a|the|another|each|every)\s+turn\b|\bnext (?:few|couple of|two|three) turns\b|\bturn (?:has )?(?:run|processed|passes|finishes)\b|\bafter turn \d+/i.test(s) ? "turn"
-      : /\b(?:deploy\w*|released?|goes live|is live|reaches the main server|on the main server|ships?)\b/i.test(s) ? "release"
+      // Keir 11.4 (ticket 1872): "I will come back when there is something to try" waits on the fix, so it is a release promise.
+      : /\b(?:deploy\w*|released?|goes live|is live|reaches the main server|on the main server|ships?)\b|\b(?:something|anything) (?:for you )?to try\b|\b(?:ready|there) (?:for you )?to try\b|\bfix (?:is|to) (?:ready|try)\b/i.test(s) ? "release"
       : /\btomorrow\b/i.test(s) ? "tomorrow"
       : /\b(?:later today|this (?:evening|afternoon|morning)|tonight|in a few hours)\b/i.test(s) ? "today"
       : /\bowner\b|\bEgg\b|\bdevelopers?\b/.test(s) ? "owner"

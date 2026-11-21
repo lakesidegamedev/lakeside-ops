@@ -39,7 +39,7 @@ test("1834: a self-owned card is not proof that the developers have it", async (
   assert.ok(f.job.raisedToDevelopers[0].selfOwned);
   assert.equal(f.ledger.data.outbox["handoff:701"], undefined, "Keir's own work items do not page anyone");
   f.playerWrote(5);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "I passed this to the developers and they are looking at the chart now." }), /developers have it|reached them/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "I passed this to the developers and they are looking at the chart now." }), /developers have it|reached them|a person can check/);
 });
 
 const ticket = (n, extra = {}) => ({ number: n, title: `Ticket ${n}`, status: "open", category: "bug", createdAt: new Date(0).toISOString(), ...extra });

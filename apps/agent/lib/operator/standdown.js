@@ -66,7 +66,8 @@ function limitationLine(receipt) {
 function currentQuestionReceipt(jobs, humanAt, { since = 0 } = {}) {
   let best = null;
   for (const j of jobs || []) for (const r of j.raisedToDevelopers || []) {
-    if (r.selfOwned || r.releasedAt || r.id == null) continue;
+    // Keir 11.4: a card Keir's own coding worker took is Keir's work, not the developers'.
+    if (r.selfOwned || r.releasedAt || r.id == null || r.workerRun) continue;
     if ((r.at || 0) < Math.max(humanAt || 0, since)) continue;
     if (!best || (r.at || 0) > (best.at || 0)) best = r;
   }
