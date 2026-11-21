@@ -23,7 +23,7 @@ function setup() {
   const a = mk(); ledger.data.seen["ticket:123"] = a.id; ledger.data.disclosed = { 123: { at: 1, posted: true } };
   a.observedPlayerAt = clock - 5 * 60000; a.lastGameReadAt = clock - 4 * 60000; a.codeLookups = 1; a.lastCodeReadAt = clock - 4 * 60000;
   const limitation = () => calls.filter((c) => c[1] === "support_public_update" && /confirmed answer for you yet/.test(c[2].message || "")).length;
-  const finish = (job, summary = "Found the cause.") => broker.tool(job, "finish", { state: "waiting", waitFor: "developer_reply", summary });
+  const finish = (job, summary = "Found the cause.") => broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary });
   return { ledger, broker, a, mk, calls, state, limitation, finish, advance: (m) => { clock += m * 60000; }, now: () => clock };
 }
 const ANSWER = "The slideshow moves on when each slide's progress bar finishes. With motion reduced the bar finishes at once, so it jumps. A fix is being made.";

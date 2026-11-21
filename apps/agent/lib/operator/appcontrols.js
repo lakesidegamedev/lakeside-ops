@@ -37,6 +37,14 @@ function catalog(config) {
     return Object.entries(loaded.manifest.skills).map(([id, meta]) => ({ id, ...meta, available: Boolean(loaded.text[id]), defaults: Object.entries(loaded.manifest.lanes).filter(([, list]) => list.includes(id)).map(([lane]) => lane) }));
   } catch { return []; }
 }
+// The voice lane's default as the app shows it, from the configured voice route (config.voiceProvider): one route is given
+// as its route id, like the other lanes' defaults; several are named and marked as alternating.
+function voiceDefault(config) {
+  const routes = String(config.voiceProvider || (config.standalone ? "auto" : require("./appmodels").VOICE.join(","))).split(",").map((r) => r.trim()).filter(Boolean);
+  if (routes.length <= 1) return routes[0] || "auto";
+  const { label } = require("./selfinfo");
+  return `${routes.map((r) => { const spec = r.split("@")[0], i = spec.indexOf(":"); return label(i < 0 ? spec : spec.slice(i + 1)); }).join(" / ")} (alternating)`;
+}
 function createControls({ ledger, config, drain = () => {}, now = Date.now }) {
   const d = ledger.data;
   function checkThread(thread) {
@@ -46,7 +54,7 @@ function createControls({ ledger, config, drain = () => {}, now = Date.now }) {
     const p = d.appThread?.preferences?.[thread] || {};
     return { supported: true, stopped: Boolean(d.paused), changedAt: d.control?.at || null,
       approvalMode: p.approvalMode || "ask", routes: p.routes || {}, skills: p.skills || {}, updates: (d.appThread?.preferences?.main || {}).updates !== false,
-      defaults: { voice: "Gemini 3.8 Flash / DeepSeek V4.1 Flash (alternating)", conversation: config.quickProvider || config.defaultRoute || "claude", coding: config.codingProvider || config.defaultRoute || "muse:muse-wonder-full-1.0@medium", investigation: config.investigatorProvider || config.codingProvider || config.defaultRoute || "muse:muse-wonder-full-1.0@medium", coordination: config.workerProvider || config.defaultRoute || "claude" },
+      defaults: { voice: voiceDefault(config), conversation: config.quickProvider || config.defaultRoute || "claude", coding: config.codingProvider || config.defaultRoute || "muse:muse-wonder-full-1.0@medium", investigation: config.investigatorProvider || config.codingProvider || config.defaultRoute || "muse:muse-wonder-full-1.0@medium", coordination: config.workerProvider || config.defaultRoute || "claude" },
       options: Object.fromEntries(LANES.map(lane => [lane, models(config, lane)])), catalog: catalog(config), commands: COMMANDS,
       active: Object.values(d.jobs).filter(j => !CLOSED.has(j.state)).length };
   }
@@ -157,4 +165,4 @@ function activityState(data, now = Date.now()) {
   const waiting = count && jobs.every(j => ["waiting", "paused"].includes(j.state));
   return { status: data.paused ? "Stopped" : pending.length ? "Needs your approval" : questions.length ? "Waiting for your answer" : blocked ? "Needs attention" : waiting ? "Waiting for an update" : count ? `${count} task${count === 1 ? "" : "s"} in progress` : "Work finished", count, stopped: Boolean(data.paused), updatedAt: Math.max(data.control?.at || 0, ...jobs.map(j => j.updatedAt || j.at || 0), 0) || now };
 }
-module.exports = { createControls, preferences, rootOf, laneOf, skillLane, authorizeYolo, activityState, COMMANDS };
+module.exports = { createControls, voiceDefault, preferences, rootOf, laneOf, skillLane, authorizeYolo, activityState, COMMANDS };

@@ -9,7 +9,7 @@ function createSpeech({ env = process.env, spawnImpl = spawn } = {}) {
   const voice = env.KEIR_SPEECH_VOICE || "en-US-AvaMultilingualNeural";
   let active = 0;
   return {
-    status: () => ({ provider: "Microsoft online speech", voice, model: "gemini-3.8-flash" }),
+    status: () => ({ provider: "Microsoft online speech", voice }),
     async synthesize(text, signal) {
       if (typeof text !== "string" || !text.trim() || text.length > 6000) throw Object.assign(new Error("Speech text must contain 1 to 6000 characters."), { status: 400 });
       if (signal?.aborted) throw Object.assign(new Error("Speech cancelled."), { status: 499 });

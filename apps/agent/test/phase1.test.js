@@ -437,7 +437,7 @@ for (const open of [false, true]) test(`approval polling backs off only without 
   f.ledger.data.decisions = { dec1: { id: "dec1", jobId: f.job.id, state: "pending", at: 4000 } };
   if (open) f.ledger.data.ticketRecords = { 1522: { facts: [], ruledOut: [], questions: [], promises: [{ id: "p", text: "Trace the independent revenue loss" }] } };
   const start = 5000;
-  await f.broker.tool(f.job, "finish", { state: "waiting", summary: open ? "Trace the independent loss on the next scheduled check" : "Approval only; no independent work remains", wakeAfterMinutes: 15 });
+  await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: open ? "Trace the independent loss on the next scheduled check" : "Approval only; no independent work remains", wakeAfterMinutes: 15 });
   assert.equal(f.job.wakeAt, start + (open ? 15 * 60000 : 6 * 3600000));
   assert.equal(f.ledger.data.decisions.dec1.state, "pending");
 });

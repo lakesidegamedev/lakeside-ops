@@ -112,6 +112,34 @@ function firstSentence(text) { const m = /^[\s\S]{20,220}?[.!?](\s|$)/.exec(Stri
 const ticketOfDecision = (d, x) => x.ticket || d.jobs?.[x.jobId]?.ticket || null;
 const digestSiblings = (d, head) => Object.values(d.decisions || {}).filter((y) => y.state === "pending" && y.digestOf === head.id).sort((a, b) => a.at - b.at);
 
+// Keir 11.2 (one ask per item): two Keir jobs asked the owner about the same bond pool repair on ticket 1859, and PR 6947
+// was approved twice from two jobs. One ledger-wide key per PR number or repair plan; a second job joins the open ask.
+const ASK_FREE_TEXT = new Set(["description", "title", "reason", "summary", "explanation", "notes", "rationale", "ticket"]);
+function prOfAction(action) {
+  const a = action?.args || {};
+  if (action?.kind === "github" && a.action === "merge" && Number(a.number)) return { number: Number(a.number), head: a.head || null, repository: a.repository || null };
+  const inner = a.args || {};
+  if (inner.action === "merge" && Number(inner.number)) return { number: Number(inner.number), head: inner.head || null, repository: inner.repository || null };
+  return null;
+}
+function prOfDecision(d, x) {
+  if (x.binds?.number) return { number: Number(x.binds.number), head: x.binds.head || null, repository: x.binds.repository || null };
+  return prOfAction(x.actionId && d.actions?.[x.actionId]);
+}
+const repoKey = (r) => String(r || "AHDGame").replace(/^.*\//, "");
+function askKey(d, { actionId = null, binds = null }) {
+  const action = actionId && d.actions?.[actionId];
+  const pr = binds?.number ? { number: Number(binds.number), repository: binds.repository } : prOfAction(action);
+  if (pr) return `pr:${repoKey(pr.repository)}:${pr.number}`;
+  if (action?.kind === "heal") {
+    if (action.args?.planDigest) return `plan:${action.args.planDigest}`;
+    const spec = Object.fromEntries(Object.entries(action.args?.spec || {}).filter(([k]) => !ASK_FREE_TEXT.has(k)).sort(([a], [b]) => a.localeCompare(b)));
+    return `plan:${crypto.createHash("sha256").update(JSON.stringify(spec)).digest("hex").slice(0, 24)}`;
+  }
+  return null;
+}
+const APPROVED_STATES = ["approved", "executing"];
+
 /** Open (or reuse) a pending decision for a job, optionally bound to an action. */
 // binds: { number, head } of an AHDGame PR the question asks the owner to
 // merge. An approval then records an exact merge approval at that head
@@ -129,6 +157,42 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
     if (choices && (existing.question !== clean(question) || JSON.stringify(existing.options) !== JSON.stringify(choices))) throw new Error("This task already has a different unanswered choice. Wait for its answer or withdraw it before replacing it.");
     return existing;
   }
+  const key = askKey(d, { actionId, binds });
+  let replacedFor = null;
+  // Keir 11.2 fourth pass (review N7): the one-ask rule has a switch (KEIR_ONE_ASK). Off: every task asks as before. Preview:
+  // what it would have done is recorded and the ask goes ahead.
+  const og = (config?.controls || require("./controls").DEFAULT_CONTROLS).gate("oneAsk");
+  if (key && og.run && !og.act && Object.values(d.decisions).some((y) => y.askKey === key && y.jobId !== jobId && ["pending", "approve"].includes(y.state))) require("./controls").preview(d, "one-ask", "join, refuse or replace", key, `task ${jobId} asks again about ${key}`);
+  if (key && og.act) {
+    const head = (binds?.head || prOfAction(actionId && d.actions[actionId])?.head) || null;
+    const same = Object.values(d.decisions).filter((y) => y.askKey === key && y.jobId !== jobId);
+    // Already approved on another task and not yet carried out: that task runs it. Asking again is the double approval.
+    // Keir 11.2 third pass (review M3): only while the approving task is alive. A task that ended or was cancelled can never
+    // run its approval, so a new ask goes ahead (the owner is asked again rather than nothing ever merging).
+    const alive = (y) => d.jobs?.[y.jobId] && !JOB_TERMINAL.includes(d.jobs[y.jobId].state);
+    const carried = same.find((y) => y.state === "approve" && alive(y) && (!y.actionId || APPROVED_STATES.includes(d.actions?.[y.actionId]?.state)) && (prOfDecision(d, y)?.head || null) === head && Date.now() - (y.answeredAt || y.at) < 6 * 3600000);
+    if (carried) {
+      if (actionId && d.actions[actionId]?.state === "pending") d.actions[actionId].state = "superseded";
+      ledger.audit("decision_ask_refused_duplicate", { job: jobId, key, approvedOn: carried.id });
+      throw new Error(`The owner already approved this exact request on another Keir task (${carried.jobId}). That task carries it out. Do not ask again and do not run it here; tell the player only what is verified.`);
+    }
+    const open = same.find((y) => y.state === "pending");
+    // Review suspicion 5: a pending ask whose task has ended is not joined (nobody would carry out its answer); it is replaced.
+    if (open && alive(open) && (prOfDecision(d, open)?.head || null) === head) {
+      open.followers = [...(open.followers || []).filter((f) => f.jobId !== jobId), { jobId, actionId, at: Date.now() }];
+      ledger.audit("decision_joined", { decision: open.id, job: jobId, key });
+      return open;
+    }
+    if (open) {
+      // A new head replaces the old ask: one live question per PR.
+      open.state = "superseded"; open.withdrawnReason = alive(open) ? "A newer version of this change replaced it" : "The task that asked it ended; a new ask replaced it";
+      if (open.actionId && d.actions[open.actionId]?.state === "pending") d.actions[open.actionId].state = "superseded";
+      ledger.audit("decision_superseded_by_new_head", { decision: open.id, key });
+      // Review m7: the task that asked the old question follows the new one, so it hears how it ends instead of waiting on
+      // a question that no longer exists.
+      if (open.jobId !== jobId) replacedFor = [{ jobId: open.jobId, actionId: null, at: Date.now(), replaced: open.id }, ...(open.followers || []).filter((f) => !f.releasedAt && f.jobId !== jobId)];
+    }
+  }
   const id = crypto.randomBytes(6).toString("hex");
   let text = clean(question);
   if (choices && text.length > 450) throw new Error("Keep the choice question at most 450 characters; put each outcome in its option detail");
@@ -136,11 +200,12 @@ function openDecision(ledger, config, { jobId, actionId = null, question, signof
   const review = action || binds ? actionReview(action, binds, explanation) : null;
   if (review?.human) text = require("./approvalcopy").body(review);
   else if(review?.description) text = review.description;
-  const decision = { id, jobId, actionId, ...(choices ? { options: choices, type: "choice" } : {}), ...(review ? { review, approvalBinding: binding(action, binds), type: "approval" } : {}), question: text, state: "pending", at: Date.now(), sent: {}, ...(decisionKey ? { decisionKey } : {}), ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}) };
+  const decision = { id, jobId, actionId, ...(choices ? { options: choices, type: "choice" } : {}), ...(review ? { review, approvalBinding: binding(action, binds), type: "approval" } : {}), question: text, state: "pending", at: Date.now(), sent: {}, ...(decisionKey ? { decisionKey } : {}), ...(signoff ? { signoff: true } : {}), ...(binds ? { binds } : {}), ...(key ? { askKey: key } : {}) };
   // Keir 10: a second owner choice on a ticket that already has one waiting joins that DM instead of sending another.
   const tn = ticket || d.jobs?.[jobId]?.ticket || null;
   const head = choices && !actionId && !signoff && !binds && tn ? Object.values(d.decisions).find((y) => y.state === "pending" && y.type === "choice" && !y.actionId && !y.digestOf && Number(ticketOfDecision(d, y)) === Number(tn)) : null;
   if (tn) decision.ticket = tn;
+  if (replacedFor?.length) decision.followers = replacedFor;
   if (head) { decision.digestOf = head.id; decision.digested = true; head.digested = true; head.digestDirty = Date.now(); }
   d.decisions[id] = decision;
   // The durable decision is already exposed by the authenticated app API and
@@ -225,11 +290,30 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       delete job.recoveryReviewRequired;
       job.state = "queued"; job.wakeAt = 0;
     }
+    releaseFollowers(x, `The owner ${selected ? `chose "${selected.label}"` : verdict === "approve" ? "approved" : verdict === "reject" ? "rejected" : "answered"} the same request that another Keir task asked about (${x.question.slice(0, 160)}). That task carries it out. Do not ask again and do not run it here.`);
     ledger.audit("decision_answered", { decision: x.id, verdict, actor });
     try { onAnswered(x, verdict, actor, text); } catch {}
     ledger.save();
     // Every copy is deleted once answered: the DMs keep only live questions.
     return removeCopies(x);
+  }
+
+  // Jobs that joined this ask (Keir 11.2) hear how it ended and stop waiting on it; their own copy of the action is moot.
+  function releaseFollowers(x, line) {
+    for (const f of x.followers || []) {
+      if (f.releasedAt) continue;
+      f.releasedAt = now();
+      const a = f.actionId && d.actions?.[f.actionId];
+      if (a && a.state === "pending") a.state = "superseded";
+      const job = d.jobs?.[f.jobId];
+      if (!job || JOB_TERMINAL.includes(job.state)) continue;
+      (job.inbox ||= []).push({ authorId: "system", role: "system", content: line, at: new Date(now()).toISOString(), decision: x.id });
+      // Review m1: a job blocked for a person (an uncertain write, a failed run) stays blocked; only a block on this owner
+      // question is lifted.
+      const onDecision = Boolean(job.ownerDecisionPending);
+      if (!Object.values(d.decisions || {}).some((y) => y.state === "pending" && (y.jobId === job.id || (y.followers || []).some((g) => g.jobId === job.id && !g.releasedAt)))) delete job.ownerDecisionPending;
+      if (job.state === "waiting" || (job.state === "blocked" && onDecision)) { job.state = "queued"; job.wakeAt = 0; }
+    }
   }
 
   async function removeCopies(x) {
@@ -293,7 +377,12 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
 
   async function tick() {
     // A decision the task moved past (or whose action resolved) stops asking.
-    const obsolete = Object.values(d.decisions || {}).filter(x => ["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain", "selected"].includes(x.state) && (!x.closedOut || Object.values(x.sent || {}).some(s => s.messageId && !s.deleted && !s.edited)));
+    // Keir 11.2: "answered" (a reply in the ticket channel) is an ending too; its DM copies used to keep live buttons for days.
+    for (const x of Object.values(d.decisions || {})) if (x.state !== "pending" && (x.followers || []).some((f) => !f.releasedAt)) releaseFollowers(x, `The owner question another Keir task asked for you ended (${x.state}${x.withdrawnReason ? `: ${x.withdrawnReason}` : ""}): ${x.question.slice(0, 160)}. If the work is still needed, check its current state before asking again.`);
+    // Third pass (review M7 first start): only answers taken under the 11.2 rule. Older "answered" states (11.1 took any owner
+    // sentence as an answer, often wrongly) keep their DM buttons, as they did before, so the owner can still answer them.
+    const newAnswer = (x) => x.state !== "answered" || /^ticket_channel_(?:reply|option)$/.test(x.answeredVia || "");
+    const obsolete = Object.values(d.decisions || {}).filter(x => ["withdrawn", "expired", "superseded", "revoked", "cancelled", "approve", "reject", "explain", "selected", "answered"].includes(x.state) && newAnswer(x) && (!x.closedOut || Object.values(x.sent || {}).some(s => s.messageId && !s.deleted && !s.edited)));
     // Bound legacy cleanup and rotate failures so old copies cannot monopolize
     // the operator loop or starve newer decisions.
     for (const x of obsolete.sort((a, b) => (a.cleanupAttemptAt || 0) - (b.cleanupAttemptAt || 0)).slice(0, 6)) { x.cleanupAttemptAt = now(); await closeOut(x); }
@@ -389,10 +478,15 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
 // How a decision ended, for the DM it replaces. Plain words for the owner; no ids or internals.
 function outcomeNote(x, d, config) {
   const who = (id) => (id === config.ownerId ? "Egg" : (config.staffIds || []).includes(id) ? "Ariane" : "someone else");
-  const answer = x.selectedOption ? `chose "${x.selectedOption.label}"` : x.state === "approve" ? "approved it" : x.state === "reject" ? "rejected it" : "replied";
+  const where = /^ticket_channel/.test(x.answeredVia || "") ? " in the ticket" : "";
+  const answer = (x.selectedOption ? `chose "${x.selectedOption.label}"` : x.state === "approve" ? "approved it" : x.state === "reject" ? "rejected it" : "replied") + where;
   const reason = String(x.withdrawnReason || "");
   const why = x.answeredBy ? `${who(x.answeredBy)} ${answer}.`
     : x.state === "expired" ? "It expired without an answer."
+    : /ticket was closed/.test(reason) ? "The ticket was closed."
+    : /merged on GitHub/.test(reason) ? "The change was merged on GitHub."
+    : /closed on GitHub/.test(reason) ? "The pull request was closed on GitHub."
+    : /new commits/.test(reason) ? "The pull request changed after this was asked."
     : x.state === "superseded" ? "A newer question replaced it."
     : /staff owns/.test(reason) ? "Staff took over the ticket."
     : /task finished/.test(reason) ? "The ticket was handled without needing this answer."
@@ -410,4 +504,4 @@ function withdrawDecisions(ledger, jobId, reason) {
   }
 }
 
-module.exports = { outcomeNote, digestSiblings, REPING_MS, normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };
+module.exports = { askKey, prOfAction, prOfDecision, outcomeNote, digestSiblings, REPING_MS, normalizeOptions, actionReview, ownerInitiated, firstSentence, withdrawDecisions, openDecision, createDecisions, buttons, VERDICT, clean, render, ESCALATE_MS };

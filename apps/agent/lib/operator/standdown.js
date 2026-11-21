@@ -165,29 +165,158 @@ function outstandingPromise(rows, isAnswer) {
 const OWNER_WAIT = /\b(?:needs?|awaiting|waiting (?:on|for)|pending|with|up to|for) (?:the )?owner(?:'s)?(?: decision| call| answer| approval| yes)?\b|\bowner(?:'s)? (?:decision|call|approval|answer)\b[^.!?]{0,40}\b(?:needed|pending|awaited|required|outstanding)\b|\bneeds the owner\b|\bthe owner has to decide\b/i;
 function claimsOwnerWait(message) { return OWNER_WAIT.test(String(message || "")); }
 
-// Marks every free-text pending decision on this ticket answered by the owner's channel message. Decisions that gate an
-// action (actionId, binds, review) still need the button: a sentence in a channel is direction, not execution approval.
-function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId = null, at = Date.now() }) {
+// Keir 11.2 (audit 2026-11-21): any owner sentence in a ticket used to answer every open question on it. All three cases
+// in two weeks were wrong ("can you link it here for review?" answered "Ship PR 6865 now?"; "yeah automobiles was removed"
+// answered "Raise the demand cap?"; "Keir is wrong" answered a pricing question). A channel message now answers a question
+// only when it is a Discord reply to that question's message, or it clearly names one option: its number, its full label,
+// or yes or no when the question is a single yes or no. Anything else stays context and the question stays open.
+// Decisions that gate an action (actionId, binds) still need the button: a sentence in a channel is direction, not approval.
+const YES = /^(?:yes|yeah|yep|yup|y|ok(?:ay)?|sure|approved?|go ahead|do it|ship it|go for it|sounds good|agreed)$/i;
+const NO = /^(?:no|nope|nah|n|declined?|rejected?|don'?t|do not|hold off|not now|leave it)$/i;
+const norm = (t) => String(t || "").toLowerCase().replace(/[*_`~>]/g, " ").replace(/[^a-z0-9%$.' ]+/g, " ").replace(/\s+/g, " ").trim();
+// Keir 11.2 third pass (review M1): a yes next to a question or a deferral is not an answer ("ok, let me look at the
+// numbers first"; "yes? why is it so large").
+const DEFER = /\?|\b(?:let me|let's see|first|later|hold on|hang on|wait|why|but|not sure|maybe|hmm|think|check|look)\b/i;
+// yes, no, or null. Only a standalone clause counts: "Do the refund, yes." is yes; "yeah automobiles was removed" is not.
+// Fourth pass (review N4): a yes word and a no word anywhere in the same message ("No, absolutely yes") answer nothing.
+const YES_WORD = /\b(?:yes|yeah|yep|yup|ok(?:ay)?|sure|approved?|go ahead|do it|ship it|go for it)\b/i;
+const NO_WORD = /\b(?:no|nope|nah|declined?|rejected?|don'?t|do not|hold off|not now)\b/i;
+function yesNo(text) {
+  const t = String(text || "");
+  const clauses = t.split(/[,.;!?\n]+/).map((c) => c.trim().replace(/\s+/g, " ")).filter(Boolean);
+  const yes = clauses.some((c) => YES.test(c)), no = clauses.some((c) => NO.test(c));
+  if (yes === no) return null;
+  if (YES_WORD.test(t) && NO_WORD.test(t)) return null;
+  const rest = clauses.filter((c) => !YES.test(c) && !NO.test(c)).join(" ");
+  if (DEFER.test(rest) || /\?/.test(t)) return null;
+  return yes ? "yes" : "no";
+}
+// The message with lead-ins and politeness trimmed: "go with Refund the player please" -> "refund the player".
+const LEAD = /^(?:(?:ok(?:ay)?|yes|yeah|sure)\s+)?(?:let'?s\s+)?(?:go with|pick|choose|take|do|i choose|i pick|option)\s+/;
+const TAIL = /\s+(?:please|thanks|thank you|for now)$/;
+const bare = (text) => norm(text).replace(/[.!']/g, "").replace(LEAD, "").replace(TAIL, "").trim();
+// Review 3 F4: a number names an option only as the whole message ("1", "option 2", "go with 2 please"), or, inside a
+// reply to the question, as "option N" in a sentence that does not negate, defer or ask ("not option 2", "don't do
+// option 1", "option 1 looks wrong, why 500?" choose nothing).
+function optionNumber(text, { reply = false } = {}) {
+  const t = String(text || "").trim();
+  const whole = /^(?:option|choice|#)?\s*([1-6])(?:\s+(?:please|thanks|thank you))?\s*[.!)]?$/i.exec(t) || /^(?:go with|pick|choose|take)\s+(?:option\s*|choice\s*)?#?([1-6])(?:\s+(?:please|thanks|thank you))?\s*[.!]?$/i.exec(t);
+  if (whole) return whole[1];
+  const inside = reply && /\b(?:option|choice)\s*#?\s*([1-6])\b/i.exec(t);
+  if (!inside || /\?/.test(t)) return null;
+  const rest = norm(t.replace(inside[0], " "));
+  return NEGATES.test(rest) || DEFER.test(rest) ? null : inside[1];
+}
+// Fourth pass (review N4): a label inside a negated, deferring or conditional sentence is not a choice ("we should not
+// refund the player until I check", "dont refund the player yet", "refund the player later maybe").
+// Review 3 F4: naming an option to reject it ("anything but", "other than", "X is wrong") is not choosing it.
+const NEGATES = /\b(?:not|don'?t|dont|never|no|nope|won'?t|wont|shouldn'?t|can'?t|until|unless|instead|yet|later|maybe|perhaps|if|whether|but|except|other than|rather than|wrong|bad|against)\b|^\s*(?:should|shall|do|does|did|can|could|would|will|is|are|what|why|how|when|who)\b/i;
+// The option this message clearly names, or null. A single-choice question (no options) takes a yes or no.
+// Outside a Discord reply to the question only the whole message names an option; inside a reply a label may sit in a
+// longer sentence, but never one that negates, defers or asks.
+function namedOption(x, text, { alone, reply = false }) {
+  const options = x.options || [];
+  if (!options.length) { const yn = yesNo(text); return yn ? { free: yn } : null; }
+  const n = alone ? optionNumber(text, { reply }) : null;
+  if (n && options.some((o) => o.id === n)) return options.find((o) => o.id === n);
+  // A label counts when it is the whole message (after "go with", "please" and the like), or when it is at least two
+  // words long and the message is not a question. "wait, why is the refund so large?" does not pick "Wait".
+  const msg = ` ${norm(text)} `, whole = bare(text);
+  const byLabel = options.filter((o) => {
+    const l = norm(o.label);
+    if (l.length < 3) return false;
+    if (whole === l.replace(/[.!']/g, "")) return true;
+    return reply && l.split(" ").length >= 2 && !/\?/.test(String(text)) && !NEGATES.test(norm(text).replace(l, " ")) && !DEFER.test(norm(text).replace(l, " ")) && msg.includes(` ${l} `);
+  });
+  if (byLabel.length === 1) return byLabel[0];
+  if (alone && options.length === 2) {
+    const yn = yesNo(text), yes = options.find((o) => /^yes\b/i.test(o.label)), no = options.find((o) => /^no\b/i.test(o.label));
+    if (yn && yes && no) return yn === "yes" ? yes : no;
+  }
+  return null;
+}
+// replyTo: the message the owner replied to ({ id, authorId, content }), or null. botId: Keir's Discord id.
+function repliesTo(x, replyTo, botId) {
+  if (!replyTo?.id) return false;
+  const ids = [...Object.values(x.sent || {}).map((s) => s.messageId), ...(x.channelMessages || [])].filter(Boolean).map(String);
+  if (ids.includes(String(replyTo.id))) return true;
+  if (!botId || replyTo.authorId !== botId) return false;
+  const body = norm(replyTo.content), q = norm(x.question).slice(0, 80);
+  return q.length >= 20 && body.includes(q.slice(0, 60));
+}
+// Keir 11.2 third pass (review M2): a message the owner meant as an answer but that did not count must not vanish. When
+// a question is open and the message looks meant for it (a yes or no word, an option word, or words from the question),
+// the owner is told once per question, in his DMs where the question's buttons are, what is still open and how to answer.
+// A message addressed to someone else (it mentions another person) or unrelated to the question gets nothing.
+const ANSWERISH = /\b(?:yes|yeah|yep|yup|no|nope|nah|ok(?:ay)?|sure|approved?|go ahead|do it|ship it|go for it|declined?|reject(?:ed)?|option|choice)\b|^\s*#?[1-6]\s*[.!)]?\s*$/i;
+const WORDS_STOP = new Set(["this", "that", "with", "from", "have", "should", "would", "could", "there", "their", "about", "which", "what", "when", "will", "your", "they", "them", "then", "than", "into", "just", "ticket", "keir", "player"]);
+const keyWords = (t) => new Set(norm(t).split(" ").filter((w) => w.length >= 4 && !WORDS_STOP.has(w) && !/^\d+$/.test(w)));
+function meantFor(x, text, botId) {
+  const mentions = [...String(text || "").matchAll(/<@!?(\d+)>/g)].map((m) => m[1]).filter((id) => id !== String(botId || ""));
+  if (mentions.length || /^\s*@\w/.test(String(text || ""))) return false;
+  if (ANSWERISH.test(String(text || ""))) return true;
+  const mine = keyWords(text), theirs = keyWords(`${x.question} ${(x.options || []).map((o) => o.label).join(" ")}`);
+  for (const w of mine) if (theirs.has(w)) return true;
+  return false;
+}
+function howToAnswer(x) {
+  const opts = (x.options || []).map((o, i) => `${i + 1} "${o.label}"`);
+  return opts.length ? `tap a button on the question, reply to it, or name the option on its own (${opts.join(" or ")})` : "tap a button on the question, reply to it, or say yes or no on its own";
+}
+function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId = null, at = Date.now(), replyTo = null, botId = null, notify = null }) {
   if (!ticket || !ownerId || authorId !== ownerId) return [];
   const content = String(text || "").trim();
   if (!content || content.startsWith("/")) return [];
   const jobs = Object.values(d.jobs || {}).filter((j) => Number(j.ticket) === Number(ticket));
+  const open = Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !x.actionId && !x.binds && (x.at || 0) <= at && (jobs.some((j) => j.id === x.jobId) || Number(x.ticket) === Number(ticket)));
+  const replied = open.filter((x) => repliesTo(x, replyTo, botId));
+  // Review 3 F4: a Discord reply to anything but the question is the owner talking to that message's author (the player,
+  // staff, another post): never an answer, and not meant for the question.
+  const elsewhere = Boolean(replyTo?.id) && !replied.length;
+  // Review 4 m1: a reply to a different Keir post is still never an answer, but it may be meant for the question (the
+  // owner answering Keir's restatement), so it gets the notice and the context line like an unreplied message.
+  const toKeir = elsewhere && Boolean(botId) && String(replyTo.authorId || "") === String(botId);
+  let picks = [];
+  // A reply to the question counts only when it also gives an answer: "can you link the PR here?" sent as a reply is not one.
+  if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true, reply: true }), reply: true })).filter((p) => p.option);
+  else if (!elsewhere) {
+    const named = open.map((x) => ({ x, option: namedOption(x, content, { alone: open.length === 1 }) })).filter((p) => p.option);
+    // A message that could answer several questions answers none of them.
+    if (named.length === 1) picks = named;
+  }
   const answered = [];
-  for (const x of Object.values(d.decisions || {})) {
-    if (x.state !== "pending" || !jobs.some((j) => j.id === x.jobId)) continue;
-    if (x.actionId || x.binds) continue;
-    if ((x.at || 0) > at) continue;
-    x.state = "answered"; x.answeredAt = at; x.answeredBy = ownerId; x.answerText = content.slice(0, 600); x.answeredVia = "ticket_channel"; x.answerMessage = messageId;
+  for (const { x, option, reply } of picks) {
+    if (!option.free) { x.state = "selected"; x.selectedOption = { ...option }; }
+    else x.state = "answered";
+    x.answeredAt = at; x.answeredBy = ownerId; x.answerText = content.slice(0, 600); x.answer = content.slice(0, 600); x.answeredVia = reply ? "ticket_channel_reply" : "ticket_channel_option"; x.answerMessage = messageId;
     answered.push(x.id);
   }
-  (d.ownerChannelAnswers ||= {})[ticket] = { at, text: content.slice(0, 600), message: messageId, decisions: answered };
+  // Not an answer: kept on each open question as context, and the question stays open.
+  // Fourth pass (review M2 gap): a message that looks meant for the question is also put in front of the task that asked,
+  // as context (it reads it when it next runs; owner chat in the ticket still holds automatic work for a while), every
+  // time, so a second unmatched message is not lost. The owner's DM notice stays one per question.
+  if (!answered.length) for (const x of open) {
+    x.channelContext = [...(x.channelContext || []), { at, text: content.slice(0, 300), message: messageId }].slice(-5);
+    if (!(replied.includes(x) || ((!elsewhere || toKeir) && meantFor(x, content, botId)))) continue;
+    const asker = d.jobs?.[x.jobId];
+    if (asker && !JOB_TERMINAL.includes(asker.state)) (asker.inbox ||= []).push({ authorId: "owner-channel", role: "system", at: new Date(at).toISOString(), decision: x.id,
+      content: `The owner wrote in the ticket channel: "${content.slice(0, 400)}". It was not taken as the answer to your open question "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}", which stays open. Use it as context; do not act on it as the decision.` });
+    if (notify && !x.unmatchedNoticeAt) {
+      const sent = notify(`owner-unmatched:${x.id}`, `Ticket ${ticket}: your message "${content.slice(0, 120)}" was not taken as your answer to "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}". That question is still open. To answer, ${howToAnswer(x)}.`.replace(/[\u2013\u2014]/g, ","));
+      if (sent !== false) x.unmatchedNoticeAt = at; // a preview notice does not use up the real one (review N7)
+    }
+  }
+  if (answered.length) (d.ownerChannelAnswers ||= {})[ticket] = { at, text: content.slice(0, 600), message: messageId, decisions: answered };
   for (const j of jobs) {
-    if (!answered.length) break;
-    if (Object.values(d.decisions || {}).some((y) => y.state === "pending" && y.jobId === j.id)) continue;
-    if (!answered.some((id) => d.decisions[id].jobId === j.id)) continue;
-    delete j.ownerDecisionPending;
-    (j.inbox ||= []).push({ authorId: ownerId, role: "owner", at: new Date(at).toISOString(), decision: answered[0],
-      content: `The owner answered the open decision in the ticket channel: ${content.slice(0, 600)}. Treat it as the decision (direction, not execution approval). Do not tell the player it is still waiting on the owner.` });
+    const mine = answered.filter((id) => d.decisions[id].jobId === j.id);
+    if (!mine.length) continue;
+    if (!Object.values(d.decisions || {}).some((y) => y.state === "pending" && y.jobId === j.id)) delete j.ownerDecisionPending;
+    for (const id of mine) {
+      const x = d.decisions[id];
+      const what = x.selectedOption ? `chose "${x.selectedOption.label}"` : "answered";
+      (j.inbox ||= []).push({ authorId: ownerId, role: "owner", at: new Date(at).toISOString(), decision: id,
+        content: `The owner ${what} in the ticket channel for "${String(x.question).slice(0, 160)}": ${content.slice(0, 600)}. Treat it as the decision (direction, not execution approval). Do not tell the player it is still waiting on the owner.` });
+    }
     if (!JOB_TERMINAL.includes(j.state)) { j.state = "queued"; j.wakeAt = 0; }
   }
   return answered;
@@ -201,5 +330,5 @@ function ownerAnsweredSince(d, ticket) {
   return !newer;
 }
 
-module.exports = { stateFingerprint, noNewRefusal, limitationLine, currentQuestionReceipt, PASSED_ON, NOT_PASSED_ON, isHoldingLine, holdingClaimRefusal, capabilityClaim,
+module.exports = { yesNo, namedOption, repliesTo, meantFor, stateFingerprint, noNewRefusal, limitationLine, currentQuestionReceipt, PASSED_ON, NOT_PASSED_ON, isHoldingLine, holdingClaimRefusal, capabilityClaim,
   quoteFactors, priceVerdictRefusal, promisesFollowUp, outstandingPromise, claimsOwnerWait, applyOwnerChannelAnswer, ownerAnsweredSince };

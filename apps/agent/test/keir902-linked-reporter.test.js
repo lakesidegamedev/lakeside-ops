@@ -83,12 +83,12 @@ test("Keir 9.0.3: a real answer that says 'I will update you' is not a holding l
   const f = setup();
   f.job.observedPlayerAt = f.now() - 120000; f.job.lastGameReadAt = f.now() - 100000;
   f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 60000, jobId: "other", text: "The fix for the slideshow is written and in testing. Turning animations back on lets it play normally for now. I will update you here once it is live." }] };
-  const r = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Answered; fix in testing." });
+  const r = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Answered; fix in testing." });
   assert.match(JSON.stringify(r), /waiting/);
   const g = setup();
   g.job.observedPlayerAt = g.now() - 120000; g.job.lastGameReadAt = g.now() - 100000;
   g.ledger.data.ticketPosts = { 123: [{ at: g.now() - 60000, jobId: "other", text: "I will update you shortly." }] };
-  await assert.rejects(g.broker.tool(g.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "Still checking." }), /no answer since they last wrote/);
+  await assert.rejects(g.broker.tool(g.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "Still checking." }), /no answer since they last wrote/);
 });
 
 test("Keir 9.0.3: after reporter_state resolves a username-linked reporter's one character, private reads on it are allowed", async () => {

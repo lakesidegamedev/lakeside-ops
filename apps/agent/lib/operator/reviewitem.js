@@ -22,7 +22,14 @@ function createReviewItemTool({ config = {}, fetcher = fetch, ledger, now = () =
     const body = { note: clip(input.note, 500) };
     if (kind === "doc_conflict") {
       if (input.outcome !== "dismissed" && input.outcome !== "fixed") throw new Error("outcome must be fixed or dismissed");
-      if (input.outcome === "fixed" && !job.reviewFixLive) throw new Error("A verified deployment is required to mark a doc conflict fixed. Call github where on your fix PR and wait for fixLive.");
+      // Keir 11.2: until its PR is merged and a deploy receipt shows it live, the item is "fix in review", not fixed; a PR
+      // closed without merging reopens it (prtruth.js reviewFix).
+      if (input.outcome === "fixed" && !job.reviewFixLive) {
+        ledger.audit("review_fix_not_live", { job: job.id, item: item.key, pr: job.reviewFix?.pr || null, state: job.reviewFix?.state || null });
+        throw new Error(job.reviewFix?.state === "reopened"
+          ? `Not fixed: fix PR #${job.reviewFix.pr} was closed without merging, so this item is open again. Prepare a new fix or dismiss it with the reason.`
+          : "Not fixed yet: this item is \"fix in review\" until its PR is merged and a deploy receipt shows it live. Call github where on your fix PR and wait for fixLive; leave the item open meanwhile.");
+      }
       body.action = input.outcome;
     }
     else { if (!["good", "bad"].includes(input.verdict)) throw new Error("verdict must be good or bad"); body.verdict = input.verdict; }
@@ -31,6 +38,7 @@ function createReviewItemTool({ config = {}, fetcher = fetch, ledger, now = () =
     if (res.status === 404) return { resolved: true, already: true };
     if (!res.ok) throw new Error(`ask ${res.status}`);
     const out = await res.json().catch(() => ({}));
+    if (kind === "doc_conflict" && input.outcome === "fixed") job.reviewFix = { ...(job.reviewFix || {}), pr: job.reviewFixLive?.number ?? job.reviewFix?.pr ?? null, state: "fixed", at: now() };
     ledger.audit("review_item_resolved", { job: job.id, item: item.key, status: out.status || null }); ledger.save();
     return { resolved: true, status: out.status || null };
   }

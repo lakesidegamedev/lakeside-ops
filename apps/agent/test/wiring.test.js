@@ -314,7 +314,8 @@ test("a fix reaching the main server sends the player one live reply", async () 
   const broker = createBroker({ ledger: f.ledger, config: f.config, mcp, discord, sandbox: {}, now: () => Date.now() });
   const t = f.ledger.createJob("ticket:1629", { kind: "ticket", role: "support", ticket: 1629, channelId: "777777777777777777", source: {}, deadline: 9e15 });
   t.state = "running"; t.evidence = [];
-  t.releaseEvidence = { abc1234567: { development: true, staging: true, main: true } };
+  t.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/7001"];
+  t.releaseEvidence = { abc1234567: { development: true, staging: true, main: true, repository: "AHDGame", pr: 7001 } };
   await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "sandbox" }] });
   assert.equal(updates.filter((u) => u.deliver && u.update_kind === "production").length, 0, "no reply before live");
   await broker.tool(t, "status_card", { items: [{ name: "Wages for staff a plant does not have", stage: "main" }] });
@@ -348,7 +349,8 @@ test("a card item named with its stage label is the same fix and sends no second
   const broker = createBroker({ ledger: f.ledger, config: f.config, mcp, discord, sandbox: {}, now: () => Date.now() });
   const t = f.ledger.createJob("ticket:1629", { kind: "ticket", role: "support", ticket: 1629, channelId: "777777777777777777", source: {}, deadline: 9e15 });
   t.state = "running"; t.evidence = [];
-  t.releaseEvidence = { abc1234567: { development: true, staging: true, main: true } };
+  t.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/7001"];
+  t.releaseEvidence = { abc1234567: { development: true, staging: true, main: true, repository: "AHDGame", pr: 7001 } };
   await broker.tool(t, "status_card", { items: [{ name: "Canada has no resource deposits", stage: "main" }] });
   assert.equal(updates.filter((u) => u.update_kind === "production").length, 1);
   await broker.tool(t, "status_card", { items: [{ name: "Canada has no resource deposits: Live on the main server: Live on the main server", stage: "main" }, { name: "Fracking", stage: "found" }] });

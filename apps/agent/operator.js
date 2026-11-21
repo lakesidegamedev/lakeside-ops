@@ -48,6 +48,7 @@ const config = {
   evidencePagesDir: env.EVIDENCE_PAGES_DIR || "/var/lib/lakeside-evidence", evidencePublicBase: env.EVIDENCE_PUBLIC_BASE || "",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   // @keir-bot on an AHDGame PR asks for a review; posted as keir-bot when its token is set.
+  ticketPostsPerHour: Number(env.KEIR_TICKET_POSTS_PER_HOUR || 4),
   prMentionEnabled: env.KEIR_PR_MENTION !== "0", githubReviewerToken: env.KEIR_GITHUB_TOKEN || "", keirGitEmail: env.KEIR_GIT_EMAIL || "keir@localhost",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
   ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
@@ -120,6 +121,20 @@ const ledger = createLedger(path.join(config.stateDir, "ledger.json"));
 // Keir 8.4: kill switch (a file read at runtime), hard caps and guarded periodic jobs.
 const killSwitch = require("./lib/operator/killswitch").createKillSwitch({ file: env.KEIR_KILL_SWITCH_FILE || path.join(config.stateDir, "kill-switch"), env });
 const limits = require("./lib/operator/limits").createLimits({ file: env.KEIR_LIMITS_FILE || path.join(config.stateDir, "limits.json"), env });
+// Keir 11.2 third pass (review M7): one switch per new unattended behaviour, a preview mode and a bounded first start,
+// read at each pass from <state dir>/switches.json and the environment (lib/operator/controls.js). Every new pass also
+// stops under the kill switch or a pause; pull request closes and branch deletions also wait out the production hold.
+const prodHoldUntil = () => { try { const until = Date.parse(require("node:fs").readFileSync(env.KEIR_PROD_HOLD_FILE || path.join(config.stateDir, "prod-hold"), "utf8").trim()); return until > Date.now() ? new Date(until).toISOString() : null; } catch { return null; } };
+const controls = require("./lib/operator/controls").createControls({ file: env.KEIR_SWITCHES_FILE || path.join(config.stateDir, "switches.json"), env, killSwitch, data: ledger.data, prodHold: prodHoldUntil,
+  log: (s) => console.log(new Date().toISOString(), s), audit: (kind, detail) => ledger.audit(kind, detail) });
+config.controls = controls; // the broker, the agent loop and the lifecycle read the switches from here
+// Keir 11.2: closing conditions, quiet wakes, step-backs and finding expiry (lib/operator/closing.js). Plain settings, shared
+// by the broker, the agent loop and the lifecycle.
+const closingSettings = require("./lib/operator/closing").settings(env);
+// Review N8: a quiet job hands its own PR to the open-PR pass only while that pass can act on it (switch on, not in
+// preview, not held, Keir's own token present); otherwise the job keeps the PR.
+closingSettings.handoffReady = () => controls.gate("openPrPass").act && Boolean(config.githubReviewerToken);
+config.closing = closingSettings;
 const tickers = require("./lib/operator/ticker").createTickers({ log: (m) => console.log(`[keir] ${m}`) });
 const diary = require("./lib/operator/diary").createDiary({ stateDir: config.stateDir, ledger, ownerId: config.ownerId, botId: config.botId, staffIds: config.staffIds });
 // Keir 5.1 routing lock: lanes never run a model that measurably failed them.
@@ -197,7 +212,7 @@ const prMention = require("./lib/operator/prmention").createPrMention({ ledger, 
     env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", ...(asReviewer && config.githubReviewerToken ? { GH_TOKEN: config.githubReviewerToken } : {}) } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null")))) });
 const dailyReview = selfImprove.createDailyReview({ ledger, config, log, drain: () => drain(), hour: Number(env.KEIR_SELF_REVIEW_HOUR || 5) });
 setInterval(() => { try { dailyReview.tick(); } catch (e) { log(`self-review: ${e.message}`); } }, 5 * 60000).unref();
-const gateway = createGateway({ ledger, config, conversation, drain: () => drain(), onWake: (ms) => setTimeout(() => tick(), ms + 50).unref(), observe: process.env.KEIR_FEEDBACK_LOG === "0" ? null : (x) => feedbackLog.observe(x) });
+const gateway = createGateway({ ledger, config, conversation, controls, drain: () => drain(), onWake: (ms) => setTimeout(() => tick(), ms + 50).unref(), observe: process.env.KEIR_FEEDBACK_LOG === "0" ? null : (x) => feedbackLog.observe(x) });
 const { createDecisions } = require("./lib/operator/decisions");
 const decisions = createDecisions({ ledger, config, discord, log, onAnswered: (x, verdict, actor, text) => {
   // Keir 2.0: owner decisions are remembered.
@@ -206,8 +221,13 @@ const decisions = createDecisions({ ledger, config, discord, log, onAnswered: (x
 function d0(x) { return ledger.data.jobs[x.jobId]?.ticket || null; }
 const { render: renderDecision } = require("./lib/operator/decisions");
 let checkingDecisions = false;
+// Keir 11.2: GitHub is read before the decision loop sends any reminder or escalation (lib/operator/prtruth.js).
+// Keir 11.2 fourth pass: a large buffer (lib/operator/ghlist.js); the default 1 MiB overflowed on the open PR list.
+const ghRead = require("./lib/operator/ghlist").ghApi({ home: "/root" });
+const prTruth = require("./lib/operator/prtruth").createPrTruth({ ledger, api: ghRead, log, controls });
 async function checkDecisions() {
   if (checkingDecisions) return; checkingDecisions = true;
+  try { await prTruth.tick(); } catch (e) { log(`prtruth: ${e.message}`); }
   try { await decisions.tick(); } catch (e) { log(`decisions: ${e.message}`); } finally { checkingDecisions = false; }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
 }
@@ -373,13 +393,16 @@ async function watchTick() {
     // game_overview is unavailable. Each sensor isolates its own failures.
     const overview = await mcp.call("gamestate", "game_overview", {}, false).catch((e) => { log(`watch overview: ${e.message}`); return null; });
     const turn = overview?.turn == null ? undefined : Number(overview.turn);
+    // Keir 11.2: the turn clock other parts read without a call of their own (closing checks, turn promises).
+    if (Number.isFinite(turn)) (ledger.data.watch ||= {}).turnClock = { turn, nextTurn: Date.parse(overview.nextTurn || "") || null, iteration: overview.iteration?.number ?? null, paused: Boolean(overview.paused), at: Date.now() };
     const r = await watch.tick({ turn });
     if (r.raised?.length) { log(`watch raised ${r.raised.join(", ")}`); if (config.rolesEnabled) engineering.tick(); drain(); }
   } catch (e) { log(`watch: ${e.message}`); }
 }
 tickers.every("watch", 5 * 60000, watchTick, { immediateMs: 1000 });
 const { createCiWatch } = require("./lib/operator/ciwatch");
-const ciApi = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
+// Keir 11.2 fourth pass: a large buffer (lib/operator/ghlist.js); the default 1 MiB overflowed on the open PR list.
+const ciApi = require("./lib/operator/ghlist").ghApi({ home: "/root" });
 const ciWatch = createCiWatch({ ledger, api: ciApi, log, onWaiting: (job, info) => broker.waitingUpdate(job, info) });
 // Developer changes related to open tickets (owner, 2026-10-14).
 const { createDevMerges } = require("./lib/operator/devmerges");
@@ -408,10 +431,24 @@ tickers.every("devmerges", 5 * 60000, async () => {
 });
 // Owner approval pings: a developer PR green except the owner's own approval (owner, 2026-11-03).
 const { createOwnerWait } = require("./lib/operator/ownerwait");
-const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain() });
+const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain(), controls });
 tickers.every("ownerwait", 5 * 60000, async () => {
   try { await ownerWait.tick(); } catch (e) { log(`ownerwait: ${e.message}`); }
 });
+// Keir 11.2: a decision's kanban card closes with the decision; at start and every six hours, open questions on closed
+// tickets are withdrawn so their cards and DMs close too (lib/operator/decisioncards.js).
+const decisionCards = require("./lib/operator/decisioncards").createDecisionCards({ ledger, mcp, config, log, controls,
+  readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(15000)) });
+tickers.every("decisioncards", 60000, () => decisionCards.tick(), { immediateMs: 3 * 60000, maxMs: 2 * 60000 });
+tickers.every("decisioncardsweep", 6 * 3600000, () => decisionCards.sweepClosedTickets(), { immediateMs: 2 * 60000, maxMs: 5 * 60000 });
+// Keir 11.2: every open Keir PR gets one ask, a repair, a plain blocked line, or a close with a note (lib/operator/keirprs.js).
+// Writes go out as keir-bot when its token is set. KEIR_STALE_PR_DAYS (default 5) sets when an orphaned PR is closed as stale.
+const ghKeir = require("./lib/operator/ghlist").ghApi({ home: "/root", token: config.githubReviewerToken || "" });
+// Closes (KEIR_OPEN_PR_CLOSES) and branch deletions (KEIR_OPEN_PR_BRANCH_DELETES) are off until the owner turns them on;
+// GitHub writes need KEIR_GITHUB_TOKEN; KEIR_PR_CLOSE_GRACE_HOURS (48) is the first-sight and warning grace.
+const keirPrs = require("./lib/operator/keirprs").createKeirPrs({ ledger, api: ciApi, write: ghKeir, config, log, drain: () => drain(), controls,
+  staleDays: Number(env.KEIR_STALE_PR_DAYS || 5), graceHours: Number(env.KEIR_PR_CLOSE_GRACE_HOURS || 48) });
+tickers.every("keirprs", 60 * 60000, async () => { await keirPrs.tick(); }, { immediateMs: 10 * 60000, maxMs: 5 * 60000 });
 tickers.every("ciwatch", 60000, async () => {
   try { await ciWatch.tick(); } catch (e) { log(`ciwatch: ${e.message}`); }
   // Keir 10: cards move on receipts, without a model run (broker.stageTick).
@@ -446,6 +483,12 @@ if (failures) tickers.every("failures", 15 * 60000, async () => {
 }, { immediateMs: 120000 });
 tickers.every("answerfeedback", 10 * 60000, async () => { await answerFeedback.sweep(); }, { immediateMs: 3 * 60000 });
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
+// Keir 11.2: a follow-up promised to a player wakes its ticket when due, even a blocked one; two failed wakes post one plain
+// "can't confirm yet" line and tell staff once (lib/operator/promises.js).
+const promiseKeeper = require("./lib/operator/promises").createPromises({ ledger, log, controls, held: (job) => ticketHeld(job), post: (n, text) => broker.promiseFallback(n, text) });
+// Keir 11.2: finding jobs blocked with no question, parked with nothing changing, or from an old world are closed with a record.
+tickers.every("findingexpiry", 30 * 60000, async () => { require("./lib/operator/closing").expireFindings(ledger, { now: Date.now(), config: closingSettings, controls }); }, { immediateMs: 5 * 60000 });
+tickers.every("promises", 5 * 60000, async () => { const r = await promiseKeeper.tick(); if (r.woke) drain(); }, { immediateMs: 3 * 60000 });
 // Keir 11.1: keeps live evidence trackers current, once per settled turn, silently (KEIR_EVIDENCE_MONITOR=0 turns it off).
 // Page-only: no Discord post, no model call, no job created or revived. Ends at 24 h, stop, pause, takeover, kill switch, closed ticket or a wrong world.
 const evidenceMonitor = require("./lib/operator/evidencemonitor").createMonitor({ ledger, config, log,
@@ -821,7 +864,7 @@ function drain() {
   const now = Date.now();
   require("./lib/operator/workqueue").reviewWaits(ledger, config, now);
   selfRecovery.tick(active, { supportDeferred: (j) => config.supportDeferred(j), setTicketOwner: (t, o) => supportOwner.setTicketOwner(t, o, "self-recovery", {}), canRun: (j) => !(j.ticketPaused || config.supportDeferred(j) || d.channels[j.channelId]?.claimedBy || broker.supportDirectiveHeld(j) || staffHeld(j)) });
-  const wakeCtx = { now, config, claimedBy: (id) => d.channels[id]?.claimedBy, directiveHeld: (j) => broker.supportDirectiveHeld(j) };
+  const wakeCtx = { now, config, data: d, closing: closingSettings, claimedBy: (id) => d.channels[id]?.claimedBy, directiveHeld: (j) => broker.supportDirectiveHeld(j) };
   for (const j of Object.values(d.jobs)) {
     if (j.codingParent && !j.operatorRole) {
       const role = rootJob(j, d.jobs).operatorRole;
@@ -968,7 +1011,7 @@ const server = http.createServer(async (req, res) => {
     try { const job = engineering.enqueue(JSON.parse(raw)); if (!job) return reply(409, { error: "engineering disabled or backlog full" }); drain(); return reply(202, { task: job.id, state: job.state }); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
-  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), codingWorkers: codingWorkersInst?.status() || [], tickers: tickers.snapshot(), sweeper: sweeper.status(), evidenceMonitor: evidenceMonitor.status(), trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
+  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), codingWorkers: codingWorkersInst?.status() || [], tickers: tickers.snapshot(), sweeper: sweeper.status(), evidenceMonitor: evidenceMonitor.status(), switches: controls.settings(), preview: { items: Object.keys(ledger.data.preview?.items || {}).length, updatedAt: ledger.data.preview?.updatedAt || null }, refusedPosts: Object.values(ledger.data.refusedPosts || {}).reduce((n, r) => n + r.length, 0), postDoubts: Object.values(ledger.data.postDoubts || {}).reduce((n, r) => n + r.length, 0), parkedJobs: Object.values(ledger.data.jobs).filter((j) => j.closing?.parked).length, trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
   if (req.url === "/v5/trust/report" && req.method === "POST") { try { const r = await trustReporter.tick({ force: true }); drain(); return reply(200, { ok: true, text: r?.text, file: r?.file }); } catch (e) { return reply(500, { error: String(e.message).slice(0, 200) }); } }
   if (req.url === "/v5/trust/killswitch" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }

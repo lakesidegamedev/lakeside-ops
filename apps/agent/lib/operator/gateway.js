@@ -3,6 +3,7 @@ const { JOB_TERMINAL } = require("./machines");
 
 const { ticketClaim } = require("./ticketClaim");
 const authority = require("./authority");
+const takeover = require("./supporttakeover");
 
 const { quickQuestion, isQuick } = require("./conversation");
 const { ackFacts } = require("./admission");
@@ -45,7 +46,7 @@ async function catchUp(call, channelId, cursor, ingest, maxPages = 10) {
   return after;
 }
 
-function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null, onWake = null }) {
+function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null, onWake = null, controls = require("./controls").DEFAULT_CONTROLS }) {
   const d = ledger.data;
   d.conversations ||= {};
   d.summonedChannels ||= {};
@@ -96,8 +97,9 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     s.role = role === "player" && conversation?.isModerator?.(actor) ? "moderator" : role;
     if (summonTask) { s.authorId = actor; s.content = summonTask.content; }
     const nTicket = ticketNumber(channel.name);
+    const pingHold = d.supportOwner?.tickets?.[nTicket] === takeover.AWAITING_PING;
     // Keir 5.7: feedback about Keir is logged by a fire-and-forget Jev check.
-    if (observe && !historical && !summonTask) Promise.resolve().then(() => observe({ text: s.content, role, actorId: actor, channelId: channel.id, ticket: nTicket || null, messageId: message.id,
+    if (observe && !historical && !summonTask && !pingHold) Promise.resolve().then(() => observe({ text: s.content, role, actorId: actor, channelId: channel.id, ticket: nTicket || null, messageId: message.id,
       dm: channel.type === 1, mentionsKeir: (message.mentions || []).some((u) => u.id === config.botId) || message.referenced_message?.author?.id === config.botId })).catch(() => {});
     const controlText = s.content.replace(new RegExp(`<@!?${config.botId}>`, "g"), "").replace(/^\s*\/?(?:keir|keith)\b[,:]?/i, "").trim();
     const controlAddress = (channel.type === 1 && role !== "player") || message.referenced_message?.author?.id === config.botId ||
@@ -128,6 +130,51 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     if (nTicket && d.channels[channel.id]?.keirPaused) {
       d.seen[`discord:${message.id}`] = "owner-ticket-pause";
       delete d.classify?.[message.id]; ledger.save(); return;
+    }
+    const standDown = !historical && !summonTask && nTicket && s.role !== "player" && controlAddress &&
+      /^(?:please\s+)?stand down(?: (?:here|on this ticket))? until (?:pinged|(?:someone|we|I) pings? you)[.!]*$/i.test(controlText);
+    if (standDown && (pingHold || takeover.ownerOf(d, nTicket) === "keir")) {
+      const key = `discord:${message.id}`;
+      if (d.seen[key]) return;
+      d.seen[key] = "ticket-awaiting-ping";
+      if (!pingHold) {
+        const owners = (d.supportOwner ||= { owner: "keir", since: now(), tickets: {} });
+        owners.tickets[nTicket] = takeover.AWAITING_PING;
+        takeover.record(ledger, nTicket, takeover.AWAITING_PING, actor, { correction: "Standing down until directly pinged in the ticket." }, now());
+      }
+      ledger.save(); return;
+    }
+    let resumedByPing = false;
+    if (pingHold) {
+      const key = `discord:${message.id}`;
+      if (d.seen[key]) return;
+      const hold = d.supportOwner.takeovers?.[nTicket];
+      // Discord may populate mentions on a reply even if its body contains no @mention.
+      const directPing = Boolean(config.botId) && (message.mentions || []).some(u => u.id === config.botId) &&
+        new RegExp(`<@!?${config.botId}>`).test(s.content);
+      const channelState = d.channels[channel.id];
+      if (historical || summonTask || !directPing || !(Date.parse(message.timestamp) > hold?.at) ||
+          channelState?.claimedBy || channelState?.keirStopped) {
+        if (!historical && !summonTask) {
+          d.seen[key] = "ticket-awaiting-ping"; delete d.classify?.[message.id]; ledger.save();
+        }
+        return;
+      }
+      // A new request may continue the ticket, but approvals from before the break
+      // do not carry over. Leave in-flight and completed effects alone.
+      const ticketJobs = new Set(Object.values(d.jobs).filter(job => takeover.ticketsOf(d, job).includes(nTicket)).map(job => job.id));
+      for (const action of Object.values(d.actions)) {
+        if (ticketJobs.has(action.jobId) && ["pending", "approved"].includes(action.state)) action.state = "withdrawn";
+      }
+      for (const decision of Object.values(d.decisions || {})) {
+        if (ticketJobs.has(decision.jobId) && decision.state === "pending") decision.state = "withdrawn";
+      }
+      for (const id of ticketJobs) delete d.jobs[id].ownerDecisionPending;
+      delete d.ticketAuthority?.[nTicket]; delete d.shipSignoffs?.[nTicket];
+      d.supportOwner.tickets[nTicket] = "keir";
+      takeover.record(ledger, nTicket, "keir", actor, { correction: `Resumed by direct Discord ping ${message.id}.` }, now());
+      resumedByPing = true;
+      ledger.save();
     }
     if (!historical && !summonTask && nTicket && role !== "player" && controlAddress &&
         /^(?:please\s+)?(?:stop|stand down|leave (?:this|the) ticket alone)(?:[\s,]+(?:please|now|for now|here|working|work|this ticket|on this ticket|on this one|on this|this one|this|it|thanks|thank you))*[.!]*$/i.test(controlText)) {
@@ -185,10 +232,30 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     if (!historical && nTicket && d.channels[channel.id]?.keirStopped && role === "player") {
       d.seen[`discord:${message.id}`] = "ticket-stopped"; ledger.save(); return;
     }
-    // Keir 10.1.14 (ticket 1842): the owner answered in the ticket channel after a decision was raised. That is the answer,
-    // whether or not the message is phrased as a direction to Keir.
+    // Keir 10.1.14 (ticket 1842), narrowed in 11.2: an owner message answers an open question only as a Discord reply to
+    // it or by naming one of its options (standdown.js). Anything else is context and the question stays open.
     if (!historical && !summonTask && nTicket && actor === config.ownerId) {
-      try { const answered = require("./standdown").applyOwnerChannelAnswer(d, { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now() }); if (answered.length) { ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save(); } } catch {}
+      // Keir 11.2 third pass (M2): a message that looked meant for an open question but did not count tells the owner once.
+      const gate = controls.gate("ownerAnswerNotice");
+      // A preview notice returns false, so the question's one real notice is not used up (review N7).
+      const notify = !gate.run ? null : gate.act ? (key, line) => { ledger.notify(key, "owner", line); return true; } : (key, line) => { require("./controls").preview(d, "channel-answers", "tell owner", key, line); return false; };
+      // Fourth pass (review N7): recording a channel message as an answer has its own switch (KEIR_CHANNEL_ANSWERS). Off: no
+      // channel message answers anything (buttons only). Preview: worked out on a copy of the ticket's jobs and open
+      // questions and recorded, nothing changed.
+      const ag = controls.gate("channelAnswers");
+      const args = { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now(), botId: config.botId,
+        replyTo: message.referenced_message ? { id: message.referenced_message.id, authorId: message.referenced_message.author?.id, content: message.referenced_message.content } : message.message_reference?.message_id ? { id: message.message_reference.message_id } : null };
+      try {
+        if (ag.act) {
+          const answered = require("./standdown").applyOwnerChannelAnswer(d, { ...args, notify });
+          if (answered.length) ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save();
+        } else if (ag.run) {
+          const pick = (o, f) => JSON.parse(JSON.stringify(Object.fromEntries(Object.entries(o || {}).filter(([, v]) => f(v)))));
+          const shadow = { jobs: pick(d.jobs, (j) => Number(j.ticket) === Number(nTicket)), decisions: pick(d.decisions, (x) => x.state === "pending") };
+          for (const id of require("./standdown").applyOwnerChannelAnswer(shadow, args)) require("./controls").preview(d, "channel-answers", "record answer", `decision ${id}`, `${shadow.decisions[id].state}: "${String(s.content).slice(0, 160)}"`);
+          ledger.save();
+        }
+      } catch {}
     }
     if (!historical && explicit && nTicket && authority.granter(config, actor) && authority.isDirection(s.content)) {
       delete d.channels[channel.id]?.keirStopped;
@@ -226,7 +293,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     // A mention-only nudge may refer to the author's immediately preceding
     // unanswered read-only question, never to older action requests or another user.
     let addressedText = text;
-    if (explicit && !text && (role !== "player" || playerVenue) && !s.attachments.length && !s.embeds.length) {
+    if (explicit && !text && (role !== "player" || playerVenue || resumedByPing) && !s.attachments.length && !s.embeds.length) {
       const rows = (conversation?.snapshot({ source: { channelId: channel.id } })?.messages || []).filter(r => r.id !== message.id);
       const referenced = rows.find(r => r.id === s.replyTo);
       const prior = rows.at(-1);
@@ -445,7 +512,7 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
       // and while staff are talking in a ticket Keir keeps quiet for ten
       // minutes unless someone addresses it (ticket 1550 woke sixteen times in
       // twelve minutes while Ariane and the player talked).
-      const addressed = new RegExp(`\\b(?:keir|keith|starmer)\\b|<@!?${config.botId}>`, "i").test(s.content || "");
+      const addressed = resumedByPing || new RegExp(`\\b(?:keir|keith|starmer)\\b|<@!?${config.botId}>`, "i").test(s.content || "");
       if (role !== "player" && !addressed) job.staffActiveUntil = now() + STAFF_HOLD_MS;
       // A message that names Keir is answered promptly; later chatter that does
       // not name Keir must not push that wake back behind the staff hold

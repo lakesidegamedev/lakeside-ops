@@ -7,7 +7,7 @@ const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubU
 // AHDGame's custom-rules check fails any PR without a ticked "Conflict of
 // interest" section, which left promotes blocked. A promote ships commits that
 // already passed review, so it never touches a holding of its own.
-const NO_CONFLICT_DISCLOSURE = "\n\n## Conflict of interest\n\n- [x] This change does not directly affect a character, corporation, or other in-game holding of mine\n- [ ] It does, and I have disclosed it below or privately to a maintainer";
+const { DISCLOSURE: NO_CONFLICT_DISCLOSURE, withDisclosure } = require("./prdisclosure");
 // Minutes between checks for a task waiting with nothing subscribed and no
 // reply owed: the first is a normal look, then it settles into a slow recheck.
 const QUIET_WAITS = [15, 30, 60, 120];
@@ -33,6 +33,7 @@ const claimcheck = require("./claimcheck");
 const accountClaim = require("./accountclaim");
 const settingClaim = require("./settingclaim");
 const standdown = require("./standdown");
+const closing = require("./closing");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const evidenceLookup = require("./evidencelookup");
@@ -556,6 +557,27 @@ function similarity(a, b) {
   return both / (x.size + y.size - both);
 }
 function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
+  // Keir 11.2: closing-condition settings (KEIR_QUIET_WAKES and friends); tests may pass config.closing.
+  const closingConfig = config.closing || closing.settings(process.env);
+  // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, quiet-wake escalation and the
+  // step-back, read at each use (lib/operator/controls.js; operator.js puts them on config.controls).
+  const controlsLib = require("./controls");
+  const ctl = () => config.controls || controlsLib.DEFAULT_CONTROLS;
+  // Review M6 and the second pass's soft spot: every post a budget, turn or step-back rule holds back is recorded where a
+  // person can read it (ledger.data.refusedPosts, printed by bin/keir-preview.js): which ticket, which rule, the text.
+  function noteRefused(rule, job, ticketNo, message) {
+    const all = (d.refusedPosts ||= {});
+    all[ticketNo] = [...(all[ticketNo] || []).filter((r) => now() - r.at < 7 * 86400000), { at: now(), rule, job: job.id, text: String(message || "").slice(0, 400) }].slice(-20);
+    for (const n of Object.keys(all)) if (!all[n].some((r) => now() - r.at < 7 * 86400000)) delete all[n];
+  }
+  // Fourth pass (review N10): where a post rule cannot tell, the post goes out and the doubt is recorded here (printed by
+  // bin/keir-preview.js), never a refusal.
+  function noteDoubt(rule, job, ticketNo, message) {
+    const all = (d.postDoubts ||= {});
+    all[ticketNo] = [...(all[ticketNo] || []).filter((r) => now() - r.at < 7 * 86400000), { at: now(), rule, job: job.id, text: String(message || "").slice(0, 400) }].slice(-20);
+    for (const n of Object.keys(all)) if (!all[n].some((r) => now() - r.at < 7 * 86400000)) delete all[n];
+    ledger.audit("post_rule_doubt", { job: job.id, ticket: ticketNo, rule });
+  }
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -741,7 +763,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       development: { done: merged || release.some((r) => r.development) },
       staging: { done: release.some((r) => r.staging) },
       main: { done: release.some((r) => r.main) && require("./livecoverage").mainCovered(jobs) },
-      mainOwn: { done: require("./livecoverage").ownMainReceipt(jobs) },
+      mainOwn: { done: require("./livecoverage").ownMainReceipt(jobs, Object.values(d.actions || {})) },
       // "Live, confirmed in game" (review 2026-10-19: 1602's card said it for a
       // change that never moved the player's mine): a turn processed after
       // the fix, then a game read after that turn.
@@ -1247,6 +1269,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       attempt(() => { const t = standdown.capabilityClaim(message); if (t) { ledger.audit("capability_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
       attempt(() => { const refusals = (d.priceVerdictRefusals ||= {}); if ((refusals[ticketNo] || 0) >= 3) return;
         const t = standdown.priceVerdictRefusal(message, ticketReadTexts(ticketNo, sameJobs)); if (t) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("price_verdict_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
+      // Keir 11.2: "waiting on the owner" needs an open question. GitHub-reconciled decisions (prtruth.js) close when the PR merged or closed.
+      attempt(() => { if (standdown.claimsOwnerWait(message) && !Object.values(d.decisions || {}).some((x) => x.state === "pending" && (ticketOf(d.jobs[x.jobId] || {}) === ticketNo || Number(x.ticket) === ticketNo)) && !standdown.ownerAnsweredSince(d, ticketNo)) { ledger.audit("owner_wait_claim_refused", { job: job.id, ticket: ticketNo, reason: "no open question" }); throw new Error("Not posted: nothing on this ticket is waiting on the owner; no question to them is open (a PR it was about may have merged or closed on GitHub). Say what is actually happening now."); } });
       attempt(() => { if (standdown.claimsOwnerWait(message) && standdown.ownerAnsweredSince(d, ticketNo)) { ledger.audit("owner_wait_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error("Not posted: the owner already answered the open decision in this ticket's channel, so it is not waiting on them. Read their message in the channel and act on it, or say what you are doing now."); } });
     }
     // The owner or a developer asking Keir directly in a ticket is owed the answer now. The
@@ -1320,6 +1344,57 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (said) refuse(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
     }
     attempt(() => guardStall(job, ticketNo, message, posts));
+    // Keir 11.2: a step-back activation states the ticket's position in a checkpoint first, then posts at most once.
+    // Review N3: only a step-back started by this activation applies; one left open by an activation that ended without
+    // finish (turn limit, crash, restart) never refuses a later activation's answer.
+    if (!opts.system && closing.stepBackActive(job)) attempt(() => {
+      const t = closing.stepBackRefusal(job, { checkpointed: (job.history || []).some((h) => h.kind === "checkpoint" && Date.parse(h.at || "") >= job.stepBack.at) });
+      if (t) { ledger.audit("step_back_post_refused", { job: job.id, ticket: ticketNo }); if (!opts.collect) noteRefused("step_back", job, ticketNo, message); throw new Error(t); }
+    });
+    // Keir 11.2 post budget (postbudget.js): one live announcement per shipped change, turn reports only when the answer
+    // changed, and an hourly cap without a new player message whose overflow is one merged correction or answer.
+    if (!opts.system && !answeringStaff) {
+      const pb = require("./postbudget"), h = humanAt(ticketNo);
+      // A rule in force refuses (and the refusal is recorded); a rule in preview records what it would have refused and lets
+      // the post through; a rule switched off does nothing.
+      const rule = (name, kind, text) => {
+        const g = ctl().gate(name);
+        if (!g.run) return;
+        ledger.audit(kind, { job: job.id, ticket: ticketNo, ...(g.act ? {} : { preview: true }) });
+        if (opts.collect) { if (g.act) refuse(text); return; }
+        if (!g.act) { controlsLib.preview(d, "post-rules", `would refuse (${kind})`, `ticket ${ticketNo}`, String(message).slice(0, 300), {}, now()); return; }
+        noteRefused(kind, job, ticketNo, message);
+        refuse(text);
+      };
+      // Second pass soft spot: what always gets through, in some form, whatever the budget or turn rule says: a correction,
+      // the answer to something the player asked since Keir last really answered (holding lines do not count as answers),
+      // and a follow-up Keir promised. These three are never refused by the rules below.
+      const correction = isCorrection(message);
+      const promiseDue = require("./promises").calledFor(d, ticketNo, now()) || owedNow;
+      const answerPosts = posts.filter((p) => !isCardPost(p) && !holdingPost(p.text));
+      const ls = d.lastSubstantive?.[ticketNo];
+      const paceAt = (d.ticketPace?.[ticketNo]?.log || []).filter((p) => !holdingPost(p.text)).at(-1)?.at || 0;
+      const lastAnswerAt = Math.max(answerPosts.at(-1)?.at || 0, ls && !ls.holding ? ls.at : 0, paceAt);
+      const playerAsked = h > 0 && h > lastAnswerAt;
+      if (pb.liveClaim(message) && !correction) {
+        const said = pb.liveAlreadySaid({ posts, receipt: pb.mainReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), humanAt: h });
+        if (said) rule("postBudget", "live_repeat_refused", `Not posted: the player was already told this release is live ("${String(said.text).slice(0, 140)}"). Do not announce it again; post only what is new.`);
+      }
+      // Keir 11.2: one turn rule (postbudget.turnPostRule): turn commentary only when the player asked, a recorded promise is
+      // due, or the closing condition calls for that turn's result; and never the same answer twice.
+      // An answer the player is owed (owedNow) passes like a due promise: it answers them.
+      const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]];
+      const calledFor = closing.closingCallsForTurn(d, job, now()) || (root && root !== job && closing.closingCallsForTurn(d, root, now()));
+      // Review N10: an open player question this post answers makes it an answer; any open question makes a doubt, not a refusal.
+      const ask = require("./ticketcase").openAsk(d, ticketNo, message, now());
+      const turnArgs = { posts: answerPosts, humanAt: h, message, correction, promiseDue, calledFor, lastKeirAt: lastAnswerAt, answersAsk: ask.answers, openAsk: ask.open > 0 };
+      const turnRule = pb.turnPostRule(turnArgs);
+      if (turnRule) rule("turnRule", turnRule.why === "same turn answer" ? "turn_repeat_refused" : "turn_post_not_called_for", turnRule.refusal);
+      else if (!opts.collect) { const via = pb.turnPostVia(turnArgs); if (via === "closing") job.turnReportViaClosing = true; else if (via === "promise" && !owedNow) job.turnReportViaPromise = true; else if (via === "doubt" && ctl().gate("turnRule").run) noteDoubt("turn_rule", job, ticketNo, message); } // a report uses up what called for it
+      const cap = Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR;
+      const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || correction || playerAsked || ask.answers || require("./promises").dueNow(d, ticketNo, now()), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
+      if (!r.allow) rule("postBudget", "hourly_post_cap_refused", pb.hourlyRefusal(r, cap));
+    }
     // Keir 10: a post must not contradict this ticket's earlier posts without saying "Correction:", and must not call something
     // available that a read in this activation says is locked. check_draft runs the same two checks.
     if (!opts.system) {
@@ -1687,7 +1762,17 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       return false;
     }
 
-    const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
+    // Keir 11.2: one live notice per ticket per shipped change (main release receipt). A model post that already said it is
+    // live for this release counts: the card notice and the model never both announce the same thing (ticket 1868).
+    // Fourth pass (review N7): this suppression belongs to the post budget switch; off or in preview the notice goes out as
+    // before (preview records that it would have been held).
+    const pbGate = ctl().gate("postBudget");
+    const receipt = require("./postbudget").mainReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo));
+    const announcedRaw = receipt && (card.liveReceipts || []).includes(receipt.key);
+    const saidSinceRaw = receipt && (d.ticketPosts?.[ticketNo] || []).some((p) => p.at >= receipt.at && !isCardPost(p) && require("./postbudget").liveClaim(p.text));
+    if ((announcedRaw || saidSinceRaw) && pbGate.run && !pbGate.act) controlsLib.preview(d, "post-rules", "would hold live notice", `ticket ${ticketNo}`, announcedRaw ? "this release was already announced" : "the model already said it is live", {}, now());
+    const announced = pbGate.act && announcedRaw, saidSince = pbGate.act && saidSinceRaw;
+    const said = announced || saidSince || (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { delete card.pendingLiveNotice; card.liveNotified = [...told, ...fresh.map(i => statusCard.cleanName(i.name))].slice(-20); ledger.save(); ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
     const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
@@ -1698,6 +1783,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       await effect(effectJob, key, () => callSupport("support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
       delete card.pendingLiveNotice;
       card.liveNotified = [...told, ...fresh.map((i) => statusCard.cleanName(i.name))].slice(-20);
+      if (receipt) card.liveReceipts = [...(card.liveReceipts || []), receipt.key].slice(-20);
       effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
       ledger.audit("live_notice", { job: effectJob.id, ticket: ticketNo, items: names.length }); ledger.save();
       return true;
@@ -1705,6 +1791,26 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       ledger.audit("live_notice_failed", { job: effectJob.id, ticket: ticketNo, reason: String(error.message).slice(0, 300) }); ledger.save();
       return false;
     }
+  }
+  // Keir 11.2 (promises.js): after two wakes failed to deliver a promised follow-up, the player gets one plain line from code.
+  // Staff ownership, a takeover, the kill switch and an ended ticket all stop it; it is never retried after delivery.
+  async function promiseFallback(ticketNo, message) {
+    killSwitch?.assertClear("A promise follow-up");
+    const n = Number(ticketNo), root = cardOwnership(n);
+    const ended = require("./ticketstate").endedReason(d, n, root);
+    if (ended) throw new Error(`ticket ended (${ended})`);
+    const notice = ledger.createJob(`promise-fallback:${n}:${Math.floor(now() / 3600000)}`, { kind: "notice", role: "support", ticket: n, internalProbe: true, channelId: root.channelId, deadline: now() + 300000, source: {} });
+    if (notice.state === "done") return { already: true };
+    notice.state = "running";
+    try {
+      guardPlayerRegister(notice, n, message);
+      await effect(notice, `promise-fallback:${n}`, () => callSupport("support_public_update", { kind: "ticket", number: n, message, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true), { kind: "reply", ticket: n, text: message });
+      notice.state = "done"; notice.summary = "Promise fallback delivered.";
+      recordTicketPost(notice, n, message);
+      ledger.audit("promise_fallback_posted", { ticket: n, job: notice.id });
+      return { posted: true };
+    } catch (e) { notice.state = "blocked"; notice.summary = String(e.message).slice(0, 300); throw e; }
+    finally { ledger.save(); }
   }
   // Ownership checks without a running task (admin path and CI waits).
   function cardOwnership(ticketNo) {
@@ -1879,6 +1985,18 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
   function outputBlocked() { return Boolean(killSwitch?.state().engaged); }
   function recordTicketPost(job, ticketNo, message, kind = "reply") {
     const card = kind === "status_card";
+    if (!card) {
+      // Keir 11.2: the post that goes past the hourly cap is the one merged overflow message for this player message.
+      try { const pb = require("./postbudget"), h = humanAt(ticketNo); if (pb.recentRun(d.ticketPosts?.[ticketNo], h, now()).length >= (Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR)) (d.postOverflow ||= {})[ticketNo] = { at: now(), humanAt: h }; } catch {}
+      // Keir 11.2: every follow-up promise Keir makes is recorded with a due time by the post path itself (promises.js).
+      if (job.kind !== "notice") { try { const askedAt = Math.max(humanAt(ticketNo), ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo && j.kind === "command" && !j.internalProbe).map((j) => Date.parse(j.source?.at || "") || 0)); const p = require("./promises").notePost(d, ticketNo, job, message, now(), { askedAt }); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt, afterTurn: p.afterTurn ?? null }); } catch {} }
+      // Keir 11.2: the ticket's pace (posts, corrections) for the step-back threshold; a step-back posts once; a turn
+      // report the closing condition called for uses that call up.
+      try { closing.notePost(d, ticketNo, message, { now: now(), correction: isCorrection(message) }); } catch {}
+      if (closing.stepBackActive(job)) job.stepBack.posted = (job.stepBack.posted || 0) + 1;
+      if (job.turnReportViaPromise) { delete job.turnReportViaPromise; require("./promises").keepForReport(d, ticketNo, now()); }
+      if (job.turnReportViaClosing) { delete job.turnReportViaClosing; const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]]; for (const j of [job, root]) if (j && closing.closingCallsForTurn(d, j, now())) closing.noteTurnReport(d, j, now()); }
+    }
     try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); } catch {}
     try { require("./ticketcase").recordPost(d, job, message, { now: now(), card }); } catch {} // Keir 10.3: durable case file
     if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
@@ -1901,7 +2019,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // Keir 10: a correction means an earlier post was wrong; the failure tracker groups these.
     if (!card && isCorrection(message)) ledger.audit("correction_posted", { job: job.id, ticket: ticketNo, lane: job.lane || null });
     const posts = (d.ticketPosts ||= {});
-    posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 24 * 3600000), { at: now(), jobId: job.id, kind, text: message.slice(0, 600) }].slice(-40);
+    // Review M6: a post made by a task answering the owner or a developer is marked, so it never counts against the player's hourly budget.
+    const toStaff = job.role === "owner" || developerTask(job);
+    posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 24 * 3600000), { at: now(), jobId: job.id, kind, text: message.slice(0, 600), ...(toStaff ? { staff: true } : {}) }].slice(-40);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
     // Keir 4.0: consecutive Keir posts since the player last spoke, kept
     // beyond the one-hour post window so a slow monologue still counts.
@@ -2104,7 +2224,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     });
     await exec("/usr/bin/git", ["-C", wt, "apply", "--index", a.args.patchFile], { signal });
     await exec("/usr/bin/git", ["-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Keir", "-c", `user.email=${config.keirGitEmail || "keir@localhost"}`, "commit", "-m", a.args.title + "\n\nPrepared by Keir for task " + job.id + "."], { signal });
-    a.args.title = noDashes(a.args.title); a.args.body = noDashes(a.args.body);
+    a.args.title = noDashes(a.args.title); a.args.body = withDisclosure(noDashes(a.args.body));
     fs.writeFileSync(bodyFile, a.args.body, { mode: 0o600 });
     } catch (e) {
       // child_process errors carry a numeric exit code, so test for our own classes, not for "no code".
@@ -3280,6 +3400,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const keirMade = Object.values(d.jobs).some((j) => (j.pullRequests || []).some((u) => canonicalGithubUrl(u) === `https://github.com/${repo}/pull/${Number(input.number)}`));
       // An owner-approval task (ownerwait.js) may ask about the one developer PR it was made for; the merge still needs his button.
       const ownerWaitPr = job.ownerWaitPr && Number(job.ownerWaitPr) === Number(input.number);
+      // Keir 11.2: the open-PR pass (keirprs.js) adopts a green Keir PR whose task ended; its one task asks the owner about that PR.
+      const adoptedPr = job.adoptedPr && Number(job.adoptedPr) === Number(input.number);
       // Keir 10.1.9 (owner, 2026-11-17, PR 6680): a green PR Keir opened that this task has no standing authority to merge
       // (a watch finding, an engineering task) goes to the owner as an Approve / Decline question, never as plain text.
       const staffSide = job.role !== "player" && ["ticket", "command", "finding"].includes(job.kind);
@@ -3287,7 +3409,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       let askForAuthority = ["merge", "promote"].includes(input.action) && staffSide && !hasStandingAuthority
         && (input.action === "merge" ? keirMade || Boolean(job.pullRequests?.length) : Boolean(job.pullRequests?.length));
       if (docReview && input.action === "merge") askForAuthority = true;
-      if (input.action === "merge" && !ownerDirected(job) && !keirMade && !ownerWaitPr) throw new Error("merge only PRs Keir opened unless the owner asked");
+      if (adoptedPr && input.action === "merge") askForAuthority = true;
+      if (input.action === "merge" && !ownerDirected(job) && !keirMade && !ownerWaitPr && !adoptedPr) throw new Error("merge only PRs Keir opened unless the owner asked");
       // Reading where a change is, its checks or its failures is open to every
       // staff-side task: a ticket inherited from another operator has no PRs of
       // its own yet still has to know whether the fix is live (2026-10-13: four
@@ -3353,6 +3476,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Source evidence goes to the worker, never directly into an owner card.
       async function requestGithubApproval(args, reason) {
         const copy=require("./approvalcopy");
+        // Keir 11.2: GitHub is the truth before any ask. A PR merged or closed by anyone, or moved to a new head, is not asked about.
+        if(args.action==="merge" && Number(args.number)) {
+          const live=await api([`repos/${repo}/pulls/${Number(args.number)}`]).catch(()=>null);
+          if(!live) throw new Error(`GitHub could not be read for PR ${Number(args.number)}; nothing was sent to the owner. Try again in a few minutes.`);
+          if(live.merged || live.merged_at) return { number: Number(args.number), merged: true, already: true, sha: live.merge_commit_sha, nextMove: "Already merged on GitHub. Nothing to ask; treat the merge as done." };
+          if(live.state && live.state!=="open") throw new Error(`PR ${Number(args.number)} is closed on GitHub; nothing was sent to the owner.`);
+          if(args.head && live.head?.sha && live.head.sha!==args.head) throw new Error(`PR ${Number(args.number)} moved to a new head (${live.head.sha.slice(0,10)}) since it was read; nothing was sent. Re-read it and ask for the current head.`);
+        }
         const existing=Object.values(d.actions).find(a=>a.jobId===job.id && a.kind==="github" && JSON.stringify(musePolicy.normalized(a.args))===JSON.stringify(musePolicy.normalized(args)) && a.expiresAt>now());
         if(existing && ["approved","done","rejected"].includes(existing.state)) return request(job,"github",args,reason,existing.explanation);
         const liveQuestion=existing && Object.values(d.decisions||{}).some(x=>x.actionId===existing.id&&x.state==="pending");
@@ -3475,6 +3606,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             if (prNow.merged) return { number: prNow.number, merged: true, already: true, sha: prNow.merge_commit_sha };
             if (prNow.state !== "open") throw new Error(`PR ${prNow.number} is ${prNow.state}`);
             const g = await gate(prNow);
+            if (!g.ready) await mergeDeadEnd(prNow, g);
             if (!g.ready) return { number: prNow.number, merged: false, url: prNow.html_url, ...g, approvalRequired: false, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix. The owner is only asked about a PR whose checks are green." : "Checks are not all green yet: finish waiting with a wakeup of about 10 minutes and call merge again. The owner is only asked once they are green." };
           }
           // A task that judges its own change economy-affecting (prices, money,
@@ -3832,8 +3964,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = merged for web; it is live once github deployed shows the main server running a commit that contains it. turn-worker/production = turn processing source; it is live once github deployed shows the turn worker running it. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. staging = the fix is in the sandbox release line, but the sandbox server is rebuilt by hand and can lag staging by days: never wait for it to update, and do not ask anyone to start it. Once main contains a fix and github deployed shows it running, the sandbox step is done; verify on the main server instead.";
         // Release claims in ticket copy are checked against these receipts.
-        const ownPr = input.number && (job.pullRequests || []).some((u) => Number(String(u).split("/").pop()) === Number(input.number));
-        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, ...(ownPr ? {} : { source: "lookup" }) };
+        // Review 3 F1: owned means this repository and this number, held by the job (not the same number in another repo).
+        const ownPr = input.number && require("./livecoverage").jobOwnsPr(d, job, repo, input.number);
+        // Review 4 m4: a later lookup of the same commit merges into the receipt; it never drops its PR or turns an owned
+        // receipt into a lookup.
+        const prior = (job.releaseEvidence ||= {})[out.sha] || {};
+        const owned = ownPr || (Number(prior.pr) > 0 && prior.source !== "lookup");
+        const receipt = { ...prior, at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, ...(input.number ? { pr: Number(input.number) } : {}), source: owned ? prior.source : "lookup" };
+        if (!receipt.source) delete receipt.source;
+        job.releaseEvidence[out.sha] = receipt;
         ledger.save();
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
           const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));
@@ -3862,6 +4001,34 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         return { runs, result: { checks: runs.length, pending, failed, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
           ...(qualification.qualified ? { qualification } : {}),
           ready: runs.length > 0 && (!pending.length || qualification.qualified) && !failed.length && pr.mergeable === true } };
+      }
+      // Keir 11.2 (audit P1-1, H5): a merge Keir was asked to carry out and GitHub refuses (red check, conflict, missing
+      // section) used to end as a silent "probe" dismissal. The owner now gets one plain line per PR, head and reason. When
+      // the only blocker is Keir's own PR description, Keir repairs it instead.
+      async function mergeDeadEnd(pr, g) {
+        try {
+          const n = Number(pr.number), head = pr.head?.sha || "";
+          const approved = Object.values(d.actions).some((a) => a.kind === "github" && a.args?.action === "merge" && Number(a.args.number) === n && ["approved", "executing"].includes(a.state));
+          if (!(job.ownerWaitPr || job.adoptedPr || approved) || repo !== GAME_REPO || input.action !== "merge") return;
+          if (!g.failed.length && g.mergeable !== false) return; // still running: not a dead end yet
+          const names = g.failed.map((f) => String(f).split(":")[0]);
+          const keirPrs = require("./keirprs");
+          const why = keirPrs.plainReason(names, g.mergeable);
+          // Fourth pass (review N7, m6): a switch (KEIR_MERGE_DEAD_END), preview, and the repair only as Keir's own account.
+          const dg = ctl().gate("mergeDeadEnd");
+          if (!dg.run) return;
+          if (why.key === "custom-rules" && !require("./prdisclosure").hasDisclosure(pr.body)) {
+            if (keirPrs.isKeirPr(pr, d) && dg.act && config.githubReviewerToken) {
+              await effect(job, `disclosure:${n}:${head}`, async () => JSON.parse(await exec("/usr/bin/gh", ["api", "-X", "PATCH", `repos/${repo}/pulls/${n}`, "-f", `body=${withDisclosure(pr.body)}`], asKeir({ timeout: 60000 })) || "null"), { kind: "github", text: `describe PR ${n}` });
+              ledger.audit("keir_pr_description_repaired", { job: job.id, pr: n, head });
+              return;
+            }
+            why.text = keirPrs.isKeirPr(pr, d) ? "its description is missing the Conflict of interest section, and Keir has no token of its own to add it" : "its description is missing the Conflict of interest section, which its author has to add";
+          }
+          if (!dg.act) { controlsLib.preview(d, "merge-dead-end", "owner line", `#${n}`, `ready but blocked: ${why.text}`, {}, now()); return; }
+          ledger.notify(`pr-blocked:${n}:${why.key}:${head}`, "owner", `PR #${n} (${String(pr.title || "").slice(0, 100)}) is ready to merge but blocked: ${why.text}. Nothing was merged.`);
+          ledger.audit("merge_dead_end_reported", { job: job.id, pr: n, head, reason: why.key });
+        } catch (e) { ledger.audit("merge_dead_end_report_failed", { job: job.id, pr: Number(pr.number), reason: String(e.message).slice(0, 200) }); }
       }
       async function mergeWhenGreen(number, method, expectBase) {
         let pr = await api([`repos/${repo}/pulls/${number}`]);
@@ -3908,6 +4075,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           }
         }
         const g = await gate(pr);
+        if (!g.ready) await mergeDeadEnd(pr, g);
         if (!g.ready) return { number, merged: false, url: pr.html_url, ...g, nextMove: g.failed.length || g.mergeable === false ? "Red or conflicted: investigate and fix, do not merge." : g.pending.length ? "Checks still running: finish waiting with a wakeup of about 10 minutes and call this again." : g.checks ? "Every check finished green, but GitHub has not reported this PR as mergeable yet. Finish waiting about 5 minutes and call merge again; do not tell the owner checks are running." : "No checks have reported on this head yet: finish waiting about 10 minutes and call this again." };
         const mergeOnce = () => api(["-X", "PUT", `repos/${repo}/pulls/${number}/merge`, "-f", `merge_method=${method}`, "-f", `sha=${pr.head.sha}`]);
         // 405/409/422 are GitHub refusing the merge: nothing merged. "Base branch
@@ -3925,7 +4093,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               try { return await mergeOnce(); } catch (second) { if (!refused(second)) throw second; last = second; }
             }
             const error = new Error(`GitHub refused the merge and nothing merged (${redactSecrets(String(last.message)).slice(0, 200)}). Re-read the PR; once it is green and mergeable at the same head, call merge again under the same approval. This needs no owner inspection.`);
-            error.code = "GITHUB_MERGE_REFUSED"; throw error;
+            error.code = "GITHUB_MERGE_REFUSED";
+            await mergeDeadEnd(latest || pr, { failed: [`merge: ${String(last.message).slice(0, 80)}`], mergeable: latest?.mergeable ?? pr.mergeable });
+            throw error;
           }
         });
         if (scopedConsent && result?.merged) { scopedConsent.state = "done"; scopedConsent.completedAt = now(); ledger.save(); }
@@ -4593,10 +4763,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const refs = /\b(?:refs?|fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#\d+/i.test(body) ? "" : issues.refsLine(linked);
         if (refs) body = `${body.trimEnd()}\n\n${refs}`;
         body = body.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi, "Refs #$1");
-        if (job.reviewItem?.kind === "doc_conflict" && !/^## Conflict of interest\s*$/im.test(body)) {
-          body += NO_CONFLICT_DISCLOSURE;
-        }
       }
+      // Keir 11.2: every PR Keir opens carries the Conflict of interest section custom-rules requires (prdisclosure.js).
+      body = withDisclosure(body);
       // Revise the open PR for this work unless the change is a genuinely
       // separate fix. That PR may belong to another task on the same ticket
       // (2026-10-12: ticket 1506's ticket task and a developer task each
@@ -4709,6 +4878,19 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       ledger.save(); return { saved: true };
     }
     if (name === "finish") {
+      // Keir 11.2: after the state and timer are settled, record the wait for the code check and escalate quiet waits once.
+      const settleClosing = () => {
+        if (job.stepBack && !job.stepBack.done) job.stepBack.done = true;
+        const startedAt = job.startedAt || job.lastRunStartedAt || 0;
+        const acted = (job.lastPublishedAt || 0) >= startedAt || Object.values(job.effects || {}).some((e) => (e?.at || 0) >= startedAt)
+          || Object.values(d.decisions || {}).some((x) => x.jobId === job.id && (x.at || x.createdAt || 0) >= startedAt);
+        // Third pass (review M7): quiet-wake escalation and parking have a switch; off or in preview the wait is still
+        // recorded for the code check, but nothing escalates or parks (preview records that it would have).
+        const qg = ctl().gate("quietWakes");
+        const out = closing.afterFinish(d, job, { acted, now: now(), config: qg.act ? closingConfig : { ...closingConfig, quietWakes: Infinity } });
+        if (!qg.act && qg.run && (job.closing?.quietWakes || 0) >= closingConfig.quietWakes) controlsLib.preview(d, "quiet-wakes", "escalate or park", `job ${job.id}`, `${job.closing.quietWakes} quiet wakes waiting on ${String(job.closing.waitingOn || "").slice(0, 160)}`, {}, now());
+        if (out?.effects) require("./lifecycle").applyEffects(ledger, out.effects);
+      };
       if (conversationTurn.foreground.has(job)) {
         if (input.state !== "waiting" || input.needsOwner) throw new Error("Finish waiting for the delegated worker.");
         if (!(job.lastPublishedAt >= job.startedAt)) throw new Error("Answer the current question before yielding to the worker.");
@@ -4748,6 +4930,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       if (developerTask(job) && ["done", "waiting", "blocked"].includes(state) && /offered (?:a |the )?patch|waiting for (?:her|his|their|your) (?:answer|reply).*patch|(?:ask|asking).*(?:whether|if).*(?:prepare|write|make).*(?:patch|fix)/i.test(input.summary || "") && !Object.values(d.actions).some(a => a.jobId === job.id && a.state === "pending")) throw new Error("Prepare the reviewable patch and focused validation now. Patch preparation already has developer authorization; use publish_patch for exact review before publication. Do not wait merely for permission to prepare it.");
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
+      // Keir 11.2 (closing.js): a ticket or finding waits only with a stated closing condition and what it waits on.
+      // Fourth pass (review N7): the refusal has its own switch (KEIR_FINISH_NEEDS_CONDITION). Off or in preview the finish is
+      // never refused (the condition is derived from the summary); preview records that it would have been.
+      { const fg = ctl().gate("finishNeedsCondition"), pendingDecision = Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.jobId === job.id);
+        if (fg.run && !fg.act && closing.fromFinish(d, JSON.parse(JSON.stringify(job)), input, now(), { pendingDecision })) controlsLib.preview(d, "finish-condition", "would refuse finish", `job ${job.id}`, "finish without closesWhen and waitingOn", {}, now());
+        const why = closing.fromFinish(d, job, input, now(), { pendingDecision, refuse: fg.act });
+        if (why) { ledger.audit("closing_condition_refused", { job: job.id, ticket: job.ticket || null }); throw new Error(why); } }
       // Keir 8.3 (owner, 2026-11-05: "tickets just sitting"): tickets 1766, 1773 and 1774 filed an issue,
       // told the player the cause was not yet found, and parked on developer_reply for hours. While
       // Keir's own last word is "haven't found it", the cause is Keir's job: an investigator must be on it.
@@ -5086,12 +5275,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (safe) { job.channelReplyQueued = true; ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); }
       } else if (!job.internalProbe && job.role !== "player" && ((state === "done" && !job.channelReplyQueued) || state === "blocked")) {
         const safe = job.role === "owner" && !job.channelReplyQueued ? await finishPublicText(job) : null;
-        if (safe) { ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); ledger.audit("checkpoint", { job: job.id, state: job.state }); ledger.save(); return { state: job.state }; }
+        if (safe) { ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); settleClosing(); ledger.audit("checkpoint", { job: job.id, state: job.state }); ledger.save(); return { state: job.state }; }
         // Tasks born from replies to Keir's old approval DMs report in the digest, not by DM.
         const to = job.noOwnerDm ? null : job.role === "owner" && job.replyChannel ? null : job.kind === "command" && job.role !== "owner" ? job.actorId : job.replyChannel && state !== "blocked" ? null : "owner";
         // Automatic and ticket work never DMs the owner; it raises a quiet alert.
         // A genuine owner decision is a DM with Approve / Reject / Explain buttons.
-        if (to === "owner" && state === "blocked" && pendingDecision) { ledger.save(); return {state: job.state}; }
+        if (to === "owner" && state === "blocked" && pendingDecision) { settleClosing(); ledger.save(); return {state: job.state}; }
         if (to === "owner" && state === "blocked") {
           // Keir 5.1.1: when the question is about one of this task's own PRs,
           // the yes binds to that PR's current head (chain consent can use it).
@@ -5108,6 +5297,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         else if (to && !(to === "owner" && job.kind !== "command")) ledger.notify(`finish:${job.id}:${job.rounds}`, to, job.summary);
       }
+      settleClosing();
       ledger.audit("checkpoint", { job: job.id, state: job.state }); ledger.save(); return { state: job.state };
     }
     throw new Error("unknown broker tool");
@@ -5203,7 +5393,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

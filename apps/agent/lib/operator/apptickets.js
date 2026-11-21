@@ -46,6 +46,10 @@ function ticketDetail(data, number, now = Date.now(), config = {}, support = nul
     if (job.state === "blocked") blockers.push({ kind: "task", title: "Keir is blocked", detail: job.summary || "No blocker detail recorded", taskId: job.id });
     if (job.waitingFor) blockers.push({ kind: "waiting", title: `Waiting for ${job.waitingFor.kind}`, detail: job.summary || "", taskId: job.id });
     if (Object.keys(job.ciWatch || {}).length) blockers.push({ kind: "ci", title: "Waiting for checks", detail: "PR " + Object.keys(job.ciWatch).map((n) => `#${n}`).join(", "), taskId: job.id });
+    // Keir 11.2 fourth pass (review N1): a parked or slowed wait stays visible where the owner looks, with what closes it,
+    // what wakes it and what the player is owed.
+    if (job.closing?.parked) { const c = job.closing; blockers.push({ kind: "parked", title: `Parked: waiting on ${String(c.waitingOn || "").slice(0, 120)}`, detail: `Closes when ${String(c.closesWhen || "").replace(/^closes when /i, "").slice(0, 200)}. Wakes when ${c.parked.source || "something changes"}, when someone writes, or at the next check in code.${c.parked.owed ? ` The player is owed ${c.parked.owed}.` : ""}`, taskId: job.id }); }
+    else if (job.closing?.slowed) { const c = job.closing; blockers.push({ kind: "waiting", title: `Checking every few hours: ${String(c.waitingOn || "").slice(0, 120)}`, detail: `Closes when ${String(c.closesWhen || "").replace(/^closes when /i, "").slice(0, 200)}. ${c.slowed.why}.`, taskId: job.id }); }
     if (job.staffActiveUntil > now || job.state === "deferred") blockers.push({ kind: "staff", title: "Staff owns the next move", detail: job.summary || "Keir is holding this ticket for staff.", taskId: job.id });
   }
   const current = jobs.find((j) => j.state === "running") || jobs.find((j) => !CLOSED.includes(j.state)) || jobs[0];
