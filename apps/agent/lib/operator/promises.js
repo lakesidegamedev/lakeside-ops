@@ -115,7 +115,9 @@ function notePost(d, ticket, job, message, now, { askedAt = 0 } = {}) {
     if ((p.wokenAt && now > p.wokenAt) || turnReport || (!found && overlap(p.text, message) >= 2)) { p.state = "kept"; p.keptAt = now; }
   }
   if (!found) return null;
-  if (chainFrom) { found.wakes = chainFrom.wakes || 0; found.chainedFrom = chainFrom.id; }
+  // Review 3 F2: a chained promise keeps its own due time and gets one wake at or after it (wakes 1), then at most the one
+  // holding line. The per-ticket day budget still bounds a chain of them.
+  if (chainFrom) { found.wakes = Math.min(chainFrom.wakes || 0, 1); found.chainedFrom = chainFrom.id; }
   if (found.kind === "turn") {
     const clock = clockOf(d, now);
     if (clock) {
@@ -178,7 +180,9 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
     const preview = (action, ticket, p, reason) => controlsLib.preview(d, "promises", action, `ticket ${ticket}`, `${reason}: "${String(p.text).slice(0, 160)}"`, {}, now());
     for (const [ticket, rows] of Object.entries(d.ticketPromises || {})) {
       for (const p of rows) {
-        if (p.state !== "open" || (p.nextAt || 0) > now() || (!p.wakes && !isDue(d, p, now()))) continue;
+        // Review 3 F2: a promise is acted on only once it is due, or for its own retry after it was woken. A chained promise
+        // carries a wake count but was never woken itself, so it waits for its due time (the turn it named actually running).
+        if (p.state !== "open" || (p.nextAt || 0) > now() || (!p.wokenAt && !isDue(d, p, now()))) continue;
         const job = root(ticket);
         const why = ended(job);
         if (why) { if (g.act) { p.state = "cancelled"; p.reason = why; changed = true; } continue; }

@@ -287,3 +287,82 @@ test("m1: a promise never requeues a job held for a person, but the player still
   v.set("21:16"); await v.keeper.tick();
   assert.equal(v.job.state, "queued");
 });
+
+// Review 3 F2 (the reviewer's chain.js): a promise made in a wake reply keeps its own due time. Turn 51 ran at 21:00, Keir
+// was woken at 21:05, said it could not confirm yet and promised to check after the next turn (52, due 23:00). Nothing may
+// wake it, and no code holding line may go out, before turn 52 runs.
+function chainWorld() {
+  const w = world();
+  w.data.watch = { turnClock: { turn: 50, iteration: 3, at: at("19:45"), nextTurn: at("21:00") } };
+  const turn = (n, t, next) => { w.set(t); w.data.watch.turnClock = { turn: n, iteration: 3, at: at(t), nextTurn: at(next) }; };
+  const fresh = (t) => { w.set(t); w.data.watch.turnClock.at = at(t); };
+  return { ...w, turn, fresh };
+}
+const wakes = (w) => w.data.audit.filter((a) => a.kind === "promise_wake");
+
+test("F2: a promise made in a wake reply is woken once, after the turn it named runs, then at most one holding line", async () => {
+  const w = chainWorld();
+  w.job.state = "waiting";
+  notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("19:45"));
+  w.turn(51, "21:05", "23:00"); await w.keeper.tick();
+  assert.equal(wakes(w).length, 1);
+  w.fresh("21:10");
+  notePost(w.data, 1868, w.job, "I can't confirm this yet: the market had not settled. I'll check after the next turn and tell you what changed.", at("21:10"), { askedAt: at("19:00") });
+  const chained = w.data.ticketPromises[1868].at(-1);
+  assert.equal(chained.afterTurn, 52);
+  assert.equal(chained.wakes, 1);
+  // The reviewer's ticks, and every five minutes until 22:55: turn 52 has not run.
+  for (let m = at("21:11"); m <= at("22:55"); m += 5 * 60000) { w.fresh(new Date(m).toISOString().slice(11, 16)); w.job.state = "waiting"; await w.keeper.tick(); }
+  assert.equal(wakes(w).length, 1, "not woken before turn 52");
+  assert.equal(w.posted.length, 0, "no code holding line before the promise is due");
+  assert.deepEqual(Object.keys(w.data.outbox), [], "the owner is not told a promise failed");
+  assert.equal(chained.state, "open");
+  // Turn 52 runs: one wake.
+  w.turn(52, "23:02", "01:00"); await w.keeper.tick();
+  assert.equal(wakes(w).length, 2);
+  assert.equal(wakes(w)[1].promise, chained.id);
+  // No follow-up: the one holding line after the retry, and nothing more.
+  for (const t of ["23:10", "23:33", "23:40", "23:55"]) { w.fresh(t); w.job.state = "waiting"; await w.keeper.tick(); }
+  assert.equal(w.posted.length, 1);
+  assert.equal(w.posted[0].text, FALLBACK);
+  assert.equal(chained.state, "failed");
+  assert.equal(wakes(w).length, 2);
+});
+
+test("F2: the same chain where Keir answers after turn 52 keeps the promise and posts nothing from code", async () => {
+  const w = chainWorld();
+  w.job.state = "waiting";
+  notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("19:45"));
+  w.turn(51, "21:05", "23:00"); await w.keeper.tick();
+  notePost(w.data, 1868, w.job, "I can't confirm this yet: the market had not settled. I'll check after the next turn and tell you what changed.", at("21:10"), { askedAt: at("19:00") });
+  w.turn(52, "23:02", "01:00"); await w.keeper.tick();
+  notePost(w.data, 1868, w.job, "Turn 52 has run: your revenue rose by 4 percent after the fix.", at("23:08"), { askedAt: at("19:00") });
+  for (const t of ["23:40", "23:59"]) { w.fresh(t); w.job.state = "waiting"; await w.keeper.tick(); }
+  assert.equal(w.data.ticketPromises[1868].at(-1).state, "kept");
+  assert.equal(w.posted.length, 0);
+});
+
+test("F2 and B3: a wake reply that promises again every turn never loops; wakes follow real turns and stop at the day cap", async () => {
+  const w = chainWorld();
+  w.job.state = "waiting";
+  notePost(w.data, 1868, w.job, "I'll check the next turn and tell you what changed.", at("00:00"));
+  w.data.watch.turnClock = { turn: 50, iteration: 3, at: at("00:00"), nextTurn: at("02:00") };
+  const wakeTimes = [];
+  let turn = 50;
+  // A day of five-minute ticks, a turn every two hours. Every wake is answered with "can't confirm, next turn".
+  for (let m = at("00:05"); m < at("23:59"); m += 5 * 60000) {
+    const hh = new Date(m).toISOString().slice(11, 16);
+    if (new Date(m).getUTCMinutes() === 5 && new Date(m).getUTCHours() % 2 === 0 && m > at("01:00")) turn++;
+    w.set(hh); w.data.watch.turnClock = { turn, iteration: 3, at: m, nextTurn: m + 2 * 3600000 - 5 * 60000 };
+    const before = wakes(w).length;
+    w.job.state = "waiting"; await w.keeper.tick();
+    if (wakes(w).length > before) {
+      wakeTimes.push({ hh, turn });
+      notePost(w.data, 1868, w.job, "I can't confirm this yet. I'll check after the next turn and tell you what changed.", m + 60000, { askedAt: at("00:00") - 60000 });
+    }
+  }
+  assert.ok(wakeTimes.length <= 4, `at most four wakes a day, got ${wakeTimes.length}`);
+  // Each wake follows a different turn: never two wakes for the same turn, never a wake minutes after the last one.
+  assert.equal(new Set(wakeTimes.map((x) => x.turn)).size, wakeTimes.length);
+  assert.ok(w.posted.length <= 1, "at most one code holding line");
+});
