@@ -404,3 +404,56 @@ test("m5: a description repair that keeps failing is given up after two tries at
     assert.ok(w.data.outbox[`pr-blocked:${n}:repair-failed:h${n}`], `#${n}: one owner line`);
   }
 });
+
+// Review 3 F5: preview is absolute. Every combination of the pass switch, the close and delete switches and global
+// preview: a close or a delete is written only when every level says on, and with the pass or global preview in force the
+// pass's records (hands-off, closed by Keir, deleted branches) are exactly as they were.
+test("F5: nestedGate, the one precedence rule: a child acts only when the parent and the child both act", () => {
+  const { nestedGate } = require("../lib/operator/controls");
+  const g = { on: { run: true, act: true, why: null }, preview: { run: true, act: false, why: "x is in preview" }, off: { run: false, act: false, why: "x is off" }, kill: { run: false, act: false, why: "kill switch engaged (t)" } };
+  for (const p of ["on", "preview", "off", "kill"]) for (const c of ["on", "preview", "off", "kill"]) {
+    const r = nestedGate(g[p], g[c]);
+    assert.equal(r.act, p === "on" && c === "on", `${p}/${c}`);
+    assert.equal(r.run, !["off", "kill"].includes(p) && c !== "kill", `${p}/${c} run`);
+  }
+});
+
+test("F5: every switch combination: closes and deletes happen only when all levels are on, and preview keeps every record", async () => {
+  const closedPr = { number: 5900, state: "closed", merged_at: null, user: { login: "keir-bot" }, head: { ref: "keir/task-b", sha: "s5900", repo: { full_name: REPO } } };
+  const PROTECT = (s) => JSON.stringify({ prs: Object.fromEntries(Object.entries(s.prs).map(([n, r]) => [n, ["handsOff", "closedAt", "closeStartedAt", "closedReason", "closeAttempts", "personTouched"].map((k) => r[k] ?? null)])),
+    branches: Object.fromEntries(Object.entries(s.branches || {}).map(([b, r]) => [b, ["handsOff", "deletedAt", "deleteStartedAt", "attempts"].map((k) => r[k] ?? null)])) });
+  const modes = ["on", "off", "preview"];
+  let checked = 0;
+  for (const pass of modes) for (const closes of modes) for (const deletes of modes) for (const global of [false, true]) {
+    let current = ALL_ON;
+    const controls = { gate: (n, o) => current.gate(n, o), settings: () => current.settings(), mode: (n) => current.mode(n), held: () => current.held() };
+    const w = setup({ open: [one(7001, "keir/task-a")], merged: [], controls });
+    // Warm up with everything on: first sight, then the stale warning. The close is due on the next pass.
+    await w.prs.tick(); w.advance(5 * DAY + 3600000); await w.prs.tick();
+    assert.equal(closesOf(w, 7001), 0);
+    w.advance(49 * 3600000);
+    // A closed unmerged Keir PR's branch is due for deletion, and earlier protective records exist.
+    w.branches.push({ ref: "keir/task-b", sha: "s5900", prs: [closedPr] });
+    Object.assign(w.data.keirPrs.prs, { 7050: { number: 7050, compact: true, closedAt: T0, handsOff: { at: T0, why: "reopened after Keir closed it" }, asked: {}, notices: {} }, 7060: { number: 7060, compact: true, closedAt: T0, closedReason: "stale", asked: {}, notices: {} } });
+    w.data.keirPrs.branches["keir/task-c"] = { pr: 7060, deletedAt: T0, handsOff: { at: T0, why: "restored after Keir deleted it" } };
+    const before = JSON.parse(JSON.stringify(w.data.keirPrs));
+    current = staticControls({ openPrPass: pass, openPrCloses: closes, openPrBranchDeletes: deletes }, { preview: global });
+    w.writes.length = 0;
+    await w.prs.tick();
+    const label = `pass ${pass}, closes ${closes}, deletes ${deletes}, global preview ${global}`;
+    const closeOn = pass === "on" && closes === "on" && !global, delOn = pass === "on" && deletes === "on" && !global;
+    assert.equal(closesOf(w, 7001), closeOn ? 1 : 0, `${label}: close`);
+    assert.equal(w.writes.filter((x) => /issues\/7001\/comments/.test(x)).length, closeOn ? 1 : 0, `${label}: close note`);
+    assert.equal(deletesOf(w, "keir/task-b"), delOn ? 1 : 0, `${label}: delete`);
+    assert.equal(deletesOf(w, "keir/task-a"), closeOn && delOn ? 1 : 0, `${label}: the closed PR's branch`);
+    if (!w.writes.every((x) => /pulls\/7001 -f state=closed|issues\/7001\/comments|DELETE/.test(x))) assert.fail(`${label}: unexpected write ${w.writes.join(" | ")}`);
+    // Records protecting a person's reversal are never lost, whatever ran.
+    for (const n of [7050, 7060]) assert.deepEqual(PROTECT({ prs: { [n]: w.data.keirPrs.prs[n] } }), PROTECT({ prs: { [n]: before.prs[n] } }), `${label}: record ${n}`);
+    assert.deepEqual(w.data.keirPrs.branches["keir/task-c"], before.branches["keir/task-c"], `${label}: branch record`);
+    if (pass !== "on" || global) assert.deepEqual(w.data.keirPrs, before, `${label}: the pass's records are untouched`);
+    if (!closeOn) assert.equal(PROTECT({ prs: { 7001: w.data.keirPrs.prs[7001] } }), PROTECT({ prs: { 7001: before.prs[7001] } }), `${label}: no close record`);
+    if (!delOn) assert.equal(w.data.keirPrs.branches["keir/task-b"]?.deleteStartedAt, undefined, `${label}: no delete record`);
+    checked++;
+  }
+  assert.equal(checked, 54);
+});

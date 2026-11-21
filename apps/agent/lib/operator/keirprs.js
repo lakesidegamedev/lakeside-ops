@@ -493,9 +493,11 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
     gates = { pass: controls.gate("openPrPass"), close: controls.gate("openPrCloses", { destructive: true }), del: controls.gate("openPrBranchDeletes", { destructive: true }) };
     if (!gates.pass.run) { log(`keirprs: not run: ${gates.pass.why}`); return { ...budget, skipped: gates.pass.why }; }
     shadow = gates.pass.act ? null : JSON.parse(JSON.stringify({ prs: {}, actions: [], branches: {}, ...(d.keirPrs || {}) }));
-    // The close and delete switches sit inside the pass: with the pass on and closes off, closes are previewed.
-    if (!gates.close.run && gates.close.why && !/kill switch|paused/.test(gates.close.why)) gates.close = { run: true, act: false, why: gates.close.why };
-    if (!gates.del.run && gates.del.why && !/kill switch|paused/.test(gates.del.why)) gates.del = { run: true, act: false, why: gates.del.why };
+    // The close and delete switches sit inside the pass (review 3 F5): they act only when the pass acts and they do. A pass
+    // in preview previews closes and deletes whatever their own switches say; with the pass on and closes off, closes are
+    // previewed.
+    gates.close = controlsLib.nestedGate(gates.pass, gates.close);
+    gates.del = controlsLib.nestedGate(gates.pass, gates.del);
     // A list that could not be read in full is "could not read, did nothing": logged, audited and returned (the preview
     // report prints it), never treated as an empty list.
     const unread = [];

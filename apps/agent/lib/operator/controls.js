@@ -103,6 +103,19 @@ function createControls({ file = process.env.KEIR_SWITCHES_FILE || DEFAULT_FILE,
   return { settings, mode, held, gate };
 }
 
+// Review 3 F5: the one precedence rule for a behaviour nested under a parent pass (closes and branch deletes under the
+// open-PR pass). The child acts only when the parent acts and the child itself acts. The kill switch and pause stop both;
+// a parent that is off stops the child; a parent in preview (its own switch, or global preview) makes the child preview,
+// whatever the child's switch says; under an acting parent, a child that is off or in preview (or held by the production
+// hold) is previewed.
+function nestedGate(parent, child) {
+  if (!parent.run) return { run: false, act: false, why: parent.why };
+  if (!child.run && /kill switch|paused/.test(child.why || "")) return { run: false, act: false, why: child.why };
+  if (!parent.act) return { run: true, act: false, why: parent.why || "the parent pass is in preview" };
+  if (!child.run || !child.act) return { run: true, act: false, why: child.why };
+  return { run: true, act: true, why: null };
+}
+
 // Fixed settings for tests and tools: every switch at its default unless named.
 function staticControls(overrides = {}, { held = null, preview = false, prodHold = null, historyPerRun = HISTORY_PER_RUN, historyDays = HISTORY_DAYS } = {}) {
   const base = resolve({});
@@ -149,4 +162,4 @@ function history(d, pass, { controls = DEFAULT_CONTROLS, now = Date.now(), act =
   };
 }
 
-module.exports = { SWITCHES, resolve, createControls, staticControls, DEFAULT_CONTROLS, preview, history, HISTORY_PER_RUN, HISTORY_DAYS };
+module.exports = { SWITCHES, resolve, createControls, staticControls, DEFAULT_CONTROLS, preview, history, HISTORY_PER_RUN, HISTORY_DAYS, nestedGate };
