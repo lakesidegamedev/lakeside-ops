@@ -107,7 +107,8 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
   async function close(pr, rec, reason, comment, budget) {
     if (budget.closes <= 0) return false;
     budget.closes--;
-    await write(["-X", "POST", `repos/${GAME_REPO}/issues/${pr.number}/comments`, "-f", `body=${comment}`]);
+    // The note goes once per PR: a close that fails after it is retried next pass without a second note.
+    if (!rec.closeNoteAt) { await write(["-X", "POST", `repos/${GAME_REPO}/issues/${pr.number}/comments`, "-f", `body=${comment}`]); rec.closeNoteAt = now(); ledger.save(); }
     await write(["-X", "PATCH", `repos/${GAME_REPO}/pulls/${pr.number}`, "-f", "state=closed"]);
     rec.closedAt = now(); rec.closedReason = reason;
     record("closed", pr.number, reason);
@@ -151,6 +152,7 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
     const s = state();
     const seen = new Set();
     for (const pr of open) {
+      try {
       if (pr.draft || !isKeirPr(pr, d, index)) continue;
       const n = Number(pr.number), head = pr.head?.sha;
       seen.add(n);
@@ -210,6 +212,7 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       }
       const closes = new Date(rec.orphanSince + STALE_MS).toISOString().slice(0, 10);
       await notice(pr, rec, `${why.key}:${head}`, `PR #${n} (${rec.title}) is blocked: ${why.text}. No Keir task is working on it.${foreign ? "" : ` Keir will close it on ${closes} unless someone picks it up.`}`, budget);
+      } catch (e) { log(`keirprs: #${pr.number}: ${String(e.message).slice(0, 160)}; retried next pass`); }
     }
     for (const [n, rec] of Object.entries(s.prs)) if (!seen.has(Number(n)) && now() - (rec.checkedAt || 0) > 14 * 86400000) delete s.prs[n];
   }

@@ -177,3 +177,16 @@ test("isKeirPr: a keir/ branch by keir-bot, or a recorded worker branch; a perso
   assert.equal(isKeirPr({ number: 2, user: { login: "Egg3901" }, head: { ref: "fix/keir-zzz" } }, d), false);
   assert.equal(isKeirPr({ number: 3, user: { login: "keir-bot" }, head: { ref: "feat/x" } }, d), false);
 });
+
+test("a close that fails after its note is retried without a second note", async () => {
+  const w = setup();
+  const realWrite = w.writes;
+  let failClose = true;
+  const prs = createKeirPrs({ ledger: w.ledger, api: w.api, now: () => T0, config: { keirGitEmail: KEIR_EMAIL },
+    write: async (args) => { realWrite.push(args.join(" ")); if (failClose && args.includes("state=closed")) throw new Error("HTTP 403"); return {}; } });
+  await prs.tick();
+  failClose = false;
+  await prs.tick();
+  assert.equal(realWrite.filter((x) => /issues\/6865\/comments/.test(x)).length, 1);
+  assert.equal(realWrite.filter((x) => /pulls\/6865 -f state=closed/.test(x)).length, 2);
+});
