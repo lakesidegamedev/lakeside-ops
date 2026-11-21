@@ -1,59 +1,66 @@
 # Keir private owner supervisor
 
-The owner's own conversation with a coding-capable model, served by the ops web
-server at `/api/keir/supervisor/*`. It does not use the Keir support operator for
-chat, source work or approvals, so it keeps working while the operator is down.
+The owner's home chat in the Keir iPhone app, served by the ops web server at
+`/api/keir/supervisor/*`. Talking to Keir here works like the owner talking to
+Claude Code as root on this box: a full Claude Code agent with every built-in
+tool, every MCP server registered for the account, real credentials, real
+network and a headless browser. There is no approval step, allowlist or
+proposal flow. It does not use the Keir support operator for chat, so it keeps
+working while the operator is down.
+
+The one hard boundary is access: only the owner's signed-in admin session (the
+same owner identity the Keir operator accepts for `/api/keir/app/*`) reaches
+these routes, because they are reachable from the internet.
 
 ## Pieces
 
 | File | Role |
 |---|---|
-| `routes.js` | HTTP routes, owner-only auth (same owner identity as `/api/keir/app/*`), CSRF rules, env wiring. |
-| `supervisor.js` | Durable job runner, model tools, crash and restart recovery, digest-bound proposals, publisher. |
+| `routes.js` | HTTP routes, owner-only auth, CSRF rules, env wiring. `GET /attention` returns what needs the owner. |
+| `supervisor.js` | Durable job runner, the chat's own tools, restart recovery, the brief. Old proposals stay decidable. |
+| `executor.js` | Runs Claude Code with permissions skipped in its own transient systemd scope (memory cap), with the host's own settings, CLAUDE.md files and `~/.claude.json` MCP servers; stream-json progress; stop and the runtime cap kill the whole tree. |
+| `owner-attention.js` | The one "needs you" function: Keir's pending decisions (valid task origin) and pending questions on open tasks, the same records and rules as the app badge (`apps/ios/Ops/Attention.swift`). Also a CLI (`node owner-attention.js`). |
+| `et.js` | US Eastern time formatting ("12:08 PM ET") for everything the owner reads. |
+| `render.js` | Renders a URL or HTML file to a PNG with the installed Playwright and Chromium, saved under the public preview directory, and prints its public URL. |
 | `store.js` | One state file written with fsync and rename; old transcript lines spill to an archive file. |
-| `executor.js` | Headless Claude Code with all built-in tools off, a throwaway HOME and HOME/PATH/LANG only. |
-| `toolserver.js` | Loopback MCP endpoint, one unguessable path per job. |
-| `sandbox.js`, `sandbox-tool.js` | Bubblewrap workspace: no network, empty env, only the workspace writable; file operations run inside it. |
-| `repos.js` | Fixed repository allowlist. Clients and the model pick a key, never a path. |
-| `studio-evidence.js` | Read-only `ticket_evidence` (one numbered support record: chronology, actors, verified channel delivery, what it cannot prove) and `game_health` (the phone game card's facts). Reads go through the ops web MCP client with this host's credentials; the model picks a ticket number or game id only. The game part copies `apps/agent/lib/operator/appgames.js`; `apps/agent/test/appgames-web-parity.test.js` keeps them identical. |
+| `toolserver.js` | Loopback MCP endpoint for the chat's own tools, one unguessable path per job. |
+| `studio-evidence.js` | The ticket queue card (`support_queue`), one ticket's chronology (`ticket_evidence`) and the phone game card facts (`game_health`). |
+| `repos.js`, `attention.js` | Kept for proposals made by the earlier read-only design (publishing and their push alerts). Nothing creates new proposals. |
 
 ## Behaviour
 
 - Each owner message is a job persisted before the response. Jobs run one at a
-  time in the web process and survive the phone disconnecting.
-- A web restart or model crash keeps the workspace, saves its diff as a patch
-  and resumes the job once from that state; a second stop reports honestly.
+  time and survive the phone disconnecting. Progress shows as the job's
+  `activity` line (the latest tool call) and as `post_update` messages.
+- Each run is `systemd-run --scope -p MemoryMax=<cap> -p MemorySwapMax=0`, so a
+  runaway job cannot take down the web service or the box. Stop (`POST
+  /jobs/<id>/cancel`) and the runtime cap kill the process group and every
+  process left in the scope.
+- A web restart stops the old run's scope and resumes the same Claude Code
+  session once (`--resume`); a second stop reports honestly. A model crash
+  resumes once the same way. A timed-out job is not retried automatically.
+- Every job's context lists what needs the owner from `owner-attention.js`, and
+  the chat answers "what needs me" from its `owner_attention` tool, so the chat
+  and the app badge cannot disagree.
 - `clientId` replays return the original message and job, across restarts.
-- The model can only propose publishing. `POST /proposals/<id>` with the exact
-  patch digest is the only approval path; chat text never is. Publishing is off
-  unless `KEIR_SUPERVISOR_PUBLISH=1`, and then pushes one branch and opens a PR
-  from a fresh clone. It never merges or deploys.
 
 ## Configuration
 
-`KEIR_SUPERVISOR_DIR` (required, absolute), `KEIR_SUPERVISOR_LAKESIDE_OPS_SOURCE`
-or `PROJECTS_ROOT`, `KEIR_SUPERVISOR_MODEL`, `KEIR_SUPERVISOR_EFFORT`,
-`KEIR_SUPERVISOR_PUBLISH`, `KEIR_SUPERVISOR_OWNER_IDENTITY` or `KEIR_OWNER_ID`,
-`KEIR_GUARDIAN_DIR`, `KEIR_SUPERVISOR_CLAUDE_BIN`. Without `KEIR_SUPERVISOR_DIR`
-the routes answer `503 {configured:false, missing}` to the owner.
+`KEIR_SUPERVISOR_DIR` (required, absolute), `KEIR_SUPERVISOR_MODEL` (default
+`claude-opus-5-5`), `KEIR_SUPERVISOR_EFFORT` (default `high`),
+`KEIR_SUPERVISOR_JOB_TIMEOUT_MIN` (default 60), `KEIR_SUPERVISOR_MEMORY_MAX`
+(default `16G`), `KEIR_SUPERVISOR_CWD` (default `HOME`, so `/root` with its
+`AGENTS.md`), `KEIR_SUPERVISOR_CLAUDE_BIN`, `KEIR_SUPERVISOR_SYSTEMD_RUN`
+(empty runs without a scope, process group only), `KEIR_SUPERVISOR_OWNER_IDENTITY`
+or `KEIR_OWNER_ID`, `KEIR_GUARDIAN_DIR`, `KEIR_LEDGER`. Render output:
+`KEIR_RENDER_DIR` (default `/srv/ahd-public/keir-renders`) and `KEIR_RENDER_URL`.
+For old proposals only: `KEIR_SUPERVISOR_LAKESIDE_OPS_SOURCE` or
+`PROJECTS_ROOT`, `KEIR_SUPERVISOR_PUBLISH`, `KEIR_APPROVAL_ATTENTION_DIR`.
+Without `KEIR_SUPERVISOR_DIR` the routes answer `503 {configured:false, missing}`
+to the owner.
 
-## Approval push alerts
-
-A new pending proposal can raise one required-attention push on the owner's
-registered iPhones. Both services need the same explicit absolute directory in
-`KEIR_APPROVAL_ATTENTION_DIR` (this web service writes it, the Keir operator
-reads it). It holds one tiny file per proposal with only the proposal id, a
-`pending` or `closed` state and timestamps: no chat, title, summary or patch, and
-it lives outside `KEIR_SUPERVISOR_DIR`. The push is sent by the operator's
-existing authenticated device and APNs path, honours each phone's quiet hours and
-notification settings, goes once per proposal, is dropped if the proposal is
-decided, superseded or older than 72 hours before it is sent, and deep links to
-that exact proposal. It never approves anything and has no lock-screen actions.
-Model progress updates never push. If the operator is down the files wait; if no
-Apple provider is installed, `GET /api/keir/app/notifications` reports
-`approvalAlerts.problem`. Leave the variable unset and nothing is projected; the
-in-app proposal card works as before.
-
-Requires `/usr/bin/bwrap` and a signed-in Claude Code for the service account;
-`GET /status` reports both. Tests that need bubblewrap skip with the reason when
-it is unavailable.
+The model process gets a root login environment (HOME, USER, PATH, LANG,
+`TZ=America/New_York`, `IS_SANDBOX=1` so Claude Code accepts skipped permissions
+as root), not the web service's own secrets. Needs a signed-in Claude Code for
+the service account; `GET /status` reports the executor, its memory cap and the
+host MCP server names it will load.

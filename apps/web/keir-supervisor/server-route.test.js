@@ -55,7 +55,7 @@ test("real server: owner-only supervisor routes work with the support operator d
   const { message } = await posted.json();
   const later = await (await req(`/api/keir/supervisor/thread?after=${message.seq}&wait=10`, { who: "owner" })).json();
   assert.equal(later.messages[0].kind, "error");
-  assert.match(later.messages[0].text, /could not start the model/);
+  assert.match(later.messages[0].text, /could not start on this server/);
   const status = await (await req("/api/keir/supervisor/status", { who: "owner" })).json();
   assert.equal(status.configured, true);
   assert.equal(status.executor.available, false);
