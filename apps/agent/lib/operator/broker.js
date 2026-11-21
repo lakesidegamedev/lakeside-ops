@@ -559,6 +559,17 @@ function similarity(a, b) {
 function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
   // Keir 11.2: closing-condition settings (KEIR_QUIET_WAKES and friends); tests may pass config.closing.
   const closingConfig = config.closing || closing.settings(process.env);
+  // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, quiet-wake escalation and the
+  // step-back, read at each use (lib/operator/controls.js; operator.js puts them on config.controls).
+  const controlsLib = require("./controls");
+  const ctl = () => config.controls || controlsLib.DEFAULT_CONTROLS;
+  // Review M6 and the second pass's soft spot: every post a budget, turn or step-back rule holds back is recorded where a
+  // person can read it (ledger.data.refusedPosts, printed by bin/keir-preview.js): which ticket, which rule, the text.
+  function noteRefused(rule, job, ticketNo, message) {
+    const all = (d.refusedPosts ||= {});
+    all[ticketNo] = [...(all[ticketNo] || []).filter((r) => now() - r.at < 7 * 86400000), { at: now(), rule, job: job.id, text: String(message || "").slice(0, 400) }].slice(-20);
+    for (const n of Object.keys(all)) if (!all[n].some((r) => now() - r.at < 7 * 86400000)) delete all[n];
+  }
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -1328,30 +1339,49 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     // Keir 11.2: a step-back activation states the ticket's position in a checkpoint first, then posts at most once.
     if (!opts.system && job.stepBack && !job.stepBack.done) attempt(() => {
       const t = closing.stepBackRefusal(job, { checkpointed: (job.history || []).some((h) => h.kind === "checkpoint" && Date.parse(h.at || "") >= job.stepBack.at) });
-      if (t) { ledger.audit("step_back_post_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); }
+      if (t) { ledger.audit("step_back_post_refused", { job: job.id, ticket: ticketNo }); if (!opts.collect) noteRefused("step_back", job, ticketNo, message); throw new Error(t); }
     });
     // Keir 11.2 post budget (postbudget.js): one live announcement per shipped change, turn reports only when the answer
     // changed, and an hourly cap without a new player message whose overflow is one merged correction or answer.
     if (!opts.system && !answeringStaff) {
       const pb = require("./postbudget"), h = humanAt(ticketNo);
-      if (pb.liveClaim(message)) {
+      // A rule in force refuses (and the refusal is recorded); a rule in preview records what it would have refused and lets
+      // the post through; a rule switched off does nothing.
+      const rule = (name, kind, text) => {
+        const g = ctl().gate(name);
+        if (!g.run) return;
+        ledger.audit(kind, { job: job.id, ticket: ticketNo, ...(g.act ? {} : { preview: true }) });
+        if (opts.collect) { if (g.act) refuse(text); return; }
+        if (!g.act) { controlsLib.preview(d, "post-rules", `would refuse (${kind})`, `ticket ${ticketNo}`, String(message).slice(0, 300), {}, now()); return; }
+        noteRefused(kind, job, ticketNo, message);
+        refuse(text);
+      };
+      // Second pass soft spot: what always gets through, in some form, whatever the budget or turn rule says: a correction,
+      // the answer to something the player asked since Keir last really answered (holding lines do not count as answers),
+      // and a follow-up Keir promised. These three are never refused by the rules below.
+      const correction = isCorrection(message);
+      const promiseDue = require("./promises").calledFor(d, ticketNo, now()) || owedNow;
+      const answerPosts = posts.filter((p) => !isCardPost(p) && !holdingPost(p.text));
+      const ls = d.lastSubstantive?.[ticketNo];
+      const paceAt = (d.ticketPace?.[ticketNo]?.log || []).filter((p) => !holdingPost(p.text)).at(-1)?.at || 0;
+      const lastAnswerAt = Math.max(answerPosts.at(-1)?.at || 0, ls && !ls.holding ? ls.at : 0, paceAt);
+      const playerAsked = h > 0 && h > lastAnswerAt;
+      if (pb.liveClaim(message) && !correction) {
         const said = pb.liveAlreadySaid({ posts, receipt: pb.mainReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), humanAt: h });
-        if (said) { ledger.audit("live_repeat_refused", { job: job.id, ticket: ticketNo }); refuse(`Not posted: the player was already told this release is live ("${String(said.text).slice(0, 140)}"). Do not announce it again; post only what is new.`); }
+        if (said) rule("postBudget", "live_repeat_refused", `Not posted: the player was already told this release is live ("${String(said.text).slice(0, 140)}"). Do not announce it again; post only what is new.`);
       }
       // Keir 11.2: one turn rule (postbudget.turnPostRule): turn commentary only when the player asked, a recorded promise is
       // due, or the closing condition calls for that turn's result; and never the same answer twice.
       // An answer the player is owed (owedNow) passes like a due promise: it answers them.
-      const promiseDue = require("./promises").calledFor(d, ticketNo, now()) || owedNow;
       const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]];
       const calledFor = closing.closingCallsForTurn(d, job, now()) || (root && root !== job && closing.closingCallsForTurn(d, root, now()));
-      const lastKeirAt = Math.max(d.ticketPace?.[ticketNo]?.log?.at(-1)?.at || 0, d.lastSubstantive?.[ticketNo]?.at || 0);
-      const turnArgs = { posts, humanAt: h, message, correction: isCorrection(message), promiseDue, calledFor, lastKeirAt };
+      const turnArgs = { posts: answerPosts, humanAt: h, message, correction, promiseDue, calledFor, lastKeirAt: lastAnswerAt };
       const turnRule = pb.turnPostRule(turnArgs);
-      if (turnRule) { ledger.audit(turnRule.why === "same turn answer" ? "turn_repeat_refused" : "turn_post_not_called_for", { job: job.id, ticket: ticketNo }); refuse(turnRule.refusal); }
+      if (turnRule) rule("turnRule", turnRule.why === "same turn answer" ? "turn_repeat_refused" : "turn_post_not_called_for", turnRule.refusal);
       else if (!opts.collect) { const via = pb.turnPostVia(turnArgs); if (via === "closing") job.turnReportViaClosing = true; else if (via === "promise" && !owedNow) job.turnReportViaPromise = true; } // a report uses up what called for it
       const cap = Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR;
-      const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || isCorrection(message), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
-      if (!r.allow) { ledger.audit("hourly_post_cap_refused", { job: job.id, ticket: ticketNo, count: r.count }); refuse(pb.hourlyRefusal(r, cap)); }
+      const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || correction || playerAsked || require("./promises").dueNow(d, ticketNo, now()), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
+      if (!r.allow) rule("postBudget", "hourly_post_cap_refused", pb.hourlyRefusal(r, cap));
     }
     // Keir 10: a post must not contradict this ticket's earlier posts without saying "Correction:", and must not call something
     // available that a read in this activation says is locked. check_draft runs the same two checks.
@@ -1972,7 +2002,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // Keir 10: a correction means an earlier post was wrong; the failure tracker groups these.
     if (!card && isCorrection(message)) ledger.audit("correction_posted", { job: job.id, ticket: ticketNo, lane: job.lane || null });
     const posts = (d.ticketPosts ||= {});
-    posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 24 * 3600000), { at: now(), jobId: job.id, kind, text: message.slice(0, 600) }].slice(-40);
+    // Review M6: a post made by a task answering the owner or a developer is marked, so it never counts against the player's hourly budget.
+    const toStaff = job.role === "owner" || developerTask(job);
+    posts[ticketNo] = [...(posts[ticketNo] || []).filter((p) => now() - p.at < 24 * 3600000), { at: now(), jobId: job.id, kind, text: message.slice(0, 600), ...(toStaff ? { staff: true } : {}) }].slice(-40);
     for (const n of Object.keys(posts)) if (!posts[n].some((p) => now() - p.at < 3600000)) delete posts[n];
     // Keir 4.0: consecutive Keir posts since the player last spoke, kept
     // beyond the one-hour post window so a slow monologue still counts.
@@ -4785,7 +4817,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const startedAt = job.startedAt || job.lastRunStartedAt || 0;
         const acted = (job.lastPublishedAt || 0) >= startedAt || Object.values(job.effects || {}).some((e) => (e?.at || 0) >= startedAt)
           || Object.values(d.decisions || {}).some((x) => x.jobId === job.id && (x.at || x.createdAt || 0) >= startedAt);
-        const out = closing.afterFinish(d, job, { acted, now: now(), config: closingConfig });
+        // Third pass (review M7): quiet-wake escalation and parking have a switch; off or in preview the wait is still
+        // recorded for the code check, but nothing escalates or parks (preview records that it would have).
+        const qg = ctl().gate("quietWakes");
+        const out = closing.afterFinish(d, job, { acted, now: now(), config: qg.act ? closingConfig : { ...closingConfig, quietWakes: Infinity } });
+        if (!qg.act && qg.run && (job.closing?.quietWakes || 0) >= closingConfig.quietWakes) controlsLib.preview(d, "quiet-wakes", "escalate or park", `job ${job.id}`, `${job.closing.quietWakes} quiet wakes waiting on ${String(job.closing.waitingOn || "").slice(0, 160)}`, {}, now());
         if (out?.effects) require("./lifecycle").applyEffects(ledger, out.effects);
       };
       if (conversationTurn.foreground.has(job)) {

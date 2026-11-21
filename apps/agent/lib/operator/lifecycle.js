@@ -134,9 +134,18 @@ function wakeStep(j, ctx) {
   const deadlineHold = j.deadlineBlockedAt && j.deadline < now;
   // Keir 11.2: a timer wake first checks, in code, whether what the job waits on changed (closing.js). Nothing changed:
   // no model run, the timer is set again, and after a few quiet wakes the job escalates once or parks.
-  if (j.state === "waiting" && j.wakeAt <= now && !backedOff && !j.inbox?.length && ctx.data) {
-    const q = require("./closing").quietWake(ctx.data, j, now, ctx.closing);
-    if (q) effects.push(...q.effects);
+  // Third pass (review M7): KEIR_QUIET_WAKE_CHECK. Off: every timer wake reaches the model as before. Preview: the check runs
+  // on a copy of the job and what it would have done is recorded; the wake still goes ahead.
+  const qg = (ctx.config?.controls || require("./controls").DEFAULT_CONTROLS).gate("quietWakes");
+  if (j.state === "waiting" && j.wakeAt <= now && !backedOff && !j.inbox?.length && ctx.data && qg.run) {
+    if (qg.act) {
+      const q = require("./closing").quietWake(ctx.data, j, now, ctx.closing);
+      if (q) effects.push(...q.effects);
+    } else {
+      const shadow = JSON.parse(JSON.stringify(j));
+      const q = require("./closing").quietWake(ctx.data, shadow, now, ctx.closing);
+      if (q?.quiet) require("./controls").preview(ctx.data, "quiet-wakes", shadow.closing?.parked ? "park" : "stay quiet", `job ${j.id}`, `nothing changed in ${shadow.closing?.on?.kind || "its wait"}: ${String(shadow.closing?.waitingOn || "").slice(0, 160)}`, {}, now);
+    }
   }
   if (j.state === "waiting" && ((j.wakeAt <= now && !backedOff) || (j.inbox?.length && !j.debounceWake))) { j.state = "queued"; delete j.debounceWake; }
   // A message that arrived while the task was running (a handoff, a staff

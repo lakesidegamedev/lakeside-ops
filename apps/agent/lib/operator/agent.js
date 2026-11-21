@@ -399,7 +399,10 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       try {
         const closing = require("./closing");
         closing.onActivation(job, Date.now(), { human: humanInbox(job) });
-        if (closing.stepBack(ledger.data, job, Date.now(), config.closing || closing.settings(process.env))) ledger.audit("step_back", { job: job.id, ticket: job.ticket, level: job.stepBackLevel, why: job.stepBack.why });
+        // Third pass (review M7): the step-back has a switch (KEIR_STEP_BACK); in preview it is recorded, not applied.
+        const sg = (config.controls || require("./controls").DEFAULT_CONTROLS).gate("stepBack");
+        if (sg.act) { if (closing.stepBack(ledger.data, job, Date.now(), config.closing || closing.settings(process.env))) ledger.audit("step_back", { job: job.id, ticket: job.ticket, level: job.stepBackLevel, why: job.stepBack.why }); }
+        else if (sg.run) { const shadow = JSON.parse(JSON.stringify(job)); if (closing.stepBack(ledger.data, shadow, Date.now(), config.closing || closing.settings(process.env))) require("./controls").preview(ledger.data, "step-back", "step back", `job ${job.id}`, `ticket ${job.ticket}: ${shadow.stepBack.why.join(" and ")}`); }
       } catch (e) { ledger.audit("closing_activation_failed", { job: job.id, error: String(e.message).slice(0, 160) }); }
     }
     job.state = "running"; job.startedAt = Date.now(); ledger.save();

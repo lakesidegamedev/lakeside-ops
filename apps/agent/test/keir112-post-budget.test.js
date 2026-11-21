@@ -121,13 +121,15 @@ test("ticket 1859: the live notice with no release of its own is suppressed; cor
   assert.ok(!r.suppressed.some((s) => isCorrection(s.text)));
 });
 
-test("hourly cap: past the limit only one merged correction or owed answer goes out; anything else is refused with a reason", () => {
+test("hourly cap: past the limit a correction or owed answer still goes out; anything else is refused with a reason", () => {
   const now = t("2026-11-19T04:00:00Z"), m = (min) => now - min * 60000;
   const posts = [m(50), m(40), m(30), m(20)].map((at) => ({ at, text: "Update." }));
   assert.equal(pb.hourly({ posts, humanAt: m(55), now, cap: 4 }).allow, false);
   const first = pb.hourly({ posts, humanAt: m(55), now, cap: 4, essential: true });
   assert.deepEqual([first.allow, first.overflow], [true, true]);
-  const second = pb.hourly({ posts, humanAt: m(55), now, cap: 4, essential: true, overflowUsedAt: m(1) });
+  // Third pass: an essential post always goes out; after the merged overflow message, anything else waits.
+  assert.equal(pb.hourly({ posts, humanAt: m(55), now, cap: 4, essential: true, overflowUsedAt: m(1) }).allow, true);
+  const second = pb.hourly({ posts, humanAt: m(55), now, cap: 4, overflowUsedAt: m(1) });
   assert.equal(second.allow, false);
   assert.match(pb.hourlyRefusal(second, 4), /merged message past that limit already went out/);
   assert.match(pb.hourlyRefusal(pb.hourly({ posts, humanAt: m(55), now, cap: 4 }), 4), /Merge what is still needed into one message/);

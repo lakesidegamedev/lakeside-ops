@@ -254,7 +254,8 @@ function quietWake(d, job, now, config = DEFAULTS) {
   // Only the timer this wait set: a retry, a close grace, a cap or a recovery timer always reaches the model.
   if (!c.parked && (c.timerAt !== job.wakeAt || !(c.timerMs >= MIN_CHECKED_WAIT_MS))) return null;
   if (job.closeReadyAt || job.resolutionReadyAt && !job.resolved || job.deadline < now) return null;
-  if (Object.values(d.ticketPromises?.[job.ticket] || {}).some((p) => p.state === "open" && p.dueAt <= now)) return null;
+  // A due promise always reaches the model (a turn promise is due when its turn ran, not at its estimated time).
+  if (require("./promises").dueNow(d, job.ticket, now)) return null;
   const seen = observe(d, job, now);
   if (!seen.checkable) {
     if (c.parked) { job.wakeAt = now + PARK_RECHECK_MS; c.timerAt = job.wakeAt; return { quiet: true, effects: [] }; }
@@ -382,8 +383,13 @@ function hasQuestion(d, job) {
     || Object.values(job.effects || {}).some((e) => ["started", "executing", "uncertain"].includes(e?.state));
 }
 // One pass. Returns the jobs closed. Bounded; a job is closed once (it is terminal afterwards).
-function expireFindings(ledger, { now, config = DEFAULTS } = {}) {
+// Third pass (review M7): KEIR_FINDING_EXPIRY switch and preview, the kill switch and pause, and a bounded first start
+// (findings that went quiet before the pass's first real run are closed a few per run).
+function expireFindings(ledger, { now, config = DEFAULTS, controls = require("./controls").DEFAULT_CONTROLS } = {}) {
   const d = ledger.data, limit = config.findingExpiryHours * HOUR, closed = [];
+  const g = controls.gate("findingExpiry");
+  if (!g.run) return closed;
+  const hist = require("./controls").history(d, "findingExpiry", { controls, now, act: g.act });
   for (const job of Object.values(d.jobs || {})) {
     if (closed.length >= MAX_EXPIRIES_PER_PASS) break;
     if (job.kind !== "finding" || job.codingParent || JOB_TERMINAL.includes(job.state) || ["running", "queued", "paused"].includes(job.state)) continue;
@@ -393,7 +399,11 @@ function expireFindings(ledger, { now, config = DEFAULTS } = {}) {
     const blockedEmpty = job.state === "blocked" && now - since >= limit;
     const parkedLong = job.state === "waiting" && job.closing?.parked && now - job.closing.parked.at >= limit;
     if (!(gone && now - (job.at || since) >= limit) && !blockedEmpty && !parkedLong) continue;
+    // Every candidate went quiet at least the expiry period ago; one that did so before the pass first ran is historical.
+    const quietSince = parkedLong ? job.closing.parked.at + limit : since + limit;
+    if (hist.check(quietSince, { open: true }) === "later") continue;
     const why = gone ? "it belongs to a world that no longer exists" : blockedEmpty ? `it was blocked ${Math.round((now - since) / HOUR)} hours with no question behind it` : `it was parked ${Math.round((now - job.closing.parked.at) / HOUR)} hours with nothing changing`;
+    if (!g.act) { require("./controls").preview(d, "finding-expiry", "close finding", `job ${job.id}`, `${why}: ${clip(job.summary, 160)}`, {}, now); closed.push(job.id); continue; }
     const was = clip(job.summary, 200);
     job.state = "dismissed";
     job.summary = `Closed automatically: ${why}. Was: ${was}`;
@@ -402,7 +412,7 @@ function expireFindings(ledger, { now, config = DEFAULTS } = {}) {
     ledger.audit("finding_expired", { job: job.id, why: gone ? "old_world" : blockedEmpty ? "blocked_no_question" : "parked", was });
     closed.push(job.id);
   }
-  if (closed.length) ledger.save();
+  if (closed.length && g.act) ledger.save();
   return closed;
 }
 

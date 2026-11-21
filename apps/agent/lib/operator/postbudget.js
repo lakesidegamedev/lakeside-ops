@@ -19,16 +19,19 @@ const LIVE = /\blive on the main server\b|\b(?:is|are) (?:now )?live\b|\blive (?
 const FUTURE = /\b(?:will be|once it(?:'s| is)|when it(?:'s| is)|not yet|is not on|isn't on|goes live|reaches)\b/i;
 function liveClaim(text) { const t = String(text || ""); return LIVE.test(t) && !FUTURE.test(t); }
 
-// Keir posts after the player's last message, within the last hour.
-function recentRun(posts, humanAt, now) { return (posts || []).filter((p) => !isCard(p) && p.at > (humanAt || 0) && now - p.at < HOUR); }
+// Keir posts after the player's last message, within the last hour. Posts answering the owner or a developer (staff) are
+// not the player's budget (review M6).
+function recentRun(posts, humanAt, now) { return (posts || []).filter((p) => !isCard(p) && !p.staff && p.at > (humanAt || 0) && now - p.at < HOUR); }
 
 // { allow, overflow, count }. essential: a correction, or an answer the player is owed. overflowUsedAt: when the one merged
 // overflow message for this player message went out (null if not yet).
 function hourly({ posts, humanAt, now, cap = DEFAULT_PER_HOUR, essential = false, overflowUsedAt = null }) {
   const count = recentRun(posts, humanAt, now).length;
   if (count < cap) return { allow: true, overflow: false, count };
+  // Third pass: an essential post (a correction, an answer the player is owed or asked for, a promised follow-up) always
+  // goes out; the cap holds back only unprompted posts.
+  if (essential) return { allow: true, overflow: true, count };
   const used = overflowUsedAt && overflowUsedAt > (humanAt || 0) && now - overflowUsedAt < HOUR;
-  if (essential && !used) return { allow: true, overflow: true, count };
   return { allow: false, overflow: false, count, used: Boolean(used) };
 }
 function hourlyRefusal(r, cap) {

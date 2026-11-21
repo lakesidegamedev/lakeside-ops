@@ -210,7 +210,10 @@ test("finding expiry: the five old-world findings close once with a record; live
   w.data.jobs.keep1 = { id: "keep1", kind: "finding", state: "blocked", at: w.now() - 100 * HOUR, stateAt: w.now() - 100 * HOUR, engineeringTitle: "Turn 97 phase partyGOTV failed", source: { content: "Turn 97" }, effects: {} };
   w.data.decisions.q1 = { id: "q1", jobId: "keep1", state: "pending" };
   w.data.jobs.keep2 = { id: "keep2", kind: "finding", state: "blocked", at: w.now() - HOUR, stateAt: w.now() - HOUR, engineeringTitle: "Turn 98 failed", source: { content: "Turn 98" }, effects: {} };
-  const closed = closing.expireFindings(w.ledger, { now: w.now(), config: CONFIG });
+  // Third pass (review M7): findings that went quiet before the pass first ran are closed three per run.
+  const first = closing.expireFindings(w.ledger, { now: w.now(), config: CONFIG });
+  assert.equal(first.length, 3);
+  const closed = [...first, ...closing.expireFindings(w.ledger, { now: w.now() + 60000, config: CONFIG })];
   assert.deepEqual(closed.sort(), old.map((o) => o[0]).sort());
   for (const [id] of old) { assert.equal(w.data.jobs[id].state, "dismissed"); assert.match(w.data.jobs[id].summary, /^Closed automatically: it belongs to a world that no longer exists\. Was: Task ran out of time twice/); }
   assert.equal(audits(w, "finding_expired").length, 5);
@@ -264,4 +267,31 @@ test("closing conditions: inference, refusal limit and the plain settings", () =
   // Commands, conversations and coding children are not held to it.
   assert.equal(closing.fromFinish(w.data, { kind: "command", effects: {} }, input, w.now()), null);
   assert.equal(closing.fromFinish(w.data, { kind: "ticket", codingParent: "p", effects: {} }, input, w.now()), null);
+});
+
+test("finding expiry has a switch and preview, and stops under the kill switch (review M7)", () => {
+  const { staticControls } = require("../lib/operator/controls");
+  for (const [controls, previewed] of [[staticControls({ findingExpiry: "off" }), false], [staticControls({}, { preview: true }), true], [staticControls({}, { held: "x" }), false]]) {
+    const w = world(Date.parse("2026-11-21T02:00:00Z"));
+    w.data.watch.turnClock = { turn: 99, iteration: 3, at: w.now() };
+    w.data.jobs.f = { id: "f", kind: "finding", state: "blocked", at: Date.parse("2026-11-07T16:11:00Z"), stateAt: Date.parse("2026-11-16T01:52:00Z"), engineeringTitle: "Turn 736 is not advancing", source: { content: "Turn 736" }, summary: "s", effects: {} };
+    closing.expireFindings(w.ledger, { now: w.now(), config: CONFIG, controls });
+    assert.equal(w.data.jobs.f.state, "blocked");
+    assert.equal(Boolean(w.data.preview?.items?.["finding-expiry:close finding:job f"]), previewed);
+  }
+});
+
+test("the quiet-wake check has a switch: off, a due timer wakes the model as before; preview records it and still wakes", () => {
+  const { staticControls } = require("../lib/operator/controls");
+  const { wakeStep } = require("../lib/operator/lifecycle");
+  for (const [controls, previewed] of [[staticControls({ quietWakes: "off" }), false], [staticControls({}, { preview: true }), true]]) {
+    const w = world();
+    const job = job6887(w);
+    pr6887(w);
+    finish(w, job, { state: "waiting", summary: "Waiting.", closesWhen: "closes when PR 6887 merges", waitingOn: "PR 6887", waitOn: { kind: "pr", ref: 6887 } });
+    w.advance(61 * 60000);
+    wakeStep(job, { now: w.now(), config: { controls, taskLifetimeMs: 9e15 }, data: w.data, closing: CONFIG, claimedBy: () => null, directiveHeld: () => false });
+    assert.equal(job.state, "queued", "the model is woken");
+    assert.equal(Boolean(w.data.preview?.items?.[`quiet-wakes:stay quiet:job ${job.id}`]), previewed);
+  }
 });

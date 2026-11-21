@@ -54,6 +54,11 @@ function calledFor(d, ticket, now) {
   return (d.ticketPromises?.[ticket] || []).some((p) => p.state === "open" && (p.wokenAt || isDue(d, p, now) || !(p.kind === "turn" && Number.isFinite(p.afterTurn))));
 }
 
+// A promise that is due now or was woken for: its follow-up is essential and goes past the hourly cap.
+function dueNow(d, ticket, now) {
+  return (d.ticketPromises?.[ticket] || []).some((p) => p.state === "open" && (p.wokenAt || isDue(d, p, now)));
+}
+
 // First person, future, a follow-up verb: "I will compare...", "I'll confirm here once...", "we'll let you know".
 const FOLLOW = /\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:\w+\s+){0,3}?(?:compare|check|confirm|update|tell|let you know|come back|follow up|get back|report back|look|post|reply|verify|read|recheck|re-check)\b/i;
 const NOT_PROMISE = /\b(?:if you (?:want|like|need)|if (?:that|it) helps|unless you)\b|\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:not|never)\b|\b(?:won(?:'|’)?t|will not|shan(?:'|’)?t)\b/i;
@@ -201,4 +206,4 @@ function keepForReport(d, ticket, now) {
   return p || null;
 }
 
-module.exports = { overlap, detect, notePost, createPromises, isDue, calledFor, keepForReport, cannotConfirm, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS, TURN_BACKSTOP_MS, MAX_TICKET_WAKES };
+module.exports = { overlap, detect, notePost, createPromises, isDue, calledFor, dueNow, keepForReport, cannotConfirm, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS, TURN_BACKSTOP_MS, MAX_TICKET_WAKES };
