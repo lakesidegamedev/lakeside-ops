@@ -220,12 +220,37 @@ describe("reconcile pass", () => {
     assert.equal(k.get(card.id).lane, "done");
   });
 
-  it("a merged ticket closes its card and says where it went", async () => {
-    const card = k.add({ product: "ahd", title: TITLE, start: true }, { actor: "claude" });
-    Object.assign(tickets.records[0], { status: "closed", mergedInto: 1853, mergedAt: clock.toISOString(), closedAt: clock.toISOString() });
-    const got = await decorateItem(k.get(card.id), reader);
+  it("a merged ticket moves its cards to the target ticket instead of closing them", async () => {
+    // Review M1: support merges 1852 into 1853; the work continues under 1853.
+    const own = k.add({ product: "ahd", title: TITLE, ticket_role: "own", start: true }, { actor: "claude" });
+    const handoff = k.add({ product: "ahd", title: "Tech cap rework", detail: "Raised by Keir from ticket 1852.", lane: "backlog" }, { actor: "keir" });
+    later(HOUR);
+    Object.assign(tickets.records[0], { status: "closed", mergedInto: 1853, mergedAt: clock.toISOString(), closedAt: clock.toISOString(), statusHistory: [{ status: "closed", at: clock.toISOString() }] });
+    const got = await decorateItem(k.get(own.id), reader);
     assert.equal(got.ticket_status[0].status, "Closed, merged into 1853");
-    assert.match(got.ticket_warning, /merged into ticket 1853/);
+    assert.match(got.ticket_warning, /merged into ticket 1853.*The work continues under ticket 1853; the reconcile pass moves this card's link there\./);
+    const out = await runTicketReconcile({ store: k, reader });
+    assert.deepEqual(out.counts, { moved: 2 });
+    for (const id of [own.id, handoff.id]) {
+      const card = k.get(id);
+      assert.notEqual(card.lane, "done", "not completed");
+      assert.deepEqual(card.tickets, [1853]);
+      assert.equal(card.events[0].event_type, "source_moved");
+      assert.match(card.events[0].summary, /Ticket 1852 was merged into ticket 1853 on 17 Nov\. The work continues there, so this card now follows ticket 1853 instead of closing\. Its link was ticket 1852\./);
+    }
+    assert.equal(k.get(own.id).closes_with_ticket, true, "an own card stays the target's own");
+    // Editing the title does not re-read the old ticket from the words.
+    k.update(handoff.id, { title: "Tech cap rework (ticket 1852)" }, { actor: "claude" });
+    assert.deepEqual(k.get(handoff.id).tickets, [1853]);
+    const again = await runTicketReconcile({ store: k, reader });
+    assert.equal(again.changed, 0, "1853 is open: nothing more to do");
+    // The opposite failure: the cards still follow their ticket once the target closes.
+    later(HOUR);
+    closeTicket(1853, clock.toISOString(), { status: "closed" });
+    const closed = await runTicketReconcile({ store: k, reader });
+    assert.deepEqual(closed.counts, { completed: 1, follow_up: 1 });
+    assert.equal(k.get(own.id).lane, "done");
+    assert.match(k.get(handoff.id).title, /^Follow-up from closed ticket 1853: /);
   });
 
   it("a reopened ticket notes every card it closed and reopens only the most recent", async () => {

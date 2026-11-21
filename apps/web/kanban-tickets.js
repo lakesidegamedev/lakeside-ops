@@ -148,6 +148,9 @@ function ticketWarning(item, statusMap, at = Date.now()) {
     ? "This card is leftover follow-up work, not the ticket."
     : "This card was filed as the ticket's own status or question and is not done; it is not evidence that the ticket is being worked. The reconcile pass will close it.";
   const stale = item.activity === "no recent activity" ? ` Its assignee ${item.assigned_to} has reported nothing recently.` : "";
+  // A merged ticket's work continues under the target ticket.
+  const targets = [...new Set(closed.filter((st) => st.merged_into != null).map((st) => st.merged_into))];
+  if (targets.length) return `${sentence}${still} The work continues under ticket ${targets.join(", ")}; the reconcile pass moves this card's link there.${stale}`;
   return `${sentence}${still} ${what}${stale}`;
 }
 

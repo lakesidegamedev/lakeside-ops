@@ -77,9 +77,13 @@ describe("replay over the 21 Nov board", () => {
     assert.deepEqual(completed.map((c) => c.id).sort(), [255323, 255382]);
   });
 
-  it("relabels the kept follow-ups and reaches a steady state", async () => {
+  it("relabels the kept follow-ups, moves the merged ticket's card, and reaches a steady state", async () => {
     for (const id of [254910, 255104, 255117, 255437, 254622, 255428])
       assert.match(k.get(id).title, /^Follow-up from closed ticket \d+: /, `card ${id}`);
+    const moved = first.changes.find((c) => c.id === 254665);
+    assert.equal(moved.action, "moved");
+    assert.deepEqual(k.get(254665).tickets, [1600]);
+    assert.match(k.get(254665).title, /^Follow-up from closed ticket 1600: /, "the second run follows the target ticket");
     const third = await runReconcile({ store: k, reader: ticketReader(at), limit: 500 });
     assert.equal(third.changed, 0);
   });

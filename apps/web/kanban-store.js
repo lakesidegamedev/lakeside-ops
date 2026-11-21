@@ -1141,10 +1141,13 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   //
   // Rules (owner, 2026-11-21), every one logged on the card as a source_*
   // event whose summary names the source and what happened to the card:
-  // - ticket: a card that is the ticket's own work closes when every ticket
-  //   it names is closed; a follow-up stays open, relabelled "Follow-up from
-  //   closed ticket N", and loses an assignee quiet for a day; a reopened
-  //   ticket reopens the most recent card this pass closed for it.
+  // - ticket: a card that is the ticket's own status or question (explicit
+  //   ticket_role own, or an own form) closes when every ticket it names is
+  //   closed; any other card is a follow-up: it stays open, relabelled
+  //   "Follow-up from closed ticket N", and loses an assignee quiet for a
+  //   day; a ticket merged into another moves the card's link to the target
+  //   (never closes it); a reopened ticket reopens the most recent card this
+  //   pass closed for it.
   // - pull request: merged -> the card completes, unless it says work is
   //   still owed after the merge (still_owed, or its latest progress names a
   //   release, a migration to run, a follow-up fix ...), in which case it is
@@ -1200,6 +1203,26 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
         const refs = parseTicketRefs(row.ticket_refs);
         if (!refs.length) continue;
         const known = refs.map((n) => [n, statusOf(n)]);
+        // A ticket merged into another is not finished: its work continues
+        // under the target. The card's link moves there (it is never closed
+        // for the merge itself) and the next pass follows the target.
+        const merged = known.filter(([n, st]) => st && st.merged_into != null && Number(st.merged_into) > 0 && Number(st.merged_into) !== n);
+        if (merged.length) {
+          const moves = merged.map(([n, st]) => [n, Number(st.merged_into)]);
+          const key = `src:${row.id}:ticket:merged:${moves.map(([n, t]) => `${n}>${t}`).join(",")}`.slice(0, 200);
+          if (keyUsed.get(key)) continue;
+          const next = [];
+          for (const n of refs) {
+            const to = (moves.find(([from]) => from === n) || [])[1] || n;
+            if (!next.includes(to)) next.push(to);
+          }
+          plan({
+            id: row.id, title: row.title, action: "moved", source: "ticket", refs: refs.map(String), tickets: next,
+            reason: `${moves.map(([n, t]) => `Ticket ${n} was merged into ticket ${t}${known.find(([m]) => m === n)[1].closed_at ? ` on ${day(known.find(([m]) => m === n)[1].closed_at)}` : ""}.`).join(" ")} The work continues there, so this card now follows ticket ${[...new Set(moves.map(([, t]) => t))].join(", ")} instead of closing. Its link was ticket ${refs.join(", ")}.`,
+            set: { ticket_refs: JSON.stringify(next), ticket_link: "explicit", updated_at: stamp }, event: "source_moved", key,
+          });
+          continue;
+        }
         const unknown = known.filter(([, st]) => !st).map(([n]) => n);
         if (unknown.length) { unknown.forEach((n) => skippedUnknown.add(n)); continue; }
         const closed = known.filter(([, st]) => st.state === "closed");
