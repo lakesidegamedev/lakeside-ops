@@ -7,7 +7,7 @@ const { noDashes, GITHUB_OWNER, GAME_REPO, canonicalRepository, canonicalGithubU
 // AHDGame's custom-rules check fails any PR without a ticked "Conflict of
 // interest" section, which left promotes blocked. A promote ships commits that
 // already passed review, so it never touches a holding of its own.
-const NO_CONFLICT_DISCLOSURE = "\n\n## Conflict of interest\n\n- [x] This change does not directly affect a character, corporation, or other in-game holding of mine\n- [ ] It does, and I have disclosed it below or privately to a maintainer";
+const { DISCLOSURE: NO_CONFLICT_DISCLOSURE, withDisclosure } = require("./prdisclosure");
 // Minutes between checks for a task waiting with nothing subscribed and no
 // reply owed: the first is a normal look, then it settles into a slow recheck.
 const QUIET_WAITS = [15, 30, 60, 120];
@@ -2104,7 +2104,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     });
     await exec("/usr/bin/git", ["-C", wt, "apply", "--index", a.args.patchFile], { signal });
     await exec("/usr/bin/git", ["-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "user.name=Keir", "-c", `user.email=${config.keirGitEmail || "keir@localhost"}`, "commit", "-m", a.args.title + "\n\nPrepared by Keir for task " + job.id + "."], { signal });
-    a.args.title = noDashes(a.args.title); a.args.body = noDashes(a.args.body);
+    a.args.title = noDashes(a.args.title); a.args.body = withDisclosure(noDashes(a.args.body));
     fs.writeFileSync(bodyFile, a.args.body, { mode: 0o600 });
     } catch (e) {
       // child_process errors carry a numeric exit code, so test for our own classes, not for "no code".
@@ -3353,6 +3353,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Source evidence goes to the worker, never directly into an owner card.
       async function requestGithubApproval(args, reason) {
         const copy=require("./approvalcopy");
+        // Keir 11.2: GitHub is the truth before any ask. A PR merged or closed by anyone, or moved to a new head, is not asked about.
+        if(args.action==="merge" && Number(args.number)) {
+          const live=await api([`repos/${repo}/pulls/${Number(args.number)}`]).catch(()=>null);
+          if(!live) throw new Error(`GitHub could not be read for PR ${Number(args.number)}; nothing was sent to the owner. Try again in a few minutes.`);
+          if(live.merged || live.merged_at) return { number: Number(args.number), merged: true, already: true, sha: live.merge_commit_sha, nextMove: "Already merged on GitHub. Nothing to ask; treat the merge as done." };
+          if(live.state && live.state!=="open") throw new Error(`PR ${Number(args.number)} is closed on GitHub; nothing was sent to the owner.`);
+          if(args.head && live.head?.sha && live.head.sha!==args.head) throw new Error(`PR ${Number(args.number)} moved to a new head (${live.head.sha.slice(0,10)}) since it was read; nothing was sent. Re-read it and ask for the current head.`);
+        }
         const existing=Object.values(d.actions).find(a=>a.jobId===job.id && a.kind==="github" && JSON.stringify(musePolicy.normalized(a.args))===JSON.stringify(musePolicy.normalized(args)) && a.expiresAt>now());
         if(existing && ["approved","done","rejected"].includes(existing.state)) return request(job,"github",args,reason,existing.explanation);
         const liveQuestion=existing && Object.values(d.decisions||{}).some(x=>x.actionId===existing.id&&x.state==="pending");
@@ -4554,10 +4562,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const refs = /\b(?:refs?|fix(?:e[sd])?|close[sd]?|resolve[sd]?)\s+#\d+/i.test(body) ? "" : issues.refsLine(linked);
         if (refs) body = `${body.trimEnd()}\n\n${refs}`;
         body = body.replace(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi, "Refs #$1");
-        if (job.reviewItem?.kind === "doc_conflict" && !/^## Conflict of interest\s*$/im.test(body)) {
-          body += NO_CONFLICT_DISCLOSURE;
-        }
       }
+      // Keir 11.2: every PR Keir opens carries the Conflict of interest section custom-rules requires (prdisclosure.js).
+      body = withDisclosure(body);
       // Revise the open PR for this work unless the change is a genuinely
       // separate fix. That PR may belong to another task on the same ticket
       // (2026-10-12: ticket 1506's ticket task and a developer task each

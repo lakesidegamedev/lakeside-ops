@@ -1,4 +1,5 @@
 "use strict";
+const { hasDisclosure, withDisclosure } = require("./prdisclosure");
 const { JOB_TERMINAL } = require("./machines");
 // Keir 8.5: Keir ships its own bug and display fixes while the owner is away.
 //
@@ -108,7 +109,7 @@ const RULES = `You are a headless Sonnet worker on the production ops box, start
 - Run EVERY command in the FOREGROUND. Never background a command, never "wait to be re-invoked": -p mode has no re-invocation. Poll CI in the foreground with a hard cap of 40 minutes, then write your report.
 - Work ONLY in your own git worktree (path below, created from origin/development). Never git checkout in /root/projects/AHDGame itself. Stage explicit files, never git add . or -A.
 - AHDGame is PUBLIC: no secrets, player names, Discord ids, ticket numbers, internal hosts or paths, or ops references in code, commits, branch names or PR text. Conventional commits (commitlint enforced).
-- The PR targets development. Add a versionless changelog note under the repo's unreleased changelog directory, following the existing files; its areas must each be one of engine, frontend, fullstack, backend. The PR body must carry a line "Change-class: <bugfix|display>" on its own line. Do not predict PR numbers.
+- The PR targets development. Add a versionless changelog note under the repo's unreleased changelog directory, following the existing files; its areas must each be one of engine, frontend, fullstack, backend. The PR body must carry a line "Change-class: <bugfix|display>" on its own line and end with the "## Conflict of interest" section (tick that the change does not affect a holding of yours). Do not predict PR numbers.
 - Do NOT merge, promote, deploy, restart services or touch systemd. Do NOT post to Discord or tickets. Prod data is READ-ONLY (gamestate and heal-ops read tools, no writes).
 - Code lookup: /root/bin/mcpcall.sh ops-knowledge code_search or code_exact, then read the real files in your worktree; rg for completeness.
 - Memory budget: shared production host. Run targeted tests (npx vitest run <files>) and a scoped tsc (npx tsc -p <tsconfig> --noEmit) once at the end. No full verify, no full test suite, no big heap.
@@ -309,12 +310,28 @@ function createCodingWorkers({
     }
     if (run.mode === "fix") { run.mode = "build"; run.checksSince = now(); run.state = "checks"; note(run, "fix worker exited"); return; }
     if (pr) { try { markProgress(d, run.ticket, now(), "worker PR opened"); } catch {} }
+    if (pr) await ensureDisclosure(run, pr);
     if (pr && report) { Object.assign(run, { pr, state: "checks", checksSince: now() }); note(run, `worker exited, PR #${pr}`); card(run, `Coding worker ${run.id} opened PR #${pr}. Waiting for the required checks.`); return; }
     if (pr) { Object.assign(run, { pr, state: "checks", checksSince: now() }); note(run, `worker exited without a report, PR #${pr}`); return; }
     let logTail = ""; try { logTail = tail(readFile(run.log), 2500); } catch {}
     if (report && !pr) return returnReport(run, report);
     if (run.attempt < 2) { run.attempt += 1; run.state = "queued"; run.retryNote = logTail || "(no log)"; note(run, "no PR and no report; one retry queued"); return; }
     return escalate(run, "the worker exited twice without a PR or a report");
+  }
+
+  // Keir 11.2: a worker writes its own PR text, and five PRs failed custom-rules for a missing Conflict of interest
+  // section. Code adds it once per PR; a failed read or edit is retried on the worker's next step, never guessed.
+  async function ensureDisclosure(run, number) {
+    if (run.disclosureChecked === number) return;
+    try {
+      const full = await api([`repos/${REPO}/pulls/${number}`]);
+      if (!full || full.state !== "open") return;
+      if (!hasDisclosure(full.body)) {
+        await write(["-X", "PATCH", `repos/${REPO}/pulls/${number}`, "-f", `body=${withDisclosure(full.body)}`]);
+        audit("coding_worker_disclosure_added", { run: run.id, pr: number });
+      }
+      run.disclosureChecked = number;
+    } catch (e) { note(run, `disclosure check failed: ${String(e.message).slice(0, 120)}`); }
   }
 
   // Send the findings to the task that owns the ticket. A report alone is not a request for human action.
@@ -425,7 +442,7 @@ function createCodingWorkers({
         const key = `promote-main:${ahead.merge_base_commit?.sha || from}`, cap = trustLimits.checkCounter(d, "deploy", key, now(), lim());
         if (!cap.ok) { run.waiting = cap.reason; return "wait"; }
       }
-      pr = await write(["-X", "POST", `repos/${REPO}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=Promotion of ${ahead.ahead_by} commits, including an automated bug fix.`]);
+      pr = await write(["-X", "POST", `repos/${REPO}/pulls`, "-f", `title=chore: promote ${from} to ${to}`, "-f", `head=${from}`, "-f", `base=${to}`, "-f", `body=${withDisclosure(`Promotion of ${ahead.ahead_by} commits, including an automated bug fix.`)}`]);
       note(run, `opened promote PR #${pr.number} ${from} to ${to}`);
     }
     run.hopPr = pr.number;
