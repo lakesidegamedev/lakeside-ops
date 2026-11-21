@@ -173,6 +173,38 @@ describe("a card linked to a pull request", () => {
     assert.equal((await run()).changed, 0);
   });
 
+  it("a card bigger than its merged pull request is kept and relabelled, not completed", async () => {
+    // Review M3, live card 255428: one PR of a larger program, linked as instructed.
+    const program = k.add({ product: "ahd", title: "Tech tree R&D prices are unreachable at real R&D income", lane: "backlog", pull_request: "lakesidegamedev/AHDGame#7025" }, { actor: "codex:tech" });
+    k.report({ id: program.id, event: "progress", summary: "PR #7025 exposes daily research spend and points left after unlocking. 23 targeted tests passed. Research balance remains open under ticket 1852.", actor: "codex:tech" });
+    // Work owed only in the detail.
+    const detail = k.add({ product: "ahd", title: "Bond pool opening cash", detail: "Fix the startup path first. Phase 2: repair the pools created later.", lane: "backlog", pull_request: "lakesidegamedev/AHDGame#7030", force: true }, { actor: "codex" });
+    // Progress names a different pull request.
+    const other = k.add({ product: "ahd", title: "Ratio refresh", lane: "backlog", pull_request: "lakesidegamedev/AHDGame#7031" }, { actor: "codex" });
+    k.report({ id: other.id, event: "progress", summary: "Merged the reader; the writer lands in PR #7040.", actor: "codex" });
+    // Several pull requests on one card.
+    const several = k.add({ product: "ahd", title: "Ledger cleanup", lane: "backlog", pull_request: ["lakesidegamedev/AHDGame#7032", "lakesidegamedev/AHDGame#7033"] }, { actor: "codex" });
+    // A card that only names the pull request (inferred from its title and evidence link).
+    const named = k.add({ product: "ahd", title: "Ship PR #7034 for the news feed", lane: "backlog", evidence_url: "https://github.com/lakesidegamedev/AHDGame/pull/7034" }, { actor: "codex" });
+    k.db.prepare("UPDATE kanban_items SET pr_refs = NULL WHERE id = ?").run(named.id);
+    k.close();
+    k = openKanban(dbPath, { now: () => clock });
+    assert.equal(k.get(named.id).pull_request_link, "inferred");
+    for (const n of [7025, 7030, 7031, 7032, 7033, 7034]) gh.prs.set(`lakesidegamedev/AHDGame#${n}`, merged("2026-11-21T11:00:00Z"));
+    later(HOUR);
+    const out = await run();
+    assert.deepEqual(out.by_source, { pull_request: { follow_up: 5 } }, "nothing completed");
+    assert.equal(k.get(program.id).title, "Still owed after PR #7025 merged (work still open): Tech tree R&D prices are unreachable at real R&D income");
+    assert.equal(k.get(detail.id).title, "Still owed after PR #7030 merged (next phase): Bond pool opening cash");
+    assert.equal(k.get(other.id).title, "Still owed after PR #7031 merged (PR #7040): Ratio refresh");
+    assert.equal(k.get(several.id).title, "Still owed after PR #7032, PR #7033 merged (check what remains): Ledger cleanup");
+    assert.match(lastEvent(several.id).summary, /names several pull requests, so one merge does not finish it/);
+    assert.equal(k.get(named.id).title, "Still owed after PR #7034 merged (check what remains): Ship PR #7034 for the news feed");
+    assert.match(lastEvent(named.id).summary, /was not filed as this pull request's card \(it only names it\)/);
+    for (const c of [program, detail, other, several, named]) assert.equal(k.get(c.id).lane, "backlog");
+    assert.equal((await run()).changed, 0);
+  });
+
   it("still_owed set explicitly keeps the card open even with a plain progress note", async () => {
     const c = k.add({ product: "ahd", title: "Index provider links", lane: "backlog", pull_request: "lakesidegamedev/AHDGame#6588", still_owed: "run the migration" }, { actor: "claude" });
     gh.prs.set("lakesidegamedev/AHDGame#6588", merged("2026-11-21T11:00:00Z"));

@@ -1148,11 +1148,12 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   //   day; a ticket merged into another moves the card's link to the target
   //   (never closes it); a reopened ticket reopens the most recent card this
   //   pass closed for it.
-  // - pull request: merged -> the card completes, unless it says work is
-  //   still owed after the merge (still_owed, or its latest progress names a
-  //   release, a migration to run, a follow-up fix ...), in which case it is
-  //   relabelled "Still owed after PR #N merged (...)" and loses a quiet
-  //   assignee; closed without merging -> back to the inbox, unassigned,
+  // - pull request: merged -> the card completes only when it was filed as
+  //   that one pull request's card (explicit link to exactly one) and says no
+  //   work is owed after the merge (still_owed, or its title, detail or
+  //   latest progress naming a release, a migration, work still open, a next
+  //   phase or another pull request); otherwise it is relabelled "Still owed
+  //   after PR #N merged (...)" and loses a quiet assignee; closed without merging -> back to the inbox, unassigned,
   //   since the work did not land.
   // - alert: the condition cleared -> the card completes (a card someone has
   //   reported work on since the alert keeps going, noted).
@@ -1330,7 +1331,18 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
           });
           continue;
         }
-        const owed = row.owed_after_merge || sources.owedAfterMerge(row.progress_summary, row.title);
+        // A merge completes the card only when the card was filed as that one
+        // pull request's card (an explicit link to exactly one) and nothing in
+        // its title, detail or latest progress says more work follows. A card
+        // that merely names the pull request, names several, or names another
+        // one is a bigger piece of work: relabelled with what is owed, kept.
+        const explicitSingle = row.pr_link === "explicit" && refs.length === 1;
+        const other = sources.otherPullRequestNamed([row.progress_summary, row.title, row.detail], refs);
+        const owed = row.owed_after_merge || sources.owedAfterMerge(row.progress_summary, row.title, row.detail)
+          || (other ? `PR #${other}` : null) || (explicitSingle ? null : "check what remains");
+        const notOwnCard = explicitSingle ? "" : refs.length > 1
+          ? " The card names several pull requests, so one merge does not finish it."
+          : " The card was not filed as this pull request's card (it only names it), so the merge does not finish it.";
         const mergeKey = merged.map(([r, p]) => `${sources.prKey(r)}@${p.merged_at || ""}`).join(",");
         if (owed) {
           const key = `src:${row.id}:pr:owed:${mergeKey}`.slice(0, 200);
@@ -1346,7 +1358,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
           if (Object.keys(set).length) { set.updated_at = stamp; set.stale_flagged_at = null; }
           plan({
             id: row.id, title: row.title, action: "follow_up", source: "pull_request", refs: refs.map(sources.prKey),
-            reason: `${mergedLine}${unmergedLine ? ` ${unmergedLine}` : ""} The card says work remains after the merge: ${owed}. It stays open for that work: ${tail}. Complete it with work_report when the ${owed} is done.`,
+            reason: `${mergedLine}${unmergedLine ? ` ${unmergedLine}` : ""}${notOwnCard}${owed === "check what remains" ? ` It stays open: ${tail}. Complete it with work_report when what remains is done.` : ` The card says work remains after the merge: ${owed}. It stays open for that work: ${tail}. Complete it with work_report when the ${owed} is done.`}`,
             set: Object.keys(set).length ? set : null, event: "source_follow_up", key,
           });
           continue;

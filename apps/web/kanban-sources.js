@@ -103,6 +103,14 @@ function owedPhrase(fragment) {
   for (const [re, phrase] of OWED_WORDS) if (re.test(fragment)) return phrase;
   return null;
 }
+// Phrases that say the card's work goes on past one merge, whatever the
+// noun: "Research balance remains open under ticket 1852" (card 255428),
+// "phase 2", "the next PR", "another change".
+const MORE_WORK = [
+  [/\b(?:remains?|remaining|still|stays?) open\b|\bopen under (?:ticket|issue|card|incident)\b/i, "work still open"],
+  [/\bnext (?:PR|pull request|change|patch)\b|\b(?:another|a second|second|a further|one more) (?:PR|pull request|change|patch)\b/i, "another change"],
+  [/\b(?:phase|part|stage|step) (?:2|3|4|two|three|four|ii|iii)\b/i, "next phase"],
+];
 function owedAfterMerge(...texts) {
   for (const raw of texts) {
     const text = String(raw || "").replace(/\s+/g, " ");
@@ -123,10 +131,25 @@ function owedAfterMerge(...texts) {
       const owed = sentence.match(/\bstill owed:?\s*([^.;]{2,60})/i);
       if (owed) return owed[1].trim();
     }
+    for (const [re, phrase] of MORE_WORK) if (re.test(text)) return phrase;
   }
   return null;
 }
 const OWED_TITLE_RE = /^still owed after (?:pull request|PR)s? /i;
+
+// The first pull request a card's text names that is not one of refs, or
+// null: progress saying "PR #7031 still to come" on a card linked to #7025
+// means the card is bigger than the merged one.
+function otherPullRequestNamed(texts, refs) {
+  const mine = new Set((refs || []).map((r) => Number(r.number)));
+  for (const raw of texts) {
+    for (const m of String(raw || "").matchAll(/(?:\bPR\b|\bpull request\b|\/pull\/)\s*#?(\d{1,7})\b/gi)) {
+      const n = Number(m[1]);
+      if (n > 0 && !mine.has(n)) return n;
+    }
+  }
+  return null;
+}
 
 // ── Alerts ─────────────────────────────────────────────────────────────────
 // A check says how to tell that an alert's condition cleared:
@@ -363,6 +386,7 @@ module.exports = {
   inferPullRequest,
   owedAfterMerge,
   OWED_TITLE_RE,
+  otherPullRequestNamed,
   checkFor,
   alertKeyFor,
   alertFromFields,
