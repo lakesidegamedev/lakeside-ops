@@ -30,7 +30,7 @@ test("a decision ended through Discord completes its card with the outcome (tick
   const w = setup({ 255495: inbox(255495) });
   w.data.jobs.j = { id: "j", ticket: 1857, state: "waiting", raisedToDevelopers: [{ id: 255495, blocking: true }] };
   w.data.decisions.b2525ab8 = { id: "b2525ab8", jobId: "j", ticket: 1857, state: "pending", at: 1, decisionKey: "kanban:255495", question: "Ticket 1857: Ship the bond issue screen fix now?", options: [{ id: "1", label: "Ship PR 6865 now" }, { id: "2", label: "Wait for a developer review" }], sent: {} };
-  sd.applyOwnerChannelAnswer(w.data, { ticket: 1857, ownerId: OWNER, authorId: OWNER, text: "Wait for a developer review", at: 2, botId: BOT });
+  sd.applyOwnerChannelAnswer(w.data, { ticket: 1857, ownerId: OWNER, authorId: OWNER, text: "Wait for a developer review", at: Date.parse("2026-11-21T01:59:00Z"), botId: BOT });
   assert.equal(w.data.decisions.b2525ab8.state, "selected");
   await w.dc.tick();
   const done = w.calls.find((c) => c.tool === "work_report");
@@ -44,7 +44,7 @@ test("a decision ended through Discord completes its card with the outcome (tick
   assert.equal(w.calls.filter((c) => c.tool === "work_report").length, 1, "closed once");
 });
 
-test("every ending closes the card: approved, withdrawn, expired, button choice", async () => {
+test("a real ending closes the card (approved, a button choice); expired and other withdrawals leave it open with a note (review M8)", async () => {
   const cards = { 1: inbox(1), 2: inbox(2), 3: inbox(3), 4: inbox(4) };
   const w = setup(cards);
   const mk = (id, n, extra) => (w.data.decisions[id] = { id, jobId: "gone", state: "pending", decisionKey: `kanban:${n}`, question: `q${n}`, sent: {}, ...extra });
@@ -54,7 +54,9 @@ test("every ending closes the card: approved, withdrawn, expired, button choice"
   w.data.decisions.f = { id: "f", jobId: "gone", state: "withdrawn", decisionKey: "kanban:Some title", sent: {} }; // no card id
   await w.dc.tick();
   const done = w.calls.filter((c) => c.tool === "work_report" && c.input.event === "completed").map((c) => c.input.id).sort();
-  assert.deepEqual(done, [1, 2, 3, 4]);
+  assert.deepEqual(done, [1, 4]);
+  const noted = w.calls.filter((c) => c.tool === "work_report" && c.input.event === "progress").map((c) => c.input.id).sort();
+  assert.deepEqual(noted, [2, 3]);
   assert.ok(!w.calls.some((c) => c.input.id === 5));
 });
 
@@ -96,4 +98,58 @@ test("startup sweep: an open question on a closed or resolved ticket is withdraw
   w.data.jobs.j1869.state = "waiting";
   await w.dc.tick();
   assert.ok(w.data.decisions.x64.cardClosedAt);
+});
+
+// ---- Third pass: the review's M8 and M7 ----
+const { staticControls } = require("../lib/operator/controls");
+
+test("M8: a question whose task finished or was archived is not withdrawn as \"the ticket was closed\" while the ticket is open", async () => {
+  const w = setup({ 7: inbox(7), 8: inbox(8) }, { tickets: { 1870: "open", 1871: "open" } });
+  w.data.jobs.done = { id: "done", ticket: 1870, state: "done" };
+  w.data.decisions.a = { id: "a", jobId: "done", ticket: 1870, state: "pending", at: Date.parse("2026-11-20T00:00:00Z"), decisionKey: "kanban:7", question: "q1?", sent: {} };
+  w.data.decisions.b = { id: "b", jobId: "archived", ticket: 1871, state: "pending", at: Date.parse("2026-11-20T00:00:00Z"), decisionKey: "kanban:8", question: "q2?", sent: {} };
+  const r = await w.dc.sweepClosedTickets();
+  assert.equal(r.withdrawn, 0);
+  assert.equal(w.data.decisions.a.state, "pending");
+  assert.equal(w.data.decisions.b.state, "pending");
+  // The support service's content envelope is read too.
+  const env = setup({ 9: inbox(9) });
+  env.dc = createDecisionCards({ ledger: env.ledger, mcp: { call: async () => ({}) }, readTicket: async () => ({ content: [{ type: "text", text: JSON.stringify({ number: 1872, status: "closed" }) }] }), now: () => Date.parse("2026-11-21T02:00:00Z") });
+  env.data.jobs.j = { id: "j", ticket: 1872, state: "waiting" };
+  env.data.decisions.c = { id: "c", jobId: "j", ticket: 1872, state: "pending", at: 1, decisionKey: "kanban:9", question: "q3?", sent: {} };
+  assert.equal((await env.dc.sweepClosedTickets()).withdrawn, 1);
+});
+
+test("M8: an expired owner question on an open ticket keeps its card; a card backing another open question is left alone", async () => {
+  const w = setup({ 11: inbox(11), 12: inbox(12) });
+  w.data.decisions.e = { id: "e", jobId: "j", state: "expired", decisionKey: "kanban:11", question: "q?", sent: {} };
+  w.data.decisions.s1 = { id: "s1", jobId: "j", state: "answered", answeredVia: "ticket_channel_option", answeredBy: OWNER, decisionKey: "kanban:12", question: "q?", sent: {} };
+  w.data.decisions.s2 = { id: "s2", jobId: "k", state: "pending", decisionKey: "kanban:12", question: "q again?", sent: {} };
+  await w.dc.tick();
+  assert.ok(!w.calls.some((c) => c.input?.event === "completed"));
+  assert.equal(w.calls.find((c) => c.input?.event === "progress")?.input.id, 11);
+});
+
+test("M7: card completion and the sweep have switches and preview, stop under the kill switch, and take a few historical decisions per run", async () => {
+  for (const controls of [staticControls({ decisionCards: "off", closedTicketSweep: "off" }), staticControls({}, { held: "x" }), staticControls({}, { preview: true })]) {
+    const w = setup({ 1: inbox(1) }, { tickets: { 1900: "closed" } });
+    w.dc = createDecisionCards({ ledger: w.ledger, mcp: { call: async (s, tool) => { w.calls.push({ tool }); return inbox(1); } }, controls, readTicket: async () => ({ status: "closed" }), now: () => Date.parse("2026-11-21T02:00:00Z") });
+    w.data.jobs.j = { id: "j", ticket: 1900, state: "waiting" };
+    w.data.decisions.a = { id: "a", jobId: "j", state: "approve", answeredBy: OWNER, decisionKey: "kanban:1", question: "q", sent: {} };
+    w.data.decisions.p = { id: "p", jobId: "j", ticket: 1900, state: "pending", at: 1, decisionKey: "kanban:2", question: "q", sent: {} };
+    await w.dc.tick(); await w.dc.sweepClosedTickets();
+    assert.equal(w.calls.length, 0);
+    assert.equal(w.data.decisions.p.state, "pending");
+  }
+  const NOW = Date.parse("2026-11-21T02:00:00Z"), DAY = 86400000;
+  const cards = {}; for (let i = 1; i <= 8; i++) cards[i] = inbox(i);
+  const w = setup(cards);
+  w.data.controls = { since: { decisionCards: NOW } };
+  for (let i = 1; i <= 6; i++) w.data.decisions[`h${i}`] = { id: `h${i}`, jobId: "j", state: "approve", answeredBy: OWNER, answeredAt: NOW - DAY, decisionKey: `kanban:${i}`, question: "q", sent: {} };
+  for (let i = 7; i <= 8; i++) w.data.decisions[`o${i}`] = { id: `o${i}`, jobId: "j", state: "approve", answeredBy: OWNER, answeredAt: NOW - 30 * DAY, decisionKey: `kanban:${i}`, question: "q", sent: {} };
+  await w.dc.tick();
+  assert.equal(w.calls.filter((c) => c.input?.event === "completed").length, 3, "three historical cards per run");
+  await w.dc.tick();
+  assert.equal(w.calls.filter((c) => c.input?.event === "completed").length, 6);
+  assert.ok(!w.calls.some((c) => [7, 8].includes(c.input?.id)), "older than the cutoff: left alone");
 });

@@ -428,7 +428,7 @@ tickers.every("ownerwait", 5 * 60000, async () => {
 });
 // Keir 11.2: a decision's kanban card closes with the decision; at start and every six hours, open questions on closed
 // tickets are withdrawn so their cards and DMs close too (lib/operator/decisioncards.js).
-const decisionCards = require("./lib/operator/decisioncards").createDecisionCards({ ledger, mcp, config, log,
+const decisionCards = require("./lib/operator/decisioncards").createDecisionCards({ ledger, mcp, config, log, controls,
   readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(15000)) });
 tickers.every("decisioncards", 60000, () => decisionCards.tick(), { immediateMs: 3 * 60000, maxMs: 2 * 60000 });
 tickers.every("decisioncardsweep", 6 * 3600000, () => decisionCards.sweepClosedTickets(), { immediateMs: 2 * 60000, maxMs: 5 * 60000 });
