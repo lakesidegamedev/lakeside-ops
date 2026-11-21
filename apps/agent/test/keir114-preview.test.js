@@ -95,10 +95,16 @@ test("players and findings cannot draw previews; the switch turns delivery off",
   assert.equal(off.runs.length, 0);
 });
 
-test("the label strip is forced on top of whatever the HTML does", () => {
-  const out = preview.labelled("<html><body style='margin:0'><h1>x</h1></body></html>");
-  assert.ok(out.indexOf(preview.LABEL) < out.indexOf("<h1>"));
-  assert.match(out, /z-index:2147483647!important/);
+test("M5: the label sits in Keir's own page, outside a sandboxed frame that holds the model's HTML", () => {
+  const out = preview.labelled("<!-- <body> --><html><body><h1>x</h1><div style='position:fixed;z-index:2147483647'>OFFICIAL NOTICE</div><script>parent.document.body.remove()</script></body></html>");
+  const frame = out.indexOf("<iframe");
+  assert.ok(out.indexOf(`id="${preview.LABEL_ID}">${preview.LABEL}</div>`) > 0 && out.indexOf(preview.LABEL) < frame);
+  assert.match(out, /<iframe sandbox="" /);
+  // The model's HTML is only ever an escaped attribute value: no tag of it reaches Keir's page.
+  const body = out.slice(out.indexOf("<body>"));
+  assert.ok(!/<h1>|<script>|OFFICIAL NOTICE<\/div>|<!-- <body>/.test(body.replace(/srcdoc="[^"]*"/, "")));
+  const broken = preview.labelled('"></iframe><div>FAKE</div>');
+  assert.equal((broken.match(/<\/iframe>/g) || []).length, 1);
 });
 
 test("B1: with image delivery off, the true 'I can't draw it right now' is posted, not looped back to render_preview", async () => {
@@ -110,4 +116,20 @@ test("B1: with image delivery off, the true 'I can't draw it right now' is poste
   // Without a recorded failure the same sentence is still refused, with the tool to use.
   const on = setup();
   await assert.rejects(on.broker.tool(on.job, "channel_reply", { message: "I cannot render the page from here, so here is the copy." }), /render_preview/);
+});
+
+test("M5: an image whose rendered text lacks the label is not posted", async () => {
+  const f = setup();
+  f.job.source.content = ASK;
+  // A browser that loses the label (as the old strip could) is caught by the check on the rendered text.
+  const real = f.runs;
+  const dir = f.dir;
+  const sandbox = { workspace: (id) => path.join(dir, "ws", id), run: async (id) => {
+    const folder = path.join(dir, "ws", id, ".keir-computer");
+    fs.writeFileSync(path.join(folder, "screen.png"), Buffer.from("png-bytes"));
+    fs.writeFileSync(path.join(folder, "result.json"), JSON.stringify({ title: "x", text: "OFFICIAL NOTICE" }));
+    return { code: 0, output: "" };
+  } };
+  await assert.rejects(preview.render({ sandbox, jobId: f.job.id, html: HTML }), /label did not render/);
+  void real;
 });

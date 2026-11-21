@@ -26,11 +26,17 @@ function requested(job, config = {}) {
   return msgs.some((s) => asksForImage(s.content));
 }
 
-// The label is drawn into the image itself: a fixed strip across the top that the HTML cannot hide or restyle.
+// The label is drawn into the image itself. Keir 11.4 review (M5): inserting a strip into the model's HTML could be
+// defeated (a "<body>" inside a comment, a later fixed overlay, body opacity, a clip-path on <html>). Now the page is
+// Keir's own: the label bar sits above a sandboxed iframe (no scripts, no same origin) that holds the model's HTML, so
+// nothing in that HTML can reach, cover or restyle the bar. render() also refuses an image whose text lacks the label.
+const LABEL_ID = "keir-preview-label";
+const escapeAttr = (s) => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 function labelled(html) {
-  const strip = `<div id="keir-preview-label" style="position:fixed!important;top:0!important;left:0!important;right:0!important;z-index:2147483647!important;display:block!important;margin:0!important;padding:6px 12px!important;background:#b45309!important;color:#fff!important;font:600 13px/1.3 system-ui,-apple-system,Segoe UI,sans-serif!important;letter-spacing:0!important;opacity:1!important;transform:none!important">${LABEL}</div><div style="height:30px"></div>`;
-  const s = String(html);
-  return /<body[^>]*>/i.test(s) ? s.replace(/<body([^>]*)>/i, `<body$1>${strip}`) : `${strip}${s}`;
+  return `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#fff}` +
+    `#${LABEL_ID}{display:block;height:30px;box-sizing:border-box;padding:6px 12px;background:#b45309;color:#fff;font:600 13px/1.3 system-ui,-apple-system,Segoe UI,sans-serif}` +
+    `iframe{display:block;border:0;width:100%;height:calc(100% - 30px)}</style></head><body><div id="${LABEL_ID}">${LABEL}</div>` +
+    `<iframe sandbox="" referrerpolicy="no-referrer" srcdoc="${escapeAttr(html)}"></iframe></body></html>`;
 }
 
 // Renders in the task's sandbox with the computer worker. Returns { png, title, text }.
@@ -47,7 +53,8 @@ async function render({ sandbox, jobId, html, signal }) {
   const png = fs.readFileSync(path.join(folder, "screen.png"));
   if (png.length > 3 * 1024 * 1024) throw new Error("the preview image is over 3 MB");
   let detail = {}; try { detail = JSON.parse(fs.readFileSync(path.join(folder, "result.json"), "utf8")); } catch {}
+  if (!String(detail.text || "").includes(LABEL)) throw new Error("the preview label did not render, so the image was not posted");
   return { png, title: String(detail.title || "").slice(0, 120), text: String(detail.text || "").slice(0, 3000) };
 }
 
-module.exports = { LABEL, asksForImage, requested, labelled, render, MAX_HTML };
+module.exports = { LABEL, LABEL_ID, asksForImage, requested, labelled, render, MAX_HTML };
