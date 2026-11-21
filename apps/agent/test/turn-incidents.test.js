@@ -500,3 +500,52 @@ test("M2, the other way: a recent turn failure incident, Keir's own from the sta
   assert.equal(ti.isTurnIncident({ title: "Turn 108 failed: the game is not advancing", createdAt: "2026-11-21T11:32:00.000Z" }, { at: at("12:00") }), true);
   assert.equal(ti.isTurnIncident({ title: "Turn 108 failed", createdAt: "2026-11-21T13:04:53.329Z" }, { turn: 109, at: at("14:00") }), true);
 });
+
+// The turn diagnostics service down: lock_status and turn_failure_detail fail; engine health may or may not answer.
+function turndiagDown(r, { health = true } = {}) {
+  const orig = r.w.mcp.call;
+  r.down = { turndiag: true, health: !health };
+  r.w.mcp.call = async (s, tool, args, write) => {
+    if (s === "turndiag" && r.down.turndiag) throw new Error("fetch failed (ECONNREFUSED)");
+    if (tool === "engine_health" && r.down.health) throw new Error("fetch failed (ECONNREFUSED)");
+    return orig(s, tool, args, write);
+  };
+}
+
+test("M3: with the turn diagnostics down, engine health still shows the failed turn and the incident opens", async () => {
+  const r = rig({ start: "11:33" });
+  turndiagDown(r);
+  await r.sweep();
+  assert.equal(r.w.creates.length, 1);
+  assert.match(r.w.creates[0].description, /^Turn 108 failed and has not finished; it stopped in the step that runs companies' production and sales\./, "no failure time is claimed when it is not known");
+  assert.equal(r.d.turnIncidents.lastRead.detailRead, false);
+  assert.equal(r.notes.filter((n) => /blind/.test(n.key)).length, 0, "engine health answered, so Keir is not blind");
+});
+
+test("M3, the other way: with the turn diagnostics down and engine health healthy, nothing opens", async () => {
+  const r = rig({ start: "11:00" });
+  turndiagDown(r);
+  for (const hhmm of ["11:00", "11:10", "11:20"]) { r.set(hhmm); await r.sweep(); }
+  assert.equal(r.w.creates.length, 0);
+  assert.equal(r.d.turnIncidents.lastRead.failing, null);
+});
+
+test("M3: when no turn health can be read for five minutes the owner is told once, and told again when reads return", async () => {
+  const r = rig({ start: "11:00" });
+  turndiagDown(r, { health: false });
+  for (const hhmm of ["11:00", "11:02", "11:04"]) { r.set(hhmm); await r.pass.probe(); }
+  assert.equal(r.notes.filter((n) => /blind/.test(n.key)).length, 0, "not inside the bound");
+  for (const hhmm of ["11:05", "11:06", "11:20", "11:40"]) { r.set(hhmm); await r.pass.probe(); }
+  const blind = r.notes.filter((n) => /blind/.test(n.key));
+  assert.equal(blind.length, 1, "told once, not every minute");
+  assert.match(blind[0].content, /Keir cannot read turn health/);
+  r.down.health = false; r.down.turndiag = false;
+  r.set("11:41"); await r.sweep();
+  assert.equal(r.notes.filter((n) => /sighted/.test(n.key)).length, 1);
+  assert.ok(!r.d.alerts.some((x) => /blind/.test(x.key)), "the blind alert is cleared");
+  r.set("11:42"); await r.sweep();
+  assert.equal(r.notes.filter((n) => /sighted/.test(n.key)).length, 1, "said once");
+  r.down.health = true; r.down.turndiag = true;
+  for (const hhmm of ["12:00", "12:06"]) { r.set(hhmm); await r.sweep(); }
+  assert.equal(r.notes.filter((n) => /blind/.test(n.key)).length, 2, "a later outage is told again");
+});

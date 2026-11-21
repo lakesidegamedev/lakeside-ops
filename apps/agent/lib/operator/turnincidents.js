@@ -77,14 +77,14 @@ function cleanRecovery(attempt) {
   return !(attempt.warnings || []).some((w) => SKIPPED.test(typeof w === "string" ? w : w?.detail || w?.message || ""));
 }
 
-// One answer from three reads: what is failing now, what recovered, and what holds it back.
-// Returns { readable, world, currentTurn, failing, recovered, hold, paused, pauseReason }.
-function assess({ lock, overview, detail }, at) {
-  if (!lock && !overview) return { readable: false };
-  const currentTurn = num(lock?.currentTurn) ?? num(overview?.turn);
-  const world = num(overview?.iteration?.number ?? overview?.iteration);
-  const paused = Boolean(lock?.paused ?? overview?.paused);
-  const pauseReason = lock?.pauseReason ?? overview?.pauseReason ?? null;
+// One answer from three reads, plus engine health when a turn read failed: what is failing now, what recovered, and
+// what holds it back. Returns { readable, world, currentTurn, failing, recovered, hold, paused, pauseReason }.
+function assess({ lock, overview, detail, health = null }, at) {
+  if (!lock && !overview && !health) return { readable: false };
+  const currentTurn = num(lock?.currentTurn) ?? num(overview?.turn) ?? num(health?.turn);
+  const world = num(overview?.iteration?.number ?? overview?.iteration) ?? num(health?.iteration?.number ?? health?.iteration);
+  const paused = Boolean(lock?.paused ?? overview?.paused ?? health?.paused);
+  const pauseReason = lock?.pauseReason ?? overview?.pauseReason ?? health?.pauseReason ?? null;
   const out = { readable: true, world, currentTurn, paused, pauseReason, failing: null, recovered: null, hold: null };
   // A reset or other maintenance holds the lock under another kind; a reset also pauses with its own reason.
   const kind = String(lock?.processingKind || "");
@@ -109,6 +109,13 @@ function assess({ lock, overview, detail }, at) {
       const ok = attempts.find((a) => a.success === true);
       if (ok || done) out.recovered = { turn, at: ok ? time(ok.realTime) : null, clean: ok ? cleanRecovery(ok) : false };
     }
+  }
+  // Release review M3: with the failure record unreadable, engine health's last turn log still shows a failed attempt
+  // at the next turn. Its time is not known, so the first sighting stands in for it and is never printed as the time.
+  const last = health?.lastTurn;
+  if (!out.failing && !detail && last?.success === false && currentTurn !== null && num(last.turn) === currentTurn + 1) {
+    const p = (last.failedPhases || [])[0];
+    out.failing = { turn: num(last.turn), kind: "failed", firstFailedAt: at, lastFailedAt: at, attempts: 1, approxTime: true, phase: (typeof p === "string" ? p : p?.phase) || null, reason: (typeof p === "object" && p?.reason) || null };
   }
   if (!out.failing) {
     // Processing-dead: a stale lock, or overdue with nothing holding it. The engine's own verdict, read as text.
@@ -163,6 +170,7 @@ function whatHappened(f) {
   if (f.kind === "dead") return `Turn ${f.turn} stopped partway through${step ? `, in ${step},` : ""} and has not finished.`;
   if (f.kind === "overdue") return `Turn ${f.turn} was due by ${clock(f.firstFailedAt)} and has not started.`;
   if (f.kind === "paused") return `No turn has finished recently, so the game has paused itself before turn ${f.turn}.`;
+  if (f.approxTime) return `Turn ${f.turn} failed and has not finished${step ? `; it stopped in ${step}` : ""}.`;
   return `Turn ${f.turn} failed to finish at ${clock(f.firstFailedAt)}${step ? `, in ${step}` : ""}.`;
 }
 function openingMessage(f) {
@@ -471,8 +479,23 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     const reads = await Promise.allSettled([mcp.call("turndiag", "lock_status", {}, false), mcp.call("gamestate", "game_overview", {}, false),
       mcp.call("turndiag", "turn_failure_detail", { attempts: 8 }, false)]);
     const [lock, overview, detail] = reads.map((r) => (r.status === "fulfilled" ? parse(r.value) : null));
-    const a = assess({ lock, overview, detail }, at);
-    s.lastRead = { at, readable: a.readable, failing: a.failing ? { turn: a.failing.turn, kind: a.failing.kind } : null, recovered: a.recovered ? { turn: a.recovered.turn } : null, hold: a.hold?.code || null, detailRead: Boolean(detail) };
+    // A turn read that failed is never "nothing wrong" (release review M3): engine health is read as well.
+    const health = !lock || !detail ? parse(await mcp.call("engine", "engine_health", {}, false).catch(() => null)) : null;
+    const a = assess({ lock, overview, detail, health }, at);
+    s.lastRead = { at, readable: a.readable, failing: a.failing ? { turn: a.failing.turn, kind: a.failing.kind } : null, recovered: a.recovered ? { turn: a.recovered.turn } : null, hold: a.hold?.code || null, detailRead: Boolean(detail), ...(health ? { healthRead: true } : {}) };
+    // Neither the failure record nor engine health answered: Keir cannot see a failed turn. The owner is told once
+    // after five minutes, and told again when the reads are back.
+    if (!detail && !health) {
+      s.blindSince ||= at;
+      if (at - s.blindSince >= 5 * MINUTE) note("turn-health", "blind", `Keir cannot read turn health: neither the turn failure record nor engine health has answered for ${duration(at - s.blindSince)}, so it cannot see whether a turn has failed. It keeps trying.`);
+    } else if (s.blindSince) {
+      delete s.blindSince;
+      if (s.notes["turn-health"]) {
+        delete s.notes["turn-health"];
+        d.alerts = (d.alerts || []).filter((x) => x.key !== "error:watch-turn-incident:blind:turn-health");
+        ledger.notify("error:watch-turn-incident:sighted:turn-health", "owner", "Keir can read turn health again.");
+      }
+    }
     if (!a.readable) { s.lastRead.why = "neither the turn lock nor the game overview could be read"; ledger.save(); return { unreadable: true }; }
 
     // Stopped (kill switch, pause) or switched off: nothing is written or posted. Reads still run so the hold is recorded
@@ -489,7 +512,8 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
       const key = `w${a.world ?? "unknown"}:t${f.turn}`;
       if (a.hold) { hold(key, a.hold.code, a.hold.why); ledger.save(); return { held: a.hold.why, key }; }
       const rec = (s.records[key] ||= { key, world: a.world, turn: f.turn, firstFailedAt: f.firstFailedAt, firstSeenAt: at, state: "new" });
-      rec.firstFailedAt = Math.min(rec.firstFailedAt || f.firstFailedAt, f.firstFailedAt); rec.phase ||= f.phase; rec.reason ||= f.reason; rec.kind ||= f.kind; rec.lastSeenAt = at; rec.attempts = f.attempts; rec.autoPaused = f.autoPaused;
+      rec.firstFailedAt = Math.min(rec.firstFailedAt || f.firstFailedAt, f.firstFailedAt); rec.phase ||= f.phase;
+      rec.approxTime = !(rec.exactTime ||= !f.approxTime); rec.reason ||= f.reason; rec.kind ||= f.kind; rec.lastSeenAt = at; rec.attempts = f.attempts; rec.autoPaused = f.autoPaused;
       if (rec.state === "closed-while-failing") { ledger.save(); return { held: "closed by a person while failing", key }; }
       // A failure not yet on the current incident is added to it only after its status is read fresh (B1): an incident
       // closed minutes ago must never absorb, or hold back, a new failure. Unknown is neither open nor closed: it is read
@@ -571,7 +595,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     const live = Boolean(s.current) || Object.values(s.records).some((r) => ["opening", "retry", "uncertain", "new"].includes(r.state));
     if (!live) {
       const [lock, health] = (await Promise.allSettled([mcp.call("turndiag", "lock_status", {}, false), mcp.call("engine", "engine_health", {}, false)])).map((r) => (r.status === "fulfilled" ? parse(r.value) : null));
-      const trouble = !lock || /^(?:STUCK|overdue)/i.test(String(lock?.verdict || "")) || Boolean(lock?.paused) || health?.lastTurn?.success === false || (health?.lastTurn?.failedPhases || []).length > 0 ||
+      const trouble = !lock || !health || /^(?:STUCK|overdue)/i.test(String(lock?.verdict || "")) || Boolean(lock?.paused) || health?.lastTurn?.success === false || (health?.lastTurn?.failedPhases || []).length > 0 ||
         (num(health?.lastTurn?.turn) !== null && num(lock?.currentTurn) !== null && num(health.lastTurn.turn) > num(lock.currentTurn));
       if (!trouble) return { quiet: true };
     } else if (s.current?.recovered && now() - (s.lastSweep?.at || 0) < CLOSED_CHECK_MS) return { quiet: true };
