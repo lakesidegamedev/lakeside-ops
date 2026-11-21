@@ -17,6 +17,29 @@ const RETRY_MS = 30 * 60000;
 const KEEP_AFTER_MS = 10 * 60000; // parts of the same reply and instant notices do not keep it
 const MAX_OPEN = 5;
 const FALLBACK = "I can't confirm this yet. I'm still checking and will update this ticket when I can.";
+// Keir 11.2 second pass: a turn promise comes due when the game's turn has actually advanced past the turn it was made
+// in, read from the turn clock the watch keeps (game_overview every 5 minutes; operator.js watchTick). When that read is
+// stale or failing, the fixed duration (DUE.turn) is the fallback. A game that is paused or stuck still brings the
+// promise due after TURN_BACKSTOP_MS, so the player hears "I can't confirm yet" rather than nothing.
+const CLOCK_FRESH_MS = 20 * 60000;
+const TURN_BACKSTOP_MS = 8 * HOUR;
+const GRACE_MS = 10 * 60000;
+function clockOf(d, now) {
+  const c = d?.watch?.turnClock;
+  return c && Number.isFinite(c.turn) && now - (c.at || 0) <= CLOCK_FRESH_MS ? c : null;
+}
+function isDue(d, p, now) {
+  if (p.kind === "turn" && Number.isFinite(p.afterTurn)) {
+    const clock = clockOf(d, now);
+    if (clock) return clock.turn >= p.afterTurn || now >= p.at + TURN_BACKSTOP_MS;
+    return now >= p.at + DUE.turn;
+  }
+  return p.dueAt <= now;
+}
+// A recorded promise the next post may keep: due now, about to be due, or already woken for.
+function calledFor(d, ticket, now) {
+  return (d.ticketPromises?.[ticket] || []).some((p) => p.state === "open" && (p.wokenAt || isDue(d, p, now) || (!Number.isFinite(p.afterTurn) && p.dueAt <= now + 30 * 60000)));
+}
 
 // First person, future, a follow-up verb: "I will compare...", "I'll confirm here once...", "we'll let you know".
 const FOLLOW = /\b(?:i|we)(?:'|’)?(?:ll| will| am going to| are going to|'m going to|'re going to)\s+(?:\w+\s+){0,3}?(?:compare|check|confirm|update|tell|let you know|come back|follow up|get back|report back|look|post|reply|verify|read|recheck|re-check|see)\b/i;
@@ -59,9 +82,20 @@ function notePost(d, ticket, job, message, now) {
     if ((p.wokenAt && now > p.wokenAt) || halfway || turnReport || (!found && overlap(p.text, message) >= 2)) { p.state = "kept"; p.keptAt = now; }
   }
   if (!found) return null;
+  if (found.kind === "turn") {
+    const clock = clockOf(d, now);
+    if (clock) {
+      found.afterTurn = clock.turn + 1;
+      if (clock.nextTurn && clock.nextTurn > now) found.dueAt = clock.nextTurn + GRACE_MS;
+    }
+  }
   // One open promise per ticket: a repeat keeps the earliest due time the player was given.
   const open = rows.find((p) => p.state === "open");
-  if (open) { open.text = found.text; open.dueAt = Math.min(open.dueAt, found.dueAt); open.repeats = (open.repeats || 0) + 1; return open; }
+  if (open) {
+    open.text = found.text; open.dueAt = Math.min(open.dueAt, found.dueAt); open.repeats = (open.repeats || 0) + 1;
+    if (Number.isFinite(found.afterTurn)) open.afterTurn = Number.isFinite(open.afterTurn) ? Math.min(open.afterTurn, found.afterTurn) : found.afterTurn;
+    return open;
+  }
   const p = { id: `${ticket}-${now.toString(36)}`, at: now, jobId: job.id, state: "open", wakes: 0, ...found };
   rows.push(p);
   d.ticketPromises[ticket] = rows.filter((x) => x.state === "open" || now - x.at < 7 * 24 * HOUR).slice(-MAX_OPEN * 4);
@@ -82,7 +116,7 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
   function wake(job, p, second) {
     const told = new Date(p.at).toISOString().slice(11, 16);
     (job.inbox ||= []).push({ authorId: "promise-keeper", role: "system", at: new Date(now()).toISOString(),
-      content: `${second ? "Still owed: y" : "Y"}ou told the player at ${told} UTC: "${p.text}". That follow-up is due now. Read what you need, then post it. If you cannot confirm it yet, tell the player plainly in one or two sentences that you cannot confirm it yet and what you are waiting for. If you already gave this follow-up, finish without posting again; otherwise do not finish without posting one of the two.` });
+      content: `${second ? "Still owed: y" : "Y"}ou told the player at ${told} UTC: "${p.text}". That follow-up is due now. Read what you need, then post it. If you cannot confirm it yet, tell the player plainly in one or two sentences that you cannot confirm it yet and what you are waiting for. If you already gave this follow-up, finish without posting again; otherwise do not finish without posting one of the two.${job.closing?.closesWhen ? ` Your recorded closing condition: closes when ${String(job.closing.closesWhen).replace(/^closes when /i, "").slice(0, 200)}; waiting on ${String(job.closing.waitingOn || "").slice(0, 160)}.` : ""}` });
     if (!["queued", "running"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
     p.wakes += 1; p.wokenAt = now(); p.nextAt = now() + retryMs;
     ledger.audit("promise_wake", { ticket: p.id.split("-")[0], promise: p.id, job: job.id, wakes: p.wakes, was: p.kind });
@@ -91,7 +125,7 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
     let woke = 0, changed = false;
     for (const [ticket, rows] of Object.entries(d.ticketPromises || {})) {
       for (const p of rows) {
-        if (p.state !== "open" || p.dueAt > now() || (p.nextAt || 0) > now()) continue;
+        if (p.state !== "open" || (p.nextAt || 0) > now() || (!p.wakes && !isDue(d, p, now()))) continue;
         const job = root(ticket);
         const why = ended(job);
         if (why) { p.state = "cancelled"; p.reason = why; changed = true; continue; }
@@ -114,4 +148,4 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
   return { tick };
 }
 
-module.exports = { overlap, detect, notePost, createPromises, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS };
+module.exports = { overlap, detect, notePost, createPromises, isDue, calledFor, DUE, FALLBACK, RETRY_MS, KEEP_AFTER_MS, TURN_BACKSTOP_MS };

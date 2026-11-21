@@ -114,3 +114,56 @@ test("a woken blocked ticket stays queued through the lifecycle wake rules", asy
   assert.equal(w.job.state, "queued");
   assert.ok(Array.isArray(effects));
 });
+
+// Keir 11.2 second pass, item 11: a turn promise comes due when the game's turn has actually advanced (the watch's turn
+// clock from game_overview), and falls back to the fixed duration when that read is stale or failing.
+test("ticket 1868: the turn promise comes due when the turn number advances, not at a fixed time", async () => {
+  const w = world();
+  w.data.watch = { turnClock: { turn: 95, nextTurn: at("21:00"), iteration: 3, at: at("19:44") } };
+  const p = notePost(w.data, 1868, w.job, PROMISE, at("19:45"));
+  assert.equal(p.afterTurn, 96, "the turn after the one already processed");
+  assert.equal(p.dueAt, at("21:10"), "the expected time is the scheduled turn plus ten minutes");
+  w.job.state = "blocked";
+  // 21:20: past the expected time, but turn 96 has not been processed (late turn): not due, nothing is woken.
+  w.set("21:20"); w.data.watch.turnClock = { turn: 95, nextTurn: at("21:00"), iteration: 3, at: at("21:18") };
+  await w.keeper.tick();
+  assert.equal(w.job.state, "blocked");
+  // 21:26: turn 96 has run. Due now.
+  w.set("21:26"); w.data.watch.turnClock = { turn: 96, nextTurn: at("22:00"), iteration: 3, at: at("21:25") };
+  await w.keeper.tick();
+  assert.equal(w.job.state, "queued");
+  assert.match(w.job.inbox.at(-1).content, /You told the player at 19:45 UTC/);
+});
+
+test("a turn promise falls back to the fixed duration when the turn read fails", async () => {
+  const w = world();
+  w.data.watch = { turnClock: { turn: 95, iteration: 3, at: at("19:44") } };
+  const p = notePost(w.data, 1868, w.job, PROMISE, at("19:45"));
+  assert.equal(p.afterTurn, 96);
+  w.job.state = "blocked";
+  // The clock stopped updating at 19:44 (game_overview failing): the turn cannot be read, so the duration decides.
+  w.set("21:10"); await w.keeper.tick();
+  assert.equal(w.job.state, "blocked", "before the 90 minute fallback");
+  w.set("21:16"); await w.keeper.tick();
+  assert.equal(w.job.state, "queued", "the fallback duration brought it due");
+  // With no clock at all, the promise is recorded exactly as before (fixed duration).
+  const w2 = world();
+  const q = notePost(w2.data, 1868, w2.job, PROMISE, at("19:45"));
+  assert.equal(q.afterTurn, undefined);
+  assert.equal(q.dueAt, at("21:15"));
+});
+
+test("a paused game still brings a turn promise due after the backstop, so the player is not left waiting", async () => {
+  const { TURN_BACKSTOP_MS } = require("../lib/operator/promises");
+  const w = world();
+  w.data.watch = { turnClock: { turn: 95, iteration: 3, at: at("19:44") } };
+  notePost(w.data, 1868, w.job, PROMISE, at("19:45"));
+  w.job.state = "blocked";
+  const later = at("19:45") + TURN_BACKSTOP_MS + 60000;
+  w.data.watch.turnClock = { turn: 95, iteration: 3, paused: true, at: later - 60000 };
+  w.set("19:45"); await w.keeper.tick();
+  assert.equal(w.job.state, "blocked");
+  // jump the clock past the backstop with the turn unchanged
+  const promises = require("../lib/operator/promises");
+  assert.equal(promises.isDue(w.data, w.data.ticketPromises[1868][0], later), true);
+});
