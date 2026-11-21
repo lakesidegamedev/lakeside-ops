@@ -412,7 +412,59 @@ function createCounters(db, { now, store }) {
     };
   }
 
-  return { record, get, list, promote, migrateCards };
+  // Undo of migrateCards: puts each moved card back in the lane it came
+  // from, as long as nothing has happened to the card since it moved (its
+  // latest event is the move). The counter rows and their history stay:
+  // they are statistics, and a later migration never moves the same card
+  // again (its migration key is used). Dry run by default.
+  //   ids: only these cards (default every moved card).
+  function undoMigration({ dryRun = true, ids = null, actor = "counter-migration" } = {}) {
+    const only = Array.isArray(ids) && ids.length ? new Set(ids.map(Number)) : null;
+    const moves = db.prepare(`SELECT e.id AS event_id, e.item_id, e.summary, e.created_at FROM kanban_events e
+      WHERE e.event_type = 'moved_to_counters' ORDER BY e.id`).all();
+    const plans = [];
+    const skipped = [];
+    const latest = db.prepare("SELECT id, event_type FROM kanban_events WHERE item_id = ? ORDER BY id DESC LIMIT 1");
+    for (const m of moves) {
+      if (only && !only.has(m.item_id)) continue;
+      const row = store.rowById(m.item_id);
+      if (!row) continue;
+      const lane = (String(m.summary).match(/Lane was (inbox|next|now|backlog|blocked)\.\s*$/) || [])[1];
+      const signature = (String(m.summary).match(/^Moved to the counter list as (.+?)\. /) || [])[1] || null;
+      const last = latest.get(m.item_id);
+      if (row.lane !== "done" || !last || last.id !== m.event_id) { skipped.push({ id: row.id, title: row.title, reason: row.lane !== "done" ? `already open in ${row.lane}` : "changed since it moved" }); continue; }
+      if (!lane) { skipped.push({ id: row.id, title: row.title, reason: "the move did not record its lane" }); continue; }
+      plans.push({ id: row.id, title: row.title, lane, signature, event_id: m.event_id, expect: row.updated_at, product: row.product });
+    }
+    if (!dryRun) {
+      for (const p of plans) {
+        const key = `counter-undo:${p.id}:${p.event_id}`;
+        if (db.prepare("SELECT 1 FROM kanban_events WHERE idempotency_key = ?").get(key)) { p.skipped = true; continue; }
+        const row = store.rowById(p.id);
+        if (!row || row.updated_at !== p.expect) { p.skipped = true; continue; }
+        const stamp = iso();
+        db.transaction(() => {
+          db.prepare("UPDATE kanban_items SET lane = ?, closed_at = NULL, updated_at = ? WHERE id = ?").run(p.lane, stamp, p.id);
+          if (p.signature) {
+            const counter = db.prepare("SELECT migrated_cards FROM kanban_counters WHERE signature = ?").get(p.signature);
+            if (counter) db.prepare("UPDATE kanban_counters SET migrated_cards = ? WHERE signature = ?").run(JSON.stringify(parseJsonList(counter.migrated_cards).filter((n) => Number(n) !== p.id)), p.signature);
+          }
+          store.logEvent({ item_id: p.id, product: p.product, event_type: "restored_from_counters", actor,
+            summary: `Back on the board in ${p.lane}: the move to the counter list${p.signature ? ` (${p.signature})` : ""} was undone. The counter keeps its history.`,
+            idempotency_key: key, created_at: stamp });
+        })();
+      }
+    }
+    return {
+      dry_run: Boolean(dryRun),
+      cards: plans.length,
+      restored: dryRun ? 0 : plans.filter((p) => !p.skipped).length,
+      skipped,
+      changes: plans.map((p) => ({ id: p.id, title: p.title, lane: p.lane, signature: p.signature, ...(p.skipped ? { skipped: true } : {}) })),
+    };
+  }
+
+  return { record, get, list, promote, migrateCards, undoMigration };
 }
 
 module.exports = {

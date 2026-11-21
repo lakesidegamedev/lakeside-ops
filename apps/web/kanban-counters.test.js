@@ -286,6 +286,33 @@ describe("migrating the existing counter cards", () => {
     assert.equal(k.counters.migrateCards({ dryRun: false }).moved, 0);
   });
 
+  it("the migration can be undone: cards go back to their lanes, a touched card is left alone", () => {
+    // Review m3.
+    loadCards(COUNTERS);
+    const lanes = new Map(COUNTERS.map((id) => [id, k.get(id).lane]));
+    k.counters.migrateCards({ dryRun: false });
+    later(HOUR);
+    // Someone reopened one moved card by hand since: the undo must not touch it.
+    k.update(255330, { lane: "backlog" }, { actor: "claude" });
+    const dry = k.counters.undoMigration({ dryRun: true });
+    assert.equal(dry.cards, 4);
+    assert.deepEqual(dry.skipped.map((x) => [x.id, x.reason]), [[255330, "already open in backlog"]]);
+    assert.equal(k.get(254959).lane, "done", "the dry run changes nothing");
+    const run = k.counters.undoMigration({ dryRun: false });
+    assert.equal(run.restored, 4);
+    for (const id of [254959, 254943, 255033, 255399]) {
+      const card = k.get(id);
+      assert.equal(card.lane, lanes.get(id), `card ${id} back in ${lanes.get(id)}`);
+      assert.equal(card.closed_at, null);
+      assert.ok(card.events.some((e) => e.event_type === "restored_from_counters"), `card ${id} has the undo in its history`);
+    }
+    assert.equal(k.get(255330).lane, "backlog");
+    assert.deepEqual(k.counters.get("raw:governmentFormations").migrated_from_cards, []);
+    assert.equal(k.counters.get("raw:governmentFormations").occurrences, 13, "the counter keeps its history");
+    assert.equal(k.counters.undoMigration({ dryRun: false }).restored, 0, "a second undo does nothing");
+    assert.equal(k.counters.migrateCards({ dryRun: false }).moved, 0, "a later migration does not move them again");
+  });
+
   it("live reports that arrived before the migration combine with the replayed history", async () => {
     loadCards([254959]);
     clock = new Date("2026-11-10T00:00:00Z");

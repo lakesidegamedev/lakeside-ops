@@ -10,6 +10,10 @@
 // where it went. Running it twice moves nothing the second time.
 //
 //   OPS_KANBAN_DB=/path/kanban.db node scripts/kanban-counters-migrate.js [--apply] [--limit N] [--brief]
+//
+// Undo: --undo puts moved cards back in the lane they came from (only cards
+// nothing has happened to since they moved); dry run unless --apply, and
+// --ids 255330,255331 limits it to those cards. Counter rows stay.
 
 const fs = require("node:fs");
 const path = require("node:path");
@@ -20,12 +24,20 @@ const apply = process.argv.includes("--apply");
 const brief = process.argv.includes("--brief");
 const li = process.argv.indexOf("--limit");
 const limit = li > -1 ? Number(process.argv[li + 1]) : 500;
+const undo = process.argv.includes("--undo");
+const ii = process.argv.indexOf("--ids");
+const ids = ii > -1 ? String(process.argv[ii + 1] || "").split(",").map(Number).filter((n) => n > 0) : null;
 
 async function main() {
   const live = defaultDbPath();
   const snapshot = apply ? null : await snapshotOf(live);
   const kanban = openKanban(snapshot || live);
   try {
+    if (undo) {
+      const out = kanban.counters.undoMigration({ dryRun: !apply, ids });
+      console.log(JSON.stringify({ db: live, ...(snapshot ? { snapshot } : {}), undo: true, ...(brief ? { ...out, changes: undefined } : out) }, null, 2));
+      return;
+    }
     const out = kanban.counters.migrateCards({ dryRun: !apply, limit });
     // A dry run also shows the counter list the move would produce, from the snapshot.
     let preview = null;
