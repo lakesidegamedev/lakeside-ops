@@ -20,6 +20,12 @@ enum OpsTheme {
     /// Blocked by something other than the owner: a dependency, a missing
     /// receipt. Kept apart from amber, which means "waiting on you".
     static let blocked = Brand.adaptive(0xb7a2ff, 0x6d4fd8)
+    /// Machinery that stopped or is out of date: stalled work, a stale or
+    /// degraded service, an overdue estimate. Orange, never amber, so amber
+    /// keeps meaning "your move".
+    static let caution = Brand.adaptive(0xff9a5c, 0xc94a0c)
+    /// A player waiting with no recorded reply.
+    static let unanswered = Brand.adaptive(0xf783ac, 0xc2255c)
     static let onAccent = Brand.onAccent
     static let neutral = muted
     /// Soft depth under raised surfaces in Light; nothing on OLED black.
@@ -121,12 +127,12 @@ enum OpsFormat {
         if s < 45 { return "now" }
         return span(s) + " ago"
     }
-    /// How long something has waited on the owner. Grey while recent; past a
-    /// week it says "Waiting" and turns amber, so the colour has a stated reason.
-    static func waiting(_ date: Date, now: Date = Date()) -> (text: String, color: Color) {
-        let age = now.timeIntervalSince(date)
-        if age >= 7 * 86_400 { return ("Waiting " + span(age), OpsTheme.warning) }
-        return (ago(date), OpsTheme.muted)
+    /// How long something has waited. Ages are neutral grey; past the
+    /// threshold they escalate one way everywhere: red and semibold. Amber is
+    /// never used for an age.
+    static func waiting(_ date: Date, now: Date = Date(), escalateAfter: TimeInterval = OpsAge.ownerLimit) -> (text: String, color: Color) {
+        let age = OpsAge(date: date, now: now, limit: escalateAfter)
+        return (age.text, age.color)
     }
     static func span(_ s: Double) -> String {
         if s < 3600 { return "\(max(1, Int(s / 60)))m" }

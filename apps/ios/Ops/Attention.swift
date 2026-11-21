@@ -329,8 +329,8 @@ struct AttentionRow: View {
                 OpsStatusBadge(status: status, label: item.kindLabel)
                 Spacer(minLength: 8)
                 if let date = item.openedAt {
-                    let age = OpsFormat.waiting(date)
-                    Text(age.text).font(.opsCaption.weight(.medium)).monospacedDigit().foregroundStyle(age.color)
+                    let age = OpsAge(date: date)
+                    Text(age.text).font(.opsCaption.weight(age.weight)).monospacedDigit().foregroundStyle(age.color)
                 }
             }
             HStack(spacing: 12) {
@@ -349,11 +349,8 @@ struct AttentionRow: View {
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold))
                     .foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
             }
-            // A stand-alone card says where its action lives, so an item that
-            // cannot be answered from the list does not look finished.
-            if card {
-                OpsIconLine(text: action, icon: icon, color: OpsTheme.accent, font: .opsCaption.weight(.semibold))
-            }
+            // The chevron is the one affordance; a second "View details" link
+            // to the same place only cost a line.
         }
     }
 }

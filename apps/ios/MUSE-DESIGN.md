@@ -287,6 +287,23 @@ when it is done. Everything else is a second tap away.
 - **Recommend** Keir writes ideas in the first person with the reason, as
   Muse does: "I can reply to #1234. The player asked twice since Monday."
 
+### Status system
+
+- **Ships**: one hue and one glyph per work state, defined once in
+  `OpsWorkState` (`OpsDesign.swift`) and read by Ops tiles, Inbox chips,
+  section headers, rows, ticket pills and the chat ticket card. Needs you is
+  amber with a raised hand, and amber means "your move" and nothing else.
+  Unanswered is pink, Stalled is orange with a pause glyph, Blocked is violet
+  with a lock, Failing checks is red with an x, Running is mint, Done is grey.
+  Stale or degraded services and overdue estimates use the same orange as
+  Stalled: machinery that stopped, not the owner's move.
+- **Ships**: ages are neutral grey and escalate one way only, red and
+  semibold, past a limit (`OpsAge`: two days for owner items, two hours for a
+  player with no reply). Done items never escalate.
+- **Ships**: lists of like items are dense rows on one grouped surface per
+  section (`OpsWorkRow` in an `OpsGroup`). Only items that need a decision
+  from the owner get a standalone card with a stripe.
+
 ### Evidence
 
 - **Recommend** when Keir says it replied to a player, the claim carries a
@@ -296,8 +313,8 @@ when it is done. Everything else is a second tap away.
 - **Recommend** a work card like Muse's Browser card: one verb line while
   running, the blocked state stated plainly ("Blocked · Waiting for your
   approval"), and the card folds into the result bubble when done.
-- **Ships and keep**: "A merged PR is not proof that a fix is live" on the
-  ticket screen. Muse has nothing comparable; Keir's receipts are stricter
+- **Ships and keep**: "A change being accepted does not prove the fix is
+  live" on the ticket screen. Muse has nothing comparable; Keir's receipts are stricter
   and should stay.
 
 ### Decisions

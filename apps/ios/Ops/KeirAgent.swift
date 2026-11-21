@@ -231,15 +231,28 @@ struct ActivityView: View {
     @ViewBuilder private var queueControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Edge to edge: chips scroll under the screen edges, starting at
-            // the same inset as the rows below.
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(filters, id: \.0) { key, title in
-                        chip(key, title)
+            // the same inset as the rows below. The selected chip is always
+            // scrolled into view, and the trailing edge fades so the row reads
+            // as scrollable.
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(filters, id: \.0) { key, title in
+                            chip(key, title).id(key)
+                        }
                     }
                 }
+                .contentMargins(.horizontal, 16, for: .scrollContent)
+                .mask {
+                    HStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: 10)
+                        Rectangle()
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 36)
+                    }
+                }
+                .onAppear { reveal(filter, proxy, animated: false) }
+                .onChange(of: filter) { _, next in reveal(next, proxy, animated: true) }
             }
-            .contentMargins(.horizontal, 16, for: .scrollContent)
             VStack(alignment: .leading, spacing: 4) {
                 if let error { Label(error, systemImage: "wifi.exclamationmark").font(.caption).foregroundStyle(OpsTheme.warn) }
                 if !work["source"]["error"].string.isEmpty { Text(work["source"]["error"].string).font(.caption).foregroundStyle(OpsTheme.warn) }
@@ -255,19 +268,38 @@ struct ActivityView: View {
         .background(OpsTheme.background)
     }
 
+    private func reveal(_ key: String, _ proxy: ScrollViewProxy, animated: Bool) {
+        // The first chips are already in view; only scroll for the rest.
+        let anchor: UnitPoint = ["all", "needs-you"].contains(key) ? .leading : .center
+        // One run loop later, so the chips have been laid out.
+        DispatchQueue.main.async {
+            if animated { withAnimation(.snappy) { proxy.scrollTo(key, anchor: anchor) } }
+            else { proxy.scrollTo(key, anchor: anchor) }
+        }
+    }
+
     private func chip(_ key: String, _ title: String) -> some View {
         let value = count(key)
         let selected = filter == key
+        let state = OpsWorkState.from(filter: key)
+        // A chip with work in a problem state carries that state's hue on its
+        // glyph and count; the selected chip is filled so it reads at a glance.
+        let live = value > 0 && (state?.isProblem ?? false)
         return Button { filter = key } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
+                if let state {
+                    Image(systemName: state.glyph).font(.caption2.weight(.semibold))
+                        .foregroundStyle(selected ? OpsTheme.onAccent : value == 0 ? OpsTheme.muted.opacity(0.7) : state.color)
+                        .accessibilityHidden(true)
+                }
                 Text(title)
                 Text("\(value)").monospacedDigit()
-                    .foregroundStyle(value == 0 && !selected ? OpsTheme.muted.opacity(0.7) : selected ? OpsTheme.sky : OpsTheme.muted)
+                    .foregroundStyle(selected ? OpsTheme.onAccent.opacity(0.85) : live ? state?.color ?? OpsTheme.muted : OpsTheme.muted)
             }
             .font(.caption.weight(.semibold))
-            .foregroundStyle(value == 0 && !selected ? OpsTheme.muted : OpsTheme.ink)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(selected ? OpsTheme.sky.opacity(0.18) : OpsTheme.muted.opacity(0.08), in: Capsule())
+            .foregroundStyle(selected ? OpsTheme.onAccent : value == 0 ? OpsTheme.muted : OpsTheme.ink)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(selected ? OpsTheme.sky : live ? (state?.color ?? OpsTheme.muted).opacity(0.1) : OpsTheme.muted.opacity(0.08), in: Capsule())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title), \(value)")
@@ -278,10 +310,11 @@ struct ActivityView: View {
     @ViewBuilder private var ownerSections: some View {
         if !visibleOwner.isEmpty {
             Section {
-                queueHeader(AttentionCenter.label, count: visibleOwner.count, identifier: "inbox-attention-count")
+                queueHeader(AttentionCenter.label, state: .needsYou, count: visibleOwner.count, identifier: "inbox-attention-count")
                 ForEach(visibleOwner) { item in
                     ownerCard(item)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .opsLeadingStripe(OpsWorkState.needsYou.color)
                         .inboxRow(card: true)
                 }
             }
@@ -307,48 +340,92 @@ struct ActivityView: View {
         }
     }
 
+    /// Lists of like items are dense rows on one shared surface per section,
+    /// all with the same anatomy. Only Needs-you items, which ask the owner
+    /// for a decision, get standalone cards.
     @ViewBuilder private var queueSection: some View {
         ForEach(filters.dropFirst(), id: \.0) { key, title in
             let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0.item) == key }
+            let state = OpsWorkState.from(filter: key)
             if key == "failing" && !visibleFailures.isEmpty {
                 Section {
-                    queueHeader("Failing checks", count: visibleFailures.count)
-                    ForEach(visibleFailures, id: \.["number"].string) { pr in
-                        if let url = URL(string: pr["url"].string.nonempty ?? pr["html_url"].string), url.scheme == "https" {
-                            Link(destination: url) { failingLabel(pr) }.inboxRow(card: true)
-                        } else { failingLabel(pr).inboxRow(card: true) }
+                    queueHeader("Failing checks", state: .failing, count: visibleFailures.count)
+                    OpsGroup {
+                        ForEach(Array(visibleFailures.enumerated()), id: \.element["number"].string) { index, pr in
+                            if index > 0 { OpsGroupDivider(inset: 28) }
+                            if let url = URL(string: pr["url"].string.nonempty ?? pr["html_url"].string), url.scheme == "https" {
+                                Link(destination: url) { failingLabel(pr) }.buttonStyle(.plain)
+                            } else { failingLabel(pr) }
+                        }
                     }
+                    .inboxRow(card: true)
                 }
             }
             if !rows.isEmpty {
                 Section {
-                    queueHeader(title, count: rows.count)
-                    ForEach(rows) { row in
-                        Button { route = row.ticket ? .ticket(row.key) : .task(row.key) } label: {
-                            if key == "unanswered" { UnansweredRow(ticket: row.item) }
-                            else { QueueRow(item: row.item, ticket: row.ticket) }
+                    queueHeader(title, state: state, count: rows.count)
+                    OpsGroup {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                            if index > 0 { OpsGroupDivider(inset: 28) }
+                            Button { route = row.ticket ? .ticket(row.key) : .task(row.key) } label: {
+                                if key == "unanswered" { UnansweredRow(ticket: row.item) }
+                                else { QueueRow(item: row.item, ticket: row.ticket) }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("work-row-\(row.key)")
                         }
-                        .buttonStyle(.plain)
-                        .inboxRow(card: true)
-                        .accessibilityIdentifier("work-row-\(row.key)")
                     }
+                    .inboxRow(card: true)
                 }
             }
         }
+        if filter != "all" && (!visibleQueue.isEmpty || !visibleOwner.isEmpty || !visibleFailures.isEmpty) {
+            filterFooter
+        }
+    }
+
+    /// Under a filtered list: says the view is filtered and offers the way
+    /// back, so a short list is never read as the whole Inbox.
+    private var filterFooter: some View {
+        let title = filters.first { $0.0 == filter }?.1 ?? "this filter"
+        let needsYou = count("needs-you")
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Showing \(title) only.").font(.caption).foregroundStyle(OpsTheme.muted)
+            HStack(spacing: 14) {
+                Button { filter = "all" } label: {
+                    Label("Show all \(count("all"))", systemImage: "line.3.horizontal.decrease.circle")
+                }
+                if filter != "needs-you" && needsYou > 0 {
+                    Button { filter = "needs-you" } label: {
+                        Label("\(needsYou) need you", systemImage: OpsWorkState.needsYou.glyph)
+                    }.foregroundStyle(OpsWorkState.needsYou.color)
+                }
+            }
+            .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+            .buttonStyle(.plain)
+        }
+        .padding(.top, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .accessibilityIdentifier("inbox-filter-footer")
     }
 
     private func failingLabel(_ pr: JSONValue) -> some View {
-        OpsQueueRow(title: pr["title"].string, detail: "Checks failing on pull request #\(pr["number"].string)", status: .failed, icon: "xmark.circle.fill", verticalPadding: 0)
-            .opsStripeCard(OpsTheme.danger)
+        OpsWorkRow(state: .failing, title: pr["title"].string.nonempty ?? "Change #\(pr["number"].string)",
+                   subtitle: "Tests failing on fix #\(pr["number"].string). Keir cannot ship it yet.",
+                   age: OpsFormat.date(pr["updatedAt"]).map { OpsAge(date: $0) }, stateWord: "Failing")
     }
 
-    private func queueHeader(_ title: String, count: Int, identifier: String? = nil) -> some View {
+    private func queueHeader(_ title: String, state: OpsWorkState? = nil, count: Int, identifier: String? = nil) -> some View {
         // A plain row, not a pinned section header, so it scrolls away with
-        // its cards instead of sliding over them.
-        SectionLabel(text: title, count: count, identifier: identifier)
-            .padding(.top, 14).padding(.bottom, 2)
+        // its rows instead of sliding over them. Small, and in the state's
+        // hue and glyph, so it costs one line.
+        OpsMiniHeader(text: title, state: state, count: count, identifier: identifier)
+            .padding(.top, 10).padding(.bottom, 0)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 16))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
     }
@@ -419,78 +496,63 @@ private extension View {
     }
 }
 
-/// The top line every Inbox list row shares: state, number, age and chevron
-/// on one baseline, so the clock and chevron line up row to row.
-private struct InboxRowTop: View {
-    let state: String
-    let color: Color
-    var number: String = ""
-    var age: String = ""
-    var ageColor: Color = OpsTheme.muted
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            StateWord(text: state, color: color)
-            if !number.isEmpty { Text("#\(number)").font(.caption).foregroundStyle(OpsTheme.muted) }
-            Spacer(minLength: 8)
-            if !age.isEmpty {
-                Text(age).font(.caption.weight(.medium)).monospacedDigit().foregroundStyle(ageColor)
-            }
-            Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted)
-                .accessibilityHidden(true)
-        }
-    }
-}
-
+/// A queue item in the shared row anatomy. The subtitle carries the ticket
+/// number and what happens next, addressed to the owner where there is a
+/// step for them, so a Blocked row always says what unblocks it.
 private struct QueueRow: View {
     let item: JSONValue
     let ticket: Bool
 
-    private var since: String {
+    private var since: OpsAge? {
         let value = item["timing"]["since"] != .null ? item["timing"]["since"] : item["updatedAt"]
-        return OpsFormat.ago(value)
+        // Finished work never escalates; its age is history, not a warning.
+        let limit = state == .done ? TimeInterval.infinity : OpsAge.ownerLimit
+        return OpsFormat.date(value).map { OpsAge(date: $0, limit: limit) }
+    }
+    private var state: OpsWorkState { WorkQueuePresentation.workState(item) }
+
+    private var reason: String {
+        let raw = item["timing"]["reason"].string
+        if raw.localizedCaseInsensitiveContains("activation aborted") { return "Keir’s last attempt stopped before it could finish" }
+        return OpsText.scrub(raw.nonempty ?? item["summary"].string)
+    }
+    private var next: String {
+        let raw = OpsText.scrub(item["timing"]["next"].string)
+        if !raw.isEmpty && raw != "Keir will record the next result." { return "Next: " + raw }
+        switch state {
+        case .blocked: return "Open to see what Keir needs to continue"
+        case .stalled: return "Open the ticket to retry"
+        default: return ""
+        }
+    }
+
+    /// When Keir looks again, if a check is scheduled.
+    private var check: String {
+        guard let at = OpsFormat.date(item["timing"]["nextCheckAt"]) else { return "" }
+        return at <= Date() ? "Check due" : "Check \(OpsFormat.ago(at))"
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            InboxRowTop(state: WorkQueuePresentation.label(item), color: WorkQueuePresentation.color(item),
-                        number: ticket ? item["number"].string : "", age: since)
-            Text(item["title"].string).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(2)
-            if item["timing"] != .null { WorkTimingView(value: item["timing"], compact: true, showsSince: false) }
-            else if let summary = item["summary"].string.nonempty { Text(summary).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2) }
-        }
-        .contentShape(Rectangle())
-        .opsStripeCard(WorkQueuePresentation.color(item))
-        .accessibilityElement(children: .combine)
+        let number = ticket ? "#" + item["number"].string : ""
+        let subtitle = [number, reason].filter { !$0.isEmpty }.joined(separator: " · ")
+        let note = [next, check].filter { !$0.isEmpty }.joined(separator: " · ")
+        OpsWorkRow(state: state, title: item["title"].string, subtitle: subtitle, note: note, age: since,
+                   stateWord: WorkQueuePresentation.label(item))
     }
 }
 
-/// A ticket with no recorded reply. The wait is the point of the row, so its
-/// age is stated and turns red once the player has waited over two hours.
+/// A ticket with no recorded reply. The wait is the point of the row; its age
+/// escalates like every other age, after two hours for a player.
 private struct UnansweredRow: View {
     let ticket: JSONValue
-    static let urgentAfter: TimeInterval = 2 * 3600
 
-    private var waited: TimeInterval? { OpsFormat.date(ticket["createdAt"]).map { Date().timeIntervalSince($0) } }
-    private var urgent: Bool { (waited ?? 0) > Self.urgentAfter }
+    private var opened: Date? { OpsFormat.date(ticket["createdAt"]) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            InboxRowTop(state: "Unanswered", color: urgent ? OpsTheme.danger : OpsTheme.warning,
-                        number: ticket["number"].string,
-                        age: waited.map { OpsFormat.span(max(60, $0)) + " ago" } ?? "",
-                        ageColor: urgent ? OpsTheme.danger : OpsTheme.muted)
-            Text(KeirTicketFollowUp.title(ticket)).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(2)
-            if let waited {
-                OpsIconLine(text: urgent ? "Player waiting \(OpsFormat.span(max(60, waited))) with no recorded reply" : "No reply recorded for \(OpsFormat.span(max(60, waited)))",
-                            icon: urgent ? "exclamationmark.bubble.fill" : "bubble.left",
-                            color: urgent ? OpsTheme.danger : OpsTheme.muted,
-                            font: .caption.weight(urgent ? .semibold : .regular))
-            }
-        }
-        .contentShape(Rectangle())
-        .opsStripeCard(urgent ? OpsTheme.danger : OpsTheme.warning)
-        .accessibilityElement(children: .combine)
+        let age = opened.map { OpsAge(date: $0, limit: OpsAge.playerLimit) }
+        OpsWorkRow(state: .unanswered, title: KeirTicketFollowUp.title(ticket),
+                   subtitle: "#\(ticket["number"].string) · " + (age.map { "No reply recorded for \($0.text.replacingOccurrences(of: " ago", with: ""))" } ?? "No reply recorded"),
+                   age: age)
     }
 }
 

@@ -56,18 +56,12 @@ enum WorkQueuePresentation {
         default: return .queued
         }
     }
-    /// One colour per bucket: amber waits on the owner or a player, red is
-    /// stalled, violet is blocked on something else, mint is running.
-    static func color(_ item: JSONValue) -> Color {
-        switch bucket(item) {
-        case "stalled": return OpsTheme.danger
-        case "stuck": return OpsTheme.blocked
-        case "unanswered", "needs-you": return OpsTheme.warning
-        case "working": return OpsTheme.mint
-        case "finished", "held": return OpsTheme.muted
-        default: return OpsTheme.sky
-        }
+    /// The bucket as a work state, so its hue and glyph come from the one
+    /// status system.
+    static func workState(_ item: JSONValue) -> OpsWorkState {
+        OpsWorkState.from(filter: bucket(item)) ?? .queued
     }
+    static func color(_ item: JSONValue) -> Color { workState(item).color }
 
 }
 
