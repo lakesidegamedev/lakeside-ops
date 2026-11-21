@@ -36,19 +36,25 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
   const d = ledger.data;
   let act = true;
   const preview = (action, target, reason) => controlsLib.preview(d, "github-reconcile", action, target, reason, {}, now());
-  const store = () => { d.prTruth ||= {}; d.prTruth.prs ||= {}; d.prTruth.reasked ||= {}; return d.prTruth; };
+  // Review N7: in preview nothing is written to the ledger, not even the read cache; reads go to a cache in memory.
+  const shadow = { prs: {}, reasked: {} };
+  const store = () => { if (!act) return shadow; d.prTruth ||= {}; d.prTruth.prs ||= {}; d.prTruth.reasked ||= {}; return d.prTruth; };
+  const cached = (key) => d.prTruth?.prs?.[key] || shadow.prs[key];
 
   // One PR's state, or null when GitHub could not be read. Cached briefly so the decision loop stays cheap.
   async function read(repo, number, budget, ttl = TTL_MS) {
-    const t = store(), key = prKey(repo, number), cached = t.prs[key];
-    if (cached && now() - cached.checkedAt < ttl) return cached;
+    const t = store(), key = prKey(repo, number), prior = cached(key);
+    if (prior && now() - prior.checkedAt < ttl) return act ? prior : { ...prior };
     if (budget.left <= 0) return null;
     budget.left--;
     let pr;
     try { pr = await api([`repos/${repo}/pulls/${Number(number)}`]); } catch (e) { log(`prtruth: #${number}: ${String(e.message).slice(0, 160)}`); return null; }
     if (!pr || Number(pr.number) !== Number(number) || !pr.state) return null;
     const merged = Boolean(pr.merged || pr.merged_at);
-    const rec = { number: Number(number), repo, state: merged ? "merged" : pr.state, merged, head: pr.head?.sha || null, mergedAt: pr.merged_at ? Date.parse(pr.merged_at) : null, mergedBy: pr.merged_by?.login || null, checkedAt: now() };
+    const rec = { number: Number(number), repo, state: merged ? "merged" : pr.state, merged, head: pr.head?.sha || null, mergedAt: pr.merged_at ? Date.parse(pr.merged_at) : null, mergedBy: pr.merged_by?.login || null, checkedAt: now(),
+      mergeSha: merged ? pr.merge_commit_sha || null : null,
+      // Whether the merge is on the main server is read separately (deploy waits) and survives a re-read of the PR.
+      ...(prior && merged && typeof prior.onMain === "boolean" ? { onMain: prior.onMain, mainCheckedAt: prior.mainCheckedAt } : {}) };
     t.prs[key] = rec;
     return rec;
   }
@@ -143,11 +149,12 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
         && (a.prSearches || 0) < SEARCH_TRIES && now() - (a.prSearchAt || 0) >= SEARCH_EVERY_MS) {
         const repo = repoOf(a.args?.repository), branch = `keir/task-${a.jobId}-${a.id}`;
         budget.left--;
-        a.prSearchAt = now(); a.prSearches = (a.prSearches || 0) + 1;
+        // Review N7: a preview search never uses up the real tries.
+        if (act) { a.prSearchAt = now(); a.prSearches = (a.prSearches || 0) + 1; }
         let found;
         try { found = await api([`repos/${repo}/pulls?state=all&head=${repo.split("/")[0]}:${branch}&per_page=5`]); } catch { continue; }
         const pr = Array.isArray(found) ? found.find((p) => p.head?.ref === branch) : null;
-        if (!pr) { if (a.prSearches >= SEARCH_TRIES) ledger.audit("publish_search_given_up", { action: a.id, tries: a.prSearches }); continue; }
+        if (!pr) { if (act && a.prSearches >= SEARCH_TRIES) ledger.audit("publish_search_given_up", { action: a.id, tries: a.prSearches }); continue; }
         if (!act) { preview("settle publish", `action ${a.id}`, `its PR #${pr.number} is on GitHub: recorded done`); continue; }
         a.state = "done"; a.executedAt = now(); a.reconciledFrom = "github"; a.result = { pullRequest: pr.html_url, branch };
         const job = d.jobs?.[a.jobId];
@@ -158,17 +165,23 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
     }
     changed += await waitedPrs();
     const t = store();
-    for (const [k, v] of Object.entries(t.prs)) if (now() - v.checkedAt > KEEP_MS) delete t.prs[k];
-    for (const [k, at] of Object.entries(t.reasked)) if (now() - at > KEEP_MS) delete t.reasked[k];
+    if (act) {
+      for (const [k, v] of Object.entries(t.prs)) if (now() - v.checkedAt > KEEP_MS) delete t.prs[k];
+      for (const [k, at] of Object.entries(t.reasked)) if (now() - at > KEEP_MS) delete t.reasked[k];
+    }
     if (changed) ledger.save();
     return { changed, reads: maxReads - budget.left };
   }
 
   // Keir 11.2: keep PR state fresh for waits, and move review fixes through fix in review, live and reopened.
+  // Fourth pass (review N1): this is the event source for "pr" and "deploy" waits. A wait names its PR, or the job holds
+  // exactly the one PR it waits on (heldPr). For a deploy wait on a merged PR, whether the merge is on the main server is read
+  // too (compare merge...main), and reaching main tells the waiting job, with a release receipt, so it wakes even when parked.
   async function waitedPrs() {
     const budget = { left: WAIT_READS };
     let changed = 0;
     const prNum = (u) => Number(/\/AHDGame\/pull\/(\d+)\s*$/.exec(String(u || ""))?.[1] || 0);
+    const { heldPr } = require("./closing");
     for (const job of Object.values(d.jobs || {})) {
       if (budget.left <= 0) break;
       const review = job.reviewItem?.kind === "doc_conflict" && job.reviewItem.source === "ask";
@@ -176,17 +189,35 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
       // A finished review task is followed only while its fix PR is still open (it can still be closed unmerged).
       if (terminal && !(review && job.reviewFix?.state === "fix_in_review" && now() - (job.updatedAt || job.at || 0) < KEEP_MS)) continue;
       const on = job.closing?.on;
-      const waited = on && ["pr", "deploy"].includes(on.kind) && Number.isFinite(on.ref) ? on.ref : null;
+      const waited = on && ["pr", "deploy"].includes(on.kind) ? (Number.isFinite(on.ref) ? on.ref : heldPr(job)) : null;
       const fixPr = review ? (job.pullRequests || []).map(prNum).filter(Boolean).at(-1) || null : null;
       const rg = controls.gate("reviewGate");
       for (const n of [...new Set([waited, fixPr].filter(Boolean))]) {
         const truth = await read(GAME_REPO, n, budget, WAIT_REFRESH_MS);
+        if (truth && n === waited && on.kind === "deploy" && !terminal) changed += await mainCheck(job, truth, budget);
         if (!truth || n !== fixPr || !rg.run) continue;
         if (!rg.act || !act) { if (truth.state === "closed" && !truth.merged && job.reviewFix?.state !== "reopened") preview("reopen review item", `job ${job.id}`, `fix PR #${n} closed without merging`); continue; }
         if (reviewFix(job, truth)) changed++;
       }
     }
     return changed;
+  }
+  // Is a merged PR's merge commit on main? Read at most every WAIT_REFRESH_MS per PR; a failed read changes nothing.
+  async function mainCheck(job, truth, budget) {
+    if (!truth.merged || !truth.mergeSha || truth.onMain === true) return 0;
+    if (now() - (truth.mainCheckedAt || 0) < WAIT_REFRESH_MS || budget.left <= 0) return 0;
+    budget.left--;
+    let c;
+    try { c = await api([`repos/${truth.repo || GAME_REPO}/compare/${truth.mergeSha}...main`]); } catch (e) { log(`prtruth: main check #${truth.number}: ${String(e.message).slice(0, 160)}`); return 0; }
+    if (!c || !c.status) return 0;
+    truth.onMain = ["ahead", "identical"].includes(c.status); truth.mainCheckedAt = now();
+    if (!truth.onMain) return 0;
+    if (!act) { preview("tell job fix is live", `job ${job.id}`, `PR #${truth.number}'s merge reached the main server`); return 0; }
+    const key = String(truth.mergeSha).slice(0, 10), prior = job.releaseEvidence?.[key] || {};
+    (job.releaseEvidence ||= {})[key] = { ...prior, at: prior.at || now(), development: true, staging: true, main: true, repository: prior.repository || "AHDGame", turnWorker: prior.turnWorker === true, source: prior.source || "github-truth" };
+    ledger.audit("deploy_wait_reached_main", { job: job.id, ticket: job.ticket || null, pr: truth.number });
+    tell(job, `PR #${truth.number} is now on the main server (Keir read its merge on main). This is what the wait "${String(job.closing?.waitingOn || "").slice(0, 160)}" was for. If the player was told a fix is coming, tell them it is live in one plain line, without PR numbers, and check the reported behaviour before calling it fixed.`);
+    return 1;
   }
   // A review item's fix is "fix in review" until its PR is merged and a deploy receipt shows it live (reviewFixLive, set by
   // github where); a PR closed without merging reopens the item: the task is told, and woken if it had finished.
@@ -201,7 +232,12 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
       ledger.audit("review_fix_reopened", { job: job.id, item: job.reviewItem.key, pr: truth.number });
       const content = `Fix PR #${truth.number} for ${job.reviewItem.kind} ${job.reviewItem.id} was closed without merging. The item is open again: it is not fixed. Decide whether a new fix is needed or the doc was right, and do not mark it fixed until a merged fix is live.`;
       (job.inbox ||= []).push({ authorId: "github-truth", role: "system", at: new Date(now()).toISOString(), content });
-      if (["waiting", "blocked", "done", "dismissed"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; if (job.deadline < now()) job.deadline = now() + 24 * 3600000; }
+      // Review m1: a job waiting, or one that finished on its own (done, or dismissed by its own finish), is woken. A job
+      // blocked for a person reads the line when a person releases it, and one closed by the finding expiry stays closed;
+      // in both cases the owner hears once.
+      const held = job.state === "blocked" || (job.state === "dismissed" && job.expired);
+      if (!held && ["waiting", "done", "dismissed"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; if (job.deadline < now()) job.deadline = now() + 24 * 3600000; }
+      else if (held) ledger.notify(`review-fix-reopened:${job.id}:${truth.number}`, "owner", `Fix PR #${truth.number} for ${job.reviewItem.kind} ${job.reviewItem.id} was closed without merging, so the item is open again. Its task is ${job.state === "blocked" ? "held for a person" : "closed as stale"} and was not restarted.`);
       return true;
     }
     const next = job.reviewFixLive?.number === truth.number ? "live" : truth.merged ? "merged" : "fix_in_review";

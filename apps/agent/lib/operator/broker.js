@@ -1337,7 +1337,9 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     }
     attempt(() => guardStall(job, ticketNo, message, posts));
     // Keir 11.2: a step-back activation states the ticket's position in a checkpoint first, then posts at most once.
-    if (!opts.system && job.stepBack && !job.stepBack.done) attempt(() => {
+    // Review N3: only a step-back started by this activation applies; one left open by an activation that ended without
+    // finish (turn limit, crash, restart) never refuses a later activation's answer.
+    if (!opts.system && closing.stepBackActive(job)) attempt(() => {
       const t = closing.stepBackRefusal(job, { checkpointed: (job.history || []).some((h) => h.kind === "checkpoint" && Date.parse(h.at || "") >= job.stepBack.at) });
       if (t) { ledger.audit("step_back_post_refused", { job: job.id, ticket: ticketNo }); if (!opts.collect) noteRefused("step_back", job, ticketNo, message); throw new Error(t); }
     });
@@ -1976,7 +1978,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Keir 11.2: the ticket's pace (posts, corrections) for the step-back threshold; a step-back posts once; a turn
       // report the closing condition called for uses that call up.
       try { closing.notePost(d, ticketNo, message, { now: now(), correction: isCorrection(message) }); } catch {}
-      if (job.stepBack && !job.stepBack.done) job.stepBack.posted = (job.stepBack.posted || 0) + 1;
+      if (closing.stepBackActive(job)) job.stepBack.posted = (job.stepBack.posted || 0) + 1;
       if (job.turnReportViaPromise) { delete job.turnReportViaPromise; require("./promises").keepForReport(d, ticketNo, now()); }
       if (job.turnReportViaClosing) { delete job.turnReportViaClosing; const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]]; for (const j of [job, root]) if (j && closing.closingCallsForTurn(d, j, now())) closing.noteTurnReport(d, j, now()); }
     }
@@ -4864,7 +4866,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (developerTask(job) && ["done", "waiting", "blocked"].includes(state) && /offered (?:a |the )?patch|waiting for (?:her|his|their|your) (?:answer|reply).*patch|(?:ask|asking).*(?:whether|if).*(?:prepare|write|make).*(?:patch|fix)/i.test(input.summary || "") && !Object.values(d.actions).some(a => a.jobId === job.id && a.state === "pending")) throw new Error("Prepare the reviewable patch and focused validation now. Patch preparation already has developer authorization; use publish_patch for exact review before publication. Do not wait merely for permission to prepare it.");
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
       // Keir 11.2 (closing.js): a ticket or finding waits only with a stated closing condition and what it waits on.
-      { const why = closing.fromFinish(d, job, input, now(), { pendingDecision: Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.jobId === job.id) });
+      // Fourth pass (review N7): the refusal has its own switch (KEIR_FINISH_NEEDS_CONDITION). Off or in preview the finish is
+      // never refused (the condition is derived from the summary); preview records that it would have been.
+      { const fg = ctl().gate("finishNeedsCondition"), pendingDecision = Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.jobId === job.id);
+        if (fg.run && !fg.act && closing.fromFinish(d, JSON.parse(JSON.stringify(job)), input, now(), { pendingDecision })) controlsLib.preview(d, "finish-condition", "would refuse finish", `job ${job.id}`, "finish without closesWhen and waitingOn", {}, now());
+        const why = closing.fromFinish(d, job, input, now(), { pendingDecision, refuse: fg.act });
         if (why) { ledger.audit("closing_condition_refused", { job: job.id, ticket: job.ticket || null }); throw new Error(why); } }
       // Keir 8.3 (owner, 2026-11-05: "tickets just sitting"): tickets 1766, 1773 and 1774 filed an issue,
       // told the player the cause was not yet found, and parked on developer_reply for hours. While

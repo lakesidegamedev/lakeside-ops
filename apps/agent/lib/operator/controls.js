@@ -33,6 +33,11 @@ const SWITCHES = Object.freeze({
   findingExpiry: { env: "KEIR_FINDING_EXPIRY", on: true, what: "close stale findings" },
   reviewGate: { env: "KEIR_REVIEW_ITEM_GATE", on: true, what: "review items stay fix in review until live; reopen on an unmerged close" },
   ownerAnswerNotice: { env: "KEIR_OWNER_ANSWER_NOTICE", on: true, what: "tell the owner once when a ticket message was not taken as an answer" },
+  // Fourth pass (review N7): the remaining new behaviours that change what Keir does.
+  channelAnswers: { env: "KEIR_CHANNEL_ANSWERS", on: true, what: "record an owner's ticket message as the answer to an open question (reply or named option)" },
+  oneAsk: { env: "KEIR_ONE_ASK", on: true, what: "one ask per PR: join, refuse or replace a second ask about the same PR" },
+  finishNeedsCondition: { env: "KEIR_FINISH_NEEDS_CONDITION", on: true, what: "refuse a ticket or finding finish that has no closing condition" },
+  mergeDeadEnd: { env: "KEIR_MERGE_DEAD_END", on: true, what: "a refused approved merge: repair Keir's own PR description or tell the owner what blocks it" },
 });
 const DEFAULT_FILE = "/var/lib/keir-operator/switches.json";
 const HISTORY_PER_RUN = 3;
@@ -125,7 +130,9 @@ function preview(d, pass, action, target, reason, extra = {}, now = Date.now()) 
 // at most perRun at a time. In preview mode the first real run is assumed to be now, so the preview shows what it would do.
 function history(d, pass, { controls = DEFAULT_CONTROLS, now = Date.now(), act = true } = {}) {
   const s = controls.settings();
-  const since = ((d.controls ||= {}).since ||= {});
+  // Preview never writes here (review N7): the first real run must still find the pass unstarted.
+  if (act) ((d.controls ||= {}).since ||= {});
+  const since = d.controls?.since || {};
   if (act && !since[pass]) since[pass] = now;
   const start = since[pass] || now;
   let left = s.historyPerRun;

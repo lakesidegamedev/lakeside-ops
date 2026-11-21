@@ -81,7 +81,9 @@ function reviewWaits(ledger, config = {}, now = Date.now()) {
     // or real developer progress; an hourly diagnostic wake only re-reads them.
     // Keir 11.2: a job with a closing condition has its next milestone on record and its wait checked in code
     // (closing.js); a parked job stays parked. Neither gets the diagnostic wake.
-    if (job.state === "waiting" && !job.closing && !parkedOnHandoffs(job) && !held(ledger.data, job, config, now) && !status.uncertain && ["waiting", "queued"].includes(status.state)) {
+    // Fourth pass (review N7): only while the quiet-wake check is on; off or in preview, they get the diagnostic wake again.
+    const closingChecked = job.closing && (config.controls || require("./controls").DEFAULT_CONTROLS).gate("quietWakes").act;
+    if (job.state === "waiting" && !closingChecked && !parkedOnHandoffs(job) && !held(ledger.data, job, config, now) && !status.uncertain && ["waiting", "queued"].includes(status.state)) {
       (job.inbox ||= []).push({ role: "system", authorId: "wait-review", at: new Date(now).toISOString(), content: "This wait is overdue. Inspect its dependency and report a concrete next milestone, blocker and next check. Do not repeat an uncertain action or widen existing authority. A timer wake or more tests alone is not delivery." });
       job.wakeAt = now;
     }

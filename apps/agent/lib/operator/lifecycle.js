@@ -137,7 +137,9 @@ function wakeStep(j, ctx) {
   // Third pass (review M7): KEIR_QUIET_WAKE_CHECK. Off: every timer wake reaches the model as before. Preview: the check runs
   // on a copy of the job and what it would have done is recorded; the wake still goes ahead.
   const qg = (ctx.config?.controls || require("./controls").DEFAULT_CONTROLS).gate("quietWakes");
-  if (j.state === "waiting" && j.wakeAt <= now && !backedOff && !j.inbox?.length && ctx.data && qg.run) {
+  // Fourth pass (review N1): a parked job is checked on every step, not only when its safety-net timer is due, so the event
+  // it waits on (a turn, a merge reaching main, a worker finishing, an answer) wakes it as soon as the ledger shows it.
+  if (j.state === "waiting" && (j.wakeAt <= now || (j.closing?.parked && qg.act)) && !backedOff && !j.inbox?.length && ctx.data && qg.run) {
     if (qg.act) {
       const q = require("./closing").quietWake(ctx.data, j, now, ctx.closing);
       if (q) effects.push(...q.effects);

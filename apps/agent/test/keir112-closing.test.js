@@ -14,14 +14,17 @@ const { ledgerIndex } = require("../lib/operator/keirprs");
 const HOUR = 3600000, MIN = 60000;
 const T0 = Date.parse("2026-11-19T02:40:00Z");
 const CONFIG = { ...closing.DEFAULTS };
+// The open-PR pass is on and able to act (review N8: the handoff needs that).
+const HANDOFF = { ...CONFIG, handoffReady: () => true };
 
 function world(now0 = T0) {
   let clock = now0;
   const data = { jobs: {}, seen: {}, channels: {}, decisions: {}, actions: {}, outbox: {}, audit: [], prTruth: { prs: {}, reasked: {} }, watch: {} };
   const ledger = { data, save() {}, audit(kind, detail) { data.audit.push({ kind, ...detail }); }, notify(key, destination, content) { data.outbox[key] ||= { destination, content }; } };
-  const ctx = () => ({ now: clock, config: { taskLifetimeMs: 24 * HOUR }, claimedBy: () => null, directiveHeld: () => false, data, closing: CONFIG });
-  return { data, ledger, now: () => clock, set: (t) => { clock = t; }, advance: (ms) => { clock += ms; },
-    wake: (job) => applyEffects(ledger, wakeStep(job, ctx())), ctx };
+  const w = { data, ledger, now: () => clock, set: (t) => { clock = t; }, advance: (ms) => { clock += ms; }, config: CONFIG };
+  const ctx = () => ({ now: clock, config: { taskLifetimeMs: 24 * HOUR }, claimedBy: () => null, directiveHeld: () => false, data, closing: w.config });
+  w.wake = (job) => applyEffects(ledger, wakeStep(job, ctx())); w.ctx = ctx;
+  return w;
 }
 const audits = (w, kind) => w.data.audit.filter((a) => a.kind === kind);
 
@@ -34,7 +37,7 @@ function finish(w, job, input, { acted = false } = {}) {
   job.wakeAt = w.now() + (input.wakeAfterMinutes || 60) * MIN;
   job.summary = input.summary;
   job.history = [...(job.history || []), { at: new Date(w.now()).toISOString(), kind: "finish", summary: input.summary }];
-  const out = closing.afterFinish(w.data, job, { acted, now: w.now(), config: CONFIG });
+  const out = closing.afterFinish(w.data, job, { acted, now: w.now(), config: w.config || CONFIG });
   if (out?.effects) applyEffects(w.ledger, out.effects);
   return out;
 }
@@ -51,7 +54,7 @@ function job6887(w) {
 }
 
 test("PR 6887: 26 timer wakes become the configured quiet wakes, then one escalation, and no repeated note", () => {
-  const w = world();
+  const w = world(); w.config = HANDOFF;
   const job = job6887(w);
   pr6887(w);
   finish(w, job, { state: "blocked", summary: "FAQ PR #6887 remains unmerged with all 25 checks green and no recorded exact-head approval.",
@@ -141,20 +144,24 @@ test("waits code cannot check still run the model, and a model wake that changes
     closesWhen: "closes when the corporations page loads cleanly for a week", waitingOn: "new failure evidence from the page sensor", waitOn: { kind: "other" } };
   finish(w, job, input);
   let runs = 0;
-  for (let i = 0; i < 6 && !job.closing.parked; i++) {
+  for (let i = 0; i < 6 && !job.closing.parked && !job.closing.slowed; i++) {
     w.set(job.wakeAt); w.wake(job);
     if (job.state !== "queued") break;
     runs++; job.state = "running"; closing.onActivation(job, w.now());
     finish(w, job, input); // nothing posted, nothing written, same wait
   }
-  assert.equal(runs, CONFIG.quietWakes, "it runs until the quiet limit, not for 117 hours");
-  assert.ok(job.closing.parked);
-  assert.equal(Object.values(w.data.outbox).filter((o) => /is parked/.test(o.content)).length, 1, "one owner line saying what it is parked on");
-  // Parked: later timers never start a model run.
-  for (let i = 0; i < 5; i++) { w.set(job.wakeAt); w.wake(job); assert.equal(job.state, "waiting"); }
+  assert.equal(runs, CONFIG.quietWakes, "it runs until the quiet limit, not every few minutes for 117 hours");
+  // Fourth pass (review N1): nothing in code can tell when an "other" wait ends, so it never parks. It slows down to one
+  // model run every slowWakeHours instead: a missed event costs hours, never a permanent silence.
+  assert.equal(job.closing.parked, undefined);
+  assert.ok(job.closing.slowed);
+  assert.equal(job.wakeAt, w.now() + CONFIG.slowWakeHours * HOUR);
+  assert.equal(audits(w, "job_slowed").length, 1);
+  w.set(job.wakeAt); w.wake(job);
+  assert.equal(job.state, "queued", "the slow timer still reaches the model");
 });
 
-test("a ticket waiting on the owner with no question open gets one ask activation; if it asks nothing it parks", () => {
+test("a ticket waiting on the owner with no question open gets one ask activation; if it asks nothing it slows down, never parks", () => {
   const w = world();
   const job = { id: "t1860", kind: "ticket", ticket: 1860, role: "support", state: "running", at: T0, deadline: T0 + 999 * HOUR, effects: {}, inbox: [] };
   w.data.jobs[job.id] = job;
@@ -168,8 +175,21 @@ test("a ticket waiting on the owner with no question open gets one ask activatio
   // The activation raises nothing: the job parks with one owner line.
   job.state = "running"; closing.onActivation(job, w.now()); job.inbox = [];
   finish(w, job, input);
-  assert.ok(job.closing.parked);
-  assert.equal(Object.values(w.data.outbox).filter((o) => /Ticket 1860 is parked/.test(o.content)).length, 1);
+  // Review N1: no owner question is open, so no answer can ever wake it. It keeps a slow timer that reaches the model.
+  assert.equal(job.closing.parked, undefined);
+  assert.ok(job.closing.slowed);
+  w.set(job.wakeAt); w.wake(job);
+  assert.equal(job.state, "queued");
+  // With a question open, the same wait may park: the answer is its event.
+  const w2 = world();
+  const j2 = { id: "t1861", kind: "ticket", ticket: 1861, role: "support", state: "running", at: T0, deadline: T0 + 999 * HOUR, effects: {}, inbox: [] };
+  w2.data.jobs[j2.id] = j2; w2.data.decisions.q = { id: "q", jobId: j2.id, state: "pending", question: "Raise the cap?" };
+  finish(w2, j2, { ...input, waitOn: { kind: "decision" } });
+  for (let i = 0; i < CONFIG.quietWakes; i++) { w2.set(j2.wakeAt); w2.wake(j2); }
+  assert.ok(j2.closing.parked);
+  // The owner answers: the next step wakes it, whatever the safety-net timer says.
+  w2.data.decisions.q.state = "approve"; w2.advance(MIN); w2.wake(j2);
+  assert.equal(j2.state, "queued");
 });
 
 test("ticket 1868: the closing condition survives the blocked activation and is in front of the promise wake", async () => {
@@ -222,7 +242,9 @@ test("finding expiry: the five old-world findings close once with a record; live
   // Once: a second pass closes nothing more and writes no new record.
   assert.deepEqual(closing.expireFindings(w.ledger, { now: w.now() + HOUR, config: CONFIG }), []);
   assert.equal(audits(w, "finding_expired").length, 5);
-  assert.equal(Object.keys(w.data.outbox).length, 0, "a record, not an owner message");
+  // Review N9: one owner line per pass that closed findings, and each keeps enough to reopen it.
+  assert.equal(Object.keys(w.data.outbox).filter((k) => k.startsWith("findings-expired:")).length, 2);
+  for (const [id] of old) assert.equal(w.data.jobs[id].expired.fromState, "blocked");
 });
 
 test("finding expiry falls out of the quiet-wake rule: a parked finding closes after the configured period", () => {
@@ -246,7 +268,7 @@ test("closing conditions: inference, refusal limit and the plain settings", () =
   assert.equal(closing.infer("something else entirely").kind, "other");
   const s = closing.settings({ KEIR_QUIET_WAKES: "5", KEIR_STEPBACK_POSTS: "12" });
   assert.equal(s.quietWakes, 5); assert.equal(s.stepBackPosts, 12); assert.equal(s.stepBackHours, 24); assert.equal(s.findingExpiryHours, 72);
-  assert.deepEqual(closing.DEFAULTS, { quietWakes: 3, stepBackPosts: 10, stepBackHours: 24, stepBackCorrections: 3, findingExpiryHours: 72 });
+  assert.deepEqual(closing.DEFAULTS, { quietWakes: 3, stepBackPosts: 10, stepBackHours: 24, stepBackCorrections: 3, findingExpiryHours: 72, parkRecheckHours: 2, findingParkRecheckHours: 6, slowWakeHours: 2 });
   // Twice refused per activation, then derived from the summary so a finish never loops.
   const w = world();
   const job = { id: "x", kind: "ticket", ticket: 5, state: "running", lastRunStartedAt: 1, effects: {} };
@@ -294,4 +316,29 @@ test("the quiet-wake check has a switch: off, a due timer wakes the model as bef
     assert.equal(job.state, "queued", "the model is woken");
     assert.equal(Boolean(w.data.preview?.items?.[`quiet-wakes:stay quiet:job ${job.id}`]), previewed);
   }
+});
+
+test("N9: a finding waiting on a developer, held for a person, touched recently, or judged on a stale clock is not expired", () => {
+  const w = world(Date.parse("2026-11-21T02:00:00Z"));
+  const now = w.now(), old = now - 100 * HOUR;
+  const ownFinish = [{ at: new Date(old).toISOString(), kind: "finish", state: "blocked", summary: "nothing more to do" }];
+  const base = (id, extra) => (w.data.jobs[id] = { id, kind: "finding", state: "blocked", at: old, stateAt: old, summary: id, effects: {}, history: ownFinish, ...extra });
+  base("dev", { raisedToDevelopers: [{ id: "h1", kind: "question", at: old }] });
+  base("failed", { history: [] }); // blocked by a failed run: the owner was told "Task stopped"
+  base("deadline", { deadlineBlockedAt: old });
+  base("touched", { inbox: [{ role: "owner", at: new Date(now - 5 * HOUR).toISOString(), content: "looking at this" }] });
+  base("abandoned", {}); // the opposite side: blocked by its own finish, nothing behind it, nobody since
+  const closed = closing.expireFindings(w.ledger, { now, config: CONFIG, controls: require("../lib/operator/controls").staticControls({}, { historyPerRun: 99 }) });
+  assert.deepEqual(closed, ["abandoned"]);
+  assert.equal(w.data.jobs.abandoned.expired.fromState, "blocked");
+  assert.match(w.data.jobs.abandoned.expired.summary, /^abandoned$/);
+  // Old world: only on a fresh clock with a known world number.
+  const w2 = world(Date.parse("2026-11-21T02:00:00Z"));
+  const job = { id: "ow", kind: "finding", state: "waiting", world: 2, at: w2.now() - 100 * HOUR, effects: {} };
+  w2.data.watch.turnClock = { turn: 99, iteration: null, at: w2.now() };
+  assert.equal(closing.oldWorld(w2.data, job, w2.now()), false, "a missing world number proves nothing");
+  w2.data.watch.turnClock = { turn: 99, iteration: 3, at: w2.now() - 3 * HOUR };
+  assert.equal(closing.oldWorld(w2.data, job, w2.now()), false, "a stale clock proves nothing");
+  w2.data.watch.turnClock = { turn: 99, iteration: 3, at: w2.now() };
+  assert.equal(closing.oldWorld(w2.data, job, w2.now()), true);
 });

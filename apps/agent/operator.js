@@ -127,6 +127,13 @@ const limits = require("./lib/operator/limits").createLimits({ file: env.KEIR_LI
 const prodHoldUntil = () => { try { const until = Date.parse(require("node:fs").readFileSync(env.KEIR_PROD_HOLD_FILE || path.join(config.stateDir, "prod-hold"), "utf8").trim()); return until > Date.now() ? new Date(until).toISOString() : null; } catch { return null; } };
 const controls = require("./lib/operator/controls").createControls({ file: env.KEIR_SWITCHES_FILE || path.join(config.stateDir, "switches.json"), env, killSwitch, data: ledger.data, prodHold: prodHoldUntil });
 config.controls = controls; // the broker, the agent loop and the lifecycle read the switches from here
+// Keir 11.2: closing conditions, quiet wakes, step-backs and finding expiry (lib/operator/closing.js). Plain settings, shared
+// by the broker, the agent loop and the lifecycle.
+const closingSettings = require("./lib/operator/closing").settings(env);
+// Review N8: a quiet job hands its own PR to the open-PR pass only while that pass can act on it (switch on, not in
+// preview, not held, Keir's own token present); otherwise the job keeps the PR.
+closingSettings.handoffReady = () => controls.gate("openPrPass").act && Boolean(config.githubReviewerToken);
+config.closing = closingSettings;
 const tickers = require("./lib/operator/ticker").createTickers({ log: (m) => console.log(`[keir] ${m}`) });
 const diary = require("./lib/operator/diary").createDiary({ stateDir: config.stateDir, ledger, ownerId: config.ownerId, botId: config.botId, staffIds: config.staffIds });
 // Keir 5.1 routing lock: lanes never run a model that measurably failed them.
@@ -216,8 +223,6 @@ let checkingDecisions = false;
 // Keir 11.2: GitHub is read before the decision loop sends any reminder or escalation (lib/operator/prtruth.js).
 const ghRead = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
 const prTruth = require("./lib/operator/prtruth").createPrTruth({ ledger, api: ghRead, log, controls });
-// Keir 11.2: closing conditions, quiet wakes, step-backs and finding expiry (lib/operator/closing.js). Plain settings.
-const closingSettings = require("./lib/operator/closing").settings(env);
 async function checkDecisions() {
   if (checkingDecisions) return; checkingDecisions = true;
   try { await prTruth.tick(); } catch (e) { log(`prtruth: ${e.message}`); }

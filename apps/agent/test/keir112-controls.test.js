@@ -59,5 +59,6 @@ test("first start: a few historical items per run, none older than the cutoff un
   const later = history(d, "cards", { controls: staticControls(), now: now + DAY });
   assert.equal(later.since, now, "the first real run is remembered");
   const p = {}; history(p, "cards", { controls: staticControls(), now, act: false });
-  assert.equal(p.controls.since.cards, undefined, "a preview run does not start the clock");
+  assert.equal(p.controls?.since?.cards, undefined, "a preview run does not start the clock");
+  assert.deepEqual(p, {}, "and writes nothing at all to the ledger (review N7)");
 });

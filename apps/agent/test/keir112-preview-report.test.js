@@ -14,7 +14,8 @@ function ledgerData() {
     version: 1, paused: false, seen: { "ticket:1868": "j1868" }, outbox: {}, audit: [], channels: {},
     jobs: {
       j1868: { id: "j1868", kind: "ticket", ticket: 1868, state: "blocked", channelId: "c" },
-      f1: { id: "f1", kind: "finding", state: "blocked", at: NOW - 400 * H, stateAt: NOW - 200 * H, summary: "old finding", effects: {} },
+      // Blocked by its own finish with nothing behind it (review N9: a finding held for a person is never expired).
+      f1: { id: "f1", kind: "finding", state: "blocked", at: NOW - 400 * H, stateAt: NOW - 200 * H, summary: "old finding", effects: {}, history: [{ at: new Date(NOW - 200 * H).toISOString(), kind: "finish", state: "blocked", summary: "old finding" }] },
     },
     actions: {},
     decisions: {
