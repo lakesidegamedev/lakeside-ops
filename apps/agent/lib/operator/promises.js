@@ -205,6 +205,9 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
         let outcome = post ? "No message was posted to the player (the ticket already had today's fallback line)." : "No message was posted to the player.";
         if (fallbackOk) {
           spent(ticket, "fallbacks").push(now());
+          // Review suspicion 2: the failed state and the spent fallback are saved before the post, so a restart in between
+          // never posts the line twice.
+          ledger.save();
           try { await post(Number(ticket), FALLBACK); p.fallbackAt = now(); outcome = "The player was told Keir cannot confirm it yet."; }
           catch (e) { p.fallbackError = String(e.message).slice(0, 200); log(`promise fallback ${ticket}: ${p.fallbackError}`); outcome = `The plain "cannot confirm yet" line could not be posted (${p.fallbackError}), so the player has heard nothing.`; }
         }
