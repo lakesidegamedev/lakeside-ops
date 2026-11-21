@@ -116,9 +116,7 @@ enum OpsFormat {
     static func ago(_ value: JSONValue) -> String {
         if let ms = value.number, ms > 1_000_000_000_000 { return ago(Date(timeIntervalSince1970: ms / 1000)) }
         if let ms = value.number, ms > 1_000_000_000 { return ago(Date(timeIntervalSince1970: ms)) }
-        let text = value.string
-        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: text) ?? ISO8601DateFormatter().date(from: text) { return ago(d) }
+        if let d = date(value) { return ago(d) }
         return ""
     }
     static func ago(_ date: Date) -> String {
@@ -140,12 +138,30 @@ enum OpsFormat {
         return "\(Int(s / 86400))d"
     }
     static func clock(_ date: Date, timeZone: TimeZone = .current) -> String {
+        clockFormatter(timeZone).string(from: date)
+    }
+    /// Building a DateFormatter costs far more than using one, and rows format
+    /// times inside `body`. One formatter per time zone, reused.
+    private static let clockLock = NSLock()
+    private static var clockFormatters: [String: DateFormatter] = [:]
+    private static func clockFormatter(_ timeZone: TimeZone) -> DateFormatter {
+        clockLock.lock(); defer { clockLock.unlock() }
+        if let cached = clockFormatters[timeZone.identifier] { return cached }
         let formatter = DateFormatter()
         formatter.locale = .autoupdatingCurrent
         formatter.timeZone = timeZone
         formatter.setLocalizedDateFormatFromTemplate("hma")
-        return formatter.string(from: date)
+        clockFormatters[timeZone.identifier] = formatter
+        return formatter
     }
+    /// ISO 8601 parsers, built once. Parsing with an existing
+    /// ISO8601DateFormatter is thread safe; building one per call (as every
+    /// row, sort comparison and chip count used to) was the main cost of
+    /// redrawing the Inbox.
+    private static let isoFractional: ISO8601DateFormatter = {
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return iso
+    }()
+    private static let isoPlain = ISO8601DateFormatter()
     static func contextual(_ date: Date) -> String {
         let calendar = Calendar.autoupdatingCurrent
         if calendar.isDateInToday(date) { return clock(date) }
@@ -156,8 +172,9 @@ enum OpsFormat {
         if let timestamp = value.number, timestamp > 1_000_000_000 {
             return Date(timeIntervalSince1970: timestamp > 1_000_000_000_000 ? timestamp / 1000 : timestamp)
         }
-        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return iso.date(from: value.string) ?? ISO8601DateFormatter().date(from: value.string)
+        let text = value.string
+        guard !text.isEmpty else { return nil }
+        return isoFractional.date(from: text) ?? isoPlain.date(from: text)
     }
     static func percent(_ value: Double?) -> String { value.map { "\(Int(($0 * 100).rounded()))%" } ?? "-" }
     /// A percentage that already arrives as 0 to 100 (service uptime), not a

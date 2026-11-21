@@ -250,9 +250,9 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
         let (data, response) = try await transport.data(for: request)
         guard credential?.value == owner else { throw CancellationError() }
         try validate(response, data: data)
-        return try decodeJSON(data, response: response)
+        return try await decodeJSON(data, response: response)
     }
-    private func decodeJSON(_ data: Data, response: URLResponse) throws -> JSONValue {
+    private func decodeJSON(_ data: Data, response: URLResponse) async throws -> JSONValue {
         let type = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type") ?? response.mimeType
         guard MediaType.isJSON(type) || MediaType.isJSON(response.mimeType) else {
             let message = MediaType.isHTML(type)
@@ -260,8 +260,14 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
                 : FailureKind.unexpectedResponse.defaultMessage
             throw AppFailure(message: message, kind: .unexpectedResponse)
         }
-        do { return try JSONDecoder().decode(JSONValue.self, from: data) }
-        catch { throw AppFailure(message: FailureKind.unexpectedResponse.defaultMessage, kind: .unexpectedResponse) }
+        // Decoding is real work for the larger reads (the hub, the ticket
+        // queue, a long thread). It runs off the main actor so a tap is never
+        // queued behind a background refresh being parsed.
+        let decoded = await Task.detached(priority: .userInitiated) { () -> JSONValue? in
+            try? JSONDecoder().decode(JSONValue.self, from: data)
+        }.value
+        guard let decoded else { throw AppFailure(message: FailureKind.unexpectedResponse.defaultMessage, kind: .unexpectedResponse) }
+        return decoded
     }
     /// Raw bytes from the pinned origin, for images such as Keir's charts.
     func data(_ path: String, accept: String = "image/png", limit: Int = 8_000_000) async throws -> Data {
@@ -316,7 +322,7 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
             // Cached answers arrive as one JSON object with the `done` fields. A
             // Stop that reached the server before generation began returns
             // `{ "stopped": true }`.
-            let answer = try decodeJSON(data, response: response)
+            let answer = try await decodeJSON(data, response: response)
             let text = String(decoding: data, as: UTF8.self)
             if answer["stopped"].bool { try onEvent(SSEEvent(name: "stopped", data: text)); return }
             guard !answer["answer"].string.isEmpty else { throw AppFailure(message: "The server did not start an answer.", kind: .unexpectedResponse) }

@@ -17,8 +17,8 @@ struct OpsHub: View {
     private var issues: [JSONValue] { ops.servicesDown }
     private var openTickets: Int { ops.openTickets.count }
     private var activity: [JSONValue] { ops.tasks + ops.openTickets }
-    private var running: Bool { activity.contains { WorkQueuePresentation.bucket($0) == "working" } }
-    private var queued: Bool { activity.contains { WorkQueuePresentation.bucket($0) == "waiting" } }
+    private var running: Bool { ops.queue.contains { $0.bucket == "working" } }
+    private var queued: Bool { ops.queue.contains { $0.bucket == "waiting" } }
     private var blockedWork: Int { ops.blockedQueueCount }
     private var nowWork: Int { ops.kanban["now"].array.count }
     private var nextWork: Int { ops.kanban["next"].array.count }

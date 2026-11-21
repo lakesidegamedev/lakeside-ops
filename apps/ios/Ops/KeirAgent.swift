@@ -164,16 +164,12 @@ struct ActivityView: View {
 
     // MARK: Rows per filter
 
-    private struct Entry: Identifiable {
-        let item: JSONValue
-        let ticket: Bool
-        var key: String { item[ticket ? "number" : "id"].string }
-        var id: String { (ticket ? "ticket:" : "task:") + key }
-    }
+    private typealias Entry = OpsStore.QueueEntry
+    /// Buckets and ranks are worked out once per refresh in the store, so a
+    /// chip tap only filters a short array instead of re-deriving every
+    /// ticket's state for each of the ten chips and nine sections.
     private func queueRows(_ key: String, search: String) -> [Entry] {
-        let entries = ops.queueTickets.map { Entry(item: $0, ticket: true) } + ops.queueTasks.map { Entry(item: $0, ticket: false) }
-        return entries.filter { WorkQueuePresentation.matches($0.item, filter: key, search: search) }
-            .sorted { WorkQueuePresentation.rank($0.item) < WorkQueuePresentation.rank($1.item) }
+        ops.queue.filter { (key == "all" || $0.bucket == key) && (search.isEmpty || WorkQueuePresentation.matches($0.item, filter: "all", search: search)) }
     }
     private func failingRows(_ search: String) -> [JSONValue] {
         ops.failingPRs.filter { search.isEmpty || [$0["title"].string, $0["number"].string].contains { $0.localizedCaseInsensitiveContains(search) } }
@@ -350,7 +346,7 @@ struct ActivityView: View {
     /// for a decision, get standalone cards.
     @ViewBuilder private var queueSection: some View {
         ForEach(filters.dropFirst(), id: \.0) { key, title in
-            let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0.item) == key }
+            let rows = visibleQueue.filter { $0.bucket == key }
             let state = OpsWorkState.from(filter: key)
             if key == "failing" && !visibleFailures.isEmpty {
                 Group {
@@ -541,8 +537,9 @@ private struct QueueRow: View {
         let number = ticket ? "#" + item["number"].string : ""
         let subtitle = [number, reason].filter { !$0.isEmpty }.joined(separator: " · ")
         let note = [next, check].filter { !$0.isEmpty }.joined(separator: " · ")
+        // A running row is happening now, so its glyph is the live spinner.
         OpsWorkRow(state: state, title: item["title"].string, subtitle: subtitle, note: note, age: since,
-                   stateWord: WorkQueuePresentation.label(item))
+                   stateWord: WorkQueuePresentation.label(item), live: state == .running)
     }
 }
 
@@ -992,7 +989,10 @@ struct KeirToolCalls: View {
                         }.font(.caption2).foregroundStyle(OpsTheme.muted)
                     }
                     Spacer(minLength: 4)
-                    if call["state"].string == "running" { ProgressView().controlSize(.mini).accessibilityLabel("Running") }
+                    if call["state"].string == "running" {
+                        ZStack { OpsSpinner(tint: OpsTheme.sky, size: 12) }
+                            .accessibilityElement(children: .ignore).accessibilityLabel("Running")
+                    }
                     else if call["state"].string == "failed" || call["ok"] == .bool(false) { Image(systemName: "exclamationmark.circle").foregroundStyle(OpsTheme.warn).accessibilityLabel("Failed") }
                     else { Image(systemName: "checkmark").foregroundStyle(OpsTheme.mint).accessibilityLabel("Completed") }
                 }.font(.caption)
