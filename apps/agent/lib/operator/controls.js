@@ -56,23 +56,72 @@ const word = (v) => {
 };
 const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) >= 0 && v !== "" && v !== null && v !== undefined ? Number(v) : d);
 
-// The settings in force: { switches: {name: mode}, preview, historyPerRun, historyDays }.
-function resolve({ env = {}, fileText = null } = {}) {
-  let file = {};
-  if (fileText) { try { const j = JSON.parse(fileText); if (j && typeof j === "object") file = j; } catch {} }
+// Review 4 N2: a file that exists but cannot be used fails safe. A missing file means the defaults. A file that is empty,
+// does not parse, is not a JSON object, or cannot be read puts every pass that defaults to on into preview and keeps
+// every pass that defaults to off (closes, branch deletes) off, whatever the environment says. A leading byte-order mark
+// is dropped first. In a file that parses, an unknown key is ignored and an unusable value fails safe for that one key
+// (a pass that defaults to on goes to preview, one that defaults to off stays off, an unusable "preview" means preview);
+// each is listed in warnings.
+const PROBLEM_KEYS = new Set(["preview", "historyPerRun", "historyDays"]);
+const failSafe = (s) => (s.on ? "preview" : "off");
+
+// The settings in force: { switches: {name: mode}, preview, historyPerRun, historyDays, fileProblem, warnings }.
+// fileText: the file's text, or null when there is no file. fileError: why an existing file could not be read.
+function resolve({ env = {}, fileText = null, fileError = null } = {}) {
+  let file = {}, fileProblem = fileError ? `switches file could not be read (${fileError})` : null;
+  const warnings = [];
+  if (!fileProblem && fileText !== null && fileText !== undefined) {
+    const text = String(fileText).replace(/^\uFEFF/, "");
+    if (!text.trim()) fileProblem = "switches file is empty";
+    else {
+      let j;
+      try { j = JSON.parse(text); } catch (e) { fileProblem = `switches file does not parse (${String(e.message).slice(0, 120)})`; }
+      if (!fileProblem) {
+        if (j && typeof j === "object" && !Array.isArray(j)) file = j;
+        else fileProblem = `switches file is not a JSON object (${Array.isArray(j) ? "an array" : j === null ? "null" : typeof j})`;
+      }
+    }
+  }
   const switches = {};
-  for (const [name, s] of Object.entries(SWITCHES)) switches[name] = word(file[name]) || word(env[s.env]) || (s.on ? "on" : "off");
-  const preview = (word(file.preview) || word(env.KEIR_PREVIEW)) === "on";
-  return { switches, preview, historyPerRun: num(file.historyPerRun ?? env.KEIR_HISTORY_PER_RUN, HISTORY_PER_RUN), historyDays: num(file.historyDays ?? env.KEIR_HISTORY_DAYS, HISTORY_DAYS) };
+  if (fileProblem) {
+    for (const [name, s] of Object.entries(SWITCHES)) switches[name] = s.on ? (word(env[s.env]) === "off" ? "off" : "preview") : "off";
+    return { switches, preview: true, historyPerRun: HISTORY_PER_RUN, historyDays: HISTORY_DAYS, fileProblem, warnings };
+  }
+  for (const key of Object.keys(file)) if (!SWITCHES[key] && !PROBLEM_KEYS.has(key)) warnings.push(`unknown key "${String(key).slice(0, 60)}" ignored`);
+  for (const [name, s] of Object.entries(SWITCHES)) {
+    const has = Object.prototype.hasOwnProperty.call(file, name);
+    if (has && !word(file[name])) warnings.push(`${name}: value ${JSON.stringify(file[name]).slice(0, 40)} is not on, off or preview; treated as ${failSafe(s)}`);
+    switches[name] = has ? (word(file[name]) || failSafe(s)) : (word(env[s.env]) || (s.on ? "on" : "off"));
+  }
+  const hasPreview = Object.prototype.hasOwnProperty.call(file, "preview");
+  const previewWord = hasPreview ? word(file.preview) : word(env.KEIR_PREVIEW);
+  if (hasPreview && !["on", "off"].includes(previewWord)) warnings.push(`preview: value ${JSON.stringify(file.preview).slice(0, 40)} is not true or false; treated as preview on`);
+  const preview = hasPreview ? previewWord !== "off" : previewWord === "on";
+  for (const k of ["historyPerRun", "historyDays"]) if (Object.prototype.hasOwnProperty.call(file, k) && num(file[k], null) === null) warnings.push(`${k}: value ${JSON.stringify(file[k]).slice(0, 40)} is not a number; default used`);
+  return { switches, preview, historyPerRun: num(file.historyPerRun ?? env.KEIR_HISTORY_PER_RUN, HISTORY_PER_RUN), historyDays: num(file.historyDays ?? env.KEIR_HISTORY_DAYS, HISTORY_DAYS), fileProblem: null, warnings };
+}
+
+// Reads the file. readFile returns the text, or null (or throws ENOENT) when there is none; any other error is a problem.
+function readSwitches(file, readFile) {
+  try { const t = readFile(file); return { fileText: t ?? null, fileError: null }; }
+  catch (e) { return e?.code === "ENOENT" ? { fileText: null, fileError: null } : { fileText: null, fileError: String(e?.code || e?.message || e).slice(0, 80) }; }
 }
 
 // killSwitch: { state() -> { engaged, reason } }. data: the ledger data (paused). prodHold() -> ISO time or null.
-function createControls({ file = process.env.KEIR_SWITCHES_FILE || DEFAULT_FILE, env = process.env, readFile = (f) => fs.readFileSync(f, "utf8"), now = () => Date.now(), killSwitch = null, data = null, prodHold = () => null, ttlMs = 5000, force = null } = {}) {
-  let cached = null, at = -Infinity;
+// log(line) and audit(kind, detail): told once each time the file's problem or warnings change, and once when they clear.
+function createControls({ file = process.env.KEIR_SWITCHES_FILE || DEFAULT_FILE, env = process.env, readFile = (f) => fs.readFileSync(f, "utf8"), now = () => Date.now(), killSwitch = null, data = null, prodHold = () => null, ttlMs = 5000, force = null, log = () => {}, audit = () => {} } = {}) {
+  let cached = null, at = -Infinity, told = "";
   function settings() {
     if (cached && now() - at < ttlMs) return cached;
-    let text = null; try { text = readFile(file); } catch {}
-    cached = resolve({ env, fileText: text }); at = now();
+    const read = readSwitches(file, readFile);
+    cached = resolve({ env, ...read }); at = now();
+    const state = cached.fileProblem || cached.warnings.length ? JSON.stringify([cached.fileProblem, cached.warnings, read.fileText, read.fileError]) : "";
+    if (state !== told) {
+      if (cached.fileProblem) { log(`switches: ${cached.fileProblem} (${file}); every pass is in preview, closes and branch deletes are off, until the file parses again`); audit("switches_file_unusable", { file, problem: cached.fileProblem }); }
+      else if (cached.warnings.length) { log(`switches: ${cached.warnings.join("; ")} (${file})`); audit("switches_file_warnings", { file, warnings: cached.warnings }); }
+      else { log(`switches: ${file} is usable again`); audit("switches_file_usable", { file }); }
+      told = state;
+    }
     if (force) cached = force(cached);
     return cached;
   }
@@ -120,7 +169,7 @@ function nestedGate(parent, child) {
 function staticControls(overrides = {}, { held = null, preview = false, prodHold = null, historyPerRun = HISTORY_PER_RUN, historyDays = HISTORY_DAYS } = {}) {
   const base = resolve({});
   const s = { ...base, switches: { ...base.switches, ...Object.fromEntries(Object.entries(overrides).map(([k, v]) => [k, word(v) || "off"])) }, preview, historyPerRun, historyDays };
-  return createControls({ readFile: () => { throw new Error("none"); }, killSwitch: { state: () => (held ? { engaged: true, reason: held } : { engaged: false }) }, prodHold: () => prodHold, force: () => s });
+  return createControls({ readFile: () => null, killSwitch: { state: () => (held ? { engaged: true, reason: held } : { engaged: false }) }, prodHold: () => prodHold, force: () => s });
 }
 const DEFAULT_CONTROLS = staticControls();
 
@@ -162,4 +211,4 @@ function history(d, pass, { controls = DEFAULT_CONTROLS, now = Date.now(), act =
   };
 }
 
-module.exports = { SWITCHES, resolve, createControls, staticControls, DEFAULT_CONTROLS, preview, history, HISTORY_PER_RUN, HISTORY_DAYS, nestedGate };
+module.exports = { SWITCHES, resolve, readSwitches, createControls, staticControls, DEFAULT_CONTROLS, preview, history, HISTORY_PER_RUN, HISTORY_DAYS, nestedGate };

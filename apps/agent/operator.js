@@ -125,7 +125,8 @@ const limits = require("./lib/operator/limits").createLimits({ file: env.KEIR_LI
 // read at each pass from <state dir>/switches.json and the environment (lib/operator/controls.js). Every new pass also
 // stops under the kill switch or a pause; pull request closes and branch deletions also wait out the production hold.
 const prodHoldUntil = () => { try { const until = Date.parse(require("node:fs").readFileSync(env.KEIR_PROD_HOLD_FILE || path.join(config.stateDir, "prod-hold"), "utf8").trim()); return until > Date.now() ? new Date(until).toISOString() : null; } catch { return null; } };
-const controls = require("./lib/operator/controls").createControls({ file: env.KEIR_SWITCHES_FILE || path.join(config.stateDir, "switches.json"), env, killSwitch, data: ledger.data, prodHold: prodHoldUntil });
+const controls = require("./lib/operator/controls").createControls({ file: env.KEIR_SWITCHES_FILE || path.join(config.stateDir, "switches.json"), env, killSwitch, data: ledger.data, prodHold: prodHoldUntil,
+  log: (s) => console.log(new Date().toISOString(), s), audit: (kind, detail) => ledger.audit(kind, detail) });
 config.controls = controls; // the broker, the agent loop and the lifecycle read the switches from here
 // Keir 11.2: closing conditions, quiet wakes, step-backs and finding expiry (lib/operator/closing.js). Plain settings, shared
 // by the broker, the agent loop and the lifecycle.

@@ -37,7 +37,7 @@ async function buildPreview({ data, settings, api, now = Date.now(), env = proce
   const live = data.preview?.items ? Object.values(data.preview.items) : [];
   data.preview = { items: {} };
   // The switches as set, with preview forced on, and no kill switch or pause.
-  const controls = controlsLib.createControls({ readFile: () => { throw new Error("none"); }, force: () => ({ ...settings, preview: true }) });
+  const controls = controlsLib.createControls({ readFile: () => null, force: () => ({ ...settings, preview: true }) });
   const ledger = {
     data,
     save() {}, audit() {},
@@ -92,6 +92,8 @@ function render({ items, unchecked, live, refused, doubts = [], parked = [] }, {
   out.push("");
   out.push("Switches (file, then environment, then default):");
   for (const [name, sw] of Object.entries(controlsLib.SWITCHES)) out.push(`  ${name.padEnd(20)} ${settings.switches[name].padEnd(8)} ${sw.env.padEnd(28)} ${sw.what}`);
+  if (settings.fileProblem) out.push(`  WARNING: ${settings.fileProblem}. Every pass is in preview and closes and branch deletes are off until it parses again.`);
+  for (const w of settings.warnings || []) out.push(`  warning: switches file: ${w}`);
   out.push(`  preview mode: ${settings.preview ? "on" : "off"}; first start: ${settings.historyPerRun} historical items per run, none older than ${settings.historyDays} days`);
   out.push(`  kill switch: ${killSwitch}; paused: ${paused ? "yes" : "no"} (ignored for this report)`);
   out.push(`  GitHub: ${github ? "read with the box's gh login" : "not contacted (--no-github)"}`);
@@ -134,8 +136,8 @@ async function main() {
   if (args.help) { process.stdout.write(fs.readFileSync(__filename, "utf8").split("\n").slice(2, 15).map((l) => l.replace(/^\/\/ ?/, "")).join("\n") + "\n"); return; }
   const file = path.join(args.stateDir, "ledger.json");
   const data = JSON.parse(fs.readFileSync(file, "utf8"));
-  let switchesText = null; try { switchesText = fs.readFileSync(process.env.KEIR_SWITCHES_FILE || path.join(args.stateDir, "switches.json"), "utf8"); } catch {}
-  const settings = controlsLib.resolve({ env: process.env, fileText: switchesText });
+  const switchesFile = process.env.KEIR_SWITCHES_FILE || path.join(args.stateDir, "switches.json");
+  const settings = controlsLib.resolve({ env: process.env, ...controlsLib.readSwitches(switchesFile, (f) => fs.readFileSync(f, "utf8")) });
   let killSwitch = "released";
   try { const k = require("../lib/operator/killswitch").parseKillSwitch(fs.readFileSync(process.env.KEIR_KILL_SWITCH_FILE || path.join(args.stateDir, "kill-switch"), "utf8")); if (k.engaged) killSwitch = `engaged (${k.reason})`; } catch {}
   const api = args.github ? ghRead : async () => { throw new Error("not contacted (--no-github)"); };

@@ -73,3 +73,18 @@ test("the command runs against a state directory read only, and says what it cou
   const json = JSON.parse(execFileSync(process.execPath, [path.join(__dirname, "../bin/keir-preview.js"), "--no-github", "--json", "--state-dir", dir], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: dir } }));
   assert.ok(Array.isArray(json.items) && Array.isArray(json.unchecked));
 });
+
+test("review 4 N2: the report says when the switches file exists but cannot be used, and shows every pass in preview", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-preview-"));
+  fs.writeFileSync(path.join(dir, "ledger.json"), JSON.stringify(ledgerData()));
+  fs.writeFileSync(path.join(dir, "switches.json"), '{"preview": true,}');
+  const out = execFileSync(process.execPath, [path.join(__dirname, "../bin/keir-preview.js"), "--no-github", "--state-dir", dir], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: dir } });
+  assert.match(out, /WARNING: switches file does not parse/);
+  assert.match(out, /githubReconcile\s+preview/);
+  assert.match(out, /openPrCloses\s+off/);
+  const json = JSON.parse(execFileSync(process.execPath, [path.join(__dirname, "../bin/keir-preview.js"), "--no-github", "--json", "--state-dir", dir], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: dir } }));
+  assert.match(json.settings.fileProblem, /does not parse/);
+  // The opposite: a valid file shows no warning.
+  fs.writeFileSync(path.join(dir, "switches.json"), '{"preview": false}');
+  assert.doesNotMatch(execFileSync(process.execPath, [path.join(__dirname, "../bin/keir-preview.js"), "--no-github", "--state-dir", dir], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: dir } }), /WARNING/);
+});
