@@ -313,3 +313,32 @@ test("B1 opposite: the same words in another order or apart are not a match", ()
   // Words in the model-written header never count.
   assert.strictEqual(ci.exactLookup(gen, "summary mentions FakeHeaderSymbol").results[0].found, false);
 });
+
+test("M1: a single word in the wrong case is found ignoring case, and says so", () => {
+  const { gen } = gameGen();
+  const r = ci.exactLookup(gen, "us_national_config").results[0];
+  assert.strictEqual(r.found, true);
+  assert.strictEqual(r.matchedCase, "case-insensitive");
+  assert.strictEqual(r.files[0].path, "src/lib/countries/us/elections/billLifecycle.ts");
+  assert.strictEqual(r.definitions[0].line, 3);
+  assert.match(ci.exactLookup(gen, "us_national_config").context, /no exact-case match, matched ignoring case/);
+});
+
+test("M1 opposite: an exact-case match is preferred and other-case names are not mixed in", () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "index.db");
+  buildIndex(file, {
+    "src/a.ts": { text: "export const Ordnance = 1;\n" },
+    "src/b.ts": { text: "const ordnance = 'shells';\n" },
+  });
+  const gen = ci.createGenerationReader(file).get();
+  const upper = ci.exactLookup(gen, "Ordnance").results[0];
+  assert.strictEqual(upper.matchedCase, "exact");
+  assert.deepStrictEqual(upper.files.map(f => f.path), ["src/a.ts"]);
+  const lower = ci.exactLookup(gen, "ordnance").results[0];
+  assert.deepStrictEqual(lower.files.map(f => f.path), ["src/b.ts"]);
+  // Whole identifiers only, in either case: ordnanceDepot is not ordnance.
+  buildIndex(file, { "src/c.ts": { text: "const ordnanceDepot = 2;\n" } });
+  const gen2 = ci.createGenerationReader(file).get();
+  assert.strictEqual(ci.exactLookup(gen2, "ORDNANCE").results[0].found, false);
+});

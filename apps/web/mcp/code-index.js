@@ -327,7 +327,7 @@ function hitsIn(text, re, term, kind) {
     const lineText = text.slice(starts[ln], (starts[ln + 1] ?? text.length + 1) - 1);
     hits.push({
       line: ln + 1, text: lineText.trim().slice(0, 240),
-      definition: kind === "symbol" ? definitionKind(lineText, term) : null,
+      definition: kind === "symbol" ? definitionKind(lineText, m[0]) : null,
       ...(m[0].includes("\n") ? { spansLines: true } : {}),
     });
   }
@@ -357,15 +357,17 @@ function confirmFiles(gen, term, kind, candidates, { maxFiles }) {
 
 function symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles }) {
   const rows = candidateRows(gen, term, "symbol", { projection, kindFilter, kindArgs });
-  // Chunk-level confirmation (a symbol never spans lines).
-  for (const caseInsensitive of [false]) {
+  // Chunk-level confirmation (a symbol never spans lines). Exact case first;
+  // a name typed from a screenshot or a player's message in another case is
+  // then matched ignoring case, and the result says which one matched.
+  for (const caseInsensitive of [false, true]) {
     const re = occurrenceRegex(term, "symbol", { caseInsensitive });
     const byFile = new Map();
     for (const r of rows) {
       re.lastIndex = 0;
       if (re.test(chunkBody(r.text)) && !byFile.has(fileKey(r))) byFile.set(fileKey(r), { path: r.path, source: r.source, revision: r.revision, repository: r.repository });
     }
-    {
+    if (byFile.size || caseInsensitive) {
       const out = confirmFiles(gen, term, "symbol", [...byFile.values()], { maxFiles });
       return { ...out, totalFiles: byFile.size, caseInsensitive: caseInsensitive && byFile.size > 0 };
     }
@@ -438,6 +440,7 @@ function describeTerm(term, kind, found, { limit, maxLinesPerFile }) {
   return {
     term, kind, found: knownTotal > 0,
     caseInsensitive: caseInsensitive || undefined,
+    ...(knownTotal > 0 ? { matchedCase: caseInsensitive ? "case-insensitive" : "exact" } : {}),
     totalFiles: totalFiles != null ? totalFiles : undefined,
     totalOccurrences: allScanned && totalFiles === scanned.length ? occurrences : undefined,
     complete,
@@ -519,7 +522,8 @@ function finishExact(gen, parsed, results, { maxChars }) {
     else {
       const lines = r.files.map(f => `${f.path}${f.test ? " (test)" : ""}${f.source && f.source !== "code" ? ` [${f.source}]` : ""}: ${f.occurrences} line(s)\n` +
         (f.lines || []).map(h => `  ${h.line ?? "?"}${h.definition ? ` [${h.definition}]` : ""}: ${h.text}`).join("\n"));
-      block = `--- "${r.term}" (${r.kind}): ${r.totalFiles} file(s)${r.complete ? ", complete" : ", truncated"} ---\n${lines.join("\n")}`;
+      const caseNote = r.caseInsensitive ? ", no exact-case match, matched ignoring case" : "";
+      block = `--- "${r.term}" (${r.kind}): ${r.totalFiles ?? "at least " + r.files.length} file(s)${caseNote}${r.complete ? ", complete" : ", truncated"} ---\n${lines.join("\n")}`;
     }
     if (block.length > budget) { blocks.push(block.slice(0, Math.max(0, budget))); budget = 0; break; }
     blocks.push(block); budget -= block.length;
