@@ -114,7 +114,8 @@ test("11:31 opens exactly one incident on the first sweep; 11:34, 11:43 and 12:0
   assert.ok(rec.startsWith(`Turn 108 finished at ${T(RECOVERED)} and the game is advancing again.`), rec);
   assert.match(rec, /stuck for 1 hour and 45 minutes/);
   assert.match(rec, /Turn 108 was tried 3 more times without success/);
-  assert.match(rec, /follow-up on that is still in progress/, "the recovery skipped work, so it is not called resolved");
+  assert.match(rec, /Keir is checking that the turn's work completed fully/, "it resumed after a crash, so it is neither called skipped nor resolved");
+  assert.doesNotMatch(rec, /skipped on the way/);
   assert.doesNotMatch(rec, /resolved|fixed/i);
   for (const hhmm of ["13:30", "13:45"]) { r.set(hhmm); await r.sweep(); }
   assert.equal(r.w.updates.length, 2, "recovery is said once");
@@ -599,8 +600,13 @@ test("M4, the other way: a recovery whose own record shows skipped work still sa
   const r = stuckThenRuns({ outcome: "partial", failedPhases: [], abortedPhases: [], warnings: ["Resuming crashed turn 110: skipping 12 phase(s)"] });
   await r.sweep();
   r.set("15:06"); await r.sweep();
-  assert.match(r.w.updates.at(-1).message, /Some of the turn's work was skipped on the way/);
-  assert.equal(ti.recoveryState(DETAIL.attempts.find((a) => a.success)), "skipped", "this morning's recovery");
+  // Second release review, N1: a resume after a crash is neither "skipped" nor proven clean.
+  assert.match(r.w.updates.at(-1).message, /Keir is checking that the turn's work completed fully/);
+  assert.doesNotMatch(r.w.updates.at(-1).message, /skipped on the way|run cleanly/);
+  assert.equal(ti.recoveryState(DETAIL.attempts.find((a) => a.success)), "unknown", "this morning's recovery resumed after a crash");
+  assert.equal(ti.recoveryState({ success: true, outcome: "clean", warnings: ["turnIncomplete: turn 108 is INCOMPLETE: interrupted steps not rerun: corporationTurn"] }), "skipped", "the engine's real incomplete marker");
+  assert.equal(ti.recoveryState({ success: true, outcome: "clean", warnings: ["Resuming crashed turn 108: skipping 54 phase(s) already applied by the previous holder", "turnIncomplete: turn 108 is INCOMPLETE: interrupted steps not rerun: corporationTurn"] }), "skipped", "incomplete wins over the resume note");
+  assert.equal(ti.recoveryState({ success: true, outcome: "clean", warnings: [] }), "clean", "a plain clean recovery still reads clean");
   assert.equal(ti.recoveryState({ success: true, outcome: "degraded", warnings: [] }), "unknown");
   assert.equal(ti.recoveryState({ success: true, outcome: "clean", abortedPhases: ["x"] }), "skipped");
   assert.equal(ti.recoveryState(null), "unknown");

@@ -72,11 +72,19 @@ function phaseOf(attempt) {
 // What the successful attempt's own record says about its work (release review M4): "skipped" only when the record
 // shows skipped, deferred, failed or aborted work; "clean" only when it says clean and shows none; otherwise "unknown".
 // Players are told work was skipped only on "skipped".
-const SKIPPED = /\bskipp|\bdeferred\b|not reached|left (?:undone|unfinished)|partial/i;
+// Second release review, N1: the engine's "Resuming crashed turn N: skipping K phase(s) already applied by the previous
+// holder" warning means those phases were not rerun because they had already run, not that work was lost, so it is not
+// "skipped". It is not proof of a clean turn either (the holder died mid-step), so a resumed turn reads "unknown" and
+// players are told Keir is checking, never that work was skipped and never that all is well. The engine's real
+// incomplete marker ("turn N is INCOMPLETE: interrupted steps not rerun") is "skipped".
+const RESUMED = /already applied|resuming crashed turn/i;
+const SKIPPED = /\bskipp|\bdeferred\b|not reached|left (?:undone|unfinished)|partial|\bincomplete\b|not rerun/i;
 function recoveryState(attempt) {
   if (!attempt) return "unknown";
   if ((attempt.failedPhases || []).length || (attempt.abortedPhases || []).length) return "skipped";
-  if ((attempt.warnings || []).some((w) => SKIPPED.test(typeof w === "string" ? w : w?.detail || w?.message || ""))) return "skipped";
+  const texts = (attempt.warnings || []).map((w) => (typeof w === "string" ? w : w?.detail || w?.message || ""));
+  if (texts.some((w) => !RESUMED.test(w) && SKIPPED.test(w))) return "skipped";
+  if (texts.some((w) => RESUMED.test(w))) return "unknown";
   return !attempt.outcome || attempt.outcome === "clean" ? "clean" : "unknown";
 }
 const cleanRecovery = (attempt) => recoveryState(attempt) === "clean";
