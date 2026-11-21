@@ -549,3 +549,54 @@ test("M3: when no turn health can be read for five minutes the owner is told onc
   for (const hhmm of ["12:00", "12:06"]) { r.set(hhmm); await r.sweep(); }
   assert.equal(r.notes.filter((n) => /blind/.test(n.key)).length, 2, "a later outage is told again");
 });
+
+// A stuck turn 110 (no failed attempt logged; the latest failure record is old turn 105), then turn 110 runs at 15:05.
+function stuckThenRuns(own) {
+  const r = rig({ start: "14:10" });
+  const orig = r.w.mcp.call;
+  r.w.currentTurn = () => (r.w.clock() >= at("15:05") ? 110 : 109);
+  r.w.mcp.call = async (s, tool, args, write) => {
+    const t = r.w.clock();
+    if (tool === "lock_status") return t < at("15:05") ? { verdict: "STUCK (heartbeat stale >5min)", currentTurn: 109, isProcessing: true, processingKind: "turn", targetTurn: 110, processingPhase: "bankingTurn", heartbeatAgeSec: 600 } : { verdict: "idle", currentTurn: 110 };
+    if (tool === "turn_failure_detail") {
+      if (args.turn === 110) { if (own === "unreadable") throw new Error("timeout"); return { turn: 110, attempts: [{ realTime: "2026-11-21T15:05:00.000Z", success: true, ...own }] }; }
+      return { turn: 105, attempts: [{ realTime: "2026-11-21T09:01:00.000Z", success: false, failedPhaseDetails: [{ phase: "bankingTurn", status: "failed" }] }, { realTime: "2026-11-21T09:20:00.000Z", success: true, outcome: "clean" }] };
+    }
+    if (tool === "game_overview") return { turn: r.w.currentTurn(), iteration: { number: 3 } };
+    return orig(s, tool, args, write);
+  };
+  return r;
+}
+
+test("M4: a stuck turn that then runs cleanly is not said to have skipped work; its own record gives the time", async () => {
+  const r = stuckThenRuns({ outcome: "clean", failedPhases: [], abortedPhases: [], warnings: [] });
+  await r.sweep();
+  assert.equal(r.w.creates.length, 1);
+  r.set("15:06"); await r.sweep();
+  const rec = r.w.updates.at(-1).message;
+  assert.match(rec, /^Turn 110 finished at .* and the game is advancing again\./);
+  assert.match(rec, /stuck for 1 hour and 5 minutes/);
+  assert.match(rec, /stays open until the next turns run cleanly/);
+  assert.doesNotMatch(rec, /skipped/);
+});
+
+test("M4: when the recovered turn's record cannot be read, the words are neutral, not a claim that work was skipped", async () => {
+  const r = stuckThenRuns("unreadable");
+  await r.sweep();
+  r.set("15:06"); await r.sweep();
+  const rec = r.w.updates.at(-1).message;
+  assert.match(rec, /^Turn 110 has finished and the game is advancing again\. It was stuck for about/);
+  assert.match(rec, /Keir is checking that the turn's work completed fully/);
+  assert.doesNotMatch(rec, /skipped|finished at/);
+});
+
+test("M4, the other way: a recovery whose own record shows skipped work still says so", async () => {
+  const r = stuckThenRuns({ outcome: "partial", failedPhases: [], abortedPhases: [], warnings: ["Resuming crashed turn 110: skipping 12 phase(s)"] });
+  await r.sweep();
+  r.set("15:06"); await r.sweep();
+  assert.match(r.w.updates.at(-1).message, /Some of the turn's work was skipped on the way/);
+  assert.equal(ti.recoveryState(DETAIL.attempts.find((a) => a.success)), "skipped", "this morning's recovery");
+  assert.equal(ti.recoveryState({ success: true, outcome: "degraded", warnings: [] }), "unknown");
+  assert.equal(ti.recoveryState({ success: true, outcome: "clean", abortedPhases: ["x"] }), "skipped");
+  assert.equal(ti.recoveryState(null), "unknown");
+});

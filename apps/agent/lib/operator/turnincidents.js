@@ -68,14 +68,17 @@ function phaseOf(attempt) {
   const failed = (attempt?.failedPhaseDetails || []).find((p) => p && p.status === "failed") || (attempt?.failedPhaseDetails || []).find((p) => p && /fail|error|stuck|timed?out/i.test(p.status || ""));
   return { phase: failed?.phase || (attempt?.failedPhases || [])[0] || null, reason: failed?.reason || null };
 }
-// A recovery is clean only when the successful attempt says so and skipped nothing.
+// What the successful attempt's own record says about its work (release review M4): "skipped" only when the record
+// shows skipped, deferred, failed or aborted work; "clean" only when it says clean and shows none; otherwise "unknown".
+// Players are told work was skipped only on "skipped".
 const SKIPPED = /\bskipp|\bdeferred\b|not reached|left (?:undone|unfinished)|partial/i;
-function cleanRecovery(attempt) {
-  if (!attempt) return false;
-  if (attempt.outcome && attempt.outcome !== "clean") return false;
-  if ((attempt.failedPhases || []).length || (attempt.abortedPhases || []).length) return false;
-  return !(attempt.warnings || []).some((w) => SKIPPED.test(typeof w === "string" ? w : w?.detail || w?.message || ""));
+function recoveryState(attempt) {
+  if (!attempt) return "unknown";
+  if ((attempt.failedPhases || []).length || (attempt.abortedPhases || []).length) return "skipped";
+  if ((attempt.warnings || []).some((w) => SKIPPED.test(typeof w === "string" ? w : w?.detail || w?.message || ""))) return "skipped";
+  return !attempt.outcome || attempt.outcome === "clean" ? "clean" : "unknown";
 }
+const cleanRecovery = (attempt) => recoveryState(attempt) === "clean";
 
 // One answer from three reads, plus engine health when a turn read failed: what is failing now, what recovered, and
 // what holds it back. Returns { readable, world, currentTurn, failing, recovered, hold, paused, pauseReason }.
@@ -107,7 +110,7 @@ function assess({ lock, overview, detail, health = null }, at) {
       }
     } else {
       const ok = attempts.find((a) => a.success === true);
-      if (ok || done) out.recovered = { turn, at: ok ? time(ok.realTime) : null, clean: ok ? cleanRecovery(ok) : false };
+      if (ok || done) out.recovered = { turn, at: ok ? time(ok.realTime) : null, state: recoveryState(ok) };
     }
   }
   // Release review M3: with the failure record unreadable, engine health's last turn log still shows a failed attempt
@@ -187,8 +190,12 @@ function newStepMessage(f, folded) {
 function pausedMessage(f, folded) {
   return finish(`The game has now paused itself because no turn has finished since the failure.${folded ? foldedRepeats(folded.count, folded.turn) : ""} Keir is still on it.`);
 }
-function recoveryMessage({ turn, at, clean, downMs, folded }) {
-  return finish(`Turn ${turn} finished at ${clock(at)} and the game is advancing again. It was stuck for ${duration(downMs)}.${folded ? foldedRepeats(folded.count, folded.turn) : ""} ${clean ? "This incident stays open until the next turns run cleanly." : "Some of the turn's work was skipped on the way, so follow-up on that is still in progress."}`);
+const RECOVERY_END = { clean: "This incident stays open until the next turns run cleanly.", skipped: "Some of the turn's work was skipped on the way, so follow-up on that is still in progress.",
+  unknown: "Keir is checking that the turn's work completed fully." };
+function recoveryMessage({ turn, at, state, clean, downMs, folded }) {
+  const how = state || (clean === true ? "clean" : clean === false ? "skipped" : "unknown");
+  const when = at ? `finished at ${clock(at)}` : "has finished";
+  return finish(`Turn ${turn} ${when} and the game is advancing again. It was stuck for ${at ? "" : "about "}${duration(downMs)}.${folded ? foldedRepeats(folded.count, folded.turn) : ""} ${RECOVERY_END[how] || RECOVERY_END.unknown}`);
 }
 
 // An open incident is the turn failure incident only on strong evidence (release review M2): Keir opened it for a turn
@@ -442,11 +449,11 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
   async function recover(cur, rec, r, act) {
     if (cur.recoveryPosted) return;
     const at = r.at || now();
-    const message = recoveryMessage({ turn: r.turn, at, clean: r.clean, downMs: at - (cur.firstFailedAt || rec?.firstFailedAt || at), folded: cur.folded?.count ? cur.folded : null });
+    const message = recoveryMessage({ turn: r.turn, at: r.at || null, state: r.state, downMs: at - (cur.firstFailedAt || rec?.firstFailedAt || at), folded: cur.folded?.count ? cur.folded : null });
     if (await postOnce(cur, `recovered:${r.turn}`, message, act)) {
-      cur.recoveryPosted = true; cur.recovered = { turn: r.turn, at, clean: r.clean, postedAt: now() }; cur.folded = { turn: r.turn, count: 0 };
+      cur.recoveryPosted = true; cur.recovered = { turn: r.turn, at, state: r.state, postedAt: now() }; cur.folded = { turn: r.turn, count: 0 };
       if (rec) { rec.state = "recovered"; rec.recoveredAt = at; }
-      ledger.audit("turn_incident_recovered", { incident: cur.number, turn: r.turn, clean: r.clean, downMinutes: Math.round((at - (cur.firstFailedAt || at)) / MINUTE) });
+      ledger.audit("turn_incident_recovered", { incident: cur.number, turn: r.turn, state: r.state, downMinutes: Math.round((at - (cur.firstFailedAt || at)) / MINUTE) });
     }
   }
   // Reads the incident's own status now: "open", "closed" (it is then no longer the one to add to) or "unknown".
@@ -576,8 +583,14 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     }
     // Nothing failing now. An open incident whose last turn ran gets its one recovery update.
     if (cur && !cur.recoveryPosted) {
-      const r = a.recovered && a.recovered.turn >= (cur.lastTurn || 0) ? a.recovered
-        : (a.currentTurn !== null && a.currentTurn >= (cur.lastTurn || Infinity)) ? { turn: cur.lastTurn, at: null, clean: false } : null;
+      let r = a.recovered && a.recovered.turn >= (cur.lastTurn || 0) ? a.recovered : null;
+      if (!r && a.currentTurn !== null && a.currentTurn >= (cur.lastTurn || Infinity)) {
+        // The latest failure record is another turn's (a stuck or overdue turn logs no failed attempt): the recovered
+        // turn's own record says when it finished and whether work was skipped. Unreadable means unknown, never skipped.
+        const own = parse(await mcp.call("turndiag", "turn_failure_detail", { turn: cur.lastTurn, attempts: 8 }, false).catch(() => null));
+        const ok = num(own?.turn) === cur.lastTurn ? (own.attempts || []).filter((x) => x && x.success === true && time(x.realTime)).sort((x, y) => time(y.realTime) - time(x.realTime))[0] : null;
+        r = { turn: cur.lastTurn, at: ok ? time(ok.realTime) : null, state: recoveryState(ok) };
+      }
       if (r) await recover(cur, s.records[cur.key] || Object.values(s.records).find((x) => x.incident === cur.number && x.turn === cur.lastTurn), r, gate.act);
     }
     // A recovered incident stops absorbing new failures after a while even if nobody closed it yet.
@@ -622,4 +635,4 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
   return { check, probe, sweep, status, incidentForTurn };
 }
 
-module.exports = { createTurnIncidents, assess, pauseKind, plainPhase, duration, titleFor, openingMessage, newTurnMessage, recoveryMessage, isTurnIncident, cleanRecovery, SWITCH, MAX_CHARS, MAX_SENTENCES, sentences };
+module.exports = { createTurnIncidents, assess, pauseKind, plainPhase, duration, titleFor, openingMessage, newTurnMessage, recoveryMessage, isTurnIncident, cleanRecovery, recoveryState, SWITCH, MAX_CHARS, MAX_SENTENCES, sentences };
