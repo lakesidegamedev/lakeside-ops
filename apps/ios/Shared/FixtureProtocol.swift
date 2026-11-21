@@ -509,6 +509,14 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                              "text": "When you activated the bank charter, half of financial sales were reserved for your branch network. I’m checking how that share is set and what happens on the next turn."]],
                 "receipts": [["key": "reply:revenue", "label": "Explained the deposit network share", "state": "done", "at": hourAgo - 1800000]],
             ]
+            // A ticket Keir is working on right now, for the working-indicator captures.
+            if ProcessInfo.processInfo.arguments.contains("--uitest-ticket-running"), var detail = value as? [String: Any] {
+                let now = Date().timeIntervalSince1970 * 1000
+                detail["retryTaskId"] = NSNull()
+                detail["current"] = ["id": "ticket-revenue", "state": "running", "updatedAt": now, "summary": "Reading how the deposit network share is set"]
+                detail["timing"] = ["state": "working", "since": hourAgo, "heartbeatAt": now, "expectedDoneAt": now + 900000]
+                value = detail
+            }
         case "/api/keir/app/tickets/1001" where ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens"):
             let twoHoursAgo = Date().addingTimeInterval(-7200).timeIntervalSince1970 * 1000
             value = [

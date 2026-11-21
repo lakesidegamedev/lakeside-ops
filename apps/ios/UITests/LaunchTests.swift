@@ -862,6 +862,26 @@ final class LaunchTests: XCTestCase {
         }
     }
 
+    /// Where the working indicator matters, in both themes: the chat while
+    /// Keir is working, and a ticket Keir is working on now.
+    func testWorkingIndicatorScreensInLightAndOLED() {
+        for (appearance, theme) in [("light", "Light"), ("dark", "OLED")] {
+            let app = launch(appearance: appearance, ["--uitest-eight-screens", "--uitest-reset-resume", "--uitest-rich-controls", "--uitest-ticket-running"])
+            let working = app.descendants(matching: .any)["keir-chat-working"].firstMatch
+            for _ in 0..<6 where !working.exists { app.swipeUp() }
+            XCTAssertTrue(working.exists, "Keir's running work shows in the chat in \(theme)")
+            capture(app, "\(theme) Chat Keir working")
+            go(app, "Activity")
+            XCTAssertTrue(app.buttons["work-filter-stuck"].waitForExistence(timeout: 10))
+            goToFilter(app, "work-filter-stalled")
+            openRow(app, "Massive drop in revenue turn 77-78", swipes: 6)
+            XCTAssertTrue(find(app, "Massive drop in revenue turn").waitForExistence(timeout: 10))
+            sleep(2)
+            capture(app, "\(theme) Ticket in progress")
+            app.terminate()
+        }
+    }
+
     // MARK: Chat shell evidence
 
     private func launch(appearance: String, _ extra: [String] = []) -> XCUIApplication {
