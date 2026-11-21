@@ -8,6 +8,24 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ### For users
 
 - Staff can say `@Keir stand down until pinged` in a ticket. Keir waits until someone in that channel directly tags it again.
+- A message the owner types in a ticket no longer counts as his answer to an open question unless it is a Discord reply to that question or names one of its options (its number, its label, or yes or no for a single yes or no question). Anything else stays context and the question stays open. When a question ends by any route, its DM copies lose their buttons and its kanban card is closed with the outcome.
+- No Keir pull request sits silently. Every open Keir PR without a live task gets one approval ask, a repaired description, one plain "blocked by" line, or a close with a note (superseded, or stale after five days). Branches of closed, unmerged Keir PRs are deleted. PRs or branches anyone else has pushed to are never closed or deleted.
+- Keir follows GitHub for approvals: a PR merged by anyone closes its question, a closed PR withdraws it, and new commits withdraw it and re-ask once. Keir no longer asks, reminds or says "waiting on the owner" about a PR that is already merged or closed.
+- Two Keir tasks never ask the owner about the same pull request or the same repair: the second joins the first question.
+- When Keir tells a player it will come back (after the next turn, after a release, later today), it is woken when that is due even if its task was stuck, and the player gets the follow-up or a plain "I can't confirm this yet". If that fails twice, staff are told once.
+- Fewer ticket posts: one "now live" announcement per shipped change, turn reports only when the answer changes, and at most four Keir posts an hour without a new player message, past which only one merged correction or answer goes out.
+- Every pull request Keir opens carries the Conflict of interest section the game repository requires.
+
+### For developers
+
+- `lib/operator/standdown.js applyOwnerChannelAnswer` matches a channel message to a decision only by Discord reply (the DM message ids, or a Keir post that quotes the question) or by an unambiguous option match; otherwise it records `channelContext` on the open decisions. `answered` is in the decision cleanup list.
+- `lib/operator/prtruth.js` runs before every decision tick: it reads (cached two minutes, at most 15 reads a pass) every PR a pending decision or an approved or executing action is about, and reconciles: merged to `withdrawn` plus action `done`, closed to `withdrawn`, new head to `withdrawn` plus one re-ask message per head. A `publish_patch` stuck `executing` whose branch has a PR becomes `done`. `orphans.js` archives a reconciled merge as `done` and an unread PR approval as `unverified` instead of `orphaned`. The github merge ask reads the PR first and refuses a merged, closed or moved head.
+- `openDecision` sets a ledger-wide `askKey` (`pr:<repo>:<n>` or `plan:<planDigest>`). A second job joins the open decision as a follower (woken with the outcome, its own action superseded); an approved, not yet carried out ask refuses a repeat; a new head supersedes the old ask.
+- `lib/operator/keirprs.js` (hourly, kill switch respected): adopts orphaned Keir PRs on AHDGame. Limits per pass: 3 closes, 10 branch deletions, 2 asks, 3 owner lines, 3 description repairs. `KEIR_STALE_PR_DAYS` (default 5) counts from the first pass that found the PR orphaned. `ownerwait.js` skips Keir's own PRs and PRs with an open ask.
+- The github merge path reports a refused merge for an owner-wait, adopted or approved PR as one owner line (`pr-blocked:<n>:<reason>:<head>`), or repairs the description when it is Keir's own PR. `prdisclosure.js` adds the section on publish, worker PRs (`codingworkers.js`) and promotion PRs.
+- `lib/operator/decisioncards.js`: decisions keyed `kanban:<id>` complete their card when they leave `pending`; cards someone else holds get a note instead. A sweep at start and every six hours withdraws pending card decisions on closed or resolved tickets.
+- `lib/operator/promises.js`: `recordTicketPost` records follow-up promises (`d.ticketPromises`) with due times (turn 90 min, release 4 h, owner 12 h, today 6 h, tomorrow 24 h, otherwise 4 h). A five minute pass wakes the ticket's root job when due (held tickets are skipped), retries once after 30 minutes, then posts one fallback line through `broker.promiseFallback` and raises `promise-overdue:` once.
+- `lib/operator/postbudget.js` and the post guard: live announcements keyed by the ticket's main release receipt (`card.liveReceipts`), turn reports refused when their outcome words repeat the last report since the player wrote, and an hourly cap (`KEIR_TICKET_POSTS_PER_HOUR`, default 4) with one merged overflow per player message for corrections and owed answers. Refusals name the reason; nothing is dropped silently.
 
 ## 11.1.1 (2026-11-20)
 
