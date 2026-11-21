@@ -273,6 +273,9 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
   // Review 3 F4: a Discord reply to anything but the question is the owner talking to that message's author (the player,
   // staff, another post): never an answer, and not meant for the question.
   const elsewhere = Boolean(replyTo?.id) && !replied.length;
+  // Review 4 m1: a reply to a different Keir post is still never an answer, but it may be meant for the question (the
+  // owner answering Keir's restatement), so it gets the notice and the context line like an unreplied message.
+  const toKeir = elsewhere && Boolean(botId) && String(replyTo.authorId || "") === String(botId);
   let picks = [];
   // A reply to the question counts only when it also gives an answer: "can you link the PR here?" sent as a reply is not one.
   if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true, reply: true }), reply: true })).filter((p) => p.option);
@@ -294,7 +297,7 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
   // time, so a second unmatched message is not lost. The owner's DM notice stays one per question.
   if (!answered.length) for (const x of open) {
     x.channelContext = [...(x.channelContext || []), { at, text: content.slice(0, 300), message: messageId }].slice(-5);
-    if (!(replied.includes(x) || (!elsewhere && meantFor(x, content, botId)))) continue;
+    if (!(replied.includes(x) || ((!elsewhere || toKeir) && meantFor(x, content, botId)))) continue;
     const asker = d.jobs?.[x.jobId];
     if (asker && !JOB_TERMINAL.includes(asker.state)) (asker.inbox ||= []).push({ authorId: "owner-channel", role: "system", at: new Date(at).toISOString(), decision: x.id,
       content: `The owner wrote in the ticket channel: "${content.slice(0, 400)}". It was not taken as the answer to your open question "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}", which stays open. Use it as context; do not act on it as the decision.` });

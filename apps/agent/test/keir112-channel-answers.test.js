@@ -257,3 +257,19 @@ test("F4, the other side: a true reply, a bare option, and a plain yes or no to 
   assert.equal(sent.length, 1);
   assert.equal(w.data.jobs.j1.inbox.filter((m) => m.authorId === "owner-channel").length, 2);
 });
+
+test("review 4 m1: a reply to a different Keir post is not an answer, but the owner is told and the task gets the context", () => {
+  const w = cap500(TWO());
+  const sent = [];
+  const restated = { id: "996", authorId: BOT, content: "Still waiting on whether the cap should go up for this player." };
+  assert.deepEqual(say(w, "yes", { replyTo: restated, notify: (k) => { sent.push(k); return true; } }), []);
+  assert.equal(w.x.state, "pending", "still not an answer");
+  assert.deepEqual(sent, [`owner-unmatched:${w.x.id}`], "the owner hears it was not taken");
+  assert.match(w.data.jobs.j1.inbox.at(-1).content, /The owner wrote in the ticket channel: "yes"/);
+  // The opposite: a reply to the player's message is the owner talking to the player, with no notice and no context line.
+  const p = cap500(TWO());
+  const quiet = [];
+  say(p, "yes", { replyTo: PLAYER_MSG, notify: (k) => { quiet.push(k); return true; } });
+  assert.deepEqual(quiet, []);
+  assert.equal((p.data.jobs.j1.inbox || []).length, 0);
+});
