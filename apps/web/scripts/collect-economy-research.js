@@ -223,7 +223,32 @@ async function main() {
     const pinnedOutput = sum(pinnedRows.map((row) => positive(row.producedUnits)));
     const desiredWorkers = sum(sectors.map((row) => positive(row.workersDesired ?? row.workers)));
     const staffedWorkers = sum(sectors.map((row) => positive(row.workers)));
-    const deliveryLimitedUnits = sum(sectors.map((row) => positive(row.producedUnits) * Math.min(1, positive(row.deliveryLimitedFraction))));
+    // The legacy clearing pass still stamps soldFraction, lowFillTurns and
+    // deliveryLimitedFraction on funded turns, measured against its own lagged
+    // book. A sector whose funded settlement is at least as recent as that
+    // stamp was paid on the settlement, so it is judged on the settlement only.
+    const fundedRecord = (row) => {
+      const record = row.producerSettlement;
+      if (!record || !Number.isFinite(Number(record.turn))) return null;
+      const legacyTurn = Number(row.soldByCommodityTurn);
+      return Number.isFinite(legacyTurn) && legacyTurn > Number(record.turn) ? null : record;
+    };
+    const settledTakenShare = (record) => {
+      let offered = 0;
+      let taken = 0;
+      for (const p of record.products || []) {
+        offered += positive(p.offeredUnits);
+        taken += positive(p.soldUnits) + positive(p.internalDeliveredUnits);
+      }
+      return offered > 0 ? taken / offered : null;
+    };
+    const lowSaleSector = (row) => {
+      const record = fundedRecord(row);
+      if (!record) return positive(row.lowFillTurns) >= 12;
+      const share = settledTakenShare(record);
+      return share != null && share < 0.5;
+    };
+    const deliveryLimitedUnits = sum(sectors.filter((row) => !fundedRecord(row)).map((row) => positive(row.producedUnits) * Math.min(1, positive(row.deliveryLimitedFraction))));
     const bindingCounts = new Map();
     for (const row of sectorRows) {
       const key = row.throughputBindingInput || "none";
@@ -406,7 +431,9 @@ async function main() {
         physicalSellThrough: round(safeDivision(totalSold, totalProduced)),
         deliveryLimitedOutputShare: round(safeDivision(deliveryLimitedUnits, totalProduced)),
         labourStaffingRate: round(safeDivision(staffedWorkers, desiredWorkers)),
-        chronicLowFillSectors: sectors.filter((row) => positive(row.lowFillTurns) >= 12).length,
+        // Funded sectors: latest settled sale under half. Others: legacy 12 turn streak.
+        chronicLowFillSectors: sectors.filter(lowSaleSector).length,
+        fundedSectors: sectors.filter((row) => fundedRecord(row)).length,
         stockpilingSectors: sectors.filter((row) => row.stockpileUnsold === true).length,
         leadingBindingInputs: [...bindingCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([input, count]) => ({ input, count })),
       },
