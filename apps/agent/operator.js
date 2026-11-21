@@ -403,8 +403,10 @@ async function watchTick() {
     const turn = overview?.turn == null ? undefined : Number(overview.turn);
     // Keir 11.2: the turn clock other parts read without a call of their own (closing checks, turn promises).
     if (Number.isFinite(turn)) (ledger.data.watch ||= {}).turnClock = { turn, nextTurn: Date.parse(overview.nextTurn || "") || null, iteration: overview.iteration?.number ?? null, paused: Boolean(overview.paused), at: Date.now() };
-    const r = await watch.tick({ turn });
+    // Keir 11.3 (release review M1): the turn incident check runs first, so a failed turn already has Keir's incident
+    // when the watch decides whether to propose one to staff.
     await turnIncidents.check({ source: "watch" });
+    const r = await watch.tick({ turn });
     if (r.raised?.length) { log(`watch raised ${r.raised.join(", ")}`); if (config.rolesEnabled) engineering.tick(); drain(); }
   } catch (e) { log(`watch: ${e.message}`); }
 }
