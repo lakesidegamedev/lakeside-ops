@@ -89,3 +89,60 @@ test("a bound PR question and an action approval for the same PR share the key",
   assert.equal(askKey(t.data, { binds: { number: 7001, head: "h" } }), askKey(t.data, { actionId: "g" }));
   assert.equal(askKey(t.data, { binds: { number: 7001 } }), "pr:AHDGame:7001");
 });
+
+// ---- Third pass: the review's M3, m7 and m1 ----
+test("M3: an approval whose task has ended does not block a new ask, so the merge can still happen", async () => {
+  const t = setup();
+  t.job("taskA", { ticket: 1900 }); t.job("taskB", { ticket: 1900 });
+  const merge = { action: "merge", number: 6947, head: "e613506c", repository: "lakesidegamedev/AHDGame", summary: "s" };
+  t.action("aa", "taskA", "github", merge);
+  const first = openDecision(t.ledger, t.config, { jobId: "taskA", actionId: "aa", question: "Merge?", signoff: true });
+  first.state = "approve"; first.answeredAt = Date.now(); t.data.actions.aa.state = "approved";
+  // Task A ends on its deadline before it executes the merge.
+  t.data.jobs.taskA.state = "cancelled";
+  t.action("bb", "taskB", "github", merge);
+  const second = openDecision(t.ledger, t.config, { jobId: "taskB", actionId: "bb", question: "Merge?", signoff: true });
+  assert.notEqual(second.id, first.id);
+  assert.equal(second.state, "pending");
+  assert.equal(t.data.actions.bb.state, "pending", "task B's action is not superseded");
+  // While the approving task is alive the duplicate is still refused.
+  t.data.jobs.taskA.state = "waiting"; second.state = "withdrawn";
+  t.action("cc", "taskB", "github", merge);
+  assert.throws(() => openDecision(t.ledger, t.config, { jobId: "taskB", actionId: "cc", question: "Merge?", signoff: true }), /already approved this exact request/);
+});
+
+test("m7: the task whose question a new head replaced follows the new question and hears how it ends", async () => {
+  const t = setup();
+  t.job("ab34", { kind: "finding", ownerDecisionPending: true }); t.job("fdd4", { kind: "command", internalProbe: true });
+  const merge = (head) => ({ action: "merge", number: 6947, head, repository: "lakesidegamedev/AHDGame", summary: "s" });
+  t.action("11b9", "ab34", "github", merge("e613506c"));
+  const a = openDecision(t.ledger, t.config, { jobId: "ab34", actionId: "11b9", question: "Merge?", signoff: true });
+  t.action("7aaa", "fdd4", "github", merge("0c89e032"));
+  const c = openDecision(t.ledger, t.config, { jobId: "fdd4", actionId: "7aaa", question: "Merge?", signoff: true });
+  assert.equal(a.state, "superseded");
+  assert.deepEqual(c.followers.map((f) => f.jobId), ["ab34"]);
+  c.state = "withdrawn"; c.withdrawnReason = "merged on GitHub";
+  await t.decisions.tick();
+  assert.equal(t.data.jobs.ab34.state, "queued");
+  assert.match(t.data.jobs.ab34.inbox.at(-1).content, /ended \(withdrawn: merged on GitHub\)/);
+});
+
+test("m1: releasing followers never requeues a job blocked for a person", async () => {
+  const t = setup();
+  t.job("lead"); t.job("stuck", { state: "blocked", summary: "uncertain write" }); t.job("onq", { state: "blocked", ownerDecisionPending: true });
+  t.data.decisions.q = { id: "q", jobId: "lead", state: "withdrawn", question: "Merge?", sent: {}, followers: [{ jobId: "stuck", at: 1 }, { jobId: "onq", at: 1 }] };
+  await t.decisions.tick();
+  assert.equal(t.data.jobs.stuck.state, "blocked");
+  assert.equal(t.data.jobs.onq.state, "queued");
+});
+
+test("first start: an owner sentence 11.1 took as an answer keeps its DM buttons; an 11.2 channel answer is closed out", async () => {
+  const t = setup();
+  t.job("j");
+  t.data.decisions.old = { id: "old", jobId: "j", state: "answered", answeredVia: "ticket_channel", question: "Raise the cap?", sent: { [OWNER]: { channelId: "dm", messageId: "m-old" } } };
+  t.data.decisions.neu = { id: "neu", jobId: "j", state: "answered", answeredVia: "ticket_channel_option", answeredBy: OWNER, question: "Keep the cap?", sent: { [DELEGATE]: { channelId: "dm2", messageId: "m-new" } } };
+  t.messages["m-old"] = { content: "old" }; t.messages["m-new"] = { content: "new" };
+  await t.decisions.tick();
+  assert.equal(t.messages["m-old"].content, "old", "untouched");
+  assert.notEqual(t.messages["m-new"].content, "new");
+});

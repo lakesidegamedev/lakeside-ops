@@ -214,7 +214,7 @@ const { render: renderDecision } = require("./lib/operator/decisions");
 let checkingDecisions = false;
 // Keir 11.2: GitHub is read before the decision loop sends any reminder or escalation (lib/operator/prtruth.js).
 const ghRead = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
-const prTruth = require("./lib/operator/prtruth").createPrTruth({ ledger, api: ghRead, log });
+const prTruth = require("./lib/operator/prtruth").createPrTruth({ ledger, api: ghRead, log, controls });
 // Keir 11.2: closing conditions, quiet wakes, step-backs and finding expiry (lib/operator/closing.js). Plain settings.
 const closingSettings = require("./lib/operator/closing").settings(env);
 async function checkDecisions() {

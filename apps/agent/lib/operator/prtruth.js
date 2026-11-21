@@ -14,6 +14,13 @@
 const { JOB_TERMINAL } = require("./machines");
 const { GAME_REPO, canonicalRepository, repositoryName } = require("./github");
 const { prOfAction, prOfDecision } = require("./decisions");
+const controlsLib = require("./controls");
+// Third pass (review M7, m1, m4): the pass has its own switch (KEIR_GITHUB_RECONCILE) and preview, and stops under the
+// kill switch or a pause; approvals from before its first real run are taken a few at a time and none older than the
+// history cutoff; a job blocked for a person is never requeued by it; a publish that never produced a PR is searched for
+// at most every 30 minutes and given up after six tries. Review items have their own switch (KEIR_REVIEW_ITEM_GATE).
+const SEARCH_EVERY_MS = 30 * 60000;
+const SEARCH_TRIES = 6;
 
 const TTL_MS = 2 * 60000;
 const KEEP_MS = 14 * 86400000;
@@ -25,8 +32,10 @@ const WAIT_READS = 5;
 const repoOf = (r) => (!r ? GAME_REPO : /\//.test(r) ? canonicalRepository(r) : repositoryName(r));
 const prKey = (repo, n) => `${repo}#${n}`;
 
-function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, maxReads = MAX_READS }) {
+function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, maxReads = MAX_READS, controls = controlsLib.DEFAULT_CONTROLS }) {
   const d = ledger.data;
+  let act = true;
+  const preview = (action, target, reason) => controlsLib.preview(d, "github-reconcile", action, target, reason, {}, now());
   const store = () => { d.prTruth ||= {}; d.prTruth.prs ||= {}; d.prTruth.reasked ||= {}; return d.prTruth; };
 
   // One PR's state, or null when GitHub could not be read. Cached briefly so the decision loop stays cheap.
@@ -47,12 +56,20 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
   function tell(job, content) {
     if (!job || JOB_TERMINAL.includes(job.state)) return;
     (job.inbox ||= []).push({ authorId: "github-truth", role: "system", at: new Date(now()).toISOString(), content });
+    // Review m1: only a job waiting, or blocked on this owner question, is requeued; a job blocked for a person (an
+    // uncertain write, a failed run) reads the line when a person releases it.
+    const onDecision = Boolean(job.ownerDecisionPending);
     if (!Object.values(d.decisions || {}).some((y) => y.state === "pending" && y.jobId === job.id)) delete job.ownerDecisionPending;
-    if (["waiting", "blocked"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; }
+    if (job.state === "waiting" || (job.state === "blocked" && onDecision)) { job.state = "queued"; job.wakeAt = 0; }
   }
 
   function settleDecision(x, truth) {
     const job = d.jobs?.[x.jobId], action = x.actionId && d.actions?.[x.actionId], pr = prOfDecision(d, x);
+    if (!act) {
+      const what = truth.merged ? "merged" : truth.state === "closed" ? "closed without merging" : pr?.head && truth.head && truth.head !== pr.head ? "moved to a new head" : null;
+      if (what) preview("withdraw question", `decision ${x.id}`, `PR #${truth.number} ${what} on GitHub: "${String(x.question || "").replace(/\s+/g, " ").slice(0, 120)}"`);
+      return false;
+    }
     if (truth.merged) {
       x.state = "withdrawn"; x.withdrawnReason = "merged on GitHub"; x.reconciledAt = now();
       if (action && ["pending", "approved", "executing"].includes(action.state)) { action.state = "done"; action.executedAt = truth.mergedAt || now(); action.reconciledFrom = "github"; }
@@ -83,6 +100,10 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
   }
 
   function settleAction(a, truth) {
+    if (!act) {
+      if (truth.merged || truth.state === "closed") preview("settle approval", `action ${a.id}`, `PR #${truth.number} ${truth.merged ? "merged: recorded done" : "closed without merging: withdrawn"}`);
+      return false;
+    }
     if (truth.merged) { a.state = "done"; a.executedAt = a.executedAt || truth.mergedAt || now(); a.reconciledFrom = "github"; ledger.audit("action_reconciled", { action: a.id, pr: truth.number, outcome: "merged" }); return true; }
     if (truth.state === "closed") {
       a.state = a.state === "executing" ? "failed" : "withdrawn"; a.reconciledFrom = "github"; a.error = a.error || "closed on GitHub without merging";
@@ -94,6 +115,10 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
   async function tick() {
     const budget = { left: maxReads };
     let changed = 0;
+    const g = controls.gate("githubReconcile");
+    if (!g.run) return { changed, reads: 0, skipped: g.why };
+    act = g.act;
+    const hist = controlsLib.history(d, "githubReconcile", { controls, now: now(), act });
     // Pending questions first: they drive reminders, escalations and "waiting on the owner" lines.
     for (const x of Object.values(d.decisions || {})) {
       if (x.state !== "pending") continue;
@@ -104,6 +129,9 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
     }
     for (const a of Object.values(d.actions || {})) {
       if (!["approved", "executing"].includes(a.state)) continue;
+      // First start: approvals older than the pass are taken a few per run, and none older than the history cutoff.
+      const age = hist.check(Number(a.approvedAt || a.at) || NaN);
+      if (age === "too old" || age === "later") continue;
       const pr = prOfAction(a);
       if (pr) {
         const truth = await read(repoOf(pr.repository), pr.number, budget);
@@ -111,13 +139,16 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
         continue;
       }
       // A publish_patch left executing after its PR reached GitHub (66f1a21d, 86ec347a: 78 hours).
-      if (a.kind === "publish_patch" && a.state === "executing" && now() - (a.at || 0) > 30 * 60000 && !a.args?.revise && budget.left > 0) {
+      if (a.kind === "publish_patch" && a.state === "executing" && now() - (a.at || 0) > 30 * 60000 && !a.args?.revise && budget.left > 0
+        && (a.prSearches || 0) < SEARCH_TRIES && now() - (a.prSearchAt || 0) >= SEARCH_EVERY_MS) {
         const repo = repoOf(a.args?.repository), branch = `keir/task-${a.jobId}-${a.id}`;
         budget.left--;
+        a.prSearchAt = now(); a.prSearches = (a.prSearches || 0) + 1;
         let found;
         try { found = await api([`repos/${repo}/pulls?state=all&head=${repo.split("/")[0]}:${branch}&per_page=5`]); } catch { continue; }
         const pr = Array.isArray(found) ? found.find((p) => p.head?.ref === branch) : null;
-        if (!pr) continue;
+        if (!pr) { if (a.prSearches >= SEARCH_TRIES) ledger.audit("publish_search_given_up", { action: a.id, tries: a.prSearches }); continue; }
+        if (!act) { preview("settle publish", `action ${a.id}`, `its PR #${pr.number} is on GitHub: recorded done`); continue; }
         a.state = "done"; a.executedAt = now(); a.reconciledFrom = "github"; a.result = { pullRequest: pr.html_url, branch };
         const job = d.jobs?.[a.jobId];
         if (job && !(job.pullRequests || []).includes(pr.html_url)) job.pullRequests = [...(job.pullRequests || []), pr.html_url];
@@ -147,9 +178,12 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
       const on = job.closing?.on;
       const waited = on && ["pr", "deploy"].includes(on.kind) && Number.isFinite(on.ref) ? on.ref : null;
       const fixPr = review ? (job.pullRequests || []).map(prNum).filter(Boolean).at(-1) || null : null;
+      const rg = controls.gate("reviewGate");
       for (const n of [...new Set([waited, fixPr].filter(Boolean))]) {
         const truth = await read(GAME_REPO, n, budget, WAIT_REFRESH_MS);
-        if (truth && n === fixPr && reviewFix(job, truth)) changed++;
+        if (!truth || n !== fixPr || !rg.run) continue;
+        if (!rg.act || !act) { if (truth.state === "closed" && !truth.merged && job.reviewFix?.state !== "reopened") preview("reopen review item", `job ${job.id}`, `fix PR #${n} closed without merging`); continue; }
+        if (reviewFix(job, truth)) changed++;
       }
     }
     return changed;

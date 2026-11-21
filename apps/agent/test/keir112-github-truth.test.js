@@ -66,6 +66,9 @@ test("approved merges reconcile to done and are archived done, never 'orphaned: 
     c87e: approved("c87e", "gone4", 7001, "036b6c"), c34b: approved("c34b", "gone4", 7001, "311742"),
   });
   await w.truth.tick();
+  // Third pass (review M7): approvals from before the pass's first run are taken three per run.
+  assert.equal(["c68a", "b11b", "b6ce", "c87e", "c34b"].filter((id) => w.data.actions[id].state === "done").length, 3);
+  await w.truth.tick();
   for (const id of ["c68a", "b11b", "b6ce", "c87e", "c34b"]) assert.equal(w.data.actions[id].state, "done", id);
   assert.equal(w.reads.length, 3, "one read per PR, not per approval");
   const archived = sweepOrphans(w.data, T0 + GRACE_MS + 86400000);
@@ -164,4 +167,39 @@ test("post path: 'waiting on the owner' is refused once the question was closed 
   f.ledger.data.decisions.y = { id: "y", jobId: f.job.id, ticket: 123, state: "pending", at: f.now() - 60000, question: "Merge?", sent: {} };
   await f.broker.tool(f.job, "channel_reply", { message: "The pricing question is waiting on the owner's decision." });
   assert.equal(f.posts().length, 1);
+});
+
+// ---- Third pass: the review's m1, m4 and M7 ----
+const { staticControls } = require("../lib/operator/controls");
+
+test("m1: a merge on GitHub never requeues a job blocked for a person; one blocked on the question is woken", async () => {
+  const w = setup({ 6866: merged(6866) });
+  w.data.jobs.p = { id: "p", state: "blocked", summary: "uncertain write" };
+  w.data.jobs.q = { id: "q", state: "blocked", ownerDecisionPending: true };
+  for (const id of ["p", "q"]) w.data.decisions[`x${id}`] = { id: `x${id}`, jobId: id, state: "pending", at: T0, question: "Merge?", binds: { number: 6866, head: "h6866" }, sent: {} };
+  await w.truth.tick();
+  assert.equal(w.data.jobs.p.state, "blocked");
+  assert.match(w.data.jobs.p.inbox.at(-1).content, /was merged on GitHub/);
+  assert.equal(w.data.jobs.q.state, "queued");
+});
+
+test("m4: a publish that never produced a PR is searched at most every 30 minutes and given up after six tries", async () => {
+  const w = setup({});
+  w.data.actions.pp = { id: "pp", jobId: "j", kind: "publish_patch", state: "executing", at: T0 - 3600000, approvedAt: T0 + 1, args: {} };
+  for (let i = 0; i < 400; i++) { await w.truth.tick(); w.advance(60000); }
+  assert.equal(w.reads.filter((r) => /head=/.test(r)).length, 6);
+  assert.ok(w.data.audit.some((a) => a.kind === "publish_search_given_up"));
+});
+
+test("M7: the reconcile switch off reads nothing; preview records the withdrawal without making it; the kill switch stops it", async () => {
+  for (const [controls, previewed] of [[staticControls({ githubReconcile: "off" }), false], [staticControls({}, { preview: true }), true], [staticControls({}, { held: "x" }), false]]) {
+    const data = { jobs: { j: { id: "j", state: "waiting" } }, actions: {}, decisions: { x: { id: "x", jobId: "j", state: "pending", at: T0, question: "Merge the fix?", binds: { number: 6866, head: "h6866" }, sent: {} } }, outbox: {}, audit: [] };
+    const reads = [];
+    const truth = createPrTruth({ ledger: { data, save() {}, audit() {}, notify() {} }, api: async ([r]) => { reads.push(r); return merged(6866); }, now: () => T0, controls });
+    await truth.tick();
+    assert.equal(data.decisions.x.state, "pending");
+    assert.equal(data.jobs.j.state, "waiting");
+    assert.equal(Boolean(data.preview?.items?.["github-reconcile:withdraw question:decision x"]), previewed);
+    if (!previewed) assert.deepEqual(reads, []);
+  }
 });
