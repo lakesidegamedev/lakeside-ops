@@ -346,7 +346,7 @@ const REPORTER_BOUND = new Set(["reporter_operating_results", "reporter_action_p
 const IDENTITY_ARGS = ["character", "characterId", "character_id", "sequentialId", "id", "name", "player", "playerId", "username", "user", "userId", "account", "accountId", "reporter", "ticket"];
 const NOT_FOUND_LIKE = /outside support scope|not a \S+ read|unknown tool|tool not found|method not found|not available to this task/i;
 const handoffTruth = require("./handofftruth");
-const QUICK_TOOLS = ["conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
+const QUICK_TOOLS = ["ticket_command", "conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -600,6 +600,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   const delegation = createDelegation({ ledger, sandbox, config, now });
   const surge = createSurge({ ledger, mcp, discord, config, now, ...(config.jevAsk ? { ask: config.jevAsk } : {}) });
   let issueFlight = Promise.resolve();
+  // Keir 11.4: owner and staff act on tickets by number (ticketcommands.js); authority is checked there from the real author.
+  const ticketCommands = require("./ticketcommands").createTicketCommands({ ledger, config, mcp, discord, effect: (...a) => effect(...a), now, ticketOf: (j) => j.ticket || ticketNumberOf(j.source?.channelName), ctl: () => ctl(), publicText: (t) => publicText(t) });
   const ownerDirected = (job) => job.kind === "command" && job.role === "owner" && job.actorId === config.ownerId && job.source?.authorId === config.ownerId;
   const developerTask = (job) => job.kind === "command" && [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && ["owner", "support"].includes(job.role);
   // A ticket a developer opened for their own internal work (its opening request
@@ -2526,6 +2528,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // The whole public timeline, as the receipt page shows it (2.3).
         publicUpdates: (t.publicUpdates || []).filter((u) => u.kind !== "heal").slice(-30).map((u) => ({ at: u.at, message: String(u.message || "").slice(0, 600) })) };
     }
+    if (name === "ticket_command") {
+      if (input.op === "add_person") {
+        const r = await ticketCommands.run(job, input, signal);
+        return tool(job, "add_to_ticket", { user: String(input.user || ""), ...(r.ticket ? { ticket: r.ticket } : {}) }, signal);
+      }
+      return ticketCommands.run(job, input, signal);
+    }
     if (name === "merge_into_incident") {
       const target = Number(input.incident);
       // A ticket task merges its own report; a developer task may name one.
@@ -4152,10 +4161,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // player to a ticket or incident channel by name.
     if (name === "add_to_ticket") {
       const staffAsk = [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && job.role !== "player";
-      if (!developerTask(job) && !(job.kind === "conversation" && staffAsk)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
+      if (!developerTask(job) && !(job.kind === "conversation" && staffAsk) && ticketCommands.refusal(job)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
       const ticketNo = Number(input.ticket) || ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
       if (!ticketNo) throw new Error("name the ticket number to add them to");
-      const channelId = (job.channelId && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
+      const channelId = (job.channelId && snowflake(job.channelId) && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
         : d.jobs[d.seen[`ticket:${ticketNo}`]]?.channelId;
       const ch = channelId && await discord("GET", `/channels/${channelId}`);
       if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== ticketNo) throw new Error(`no open channel found for ticket ${ticketNo}`);
@@ -5408,7 +5417,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { ticketCommandAllowed: (job) => !ticketCommands.refusal(job), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),
