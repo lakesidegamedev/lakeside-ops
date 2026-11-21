@@ -12,8 +12,9 @@
 //
 // Third pass (review B3, m2, m3): the keeper cannot feed itself. A reply made after a promise wake, before the player or
 // staff write again, never records or re-arms a promise; "I can't confirm yet" after a wake ends that promise. Each
-// promise gets at most two wakes and one fallback line, and each ticket at most MAX_TICKET_WAKES wakes and one fallback
-// line a day. Refusals, quoted speech and "we'll see" are not promises. The owner hears what actually reached the player.
+// promise gets at most two wakes and one fallback line (a promise chained to a woken one gets one wake of its own at its
+// due time), and each ticket at most MAX_TICKET_WAKES wakes and one fallback line a day, after which the promise ends
+// and the owner is told. Refusals, quoted speech and "we'll see" are not promises. The owner hears what actually reached the player.
 const { JOB_TERMINAL } = require("./machines");
 const controlsLib = require("./controls");
 
@@ -94,8 +95,8 @@ function list(d, ticket) { d.ticketPromises ||= {}; return (d.ticketPromises[tic
 // Called by the post path for every delivered Keir reply on a ticket (never for cards or code notices).
 // askedAt: the last time the player or staff wrote on the ticket. A reply made after a promise wake and before anyone
 // wrote again answers that wake: it keeps or ends the woken promise (review B3). Fourth pass (review N2): a real new
-// promise in that reply is still recorded, chained to the woken one: it inherits the wakes already spent, so the chain
-// stays inside the same two wakes per promise and four per ticket a day, then the one fallback line. Nothing is dropped.
+// promise in that reply is still recorded, chained to the woken one: it gets one wake of its own at its due time, then
+// the one fallback line; the ticket's four wakes a day bound the whole chain, then the owner is told. Nothing is dropped.
 function notePost(d, ticket, job, message, now, { askedAt = 0 } = {}) {
   if (!ticket || !job) return null;
   const rows = list(d, ticket);
@@ -215,7 +216,7 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
           try { await post(Number(ticket), FALLBACK); p.fallbackAt = now(); outcome = "The player was told Keir cannot confirm it yet."; }
           catch (e) { p.fallbackError = String(e.message).slice(0, 200); log(`promise fallback ${ticket}: ${p.fallbackError}`); outcome = `The plain "cannot confirm yet" line could not be posted (${p.fallbackError}), so the player has heard nothing.`; }
         }
-        ledger.notify(`promise-overdue:${ticket}:${p.id}`, "owner", `Ticket ${ticket}: Keir promised the player a follow-up ("${p.text.slice(0, 200)}") and two wakes did not produce it. ${outcome} A person may want to look.`);
+        ledger.notify(`promise-overdue:${ticket}:${p.id}`, "owner", `Ticket ${ticket}: Keir promised the player a follow-up ("${p.text.slice(0, 200)}") and ${p.chainedFrom ? "its wake" : "two wakes"} did not produce it. ${outcome} A person may want to look.`);
       }
     }
     if (changed) ledger.save();

@@ -55,6 +55,7 @@ test("ticket 1868 replay: blocked job is woken when due, twice, then the player 
   assert.equal(w.posted[0].text, FALLBACK);
   assert.doesNotMatch(FALLBACK, /[–—]/);
   assert.equal(Object.keys(w.data.outbox).filter((k) => k.startsWith("promise-overdue:1868:")).length, 1);
+  assert.match(Object.entries(w.data.outbox).find(([k]) => k.startsWith("promise-overdue:1868:"))[1].content, /and two wakes did not produce it/, "an unchained promise had two wakes");
   w.set("23:30"); await w.keeper.tick(); w.set("23:59"); await w.keeper.tick();
   assert.equal(w.posted.length, 1, "bounded: never repeats");
   assert.equal(w.data.audit.filter((a) => a.kind === "promise_wake").length, 2);
@@ -327,6 +328,10 @@ test("F2: a promise made in a wake reply is woken once, after the turn it named 
   assert.equal(w.posted[0].text, FALLBACK);
   assert.equal(chained.state, "failed");
   assert.equal(wakes(w).length, 2);
+  // Review 4 m3: the owner line is true for a chained promise, which had one wake of its own.
+  const line = Object.entries(w.data.outbox).find(([k]) => k === `promise-overdue:1868:${chained.id}`)[1].content;
+  assert.match(line, /and its wake did not produce it/);
+  assert.doesNotMatch(line, /two wakes/);
 });
 
 test("F2: the same chain where Keir answers after turn 52 keeps the promise and posts nothing from code", async () => {
