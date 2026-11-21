@@ -210,6 +210,8 @@ let checkingDecisions = false;
 // Keir 11.2: GitHub is read before the decision loop sends any reminder or escalation (lib/operator/prtruth.js).
 const ghRead = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
 const prTruth = require("./lib/operator/prtruth").createPrTruth({ ledger, api: ghRead, log });
+// Keir 11.2: closing conditions, quiet wakes, step-backs and finding expiry (lib/operator/closing.js). Plain settings.
+const closingSettings = require("./lib/operator/closing").settings(env);
 async function checkDecisions() {
   if (checkingDecisions) return; checkingDecisions = true;
   try { await prTruth.tick(); } catch (e) { log(`prtruth: ${e.message}`); }
@@ -378,6 +380,8 @@ async function watchTick() {
     // game_overview is unavailable. Each sensor isolates its own failures.
     const overview = await mcp.call("gamestate", "game_overview", {}, false).catch((e) => { log(`watch overview: ${e.message}`); return null; });
     const turn = overview?.turn == null ? undefined : Number(overview.turn);
+    // Keir 11.2: the turn clock other parts read without a call of their own (closing checks, turn promises).
+    if (Number.isFinite(turn)) (ledger.data.watch ||= {}).turnClock = { turn, nextTurn: Date.parse(overview.nextTurn || "") || null, iteration: overview.iteration?.number ?? null, paused: Boolean(overview.paused), at: Date.now() };
     const r = await watch.tick({ turn });
     if (r.raised?.length) { log(`watch raised ${r.raised.join(", ")}`); if (config.rolesEnabled) engineering.tick(); drain(); }
   } catch (e) { log(`watch: ${e.message}`); }
@@ -466,6 +470,8 @@ tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, {
 // Keir 11.2: a follow-up promised to a player wakes its ticket when due, even a blocked one; two failed wakes post one plain
 // "can't confirm yet" line and tell staff once (lib/operator/promises.js).
 const promiseKeeper = require("./lib/operator/promises").createPromises({ ledger, log, held: (job) => ticketHeld(job), post: (n, text) => broker.promiseFallback(n, text) });
+// Keir 11.2: finding jobs blocked with no question, parked with nothing changing, or from an old world are closed with a record.
+tickers.every("findingexpiry", 30 * 60000, async () => { if (ledger.data.paused) return; require("./lib/operator/closing").expireFindings(ledger, { now: Date.now(), config: closingSettings }); }, { immediateMs: 5 * 60000 });
 tickers.every("promises", 5 * 60000, async () => { if (killSwitch.state()?.engaged) return; const r = await promiseKeeper.tick(); if (r.woke) drain(); }, { immediateMs: 3 * 60000 });
 // Keir 11.1: keeps live evidence trackers current, once per settled turn, silently (KEIR_EVIDENCE_MONITOR=0 turns it off).
 // Page-only: no Discord post, no model call, no job created or revived. Ends at 24 h, stop, pause, takeover, kill switch, closed ticket or a wrong world.
@@ -842,7 +848,7 @@ function drain() {
   const now = Date.now();
   require("./lib/operator/workqueue").reviewWaits(ledger, config, now);
   selfRecovery.tick(active, { supportDeferred: (j) => config.supportDeferred(j), setTicketOwner: (t, o) => supportOwner.setTicketOwner(t, o, "self-recovery", {}), canRun: (j) => !(j.ticketPaused || config.supportDeferred(j) || d.channels[j.channelId]?.claimedBy || broker.supportDirectiveHeld(j) || staffHeld(j)) });
-  const wakeCtx = { now, config, claimedBy: (id) => d.channels[id]?.claimedBy, directiveHeld: (j) => broker.supportDirectiveHeld(j) };
+  const wakeCtx = { now, config, data: d, closing: closingSettings, claimedBy: (id) => d.channels[id]?.claimedBy, directiveHeld: (j) => broker.supportDirectiveHeld(j) };
   for (const j of Object.values(d.jobs)) {
     if (j.codingParent && !j.operatorRole) {
       const role = rootJob(j, d.jobs).operatorRole;

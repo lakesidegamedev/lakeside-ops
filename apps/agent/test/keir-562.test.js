@@ -80,17 +80,17 @@ test("one open question does not pause a ticket's other fixes", async (t) => {
     { name: "Gain tooltips", stage: "found", blocked: true, note: "" },
     { name: "Logo spacing", stage: "found", blocked: true, note: "Waiting on which page." },
   ] } };
-  await assert.rejects(f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Waiting for the logo page." }), /Gain tooltips[\s\S]*does not pause the others/);
+  await assert.rejects(f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Waiting for the logo page." }), /Gain tooltips[\s\S]*does not pause the others/);
   assert.equal(f.job.state, "running");
   // Asked once per card state: a genuine wait still finishes.
-  const done = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Waiting for the logo page." });
+  const done = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Waiting for the logo page." });
   assert.equal(done.state, "waiting");
 });
 
 test("annotating an idle fix as the prompt asks does not re-arm it; a newly idle fix asks again", async (t) => {
   const f = fixture(t);
   f.ledger.data.statusCards = { 1577: { items: [{ name: "Steelworks idle", stage: "found", blocked: false, note: "" }] } };
-  const finish = () => f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting on the player." });
+  const finish = () => f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered; waiting on the player." });
   await assert.rejects(finish(), /not moving/);
   f.ledger.data.statusCards[1577].items = [{ name: "Steelworks idle", stage: "found", blocked: true, note: "Waiting on your reply about renewal." }];
   assert.equal((await finish()).state, "waiting");
@@ -102,14 +102,14 @@ test("annotating an idle fix as the prompt asks does not re-arm it; a newly idle
 test("an answered item does not count as an idle fix", async (t) => {
   const f = fixture(t);
   f.ledger.data.statusCards = { 1577: { items: [{ name: "Steelworks made nothing", stage: "answered", blocked: false, note: "" }] } };
-  const done = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Answered; waiting on the player." });
+  const done = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Answered; waiting on the player." });
   assert.equal(done.state, "waiting");
 });
 
 test("a card with every fix live or moving finishes waiting without a prompt", async (t) => {
   const f = fixture(t);
   f.ledger.data.statusCards = { 1577: { items: [{ name: "Dropdowns", stage: "main", blocked: false, note: "" }] } };
-  const done = await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "player_reply", summary: "Waiting for the player to confirm." });
+  const done = await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "player_reply", summary: "Waiting for the player to confirm." });
   assert.equal(done.state, "waiting");
 });
 

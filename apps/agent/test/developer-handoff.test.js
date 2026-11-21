@@ -20,7 +20,7 @@ function fixture(t) {
 test("a blocking developer handoff cannot silently finish a finding before acceptance", async (t) => {
   const { job, broker } = fixture(t);
   await broker.tool(job, "raise_to_developers", { title: "Reviewed turn fix needs developer execution", detail: "The reviewed fix needs a developer to complete its merge and verify deployment; the finding has no authority to perform that step.", kind: "question", needsHuman: true, force: true });
-  const result = await broker.tool(job, "finish", { state: "done", summary: "Filed the next step for developers; patch is not deployed." });
+  const result = await broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Filed the next step for developers; patch is not deployed." });
   assert.equal(result.state, "waiting");
   assert.equal(job.raisedToDevelopers[0].blocking, true);
 });
@@ -103,7 +103,7 @@ test("a pending handoff never delays fresh unanswered player evidence", async (t
   const f = fixture(t); f.job.kind = "ticket"; f.job.ticket = 9;
   f.job.raisedToDevelopers = [{ id: 77, at: NOW, blocking: true }];
   f.job.observedPlayerAt = NOW - 1000; f.job.lastPublishedAt = NOW - 2000;
-  await f.broker.tool(f.job, "finish", { state: "waiting", waitFor: "developer_reply", summary: "waiting" });
+  await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary: "waiting" });
   assert.equal(f.job.wakeAt, NOW + 60000);
 });
 test("legacy explicit developer waits are adopted without reclassifying all old issues", async (t) => {
@@ -116,7 +116,7 @@ test("legacy explicit developer waits are adopted without reclassifying all old 
 test("a queued decision is not withdrawn when a requested done becomes a waiting handoff", async (t) => {
   const f = fixture(t); f.job.raisedToDevelopers = [{ id: 77, at: NOW, blocking: true }];
   f.ledger.data.decisions = { fixture: { id: "fixture", jobId: f.job.id, state: "pending" } };
-  await f.broker.tool(f.job, "finish", { state: "done", summary: "Handed off" });
+  await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "done", summary: "Handed off" });
   assert.equal(f.job.state, "waiting"); assert.equal(f.ledger.data.decisions.fixture.state, "pending");
 });
 test("a recovery can read its own handoff result but not unrelated queue items", async (t) => {

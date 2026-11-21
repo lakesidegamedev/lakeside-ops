@@ -222,6 +222,9 @@ function createRecovery({ ledger, config = {}, now = () => Date.now(), log = () 
   function waitReason(j) {
     if (j.ownerDecisionPending || Object.values(d.decisions || {}).some((x) => x.jobId === j.id && x.state === "pending")) return "decision";
     if (j.turnWatch || Object.keys(j.ciWatch || {}).length || (j.promotionHoldUntil || 0) > now()) return "subscription";
+    // Keir 11.2: a closing condition whose wait code checks (a turn, a PR, a deploy, a worker) is a known dependency, and a
+    // parked job has told the owner what it waits on (closing.js). Neither is an unknown wait.
+    if (j.closing?.parked || ["turn", "pr", "deploy", "worker"].includes(j.closing?.on?.kind)) return "subscription";
     const posted = typeof j.lastPublishedAt === "number" ? j.lastPublishedAt : Date.parse(j.lastPublishedAt || "") || 0;
     const player = typeof j.lastPlayerAt === "number" ? j.lastPlayerAt : Date.parse(j.lastPlayerAt || "") || 0;
     // Closing grace: the ticket is answered and waiting out its closure window.

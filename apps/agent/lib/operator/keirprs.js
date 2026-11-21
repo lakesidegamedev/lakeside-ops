@@ -45,7 +45,9 @@ function ledgerIndex(d) {
   };
   for (const j of Object.values(d.jobs || {})) {
     const live = !JOB_TERMINAL.includes(j.state);
-    for (const u of j.pullRequests || []) if (/\/AHDGame\/pull\//.test(u)) add(prNumber(u), j.id, live);
+    // Keir 11.2: a job that woke quietly and handed its PR over (closing.js) no longer drives it; this pass does.
+    const handed = new Set(j.closing?.handedPrs || []);
+    for (const u of j.pullRequests || []) if (/\/AHDGame\/pull\//.test(u)) add(prNumber(u), j.id, live && !handed.has(prNumber(u)));
     for (const n of [j.ownerWaitPr, j.adoptedPr]) if (n && live) add(Number(n), j.id, true);
   }
   for (const a of Object.values(d.actions || {})) if (a.kind === "publish_patch" && a.result?.pullRequest) add(prNumber(a.result.pullRequest), a.jobId, false, a.result.branch);

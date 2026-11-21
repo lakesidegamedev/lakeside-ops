@@ -26,7 +26,9 @@ const { JOB_TERMINAL } = require("./machines");
 //   4. dead-end sweep         blocked probe/benchmark > 1 h, or blocked subworker whose
 //                             report reached its parent > 30 min     -> dismissed, stop
 //   5. directive held         owner directive on the ticket (broker)  -> nothing else runs
-//   6. wake                   waiting and (wakeAt reached, or inbox has mail and no
+//   6. wake                   (a due timer with an empty inbox first runs the closing check, closing.js:
+//                             nothing changed in what the job waits on -> stays waiting, no model run)
+//                             waiting and (wakeAt reached, or inbox has mail and no
 //                             debounceWake)                           -> queued
 //                             blocked with mail, not a subworker or
 //                             probe, channel open                     -> queued
@@ -130,6 +132,12 @@ function wakeStep(j, ctx) {
   // a message still wakes the job.
   const backedOff = j.closeReadFailures > 0 && now < (j.closeCheckAt || 0);
   const deadlineHold = j.deadlineBlockedAt && j.deadline < now;
+  // Keir 11.2: a timer wake first checks, in code, whether what the job waits on changed (closing.js). Nothing changed:
+  // no model run, the timer is set again, and after a few quiet wakes the job escalates once or parks.
+  if (j.state === "waiting" && j.wakeAt <= now && !backedOff && !j.inbox?.length && ctx.data) {
+    const q = require("./closing").quietWake(ctx.data, j, now, ctx.closing);
+    if (q) effects.push(...q.effects);
+  }
   if (j.state === "waiting" && ((j.wakeAt <= now && !backedOff) || (j.inbox?.length && !j.debounceWake))) { j.state = "queued"; delete j.debounceWake; }
   // A message that arrived while the task was running (a handoff, a staff
   // note) is still unread when that run settles as blocked; it must wake the

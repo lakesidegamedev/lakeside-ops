@@ -15,7 +15,7 @@ function fixture(t, fields = {}) {
   const job = ledger.createJob("ticket:1545", { kind: "ticket", role: "support", ticket: 1545, channelId: "channel", source: {}, deadline: NOW + 86400000, ...fields });
   job.state = "running";
   const broker = createBroker({ ledger, config, mcp: { servers: () => [] }, discord: async () => { throw new Error("unexpected external call"); }, sandbox: {}, now: () => NOW });
-  return { ledger, job, finish: (input) => broker.tool(job, "finish", { state: "waiting", summary: "Waiting for evidence", ...input }) };
+  return { ledger, job, finish: (input) => broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Waiting for evidence", ...input }) };
 }
 test("broker honors explicitly requested six-hour support wait instead of clamping to fifteen minutes", async (t) => {
   const f = fixture(t); await f.finish({ wakeAfterMinutes: 360 });

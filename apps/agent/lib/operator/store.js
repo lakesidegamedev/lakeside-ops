@@ -61,6 +61,8 @@ function createLedger(file) {
   function createJob(key, fields) {
     if (data.seen[key]) return data.jobs[data.seen[key]];
     const job = { id: id(), state: "queued", at: Date.now(), updatedAt: Date.now(), rounds: 0, messages: [], effects: {}, ...fields };
+    // Keir 11.2: a finding remembers the game world it was raised in, so it can expire when that world is gone (closing.js).
+    if (job.kind === "finding" && job.world === undefined && data.watch?.turnClock?.iteration != null) job.world = data.watch.turnClock.iteration;
     data.jobs[job.id] = track(job, "job", unexpected);
     data.seen[key] = job.id;
     audit("created", { job: job.id, role: job.role, source: key });

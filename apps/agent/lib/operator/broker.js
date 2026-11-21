@@ -33,6 +33,7 @@ const claimcheck = require("./claimcheck");
 const accountClaim = require("./accountclaim");
 const settingClaim = require("./settingclaim");
 const standdown = require("./standdown");
+const closing = require("./closing");
 const { isQuick } = require("./conversation");
 const { rootJob } = require("./workrecord");
 const evidenceLookup = require("./evidencelookup");
@@ -556,6 +557,8 @@ function similarity(a, b) {
   return both / (x.size + y.size - both);
 }
 function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
+  // Keir 11.2: closing-condition settings (KEIR_QUIET_WAKES and friends); tests may pass config.closing.
+  const closingConfig = config.closing || closing.settings(process.env);
   let guildChannelCache = null;
   const reporterCache = new Map();
   const d = ledger.data;
@@ -1322,6 +1325,11 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (said) refuse(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
     }
     attempt(() => guardStall(job, ticketNo, message, posts));
+    // Keir 11.2: a step-back activation states the ticket's position in a checkpoint first, then posts at most once.
+    if (!opts.system && job.stepBack && !job.stepBack.done) attempt(() => {
+      const t = closing.stepBackRefusal(job, { checkpointed: (job.history || []).some((h) => h.kind === "checkpoint" && Date.parse(h.at || "") >= job.stepBack.at) });
+      if (t) { ledger.audit("step_back_post_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); }
+    });
     // Keir 11.2 post budget (postbudget.js): one live announcement per shipped change, turn reports only when the answer
     // changed, and an hourly cap without a new player message whose overflow is one merged correction or answer.
     if (!opts.system && !answeringStaff) {
@@ -1330,9 +1338,16 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         const said = pb.liveAlreadySaid({ posts, receipt: pb.mainReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), humanAt: h });
         if (said) { ledger.audit("live_repeat_refused", { job: job.id, ticket: ticketNo }); refuse(`Not posted: the player was already told this release is live ("${String(said.text).slice(0, 140)}"). Do not announce it again; post only what is new.`); }
       }
-      const promiseDue = (d.ticketPromises?.[ticketNo] || []).some((p) => p.state === "open" && (p.wokenAt || p.dueAt <= now() + 30 * 60000));
-      const repeat = !isCorrection(message) && !promiseDue && pb.repeatsTurnAnswer({ posts, humanAt: h, message });
-      if (repeat) { ledger.audit("turn_repeat_refused", { job: job.id, ticket: ticketNo }); refuse(`Not posted: this turn report gives the same answer as the last one ("${String(repeat.text).slice(0, 140)}") and the player has not written since. Post a turn report only when the answer changes; keep checking privately.`); }
+      // Keir 11.2: one turn rule (postbudget.turnPostRule): turn commentary only when the player asked, a recorded promise is
+      // due, or the closing condition calls for that turn's result; and never the same answer twice.
+      const promiseDue = require("./promises").calledFor(d, ticketNo, now());
+      const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]];
+      const calledFor = closing.closingCallsForTurn(d, job, now()) || (root && root !== job && closing.closingCallsForTurn(d, root, now()));
+      const lastKeirAt = Math.max(d.ticketPace?.[ticketNo]?.log?.at(-1)?.at || 0, d.lastSubstantive?.[ticketNo]?.at || 0);
+      const turnArgs = { posts, humanAt: h, message, correction: isCorrection(message), promiseDue, calledFor, lastKeirAt };
+      const turnRule = pb.turnPostRule(turnArgs);
+      if (turnRule) { ledger.audit(turnRule.why === "same turn answer" ? "turn_repeat_refused" : "turn_post_not_called_for", { job: job.id, ticket: ticketNo }); refuse(turnRule.refusal); }
+      else if (!opts.collect && pb.turnPostVia(turnArgs) === "closing") job.turnReportViaClosing = true; // it uses up the closing condition's call
       const cap = Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR;
       const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || isCorrection(message), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
       if (!r.allow) { ledger.audit("hourly_post_cap_refused", { job: job.id, ticket: ticketNo, count: r.count }); refuse(pb.hourlyRefusal(r, cap)); }
@@ -1926,7 +1941,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Keir 11.2: the post that goes past the hourly cap is the one merged overflow message for this player message.
       try { const pb = require("./postbudget"), h = humanAt(ticketNo); if (pb.recentRun(d.ticketPosts?.[ticketNo], h, now()).length >= (Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR)) (d.postOverflow ||= {})[ticketNo] = { at: now(), humanAt: h }; } catch {}
       // Keir 11.2: every follow-up promise Keir makes is recorded with a due time by the post path itself (promises.js).
-      if (job.kind !== "notice") { try { const p = require("./promises").notePost(d, ticketNo, job, message, now()); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt }); } catch {} }
+      if (job.kind !== "notice") { try { const p = require("./promises").notePost(d, ticketNo, job, message, now()); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt, afterTurn: p.afterTurn ?? null }); } catch {} }
+      // Keir 11.2: the ticket's pace (posts, corrections) for the step-back threshold; a step-back posts once; a turn
+      // report the closing condition called for uses that call up.
+      try { closing.notePost(d, ticketNo, message, { now: now(), correction: isCorrection(message) }); } catch {}
+      if (job.stepBack && !job.stepBack.done) job.stepBack.posted = (job.stepBack.posted || 0) + 1;
+      if (job.turnReportViaClosing) { delete job.turnReportViaClosing; const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]]; for (const j of [job, root]) if (j && closing.closingCallsForTurn(d, j, now())) closing.noteTurnReport(d, j, now()); }
     }
     try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); } catch {}
     try { require("./ticketcase").recordPost(d, job, message, { now: now(), card }); } catch {} // Keir 10.3: durable case file
@@ -4757,6 +4777,15 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       ledger.save(); return { saved: true };
     }
     if (name === "finish") {
+      // Keir 11.2: after the state and timer are settled, record the wait for the code check and escalate quiet waits once.
+      const settleClosing = () => {
+        if (job.stepBack && !job.stepBack.done) job.stepBack.done = true;
+        const startedAt = job.startedAt || job.lastRunStartedAt || 0;
+        const acted = (job.lastPublishedAt || 0) >= startedAt || Object.values(job.effects || {}).some((e) => (e?.at || 0) >= startedAt)
+          || Object.values(d.decisions || {}).some((x) => x.jobId === job.id && (x.at || x.createdAt || 0) >= startedAt);
+        const out = closing.afterFinish(d, job, { acted, now: now(), config: closingConfig });
+        if (out?.effects) require("./lifecycle").applyEffects(ledger, out.effects);
+      };
       if (conversationTurn.foreground.has(job)) {
         if (input.state !== "waiting" || input.needsOwner) throw new Error("Finish waiting for the delegated worker.");
         if (!(job.lastPublishedAt >= job.startedAt)) throw new Error("Answer the current question before yielding to the worker.");
@@ -4796,6 +4825,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       if (developerTask(job) && ["done", "waiting", "blocked"].includes(state) && /offered (?:a |the )?patch|waiting for (?:her|his|their|your) (?:answer|reply).*patch|(?:ask|asking).*(?:whether|if).*(?:prepare|write|make).*(?:patch|fix)/i.test(input.summary || "") && !Object.values(d.actions).some(a => a.jobId === job.id && a.state === "pending")) throw new Error("Prepare the reviewable patch and focused validation now. Patch preparation already has developer authorization; use publish_patch for exact review before publication. Do not wait merely for permission to prepare it.");
       if (!["done", "waiting", "blocked", "dismissed"].includes(state)) throw new Error("invalid task state");
+      // Keir 11.2 (closing.js): a ticket or finding waits only with a stated closing condition and what it waits on.
+      { const why = closing.fromFinish(d, job, input, now(), { pendingDecision: Object.values(d.decisions || {}).some((x) => x.state === "pending" && x.jobId === job.id) });
+        if (why) { ledger.audit("closing_condition_refused", { job: job.id, ticket: job.ticket || null }); throw new Error(why); } }
       // Keir 8.3 (owner, 2026-11-05: "tickets just sitting"): tickets 1766, 1773 and 1774 filed an issue,
       // told the player the cause was not yet found, and parked on developer_reply for hours. While
       // Keir's own last word is "haven't found it", the cause is Keir's job: an investigator must be on it.
@@ -5134,12 +5166,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (safe) { job.channelReplyQueued = true; ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); }
       } else if (!job.internalProbe && job.role !== "player" && ((state === "done" && !job.channelReplyQueued) || state === "blocked")) {
         const safe = job.role === "owner" && !job.channelReplyQueued ? await finishPublicText(job) : null;
-        if (safe) { ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); ledger.audit("checkpoint", { job: job.id, state: job.state }); ledger.save(); return { state: job.state }; }
+        if (safe) { ledger.notify(`finish:${job.id}:${job.rounds}`, `channel:${job.id}`, safe); settleClosing(); ledger.audit("checkpoint", { job: job.id, state: job.state }); ledger.save(); return { state: job.state }; }
         // Tasks born from replies to Keir's old approval DMs report in the digest, not by DM.
         const to = job.noOwnerDm ? null : job.role === "owner" && job.replyChannel ? null : job.kind === "command" && job.role !== "owner" ? job.actorId : job.replyChannel && state !== "blocked" ? null : "owner";
         // Automatic and ticket work never DMs the owner; it raises a quiet alert.
         // A genuine owner decision is a DM with Approve / Reject / Explain buttons.
-        if (to === "owner" && state === "blocked" && pendingDecision) { ledger.save(); return {state: job.state}; }
+        if (to === "owner" && state === "blocked" && pendingDecision) { settleClosing(); ledger.save(); return {state: job.state}; }
         if (to === "owner" && state === "blocked") {
           // Keir 5.1.1: when the question is about one of this task's own PRs,
           // the yes binds to that PR's current head (chain consent can use it).
@@ -5156,6 +5188,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         else if (to && !(to === "owner" && job.kind !== "command")) ledger.notify(`finish:${job.id}:${job.rounds}`, to, job.summary);
       }
+      settleClosing();
       ledger.audit("checkpoint", { job: job.id, state: job.state }); ledger.save(); return { state: job.state };
     }
     throw new Error("unknown broker tool");
