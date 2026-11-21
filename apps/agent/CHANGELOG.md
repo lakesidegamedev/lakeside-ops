@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.2.0 (2026-11-20)
+
 ### For users
 
 - The app's automatic voice model now names the voice route Keir is actually configured to use, instead of a fixed Gemini and DeepSeek label.
