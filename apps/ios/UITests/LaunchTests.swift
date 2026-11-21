@@ -956,13 +956,19 @@ final class LaunchTests: XCTestCase {
             let frame = chip.frame, width = app.frame.width
             return frame.minX >= 0 && frame.maxX <= width - 24
         }
+        // Each drag moves the row only as far as it takes to bring the chip
+        // to the middle, and holds before lifting so the row stops where the
+        // finger stops. A drag that lifted at speed flung the row past the
+        // chip, and with the chips of the running-ticket fixture it then
+        // swung from one edge to the other on every try.
         for _ in 0..<8 where !onScreen() {
-            let screen = app.frame
-            let y = chip.frame.midY / max(screen.height, 1)
-            let towardRight = chip.frame.midX > screen.width / 2
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.7 : 0.3, dy: y))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.35 : 0.65, dy: y))
-            start.press(forDuration: 0.05, thenDragTo: end)
+            let frame = chip.frame, width = app.frame.width
+            let distance = max(-width * 0.6, min(width * 0.6, width / 2 - frame.midX))
+            let startX = distance > 0 ? width * 0.2 : width * 0.8
+            let origin = app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            let start = origin.withOffset(CGVector(dx: startX, dy: frame.midY))
+            let end = origin.withOffset(CGVector(dx: startX + distance, dy: frame.midY))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.4)
             sleep(1)
         }
         XCTAssertTrue(onScreen(), "\(identifier) could not be scrolled into view")
