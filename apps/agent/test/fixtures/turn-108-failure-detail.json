@@ -1,0 +1,193 @@
+{
+ "_source": "turndiag turn_failure_detail for turn 108, 2026-11-21, trimmed: failed phase plus two of the 116 not-reached phases per attempt; no player or staff data.",
+ "turn": 108,
+ "attemptCount": 5,
+ "attempts": [
+  {
+   "realTime": "2026-11-21T13:16:07.300Z",
+   "success": true,
+   "outcome": "clean",
+   "durationMs": 195129,
+   "failedPhases": [],
+   "abortedPhases": [],
+   "buildCommit": "d9daafbadd5689bf16f8d5baf906ebe573049ffa",
+   "turnExceptionMessages": [],
+   "warningCount": 1,
+   "warnings": [
+    "Resuming crashed turn 108: skipping 54 phase(s) already applied by the previous holder, which died at phase \"corporationTurn\""
+   ],
+   "failedPhaseDetails": []
+  },
+  {
+   "realTime": "2026-11-21T12:00:15.727Z",
+   "success": false,
+   "durationMs": 16276,
+   "buildCommit": "d9daafbadd5689bf16f8d5baf906ebe573049ffa",
+   "turnExceptionMessages": [
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "warningCount": 3,
+   "warnings": [
+    "Resuming crashed turn 108: skipping 54 phase(s) already applied by the previous holder, which died at phase \"corporationTurn\"",
+    "corporationTurn: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule",
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "failedPhaseDetails": [
+    {
+     "phase": "corporationTurn",
+     "status": "failed",
+     "reason": "mustStop",
+     "message": "corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule\nat <anonymous> (/app/src/lib/turn/corporation/index.ts:740:13)\nat process.processTicksAndRejections (node:internal/process/task_queues:104:5)\nat async processCorporationTurn (/app/src/lib/turn/corporation/index.ts:715:14)\nat async withSpan (/app/src/lib/observability/spans.ts:57:20)\nat async kind (/app/src/simulation/engine/turnPhaseRuntime.ts:535:18)\nat async Object.runPhase (/app/src/simulation/engine/turnPhaseRuntime.ts:646:34)",
+     "startedAt": "2026-11-21T12:00:01.271Z",
+     "completedAt": "2026-11-21T12:00:15.123Z",
+     "ms": 13852.0
+    },
+    {
+     "phase": "governorLegislationQueue",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T12:00:15.292Z"
+    },
+    {
+     "phase": "nppBillSponsorship",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T12:00:15.296Z"
+    }
+   ]
+  },
+  {
+   "realTime": "2026-11-21T11:43:33.232Z",
+   "success": false,
+   "durationMs": 10558,
+   "buildCommit": "d9daafbadd5689bf16f8d5baf906ebe573049ffa",
+   "turnExceptionMessages": [
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "warningCount": 4,
+   "warnings": [
+    "turnRetry: automatic attempt 3 of 3 after corporationTurn stopped the turn",
+    "Resuming crashed turn 108: skipping 54 phase(s) already applied by the previous holder, which died at phase \"corporationTurn\"",
+    "corporationTurn: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule",
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "failedPhaseDetails": [
+    {
+     "phase": "corporationTurn",
+     "status": "failed",
+     "reason": "mustStop",
+     "message": "corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule\nat <anonymous> (/app/src/lib/turn/corporation/index.ts:740:13)\nat process.processTicksAndRejections (node:internal/process/task_queues:104:5)\nat async processCorporationTurn (/app/src/lib/turn/corporation/index.ts:715:14)\nat async withSpan (/app/src/lib/observability/spans.ts:57:20)\nat async kind (/app/src/simulation/engine/turnPhaseRuntime.ts:535:18)\nat async Object.runPhase (/app/src/simulation/engine/turnPhaseRuntime.ts:646:34)",
+     "startedAt": "2026-11-21T11:43:23.721Z",
+     "completedAt": "2026-11-21T11:43:31.971Z",
+     "ms": 8250.0
+    },
+    {
+     "phase": "governorLegislationQueue",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T11:43:32.131Z"
+    },
+    {
+     "phase": "nppBillSponsorship",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T11:43:32.140Z"
+    }
+   ]
+  },
+  {
+   "realTime": "2026-11-21T11:34:22.877Z",
+   "success": false,
+   "durationMs": 5867,
+   "buildCommit": "d9daafbadd5689bf16f8d5baf906ebe573049ffa",
+   "turnExceptionMessages": [
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "warningCount": 4,
+   "warnings": [
+    "turnRetry: automatic attempt 2 of 3 after corporationTurn stopped the turn",
+    "Resuming crashed turn 108: skipping 54 phase(s) already applied by the previous holder, which died at phase \"corporationTurn\"",
+    "corporationTurn: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule",
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "failedPhaseDetails": [
+    {
+     "phase": "corporationTurn",
+     "status": "failed",
+     "reason": "mustStop",
+     "message": "corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule\nat <anonymous> (/app/src/lib/turn/corporation/index.ts:740:13)\nat process.processTicksAndRejections (node:internal/process/task_queues:104:5)\nat async processCorporationTurn (/app/src/lib/turn/corporation/index.ts:715:14)\nat async withSpan (/app/src/lib/observability/spans.ts:57:20)\nat async kind (/app/src/simulation/engine/turnPhaseRuntime.ts:535:18)\nat async Object.runPhase (/app/src/simulation/engine/turnPhaseRuntime.ts:646:34)",
+     "startedAt": "2026-11-21T11:34:17.819Z",
+     "completedAt": "2026-11-21T11:34:22.615Z",
+     "ms": 4796.0
+    },
+    {
+     "phase": "governorLegislationQueue",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T11:34:22.676Z"
+    },
+    {
+     "phase": "nppBillSponsorship",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T11:34:22.679Z"
+    }
+   ]
+  },
+  {
+   "realTime": "2026-11-21T11:31:16.927Z",
+   "success": false,
+   "durationMs": 5390,
+   "buildCommit": "d9daafbadd5689bf16f8d5baf906ebe573049ffa",
+   "turnExceptionMessages": [
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "warningCount": 4,
+   "warnings": [
+    "turnRetry: automatic attempt 1 of 3 after corporationTurn stopped the turn",
+    "Resuming crashed turn 108: skipping 54 phase(s) already applied by the previous holder, which died at phase \"corporationTurn\"",
+    "corporationTurn: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule",
+    "turnSystem: corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule"
+   ],
+   "failedPhaseDetails": [
+    {
+     "phase": "corporationTurn",
+     "status": "failed",
+     "reason": "mustStop",
+     "message": "corporationTurn must succeed before the turn can advance: Funded producer turn could not prepare 1975 sector(s): Producer sector requires a reconciled opening generation; Invalid unsettled construction schedule\nat <anonymous> (/app/src/lib/turn/corporation/index.ts:740:13)\nat process.processTicksAndRejections (node:internal/process/task_queues:104:5)\nat async processCorporationTurn (/app/src/lib/turn/corporation/index.ts:715:14)\nat async withSpan (/app/src/lib/observability/spans.ts:57:20)\nat async kind (/app/src/simulation/engine/turnPhaseRuntime.ts:535:18)\nat async Object.runPhase (/app/src/simulation/engine/turnPhaseRuntime.ts:646:34)",
+     "startedAt": "2026-11-21T11:31:12.571Z",
+     "completedAt": "2026-11-21T11:31:16.549Z",
+     "ms": 3978.0
+    },
+    {
+     "phase": "governorLegislationQueue",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T11:31:16.652Z"
+    },
+    {
+     "phase": "nppBillSponsorship",
+     "status": "notReached",
+     "reason": "upstreamAbort",
+     "message": "Deferred until the failed market and its prerequisites complete.",
+     "startedAt": null,
+     "completedAt": "2026-11-21T11:31:16.655Z"
+    }
+   ]
+  }
+ ]
+}
