@@ -321,12 +321,15 @@ function escalate(d, job, now, config = DEFAULTS) {
   const pr = n ? Object.values(d.prTruth?.prs || {}).find((r) => Number(r.number) === Number(n)) : null;
   const ownPr = n && (job.pullRequests || []).some((u) => prNumberOf(u) === n);
   const ready = typeof config.handoffReady === "function" && Boolean(config.handoffReady());
-  if (ownPr && ready && (!pr || pr.state === "open") && !(c.handedPrs || []).includes(n)) {
+  // Review 4 N1: the handoff parks, so it passes the same closed list as every other park. A wait that may not park keeps
+  // its PR and falls through to the ask or the slow timer.
+  const may = ownPr && ready && (!pr || pr.state === "open") && !(c.handedPrs || []).includes(n) ? parkable(d, job, now) : null;
+  if (may?.ok) {
     c.handedPrs = [...(c.handedPrs || []), n];
     c.escalation = { at: now, how: "handoff", pr: n };
     // The open-PR pass makes the one ask, repair or close, which the owner sees; a ticket that owes the player something
     // still gets the parked line.
-    const out = park(d, job, now, `PR ${n} handed to the open-PR pass`, config, { silent: true, source: `the open-PR pass merges, closes or asks the owner about PR ${n}` });
+    const out = park(d, job, now, `PR ${n} handed to the open-PR pass`, config, { silent: true, source: `${may.source}, or PR ${n} is merged or closed (the open-PR pass asks the owner about it)` });
     out.effects.push({ type: "audit", kind: "pr_handed_to_open_pr_pass", detail: { job: job.id, pr: n } });
     return { handedOff: n, effects: out.effects };
   }
@@ -391,9 +394,17 @@ function parkedCheck(d, job, now, config = DEFAULTS) {
     c.mark = seen.mark; unpark(c); c.wokeFor = "change"; job.wakeAt = now;
     return { quiet: false, effects: [{ type: "audit", kind: "job_unparked", detail: { job: job.id, ticket: job.ticket || null, mark: seen.mark, by: "change" } }] };
   }
+  // Review 4 N1: a handed-off PR that is merged or closed wakes the job at once, whatever its own wait, so the player hears.
+  const moved = (c.handedPrs || []).map((n) => Object.values(d.prTruth?.prs || {}).find((r) => Number(r.number) === Number(n))).find((r) => r && r.state !== "open");
+  if (moved) {
+    unpark(c); c.wokeFor = "change"; job.wakeAt = now;
+    return { quiet: false, effects: [{ type: "audit", kind: "job_unparked", detail: { job: job.id, ticket: job.ticket || null, by: "handed PR", pr: Number(moved.number), state: moved.state } }] };
+  }
   if (!(job.wakeAt <= now)) return { quiet: true, effects: [] };
-  // Review 3 F3: a wait that can no longer change (its turn ran, its PR closed) is handed back too, so it slows down.
-  const still = seen.checkable && !c.handedPrs ? parkable(d, job, now) : { ok: true };
+  // Review 3 F3 and review 4 N1: a wait that can no longer change (its turn ran, its PR closed) is handed back too, so it
+  // slows down. A handed job gets the same re-check, and is handed back when its handed PR can no longer be read.
+  const unread = (c.handedPrs || []).find((n) => !prState(d, n, now));
+  const still = !seen.checkable ? { ok: true } : unread ? { ok: false, why: `PR ${unread} state not read recently` } : parkable(d, job, now);
   if (!seen.checkable || !still.ok) {
     unpark(c); c.wokeFor = "timer-unchecked";
     return { quiet: false, effects: [{ type: "audit", kind: "job_unparked", detail: { job: job.id, ticket: job.ticket || null, by: "safety net", why: seen.why || still.why || "wait unreadable" } }] };

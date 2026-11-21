@@ -314,3 +314,75 @@ test("F3: a parked wait that can no longer change is handed back by the safety n
   assert.equal(j2.state, "waiting");
   assert.ok(j2.closing.parked);
 });
+
+// Review 4 N1 (the reviewer's handoff.js): the PR handoff parks, so it passes the closed parking list, and a handed-off
+// job wakes when its handed PR is merged or closed.
+test("review 4 N1 reproduction: a reached turn wait holding open PR 7001 is not handed off to park; it slows down", () => {
+  const w = world({ config: { ...CONFIG, handoffReady: () => true } });
+  const job = ticketJob(w, "j1900", 1900, { pullRequests: [`https://github.com/${REPO}/pull/7001`] });
+  const pr = { number: 7001, repo: REPO, state: "open", head: "abc", checkedAt: w.now() };
+  w.data.prTruth.prs[`${REPO}#7001`] = pr;
+  w.data.watch.turnClock = { turn: 97, iteration: 3, at: w.now() };
+  const input = { state: "waiting", summary: "s", closesWhen: "closes when the revenue is compared with turn 96", waitingOn: "turn 97 figures", waitOn: { kind: "turn", ref: 97 } };
+  finish(w, job, input);
+  let turn = 97;
+  quietUntilEscalated(w, job, input, () => { pr.checkedAt = w.now(); w.data.watch.turnClock = { turn: ++turn, iteration: 3, at: w.now() }; });
+  assert.equal(job.closing.parked, undefined, "never parked");
+  assert.equal(job.closing.handedPrs, undefined, "the job keeps its PR");
+  assert.equal(audits(w, "pr_handed_to_open_pr_pass").length, 0);
+  assert.ok(job.closing.slowed, "slowed: the model still runs every two hours and sees the merge");
+});
+
+test("review 4 N1: a handed-off job whose PR merges or closes wakes at once, and is re-checked at the safety net", () => {
+  for (const [label, end] of [["merged", { state: "merged", merged: true }], ["closed", { state: "closed", merged: false }]]) {
+    const w = world({ config: { ...CONFIG, handoffReady: () => true } });
+    const job = ticketJob(w, `jh-${label}`, 1901, { pullRequests: [`https://github.com/${REPO}/pull/7002`] });
+    const pr = { number: 7002, repo: REPO, state: "open", head: "h", checkedAt: w.now() };
+    w.data.prTruth.prs[`${REPO}#7002`] = pr;
+    // A player wait held with an own open PR: parkable (the player writing ends it), so the handoff happens.
+    const input = { state: "waiting", summary: "s", closesWhen: "closes when the player confirms the fix", waitingOn: "the player to confirm", waitOn: { kind: "player", ref: null } };
+    finish(w, job, input);
+    quietUntilEscalated(w, job, input, () => { pr.checkedAt = w.now(); });
+    assert.deepEqual(job.closing.handedPrs, [7002], label);
+    assert.ok(job.closing.parked, label);
+    // Nothing about the PR changed: the next step does nothing.
+    w.advance(10 * MIN); pr.checkedAt = w.now(); w.wake(job);
+    assert.equal(job.state, "waiting");
+    // The open-PR pass merges or closes it: the very next step wakes the job (well before the safety net).
+    Object.assign(pr, end, { checkedAt: w.now() }); w.advance(MIN); w.wake(job);
+    assert.equal(job.state, "queued", `${label}: woken`);
+    assert.equal(job.closing.parked, undefined);
+    assert.equal(job.closing.handedPrs, undefined, "the PR is the job's again");
+    assert.equal(audits(w, "job_unparked").at(-1).by, "handed PR");
+  }
+  // The safety net re-checks a handed job too: a handed PR that can no longer be read hands the job back.
+  const w = world({ config: { ...CONFIG, handoffReady: () => true } });
+  const job = ticketJob(w, "jh-stale", 1902, { pullRequests: [`https://github.com/${REPO}/pull/7003`] });
+  const pr = { number: 7003, repo: REPO, state: "open", head: "h", checkedAt: w.now() };
+  w.data.prTruth.prs[`${REPO}#7003`] = pr;
+  const input = { state: "waiting", summary: "s", closesWhen: "closes when the player confirms", waitingOn: "the player to confirm", waitOn: { kind: "player", ref: null } };
+  finish(w, job, input);
+  quietUntilEscalated(w, job, input, () => { pr.checkedAt = w.now(); });
+  assert.deepEqual(job.closing.handedPrs, [7003]);
+  w.set(job.wakeAt + MIN); w.wake(job); // the PR read is now older than the freshness window
+  assert.equal(job.state, "queued");
+  assert.match(audits(w, "job_unparked").at(-1).why, /PR 7003 state not read recently/);
+});
+
+test("review 4 N1, the opposite: the PR 6887 handoff still stops the repeated quiet wakes (no model run, no note)", () => {
+  const w = world({ config: { ...CONFIG, handoffReady: () => true } });
+  const job = { id: "f6887b", kind: "finding", role: "support", state: "running", at: T0, deadline: T0 + 99 * 24 * HOUR, effects: {}, inbox: [], pullRequests: [`https://github.com/${REPO}/pull/6887`] };
+  w.data.jobs[job.id] = job;
+  const pr = { number: 6887, repo: REPO, state: "open", head: "38d8af58d29f", checkedAt: w.now() };
+  w.data.prTruth.prs[`${REPO}#6887`] = pr;
+  const input = { state: "blocked", summary: "PR 6887 remains unmerged with all checks green.", closesWhen: "closes when PR 6887 merges", waitingOn: "the owner's approval of PR 6887", waitOn: { kind: "pr", ref: 6887 } };
+  finish(w, job, input);
+  const runs = quietUntilEscalated(w, job, input, () => { pr.checkedAt = w.now(); });
+  assert.equal(runs, 0);
+  assert.deepEqual(job.closing.handedPrs, [6887]);
+  // 72 hours of steps with the PR unchanged and kept fresh: no model run, no note, no repeated handoff.
+  for (let i = 0; i < 72 * 4; i++) { w.advance(15 * MIN); pr.checkedAt = w.now(); w.wake(job); assert.equal(job.state, "waiting"); }
+  assert.equal(Object.keys(w.data.outbox).length, 0);
+  assert.equal(audits(w, "pr_handed_to_open_pr_pass").length, 1);
+  assert.ok(job.closing.parked);
+});
