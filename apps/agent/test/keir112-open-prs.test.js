@@ -493,3 +493,26 @@ test("m1: an ask job that ends without a decision leads to one more ask for that
   for (let i = 0; i < 3; i++) { v.advance(3600000); await v.prs.tick(); }
   assert.equal(Object.values(v.data.jobs).filter((j) => j.adoptedPr === 7002).length, 1);
 });
+
+// Review 4 m2: an overlap ask is a choice question with no askKey. A choice the ask job raised counts as asked; a head
+// whose ask jobs raised nothing is never described as put to the owner.
+test("review 4 m2: a choice question raised by the ask job ends the re-ask, and a stale note never claims an ask that did not happen", async () => {
+  const v = setup({ open: [one(7003, "keir/task-m2", { checks: "green" })], merged: [] });
+  await v.prs.tick();
+  const job = Object.values(v.data.jobs).find((j) => j.adoptedPr === 7003);
+  v.data.decisions.c = { id: "c", jobId: job.id, kind: "raise_to_developers", state: "pending", question: "Merge PR 7003, close it as a duplicate, or keep it open?" };
+  job.state = "done";
+  for (let i = 0; i < 3; i++) { v.advance(3600000); await v.prs.tick(); }
+  assert.equal(Object.values(v.data.jobs).filter((j) => j.adoptedPr === 7003).length, 1, "not asked a second time");
+  v.advance(5 * DAY); await v.prs.tick();
+  assert.match(Object.entries(v.data.outbox).find(([k]) => /^pr-blocked:7003:will-close:stale/.test(k))[1].content, /was put to the owner on/);
+  // The opposite: two ask jobs that raised nothing; the stale warning says so instead of "put to the owner".
+  const w = setup({ open: [one(7004, "keir/task-m2b", { checks: "green" })], merged: [] });
+  await w.prs.tick();
+  for (let i = 0; i < 3; i++) { for (const j of Object.values(w.data.jobs)) if (j.adoptedPr) j.state = "done"; w.advance(3600000); await w.prs.tick(); }
+  assert.equal(Object.values(w.data.jobs).filter((j) => j.adoptedPr === 7004).length, 2);
+  w.advance(5 * DAY); await w.prs.tick();
+  const warn = Object.entries(w.data.outbox).find(([k]) => /^pr-blocked:7004:will-close:stale/.test(k))[1].content;
+  assert.match(warn, /has been green with no owner question since/);
+  assert.doesNotMatch(warn, /put to the owner/);
+});

@@ -410,7 +410,11 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
         // Review 3 m1: the ask is recorded when its job starts. A job that ended without raising any decision about this PR
         // never asked, so the head is asked once more (two tries per head), never claimed as put to the owner.
         const tries = rec.askTries?.[head] || 1, askJob = d.jobs?.[d.seen?.[`keirpr:${n}:${head}${tries > 1 ? `:${tries}` : ""}`]];
-        if (rec.asked[head] && tries < 2 && askJob && JOB_TERMINAL.includes(askJob.state) && !Object.values(d.decisions || {}).some((x) => x.askKey === `pr:AHDGame:${n}`)) {
+        // Review 4 m2: an overlap ask is a choice question with no askKey, so a decision the ask jobs of this head raised
+        // counts too.
+        const askJobIds = new Set([`keirpr:${n}:${head}`, `keirpr:${n}:${head}:2`].map((k) => d.seen?.[k]).filter(Boolean));
+        const raised = Object.values(d.decisions || {}).some((x) => x.askKey === `pr:AHDGame:${n}` || askJobIds.has(x.jobId));
+        if (rec.asked[head] && tries < 2 && askJob && JOB_TERMINAL.includes(askJob.state) && !raised) {
           rec.askTries = { [head]: tries + 1 }; delete rec.asked[head];
         }
         if (!rec.asked[head]) {
@@ -429,9 +433,11 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
           continue;
         }
         const askedAt = rec.asked[head];
-        if (stale && askedAt && now() - askedAt > STALE_MS) await warnThenClose(pr, rec, "stale", `stale: asked on ${day(askedAt)} with no answer`,
-          `PR #${n} (${rec.title}) was put to the owner on ${day(askedAt)} and nobody has carried it forward.`,
-          `Closing as stale: this change was put to the owner on ${day(askedAt)} and nobody carried it forward for ${Math.round(STALE_MS / 86400000)} days. Closed automatically by Keir, which opened this PR. If it is still wanted, reopen it; Keir will then leave it alone.`, budget);
+        // Review 4 m2: "put to the owner" only when a question was really raised.
+        const put = raised ? `was put to the owner on ${day(askedAt)}` : `has been green with no owner question since ${day(askedAt)}`;
+        if (stale && askedAt && now() - askedAt > STALE_MS) await warnThenClose(pr, rec, "stale", `stale: ${raised ? "asked" : "green, never asked"} on ${day(askedAt)} with no answer`,
+          `PR #${n} (${rec.title}) ${put} and nobody has carried it forward.`,
+          `Closing as stale: this change ${put} and nobody carried it forward for ${Math.round(STALE_MS / 86400000)} days. Closed automatically by Keir, which opened this PR. If it is still wanted, reopen it; Keir will then leave it alone.`, budget);
         continue;
       }
       if (running) continue;
