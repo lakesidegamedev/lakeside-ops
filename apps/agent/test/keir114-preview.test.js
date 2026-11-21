@@ -133,3 +133,10 @@ test("M5: an image whose rendered text lacks the label is not posted", async () 
   await assert.rejects(preview.render({ sandbox, jobId: f.job.id, html: HTML }), /label did not render/);
   void real;
 });
+
+test("minor: only the newest owner or staff message unlocks render_preview", () => {
+  const f = setup();
+  assert.equal(preview.requested(f.job, f.config), true);
+  f.job.inbox = [{ authorId: OWNER, role: "owner", content: "thanks, that is clear now", at: new Date(Date.now() + 1000).toISOString() }];
+  assert.equal(preview.requested(f.job, f.config), false);
+});

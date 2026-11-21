@@ -73,19 +73,29 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
   }
 
   // Every live task on ticket n learns what happened, so nothing keeps posting on a merged or closed ticket.
+  // Keir 11.4 review: closing reuses ticketstate.closeTicketJobs (the path a staff close uses), so wakeAt and inbox are
+  // cleared too; a reopen wakes only the ticket's newest ticket task, never a cancelled or dismissed one.
   function settle(job, n, outcome, detail = {}) {
-    for (const j of Object.values(d.jobs)) {
-      if (j.id === job.id || Number(ticketOf(j)) !== Number(n)) continue;
-      const note = { role: "system", authorId: "ticket-command", at: new Date(now()).toISOString(), content: outcome === "merged" ? `Ticket ${n} was merged into ticket ${detail.target} on the ${detail.by} instruction. Its channel is closed. Do not post here again.` : outcome === "closed" ? `Ticket ${n} was closed on the ${detail.by} instruction. Do not post here again.` : `Ticket ${n} was reopened on the ${detail.by} instruction. Read the ticket and continue.` };
-      if (outcome === "reopened") {
-        if (j.kind === "ticket" && JOB_TERMINAL.includes(j.state) && !j.channelClosed) { j.state = "queued"; j.resolved = false; delete j.resolutionReadyAt; }
-        if (!JOB_TERMINAL.includes(j.state)) (j.inbox ||= []).push(note);
-        continue;
+    const at = new Date(now()).toISOString();
+    const content = outcome === "merged" ? `Ticket ${n} was merged into ticket ${detail.target} on the ${detail.by} instruction. Its channel is closed. Do not post here again.` : outcome === "closed" ? `Ticket ${n} was closed on the ${detail.by} instruction. Do not post here again.` : `Ticket ${n} was reopened on the ${detail.by} instruction. Read the ticket and continue.`;
+    const mine = Object.values(d.jobs).filter((j) => j.id !== job.id && Number(ticketOf(j)) === Number(n));
+    if (outcome === "reopened") {
+      const live = mine.filter((j) => !JOB_TERMINAL.includes(j.state));
+      for (const j of live) (j.inbox ||= []).push({ role: "system", authorId: "ticket-command", at, content });
+      const newest = mine.filter((j) => j.kind === "ticket").sort((a, b) => (Date.parse(b.createdAt || "") || b.at || 0) - (Date.parse(a.createdAt || "") || a.at || 0))[0];
+      if (!live.length && newest && ["done", "closed"].includes(newest.state) && !newest.channelClosed) {
+        newest.state = "queued"; newest.wakeAt = 0; newest.resolved = false; delete newest.resolutionReadyAt;
+        (newest.inbox ||= []).push({ role: "system", authorId: "ticket-command", at, content });
       }
-      if (JOB_TERMINAL.includes(j.state)) continue;
-      (j.history ||= []).push({ at: note.at, kind: "ticket_command", summary: note.content });
-      j.state = "done"; j.summary = note.content;
-      if (outcome === "merged") { j.channelClosed = true; j.mergedInto = detail.target; }
+      ledger.save();
+      return;
+    }
+    const open = mine.filter((j) => !JOB_TERMINAL.includes(j.state));
+    require("./ticketstate").closeTicketJobs(ledger, n, outcome === "merged" ? `merged into ${detail.target}` : "closed", { except: job, channelGone: outcome === "merged" });
+    for (const j of open) {
+      (j.history ||= []).push({ at, kind: "ticket_command", summary: content });
+      j.summary = content;
+      if (outcome === "merged") j.mergedInto = detail.target;
       else j.resolved = true;
     }
     ledger.save();
@@ -97,7 +107,9 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
     const done = Object.values(d.decisions || {}).find((x) => x.jobId === job.id && x.decisionKey === key && !["pending"].includes(x.state));
     if (done) {
       if (done.state === "selected" && done.selectedOption?.id === "1") return { ok: true };
-      throw new Error(`The owner said no to this ${op} (${list.join(", ")}). Do not do it; tell the requester in one line.`);
+      // Keir 11.4 review: only an answer of "No" is the owner saying no; an expired, withdrawn or replaced question is not.
+      if (done.state === "selected") throw new Error(`The owner said no to this ${op} (${list.join(", ")}). Do not do it; tell the requester in one line.`);
+      throw new Error(`The owner did not answer the question about this ${op} (${list.join(", ")}): it ${done.state === "expired" ? "expired" : `was ${done.state}`}. Nothing was changed. Tell the requester in one line, and ask again only if they still want it.`);
     }
     const verb = op === "merge" ? `Merge tickets ${list.join(", ")} into ticket ${target}` : `Close tickets ${list.join(", ")}`;
     const x = openDecision(ledger, config, { jobId: job.id, decisionKey: key, question: `${verb}? ${why}`.slice(0, 440), options: [{ label: "Yes, go ahead", detail: list.join(", ") }, { label: "No, leave them" }] });
@@ -127,7 +139,8 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
     if (op === "open_incident") {
       const title = publicText(input.title).trim().slice(0, 200), description = publicText(input.description || input.reason || "").trim().slice(0, 4800);
       if (!title || !description) throw new Error("Give the incident a short title and a plain description of the problem.");
-      const r = await effect(job, `ticket-command:incident:${requestId}`, () => mcp.call("support", "support_create_ticket", { category: "incident", title, description: `${description}\n\nOpened by Keir on the ${by} instruction.`, ...(SNOWFLAKE.test(String(job.replyChannel || "")) ? { source_channel_id: job.replyChannel } : {}) }, true, signal));
+      // Keyed by the request and the title, so a retry reuses the incident and a second, different incident is opened.
+      const r = await effect(job, `ticket-command:incident:${requestId}:${hash(title.toLowerCase())}`, () => mcp.call("support", "support_create_ticket", { category: "incident", title, description: `${description}\n\nOpened by Keir on the ${by} instruction.`, ...(SNOWFLAKE.test(String(job.replyChannel || "")) ? { source_channel_id: job.replyChannel } : {}) }, true, signal));
       const number = r?.ticketNumber || r?.number || r?.ticket?.number;
       if (!number) throw new Error("The incident was requested but no ticket number came back. Inspect its receipt before retrying.");
       job.commandIncident = number; ledger.audit("ticket_command_incident", { job: job.id, ticket: number, by: job.actorId }); ledger.save();

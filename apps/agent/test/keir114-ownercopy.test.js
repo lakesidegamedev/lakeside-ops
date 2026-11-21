@@ -75,3 +75,7 @@ test("M4: the original UTC leak is still converted: Z and UTC clock times and UT
   assert.ok(!/\d{1,2}:\d{2}Z|UTC/.test(out), out);
   assert.match(out, /9:26 AM ET/); assert.match(out, /2:00 PM ET/); assert.match(out, /11:05 AM ET/);
 });
+
+test("minor: stripping a job id leaves no dangling word; ticket and PR numbers stay", () => {
+  assert.equal(oc.plain("Started job j_e52f2a6086cb8c3c to merge. Ticket 1872 and PR 512 stay."), "Started the task to merge. Ticket 1872 and PR 512 stay.");
+});

@@ -61,6 +61,7 @@ function plain(text, now = Date.now()) {
     .replace(/\b[\w-]+\.(?:tsx?|jsx?|mjs|cjs)(?::\d+(?::\d+)?)\b/g, "the code")
     .replace(/\b(?:(?:a|the|my|coding)\s+)*worker\s+cw-\d+-\d+\b/gi, "the coding worker")
     .replace(/\bcw-\d+-\d+\b/g, "a coding worker")
+    .replace(/\b(?:(?:the|a|this)\s+)?(?:job|task)\s+j_[0-9a-f]{16}\b/gi, "the task")
     .replace(/\b(?:job|task|action|decision|attempt|run|worker)\s+(?:id\s+)?(?:j_)?[0-9a-f]{10,}\b/gi, (m) => m.split(/\s+/)[0])
     .replace(/\bj_[0-9a-f]{16}\b/g, "")
     .replace(/(?<![\w#/])[0-9a-f]{12,40}(?![\w])/g, (m) => (/[a-f]/.test(m) && /\d/.test(m) ? "" : m))

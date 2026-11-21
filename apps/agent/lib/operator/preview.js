@@ -23,7 +23,9 @@ function requested(job, config = {}) {
   const staff = new Set([config.ownerId, ...(config.staffIds || [])].filter(Boolean));
   const app = job.replyChannel === "app" && job.role === "owner";
   const msgs = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((s) => s && s.content && (app ? s.role !== "system" : staff.has(s.authorId)));
-  return msgs.some((s) => asksForImage(s.content));
+  // Keir 11.4 review: the newest one only, so an old picture request does not keep unlocking the tool.
+  const newest = msgs.map((s, i) => ({ s, i, at: Date.parse(s.at || "") || 0 })).sort((a, b) => a.at - b.at || a.i - b.i).at(-1)?.s;
+  return Boolean(newest && asksForImage(newest.content));
 }
 
 // The label is drawn into the image itself. Keir 11.4 review (M5): inserting a strip into the model's HTML could be

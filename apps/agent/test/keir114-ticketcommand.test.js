@@ -263,3 +263,38 @@ test("M6: add_to_ticket on another ticket is held by the cross-ticket switch; th
   const r = await pv.broker.tool(discordJob(pv), "add_to_ticket", { user: "enigma", ticket: 1872 });
   assert.equal(r.preview, true);
 });
+
+// ---------- Keir 11.4 release review, minors ----------
+test("minor: an expired confirmation is not reported as the owner saying no", async () => {
+  const f = setup({ tickets: [1872, 1873, 1874, 1877, 1878, 1876] }); f.store[1876].category = "incident";
+  const job = discordJob(f);
+  const args = { op: "merge", tickets: [1872, 1873, 1874, 1877, 1878], target: 1876, reason: "same compressed data error on page loads" };
+  const r = await f.broker.tool(job, "ticket_command", args);
+  Object.assign(f.d.decisions[r.decision], { state: "expired" });
+  await assert.rejects(f.broker.tool(job, "ticket_command", args), (e) => /did not answer/.test(e.message) && /expired/.test(e.message) && !/said no/.test(e.message));
+  Object.assign(f.d.decisions[r.decision], { state: "selected", selectedOption: { id: "2", label: "No, leave them" } });
+  await assert.rejects(f.broker.tool(job, "ticket_command", args), /said no/);
+});
+
+test("minor: a second, different incident in the same request is opened; a retry of the first is not", async () => {
+  const f = setup(); const job = discordJob(f);
+  const creates = () => f.calls.filter((c) => c[0] === "support_create_ticket").length;
+  await f.broker.tool(job, "ticket_command", { op: "open_incident", title: "Pages fail with unreadable data", description: "Company pages fail to load." });
+  await f.broker.tool(job, "ticket_command", { op: "open_incident", title: "Pages fail with unreadable data", description: "Company pages fail to load." });
+  assert.equal(creates(), 1);
+  await f.broker.tool(job, "ticket_command", { op: "open_incident", title: "Mail fails to send", description: "Mail fails with a server error." });
+  assert.equal(creates(), 2);
+});
+
+test("minor: a merged ticket's task is closed through the shared path (no wake, no inbox); a reopen wakes only the newest ticket task", async () => {
+  const f = setup();
+  const t = f.ledger.createJob("t1873", { kind: "ticket", role: "support", ticket: 1873, channelId: "1", source: {}, deadline: 9e15 });
+  t.state = "waiting"; t.wakeAt = Date.now() + 60000; t.inbox = [{ content: "old" }];
+  await mergeFlow(f, discordJob(f));
+  assert.equal(t.state, "done"); assert.equal(t.wakeAt, 0); assert.deepEqual(t.inbox, []); assert.equal(t.mergedInto, 1876); assert.equal(t.channelClosed, true);
+  const tc = require("../lib/operator/ticketcommands").createTicketCommands({ ledger: f.ledger, config: f.config, mcp: {}, discord: async () => ({}), effect: async () => ({}) });
+  const old = f.ledger.createJob("old1880", { kind: "ticket", role: "support", ticket: 1880, source: {}, deadline: 9e15 }); old.state = "cancelled"; old.at = 1;
+  const last = f.ledger.createJob("new1880", { kind: "ticket", role: "support", ticket: 1880, source: {}, deadline: 9e15 }); last.state = "done"; last.at = 2;
+  tc.settle({ id: "cmd" }, 1880, "reopened", { by: "owner's" });
+  assert.equal(old.state, "cancelled"); assert.equal(last.state, "queued");
+});
