@@ -113,7 +113,7 @@ function changes(prev, next) {
     // Work is announced once, when it first actually runs: a queued job is not
     // yet being worked, and a job that wakes again is not new.
     const running = j.state === "working" || j.rounds > 0;
-    if (!CLOSED.has(j.state) && running && !p?.started) push({ id: `start:${id}`, jobId: id, ticket: j.ticket, kind: "started", text: `${who}: started. ${sentence(j.reason === "No next milestone recorded." ? "" : j.reason)}`.trim() });
+    if (!CLOSED.has(j.state) && running && !p?.started) push({ id: `start:${id}`, jobId: id, ticket: j.ticket, kind: "started", text: `${who}: started. ${sentence(["No next milestone recorded.", "Nothing is recorded yet about what this waits on."].includes(j.reason) ? "" : j.reason)}`.trim() });
     for (const pr of j.opened.filter(x => !(p?.prs || []).includes(x.url))) push({ id: `pr:${pr.url}`, jobId: id, ticket: j.ticket, kind: "pr", text: `${who}: opened PR #${pr.number} in ${pr.repository}.`, card: { type: "pr", repository: pr.repository, number: pr.number, url: pr.url } });
     for (const m of j.merged.filter(x => !(p?.merges || []).includes(x.key))) push({ id: `merge:${id}:${m.key}`, jobId: id, ticket: j.ticket, kind: "merged", text: `${who}: merged${m.number ? ` PR #${m.number}` : " a PR"}.` });
     if (!p || p.state === j.state) continue;

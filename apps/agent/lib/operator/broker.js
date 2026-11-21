@@ -345,7 +345,8 @@ const PLAYER_PRIVATE = new Set(["trace_character", "trace_account", "character_b
 const REPORTER_BOUND = new Set(["reporter_operating_results", "reporter_action_points"]);
 const IDENTITY_ARGS = ["character", "characterId", "character_id", "sequentialId", "id", "name", "player", "playerId", "username", "user", "userId", "account", "accountId", "reporter", "ticket"];
 const NOT_FOUND_LIKE = /outside support scope|not a \S+ read|unknown tool|tool not found|method not found|not available to this task/i;
-const QUICK_TOOLS = ["conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
+const handoffTruth = require("./handofftruth");
+const QUICK_TOOLS = ["render_preview", "ticket_command", "conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -599,6 +600,47 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   const delegation = createDelegation({ ledger, sandbox, config, now });
   const surge = createSurge({ ledger, mcp, discord, config, now, ...(config.jevAsk ? { ask: config.jevAsk } : {}) });
   let issueFlight = Promise.resolve();
+  // Keir 11.4: owner and staff act on tickets by number (ticketcommands.js); authority is checked there from the real author.
+  const ticketCommands = require("./ticketcommands").createTicketCommands({ ledger, config, mcp, discord, effect: (...a) => effect(...a), now, ticketOf: (j) => j.ticket || ticketNumberOf(j.source?.channelName), ctl: () => ctl(), publicText: (t) => publicText(t),
+    callSupport: (...a) => callSupport(...a), closureRefusal: (...a) => commandClosureRefusal(...a) });
+  // Keir 11.4 review (M2): ticket_command resolve passes the closure guards the single-ticket resolve uses: moderation
+  // tickets, the owner's closure hold, a pending owner decision or a rule that hurts the player, the advice redirect, a
+  // ticket a staff member has claimed, the player's newest message still unanswered (read live from Discord), and the
+  // grace period after the final answer. Returns why ticket n must not be closed now, or null.
+  async function commandClosureRefusal(job, n, message, { named = false } = {}, signal) {
+    const t = await mcp.call("support", "support_get", { kind: "ticket", number: n }, false, signal).catch(() => null);
+    if (!t?.number) return "not found";
+    if (["resolved", "closed"].includes(t.status)) return `already ${t.status}`;
+    const jobs = Object.values(d.jobs).filter((j) => Number(ticketOf(j)) === Number(n));
+    const tj = d.jobs[d.seen[`ticket:${n}`]] || jobs.find((j) => j.kind === "ticket") || null;
+    if (["moderation", "investigation"].includes(t.category) || (tj?.channelId && isModerationChannel(ledger, tj.channelId))) return "moderators handle moderation tickets; Keir does not close them";
+    if (jobs.some((j) => j.ownerClosureHold) && !(job.actorId === config.ownerId && named)) return "the owner put a hold on closing it; only the owner can lift it, by naming the ticket";
+    const ids = new Set(jobs.map((j) => j.id));
+    const mine = Object.values(d.decisions || {}).filter((x) => ids.has(x.jobId));
+    const ev = ticketEvidence(n);
+    const lastPost = (d.ticketPosts?.[n] || []).filter((p) => !isCardPost(p)).at(-1);
+    const policy = replyPolicy.resolveRefusal({ pendingDecision: mine.some((x) => x.state === "pending"), decided: job.actorId === config.ownerId || mine.some((x) => x.type !== "approval" && ["approved", "selected"].includes(x.state)),
+      fixed: ev.written.done || ev.main.done || ev.money.done, texts: t.category === "suggestion" ? [] : [message, lastPost?.text] });
+    if (policy) return policy.replace(/^Not (?:closed|resolved)[:.]?\s*/i, "");
+    if (tj) { try { require("./advicerouting").guardResolution(tj, d, { message }); } catch (e) { return String(e.message); } }
+    const staffIds = new Set([config.ownerId, ...(config.staffIds || [])].filter(Boolean));
+    if (jobs.some((j) => j.kind === "ticket" && !JOB_TERMINAL.includes(j.state) && Math.max(j.lastPlayerAt || 0, j.observedPlayerAt || 0) > (j.lastPublishedAt || 0))) return "the player is still waiting for an answer";
+    const channels = await discord("GET", `/guilds/${config.guildId}/channels`).catch(() => null);
+    const channel = Array.isArray(channels) ? channels.find((c) => (!tj?.channelId || c.id === tj.channelId) && String(c.name || "").endsWith(`-${n}`)) : null;
+    if (channel) {
+      const rows = await discord("GET", `/channels/${channel.id}/messages?limit=100`).catch(() => null);
+      if (!Array.isArray(rows)) return "its channel could not be read, so a newer player message cannot be ruled out";
+      const claimant = rows.map((m) => ticketClaim(m, config, d.channels[channel.id]?.claimReleasedAt)).find(Boolean) || d.channels[channel.id]?.claimedBy;
+      if (claimant && claimant !== job.actorId) return "a staff member has claimed it; they close it";
+      const ordered = rows.filter((m) => m?.author && m.id).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1);
+      const lastHuman = ordered.filter((m) => !m.author.bot).at(-1);
+      if (lastHuman && !staffIds.has(lastHuman.author.id) && !ordered.some((m) => BigInt(m.id) > BigInt(lastHuman.id) && (m.author.bot || staffIds.has(m.author.id))))
+        return "the player's newest message has no answer yet";
+    }
+    const answerAt = tj?.resolutionReadyAt || 0;
+    if (answerAt && now() - answerAt < config.closeGraceMs) return `the player got the final answer ${Math.max(1, Math.round((now() - answerAt) / 60000))} minutes ago; the closure grace period has ${Math.ceil((config.closeGraceMs - (now() - answerAt)) / 60000)} minutes left`;
+    return null;
+  }
   const ownerDirected = (job) => job.kind === "command" && job.role === "owner" && job.actorId === config.ownerId && job.source?.authorId === config.ownerId;
   const developerTask = (job) => job.kind === "command" && [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && ["owner", "support"].includes(job.role);
   // A ticket a developer opened for their own internal work (its opening request
@@ -775,7 +817,8 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       // decision; "handed to an investigator" needs a real investigation job. Nobody-assigned handoffs
       // were posted on 1766 and 1773.
       // Keir 10.1 (ticket 1834): Keir's own self-assigned card reaches nobody, so it is not proof.
-      escalated: { done: jobs.some((j) => (j.raisedToDevelopers || []).some((r) => r.id && !r.selfOwned) || (j.pullRequests || []).length || j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
+      // Keir 11.4 (ticket 1872): a card Keir's own coding worker took, and Keir's own pull request, are Keir's work, not the developers'.
+      escalated: { done: handoffTruth.developerReceipts(d, ticketNo, jobs).length > 0 || jobs.some((j) => j.trackerRaised) || Object.values(d.decisions || {}).some((x) => ids.has(x.jobId)) },
       investigating: { done: jobs.some((j) => (j.investigations || []).some((id) => d.jobs[id])) },
     };
   }
@@ -789,7 +832,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     main: "\"live\" needs github where to show the fix on main (and turn-worker/production for turn fixes).",
     verified: "saying it is fixed, working, gone or now shows correctly needs the fix live on main, a turn processed on it, and a read of this player's own figures after that turn and after their last message. Until then say it is released and ask them to check after the next turn, or check it yourself first.",
     investigating: "\"handed to an investigator\" needs a real investigation job: call delegate_investigation with one bounded question first. Until then say you are digging into it yourself.",
-    escalated: "\"the developers have it\" needs something that reached them: call raise_to_developers (or sync the ticket tracker, or open a decision). Until then say you will pass it on.",
+    escalated: "\"the developers have it\" needs a handoff a person holds: a raised item no Keir worker took, a question with needsHuman, or an open owner decision. If your own coding worker or pull request has it, say \"I am preparing a fix\" or \"My fix is in testing\" instead.",
   };
   // One public voice per ticket: no near-duplicate updates, and no second task
   // talking over the one that just posted (tickets 1500, 1506, 1507).
@@ -951,9 +994,35 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("team_cover_refused", { job: job.id, ticket: ticketNo, conclusion: kind, attempt: refused[ticketNo], staffSaidFixing: Boolean(activity.staffSaidFixing) });
     throw new Error(`${why}\n${activity.report}`);
   }
+  // Keir 11.4 review: what the deflection guard needs to tell a false claim from a true one.
+  function deflectionContext(job, ticketNo) {
+    const previewLib = require("./preview");
+    return { d, job, ticketNo: ticketNo || null, jobs: ticketNo ? Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo) : [], config,
+      previewFailed: Boolean(job.previewFailure), renderOffered: previewLib.requested(job, config) || (job.role === "owner" && job.replyChannel === "app"),
+      ticketCommandsOn: ctl().gate("crossTicketActions").run && !ticketCommands.refusal(job) };
+  }
+  // Keir 11.4 review (B1, M1): a refusal is never the end of an answer. The first two deflection refusals in an activation
+  // name the true sentence to use; after that the message goes out without the sentences that make the false claim, so a
+  // player owed an answer gets it instead of the code's "no confirmed answer" line. Returns the text to post.
+  function deflectionGate(job, ticketNo, message) {
+    const ctx = deflectionContext(job, ticketNo);
+    const t = handoffTruth.deflection(message, ctx);
+    if (!t) return message;
+    const kind = /you can render/.test(t) ? "render" : /ticket_command/.test(t) ? "read_only" : "handoff";
+    const budget = job.deflectionRefusals?.at === (job.startedAt || 0) ? job.deflectionRefusals : (job.deflectionRefusals = { at: job.startedAt || 0, n: 0 });
+    if (budget.n < 2) {
+      budget.n += 1; ledger.audit("deflection_refused", { job: job.id, ticket: ticketNo || null, kind, attempt: budget.n }); ledger.save();
+      throw new Error(t);
+    }
+    const kept = handoffTruth.withoutDeflections(message, ctx);
+    if (!kept) { ledger.audit("deflection_refused", { job: job.id, ticket: ticketNo || null, kind, attempt: budget.n + 1, empty: true }); throw new Error(`${t} Nothing else in the message is left to post.`); }
+    ledger.audit("deflection_stripped", { job: job.id, ticket: ticketNo || null, kind }); ledger.save();
+    return kept;
+  }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
     { const why = require("./ticketstate").endedReason(d, ticketNo, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: ticketNo, why }); throw new Error(`Ticket ${ticketNo} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
+    if (!opts.system) message = deflectionGate(job, ticketNo, message);
     notePageSymptom(ticketNo, message);
     await pageGate(job, ticketNo, message);
     guardTicketNumbers(job, ticketNo, message);
@@ -994,6 +1063,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     } catch (e) { if (e.screened) throw e; }
     await guardNeedlessClarification(job, ticketNo, message);
     if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
+    return message;
   }
   // Keir 10 claim check: check_draft runs every content guard a real post runs, against a draft, and lists all the problems at
   // once with a fix for each. It posts nothing, records nothing, spends no post budget and leaves every refusal counter as it was,
@@ -1269,7 +1339,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       const sameJobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
       const staffAsked = (job.role === "owner" || developerTask(job)) && Math.max(job.observedPlayerAt || 0, Date.parse(job.source?.at || "") || 0) > (job.lastPublishedAt || 0);
       attempt(() => { const t = standdown.holdingClaimRefusal(message); if (t) { ledger.audit("holding_guess_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
-      attempt(() => { const t = standdown.capabilityClaim(message); if (t) { ledger.audit("capability_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
+      attempt(() => { const t = standdown.capabilityClaim(message, { pageViewed: (d.ticketObservations?.[ticketNo] || []).some((o) => o.tool === "view_page") }); if (t) { ledger.audit("capability_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
       attempt(() => { const refusals = (d.priceVerdictRefusals ||= {}); if ((refusals[ticketNo] || 0) >= 3) return;
         const t = standdown.priceVerdictRefusal(message, ticketReadTexts(ticketNo, sameJobs)); if (t) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("price_verdict_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
       // Keir 11.2: "waiting on the owner" needs an open question. GitHub-reconciled decisions (prtruth.js) close when the PR merged or closed.
@@ -1332,6 +1402,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (job.kind === "ticket") {
       const dev = Object.values(d.jobs).find((j) => j.id !== job.id && j.kind === "command" && j.ticket === ticketNo && [config.ownerId, ...config.staffIds].includes(j.actorId) && !JOB_TERMINAL.includes(j.state) && humanAt(ticketNo) <= (Date.parse(j.source?.at || "") || now()));
       if (dev) refuse(`Not posted: a developer's own task (${dev.id}) is handling a request in ticket ${ticketNo}. Do not answer or refuse developer requests here; leave them to that task. Finish waiting.`);
+    }
+    // Keir 11.4 (owner, 2026-11-21): "with the developers" only when a person holds it and never to the person who asked;
+    // no blanket "I cannot render" or "read-only". Each refusal names the true sentence to use.
+    // Real posts run deflectionGate in guardTicketPost (it may post the answer without the false sentence); check_draft lists it here.
+    if (!opts.system && opts.collect) {
+      const t = handoffTruth.deflection(message, deflectionContext(job, ticketNo));
+      if (t) refuse(t);
     }
     const ev = ticketEvidence(ticketNo);
     const claims = outcomeClaims(message);
@@ -1639,7 +1716,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (ticketNo) {
         text = shapeTicketPost(text);
         if (TECHNICAL.test(text)) throw new Error("Ticket finish copy must use the player's register, without technical release details.");
-        await guardTicketPost(job, ticketNo, text);
+        text = await guardTicketPost(job, ticketNo, text);
         recordTicketPost(job, ticketNo, text);
       }
       return text;
@@ -2490,7 +2567,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!config.roleSnapshot || !["watchkeeper", "engineering"].includes(require("./roles").roleOf(job, ledger.data.jobs))) throw new Error("Operator role state is restricted to observer and engineering tasks");
       return config.roleSnapshot();
     }
-    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)
+    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "render_preview", "ticket_command", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)
       && !(name === "execute_action" && (() => { const x = ledger.data.actions?.[input.action]; return x && x.jobId === job.id && x.kind === "heal" && x.state === "approved" && x.approvedBy === config.ownerId; })())) throw new Error("finding tasks never post in Discord or execute privileged actions");
     if (job.prMention && !prMention.PR_MENTION_TOOLS.includes(name)) throw new Error("A PR review task only reads the pull request and the code, and posts one review comment on it");
     if (job.codingParent && !childTools(job).includes(name)) throw new Error(job.investigation ? "Investigators only read: code in the snapshot, live game state, history and past tickets. The worker handles fixes, publication and communication." : "Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.");
@@ -2517,6 +2594,16 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         resolution: t.resolution?.message ? String(t.resolution.message).slice(0, 1500) : null,
         // The whole public timeline, as the receipt page shows it (2.3).
         publicUpdates: (t.publicUpdates || []).filter((u) => u.kind !== "heal").slice(-30).map((u) => ({ at: u.at, message: String(u.message || "").slice(0, 600) })) };
+    }
+    if (name === "ticket_command") {
+      if (input.op === "add_person") {
+        // Keir 11.4 review (M6): preview mode changes nothing, and the person is added only to the ticket the command names.
+        const r = await ticketCommands.run(job, input, signal);
+        if (r.preview) return r;
+        if (!r.ticket) throw new Error("Name the ticket to add them to, by number, in tickets.");
+        return tool(job, "add_to_ticket", { user: String(input.user || ""), ticket: r.ticket }, signal);
+      }
+      return ticketCommands.run(job, input, signal);
     }
     if (name === "merge_into_incident") {
       const target = Number(input.incident);
@@ -2628,7 +2715,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (out.skipped) { ledger.save(); return null; }
         if (rec) { rec.workerRun = out.run.id; rec.workerSeen = true; }
         ledger.save();
-        return { codingWorker: out.run.id, instruction: `Filed, and a coding worker (${out.run.id}) is building the fix now. Keir merges it, promotes it and verifies it live on its own once the required checks are green; you will be woken at each end state. Tell the player a fix is being built, not that it is live. Say it is live only after the wake that says it is live.` };
+        return { codingWorker: out.run.id, instruction: `Filed, and a coding worker (${out.run.id}) is building the fix now. Keir merges it, promotes it and verifies it live on its own once the required checks are green; you will be woken at each end state. Tell the player in the first person: "I am preparing a fix", not that it is live and never that the developers have it (no developer does). Say it is live only after the wake that says it is live.` };
       }
       async function ensureIssueCard(number, url, issueTitle, fresh = false) {
         const issue = d.keirIssues[number];
@@ -2894,12 +2981,17 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
       if (require("./toolmarkup").leaked(input.message)) throw new Error("This message contains tool-call markup. Call the tool through the tool interface instead of writing it out, then reply with the result.");
       let message = publicText(input.message);
+      // Keir 11.4: a UTC time in a Discord message becomes Discord's timestamp markup; the app gets ET.
+      message = job.replyChannel === "app" ? require("./ownercopy").etTimes(message, now()) : require("./ownercopy").discordTimes(message, now());
       if (job.startedAt && job.unavailableScreenshotTurn === job.startedAt &&
           /\b(?:should (?:now )?(?:appear|show|see|be visible)|(?:now|currently) (?:lists?|shows?|appears?|displays?)|you(?:'ll| will) see)\b/i.test(message))
         throw new Error("The referenced screenshot is unavailable. Explain what you meant by the earlier reference. Leave the current screen unverified, or check it before claiming what appears there.");
       if (job.replyChannel !== "app" && Boolean(job.ticket || job.source?.channelName) && /\bintake\s+persisted|\b(?:support|ticket['’]s own)\s+task\b|receipt and intake card|intake card delivered/i.test(message))
         throw new Error("Public ticket acknowledgements should give the ticket link in one short sentence. Keep intake bookkeeping and task handoffs private.");
       require("./advicerouting").guard(job, d, message);
+      if (!(job.ticket || ticketNumberOf(job.source?.channelName))) {
+        message = deflectionGate(job, null, message);
+      }
       if (/^(?:i['’]m on it|on it|looking into it|will do)[.!]*$/i.test(message.trim())) return { skipped: "generic acknowledgment suppressed; use progress_update with a specific line" };
       const ticketNo = job.ticket || ticketNumberOf(job.source?.channelName);
       if (ticketNo) message = shapeTicketPost(message); // short, in paragraphs, or refused
@@ -2916,7 +3008,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // A ticket channel belongs to the player, whoever asked. Player-register
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
-        await guardTicketPost(job, ticketNo, message);
+        message = await guardTicketPost(job, ticketNo, message);
         message = softenSettingClaims(job, ticketNo, softenAccountClaims(job, ticketNo, softenBugClaims(job, ticketNo, softenUnreadClaims(job, ticketNo, message))));
         message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
@@ -4140,10 +4232,18 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     // player to a ticket or incident channel by name.
     if (name === "add_to_ticket") {
       const staffAsk = [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && job.role !== "player";
-      if (!developerTask(job) && !(job.kind === "conversation" && staffAsk)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
-      const ticketNo = Number(input.ticket) || ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
+      if (!developerTask(job) && !(job.kind === "conversation" && staffAsk) && ticketCommands.refusal(job)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
+      const ownTicket = ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
+      const ticketNo = Number(input.ticket) || ownTicket;
       if (!ticketNo) throw new Error("name the ticket number to add them to");
-      const channelId = (job.channelId && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
+      // Keir 11.4 review (M6): adding someone to a ticket other than the one this request came from is a cross-ticket
+      // action, held by the same switch as ticket_command (off refuses, preview changes nothing).
+      if (Number(ticketNo) !== Number(ownTicket || 0)) {
+        const g = ctl().gate("crossTicketActions");
+        if (!g.run) throw new Error(`Not done: ticket commands are off right now (${g.why}). Tell the requester exactly that.`);
+        if (!g.act) { controlsLib.preview(d, "ticket-command", "add_person", String(ticketNo), `requested by ${job.actorId}`, {}, now()); ledger.save(); return { preview: true, instruction: "Ticket commands are in preview: nobody was added. Tell the requester that in one line." }; }
+      }
+      const channelId = (job.channelId && snowflake(job.channelId) && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
         : d.jobs[d.seen[`ticket:${ticketNo}`]]?.channelId;
       const ch = channelId && await discord("GET", `/channels/${channelId}`);
       if (!ch || ch.guild_id !== config.guildId || ticketNumberOf(ch.name) !== ticketNo) throw new Error(`no open channel found for ticket ${ticketNo}`);
@@ -4185,6 +4285,41 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Private pages are pinned to the ticket's original reporter from the support service's own ticket row.
       return require("./evidencepages").present({ ledger, config, job, input: input || {}, now: now(),
         readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, signal) });
+    }
+    if (name === "render_preview") {
+      // Keir 11.4 (ticket 1875): a labelled interface preview from HTML Keir writes, posted as an image where it is answering.
+      const previewLib = require("./preview");
+      if (job.role === "player" || job.kind === "finding" || job.codingParent || job.internalProbe) throw new Error("previews are drawn for the owner and staff");
+      const g = ctl().gate("imageDelivery");
+      // Keir 11.4 review (B1): switched off is a true reason; record it so "I can't draw it right now" is not refused.
+      if (!g.run) { job.previewFailure = { at: now(), why: `image delivery is off (${g.why})` }; ledger.save(); throw new Error(`Not drawn: image delivery is off right now (${g.why}). Say that once and give the proposed wording as text.`); }
+      const caption = input.caption ? publicText(String(input.caption)).replace(/(?:^|\n+)\s*(?:From|Source|Sources|Checked):[^\n]*$/i, "").trim().slice(0, 600) : "";
+      const ticketNo = ticketOf(job);
+      if (caption) { const t = handoffTruth.deflection(caption, { d, job, ticketNo, jobs: ticketNo ? Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo) : [], config }); if (t) throw new Error(t); }
+      if (!g.act) { job.previewFailure = { at: now(), why: "image delivery is in preview" }; controlsLib.preview(d, "image-delivery", "post preview", `job ${job.id}`, caption || previewLib.LABEL, {}, now()); ledger.save(); return { preview: true, instruction: "Image delivery is in preview: nothing was posted. Give the proposed wording as text." }; }
+      let out;
+      try { out = await previewLib.render({ sandbox, jobId: job.id, html: input.html, signal }); }
+      catch (e) {
+        job.previewFailure = { at: now(), why: String(e.message).slice(0, 160) }; ledger.save();
+        ledger.audit("preview_failed", { job: job.id, ticket: ticketNo || null, why: job.previewFailure.why });
+        throw new Error(`The preview could not be drawn: ${job.previewFailure.why}. Say once, plainly, what failed and give the proposed wording as text. Do not say you cannot render in general.`);
+      }
+      delete job.previewFailure;
+      const dir = path.join(config.stateDir, "artifacts"); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const digest = hash({ html: input.html, caption });
+      const file = path.join(dir, `preview-${job.id}-${digest.slice(0, 12)}.png`);
+      fs.writeFileSync(file, out.png, { mode: 0o600 });
+      // The label always leads the message; it is not a claim about the game, so no source line.
+      const text = `${previewLib.LABEL}${caption ? `\n\n${caption}` : ""}`;
+      const destination = job.replyChannel ? `channel:${job.id}` : job.actorId === config.ownerId ? "owner" : job.actorId;
+      const key = `chart:preview:${job.id}:${digest.slice(0, 16)}`;
+      ledger.notify(key, destination, text.slice(0, 1800));
+      if (d.outbox[key]) { d.outbox[key].files = [{ path: file, name: "keir-preview.png", preview: true }]; d.outbox[key].preview = true; }
+      if (job.replyChannel) { job.channelReplyQueued = true; job.channelRepliedAt = now(); }
+      if (ticketNo && job.replyChannel && job.replyChannel !== "app") recordTicketPost(job, ticketNo, text);
+      ledger.audit("preview_posted", { job: job.id, ticket: ticketNo || null });
+      ledger.save();
+      return { posted: true, label: previewLib.LABEL, renderedText: out.text.slice(0, 1500), instruction: "The preview is posted as an image with its label. Do not post the same wording again as text unless asked; answer anything else they asked, then finish." };
     }
     if (name === "chart") {
       // An AHD house-style chart, posted where the conversation is happening.
@@ -4511,7 +4646,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenSettingClaims(job, job.ticket, softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(require("./ownercopy").discordTimes(args.message || "", now())); args.message = await guardTicketPost(job, job.ticket, args.message); args.message = softenSettingClaims(job, job.ticket, softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).
@@ -5396,7 +5531,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { ticketCommandAllowed: (job) => !ticketCommands.refusal(job), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

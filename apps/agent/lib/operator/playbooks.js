@@ -55,7 +55,7 @@ const PLAYBOOKS = {
     step("read_reporter", "Read the reporter's live records", f.reporter && f.reads >= 1),
     step("verify_loss", "Verify the loss from the ledger or history (trace_account, character history); never take the player's number on trust", f.reads >= 3),
     step("route", "Propose the repair with request_heal (the owner approves it) and raise the code bug that caused it; never promise money", f.heal || f.raised || f.merged || f.answeredCard),
-    step("tell_player", "Tell the player what was verified and that the repair is with the developers, after their last message", f.answeredSincePlayer),    teamStep(f),
+    step("tell_player", "Tell the player what was verified and where the repair stands in plain words (waiting for approval, being prepared by you, or with a named person), after their last message", f.answeredSincePlayer),    teamStep(f),
   ],
   gameplay_advice: (f) => [
     step("redirect", `Send the short Ask redirect (${require("./advicerouting").URL}); do not research investments or create a progress card`, f.adviceRedirect),

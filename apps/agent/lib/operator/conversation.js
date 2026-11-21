@@ -8,6 +8,8 @@ function quickQuestion(text) {
   text = String(text || "").trim().replace(/^(?:so|hang on|wait)[, ]+/i, "");
   if (/^(?:any (?:updates?|news|progress)(?: (?:on (?:this|that)|yet))?|(?:do i|should i|did i) (?:need to )?(?:wait|retry|refile|try again))\s*[?.!]*$/i.test(text)) return true;
   if (/\b(deploy|fix|change|open|close|create|delete|remove|cancel|approve|reject|restart|merge|publish|install|update|set|run|build|implement|investigate)\b/i.test(text)) return false;
+  // Keir 11.4 (ticket 1875): a request for a picture is work, not a quick chat answer; the quick lane has no way to draw one.
+  if (require("./preview").asksForImage(text)) return false;
   if (/^(?:(?:ok(?:ay)?[,!. ]*)?let['’]s (?:talk|chat)(?: to each other)?|test|ping|hello|hi|hey|thanks|thank you)[!.? ]*$/i.test(text.trim())) return true;
   if (/^(?:please\s+)?ask me (?:for|about)\b/i.test(text.trim())) return true;
   return /^(what|who|why|how|when|where|which|is|are|was|were|does|do|did|has|have|can you (?:explain|show|tell|check)|show|explain|tell me|any (?:news|progress)|status)\b/i.test(text.trim());

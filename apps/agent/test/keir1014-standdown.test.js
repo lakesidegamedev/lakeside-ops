@@ -55,7 +55,7 @@ test("C: a holding line may not state a cause (1845)", () => {
 });
 test("C: capability claims are refused (1843)", () => {
   for (const t of ["The site loads on a phone for me.", "I tested it on my phone and it works.", "I loaded the page and it looks fine.", "It works for me on mobile."])
-    assert.match(sd.capabilityClaim(t) || "", /cannot open the site/, t);
+    assert.match(sd.capabilityClaim(t) || "", /view_page/, t);
   for (const t of ["Your corporation shows revenue of 35,051 CAD.", "I read your corporation records for turn 12.", "Which browser and device are you on?"]) assert.equal(sd.capabilityClaim(t), null, t);
 });
 
@@ -148,7 +148,7 @@ test("broker: a repeat post with nothing new is refused; a player message reopen
 });
 test("broker: capability and guessed-cause holding lines are refused (C)", async () => {
   const f = setup();
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The site loads on a phone for me." }), /cannot open the site/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "The site loads on a phone for me." }), /view_page/);
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your company has nothing set aside for logistics, so I am checking whether stock is reaching your shops." }), /holding line states a cause/);
   await f.broker.tool(f.job, "channel_reply", { message: "I am checking how your logistics spending is set up and will post what I find." });
 });
