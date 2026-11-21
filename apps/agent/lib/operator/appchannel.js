@@ -216,7 +216,8 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
   function deliver(key, entry, job) {
     // A queued reply can race with cancellation after the model has finished.
     if (job.state === "cancelled" || job.appCancelledAt != null || rootOf(job)?.state === "cancelled" || rootOf(job)?.appCancelledAt != null) return [];
-    const text = ownerText(entry.content).replace(/[–—]/g, ",");
+    // Keir 11.4: the owner never reads UTC; clock times become ET.
+    const text = require("./ownercopy").etTimes(ownerText(entry.content), now()).replace(/[–—]/g, ",");
     if (key.startsWith("ack:")) { setStatus(d, job.id, text, now()); job.progressMessageId = `app-status-${job.id}`; return [job.progressMessageId]; }
     // A watch speaks only when its condition is met.
     if (job.appWatch && agent() && !agent().onWatchReply(job, text)) { clearStatus(d, job.id); return [`watch-${job.appWatch}-quiet`]; }

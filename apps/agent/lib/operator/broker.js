@@ -2911,6 +2911,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!job.replyChannel || job.replyChannel !== job.source?.channelId) throw new Error("no authenticated reply channel");
       if (require("./toolmarkup").leaked(input.message)) throw new Error("This message contains tool-call markup. Call the tool through the tool interface instead of writing it out, then reply with the result.");
       let message = publicText(input.message);
+      // Keir 11.4: a UTC time in a Discord message becomes Discord's timestamp markup; the app gets ET.
+      message = job.replyChannel === "app" ? require("./ownercopy").etTimes(message, now()) : require("./ownercopy").discordTimes(message, now());
       if (job.startedAt && job.unavailableScreenshotTurn === job.startedAt &&
           /\b(?:should (?:now )?(?:appear|show|see|be visible)|(?:now|currently) (?:lists?|shows?|appears?|displays?)|you(?:'ll| will) see)\b/i.test(message))
         throw new Error("The referenced screenshot is unavailable. Explain what you meant by the earlier reference. Leave the current screen unverified, or check it before claiming what appears there.");
@@ -4566,7 +4568,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(args.message || ""); await guardTicketPost(job, job.ticket, args.message); args.message = softenSettingClaims(job, job.ticket, softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(require("./ownercopy").discordTimes(args.message || "", now())); await guardTicketPost(job, job.ticket, args.message); args.message = softenSettingClaims(job, job.ticket, softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).

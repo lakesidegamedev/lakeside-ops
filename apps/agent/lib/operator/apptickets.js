@@ -61,10 +61,14 @@ function ticketDetail(data, number, now = Date.now(), config = {}, support = nul
   const playerReply = verifiedPlayerReply(support, number, config.guildId);
   if (playerReply) history.push(playerReply);
   history.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  // Keir 11.4 (owner, 2026-11-21): rows the owner reads are plain: no hashes, paths or task ids, and times in ET, never UTC.
+  const oc = require("./ownercopy"), pl = (t) => (t == null ? t : oc.plain(t, now));
+  for (const b of blockers) { b.title = pl(b.title); b.detail = pl(b.detail); }
+  for (const h of history) h.text = oc.etTimes(h.text, now);
   return { number, title: support?.number === number ? support.title || null : data.ticketRecords?.[number]?.title || null, retryTaskId: stalledTicketJob(data, number)?.id || null, timing: current ? require("./workqueue").workStatus(data, require("./workrecord").rootJob(current, data.jobs), { now, config }) : null, blockers, decisions: decisions.map((x) => require("./appdecision").decisionView(data, x, now)),
-    current: current ? { id: current.id, state: current.state, status: current.liveLog?.at(-1)?.what || card.status || current.summary || null, summary: current.summary || null, startedAt: current.startedAt || null, updatedAt: current.updatedAt || current.at, plan: current.plan || [] } : null,
+    current: current ? { id: current.id, state: current.state, status: pl(current.liveLog?.at(-1)?.title || card.status || current.summary || null), summary: pl(current.summary || null), startedAt: current.startedAt || null, updatedAt: current.updatedAt || current.at, plan: current.plan || [] } : null,
     card, receipts, handoffs, history: history.slice(0, 50),
-    tasks: jobs.map((j) => ({ id: j.id, canOpen: j.role === "owner", state: j.state, kind: j.kind, summary: j.summary, updatedAt: j.updatedAt || j.at })),
+    tasks: jobs.map((j) => ({ id: j.id, canOpen: j.role === "owner", state: j.state, kind: j.kind, summary: pl(j.summary), updatedAt: j.updatedAt || j.at })),
     pullRequests: [...new Set(jobs.flatMap((j) => j.pullRequests || []))], updatedAt: now };
 }
 function stalledTicketJob(data, number) {

@@ -640,7 +640,8 @@ async function flushOutbox() {
         const recipient = entry.destination === "owner" ? config.ownerId : entry.destination;
         if (![config.ownerId, ...config.staffIds].includes(recipient)) throw new Error("untrusted notification recipient");
         dmId = await ensureDm(recipient);
-        clean = recipient === config.ownerId ? ownerText(entry.content) : redactSecrets(entry.content);
+        // Keir 11.4: owner and staff DMs never show UTC; clock times become ET.
+        clean = require("./lib/operator/ownercopy").etTimes(recipient === config.ownerId ? ownerText(entry.content) : redactSecrets(entry.content));
       }
       // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
       const text = clean.replace(/[\u2013\u2014]/g, ",");

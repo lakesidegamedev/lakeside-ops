@@ -16,7 +16,8 @@ const NUMBER = /(?<![\w.#])-?\d[\d,]*(?:\.\d+)?\s*(?:%|k\b|thousand\b|mn?\b|mill
 /** Every number in a text, scaled by its unit word (12.5m -> 12500000). */
 function numbersIn(text) {
   const out = [];
-  for (const raw of String(text || "").match(NUMBER) || []) {
+  // Discord timestamp markup (<t:1795269600:t>) is a time, not a figure to check.
+  for (const raw of String(text || "").replace(/<t:-?\d+(?::[tTdDfFR])?>/g, " ").match(NUMBER) || []) {
     const m = /^(-?[\d,]+(?:\.\d+)?)\s*([a-z%]*)$/i.exec(raw.trim());
     if (!m) continue;
     const base = Number(m[1].replace(/,/g, ""));
