@@ -202,6 +202,9 @@ struct ActivityView: View {
             }
         }
         .listStyle(.plain)
+        // Header rows are one short line; the default 44 pt minimum row
+        // height left a tall gap above every group.
+        .environment(\.defaultMinListRowHeight, 1)
         .opsScrollable()
         // The scope and filter controls sit outside the List so tapping one
         // never rebuilds or scrolls the row the tap came from.
