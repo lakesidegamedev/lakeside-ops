@@ -394,3 +394,85 @@ test("the preview report shows the switch, what the service recorded and what it
   assert.match(text, /\[turn-incidents\] open incident w3:t108/);
   assert.match(text, /last read: .*turn 108 failing \(failed\)/);
 });
+
+// --- release review fixes (2026-11-21) ---------------------------------------------------------------------------
+
+// Turn 110 fails at 14:01 and recovers at 14:40; turn 112 fails at 16:01. The world as a function of the clock.
+function laterTurns(r, { okAt = "14:40" } = {}) {
+  const fail = (turn, iso, phase = "corporationTurn") => ({ realTime: iso, success: false, failedPhaseDetails: [{ phase, status: "failed", reason: "mustStop", message: STACK }] });
+  const orig = r.w.mcp.call;
+  r.w.detail = (t) => t >= at("16:01") ? { turn: 112, attempts: [fail(112, "2026-11-21T16:01:00.000Z")] }
+    : { turn: 110, attempts: [fail(110, "2026-11-21T14:01:00.000Z"), ...(okAt && t >= at(okAt) ? [{ realTime: `2026-11-21T${okAt}:00.000Z`, success: true, outcome: "clean", failedPhases: [], abortedPhases: [], warnings: [] }] : [])].filter((a) => Date.parse(a.realTime) <= t) };
+  r.w.currentTurn = () => (r.clock() >= at("16:01") ? 111 : r.clock() >= at(okAt || "23:59") ? 110 : 109);
+  r.w.mcp.call = async (s, tool, args, write) => tool === "turn_failure_detail" ? r.w.detail(r.clock()) : orig(s, tool, args, write);
+}
+function rig2(start, opts = {}) { const r = rig({ start, ...opts }); r.clock = () => r.w.clock(); laterTurns(r, opts); return r; }
+
+test("B1: an incident closed minutes before the next failure does not absorb it; the new failure gets its own incident", async () => {
+  const r = rig2("14:02");
+  await r.sweep();
+  assert.equal(r.w.creates.length, 1);
+  r.set("14:41"); await r.sweep();
+  assert.match(r.w.updates.at(-1).message, /advancing again/);
+  r.set("15:55"); await r.sweep(); // status read: open, cached for ten minutes
+  r.w.incidents.find((i) => i.number === 1880).status = "closed";
+  r.set("16:02"); await r.sweep();
+  assert.equal(r.w.creates.length, 2, "turn 112 gets its own incident");
+  assert.match(r.w.creates[1].title, /^Turn 112 failed/);
+  assert.equal(r.w.updates.filter((u) => u.number === 1880 && /Turn 112/.test(u.message)).length, 0, "nothing is posted into the closed incident");
+  assert.equal(r.d.turnIncidents.current.number, 1881);
+  assert.equal(r.pass.incidentForTurn(112), 1881);
+  for (const hhmm of ["16:10", "16:30", "17:00"]) { r.set(hhmm); await r.sweep(); }
+  assert.equal(r.w.creates.length, 2, "and only one");
+});
+
+test("B1, the other way: an incident read open just now still takes the next turn's failure, and opens nothing new", async () => {
+  const r = rig2("14:02");
+  await r.sweep();
+  r.set("14:41"); await r.sweep();
+  r.set("15:55"); await r.sweep();
+  r.set("16:02"); await r.sweep();
+  assert.equal(r.w.creates.length, 1);
+  assert.match(r.w.updates.at(-1).message, /^Turn 112 failed to finish/);
+  assert.equal(r.w.updates.at(-1).number, 1880);
+  assert.ok(r.w.calls.some((c) => c.tool === "support_get" && c.args.number === 1880 && r.w.calls.indexOf(c) > r.w.calls.findIndex((x) => x.tool === "turn_failure_detail" && x === r.w.calls.filter((y) => y.tool === "turn_failure_detail").at(-1))), "the status was read fresh before adding");
+});
+
+test("B1: an incident whose status cannot be read is not added to; past five minutes the failure gets its own incident and the owner is told once", async () => {
+  const r = rig2("14:02");
+  await r.sweep();
+  r.set("14:41"); await r.sweep();
+  const orig = r.w.mcp.call;
+  // The ticket read keeps failing; the list fails too at first, then answers without #1880 (only the newest 20 are
+  // listed), which proves nothing about it either way.
+  r.w.mcp.call = async (s, tool, args, write) => {
+    if (tool === "support_get" || (tool === "support_list" && r.clock() < at("16:08"))) throw new Error("timeout");
+    if (tool === "support_list") { const l = await orig(s, tool, args, write); return { items: l.items.filter((x) => x.number !== 1880) }; }
+    return orig(s, tool, args, write);
+  };
+  r.set("16:02"); await r.sweep();
+  r.set("16:04"); await r.sweep();
+  assert.equal(r.w.creates.length, 1, "inside the bound: neither added nor opened");
+  assert.equal(r.w.updates.filter((u) => /Turn 112/.test(u.message)).length, 0);
+  assert.match(holds(r.d), /status-unknown: could not read whether incident #1880 is still open/);
+  r.set("16:07"); await r.sweep(); // past the bound, but the list is still unreadable: it keeps trying
+  assert.equal(r.w.creates.length, 1);
+  r.set("16:08"); await r.sweep();
+  assert.equal(r.w.creates.length, 2, "a new incident rather than silence");
+  assert.match(r.w.creates[1].title, /^Turn 112 failed/);
+  assert.equal(r.notes.filter((n) => /:status$/.test(n.key)).length, 1);
+  for (const hhmm of ["16:25", "16:40"]) { r.set(hhmm); await r.sweep(); }
+  assert.equal(r.w.creates.length, 2); assert.equal(r.notes.filter((n) => /:status$/.test(n.key)).length, 1, "told once");
+});
+
+test("B1: a person closing the incident while its turn still fails is held, not reopened, and the owner is told once", async () => {
+  const r = rig({ start: "11:32" });
+  await r.sweep();
+  r.w.incidents.find((i) => i.number === 1880).status = "closed";
+  for (const hhmm of ["11:45", "11:50", "12:01", "12:30"]) { r.set(hhmm); await r.sweep(); }
+  assert.equal(r.w.creates.length, 1, "not reopened for the same turn");
+  assert.equal(r.d.turnIncidents.records["w3:t108"].state, "closed-while-failing");
+  const told = r.notes.filter((n) => /:closed$/.test(n.key));
+  assert.equal(told.length, 1); assert.match(told[0].content, /Turn 108 is still failing but its incident #1880 was closed/);
+  assert.equal(r.pass.incidentForTurn(108), null, "the staff proposal fallback is not suppressed");
+});

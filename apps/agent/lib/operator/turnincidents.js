@@ -39,6 +39,7 @@ const SETTLE_MS = 10 * MINUTE;          // an uncertain create is not retried be
 const CLOSED_CHECK_MS = 10 * MINUTE;    // how often an open incident's own status is re-read
 const FOLD_MIN_MS = 30 * MINUTE;        // a same-turn change of step is posted at most this often
 const RECOVERED_KEEP_MS = 6 * HOUR;     // a recovered incident still absorbs a new failure for this long, if open
+const STATUS_BOUND_MS = 5 * MINUTE;     // an incident whose status cannot be read is not added to; past this, a new one opens
 const OPEN = (s) => !["resolved", "closed", "merged", "rejected", "done"].includes(String(s || "").toLowerCase());
 
 // --- reading the engine ------------------------------------------------------------------------------------------
@@ -288,7 +289,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     const s = st();
     s.current = { number, title: title || null, by, key: rec.key, turns: [rec.turn], at: now(), lastTurn: rec.turn, lastPhase: rec.phase || null, lastKind: rec.kind,
       folded: { turn: rec.turn, count: 0 }, firstFailedAt: rec.firstFailedAt, checkedAt: now(), seenAttempts: { [rec.turn]: rec.attempts || 1 }, pausedPosted: Boolean(rec.autoPaused) };
-    rec.state = "attached"; rec.incident = number;
+    rec.state = "attached"; rec.incident = number; rec.attachedOpenAt = now();
     ledger.audit("turn_incident_adopted", { key: rec.key, incident: number, by });
     return s.current;
   }
@@ -429,17 +430,26 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
       ledger.audit("turn_incident_recovered", { incident: cur.number, turn: r.turn, clean: r.clean, downMinutes: Math.round((at - (cur.firstFailedAt || at)) / MINUTE) });
     }
   }
+  // Reads the incident's own status now: "open", "closed" (it is then no longer the one to add to) or "unknown".
+  // A failed read of the ticket falls back to the open incident list, which can prove open but never closed.
+  async function readStatus(cur) {
+    let t; try { t = await readTicket(cur.number); } catch { t = null; }
+    if (!t) {
+      try { if ((await listOpenIncidents()).some((x) => Number(x.number) === Number(cur.number))) { cur.checkedAt = now(); return "open"; } } catch {}
+      return "unknown";
+    }
+    cur.checkedAt = now();
+    if (OPEN(t.status) && t.category === "incident" && !t.mergedInto) return "open";
+    const s = st();
+    s.past = [...(s.past || []), { ...cur, closedAt: now(), status: t.status, mergedInto: t.mergedInto || null }].slice(-20);
+    if (s.current === cur) delete s.current;
+    ledger.audit("turn_incident_closed_seen", { incident: cur.number, status: t.status });
+    return "closed";
+  }
   // Re-reads the incident's own status every so often; a closed incident is no longer the one to add to.
   async function stillOpen(cur) {
     if (now() - (cur.checkedAt || 0) < CLOSED_CHECK_MS) return true;
-    let t; try { t = await readTicket(cur.number); } catch { return true; }
-    cur.checkedAt = now();
-    if (OPEN(t.status) && t.category === "incident" && !t.mergedInto) return true;
-    const s = st();
-    s.past = [...(s.past || []), { ...cur, closedAt: now(), status: t.status }].slice(-20);
-    delete s.current;
-    ledger.audit("turn_incident_closed_seen", { incident: cur.number, status: t.status });
-    return false;
+    return (await readStatus(cur)) !== "closed";
   }
 
   // --- one sweep ---------------------------------------------------------------------------------------------------
@@ -470,14 +480,38 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
       const rec = (s.records[key] ||= { key, world: a.world, turn: f.turn, firstFailedAt: f.firstFailedAt, firstSeenAt: at, state: "new" });
       rec.firstFailedAt = Math.min(rec.firstFailedAt || f.firstFailedAt, f.firstFailedAt); rec.phase ||= f.phase; rec.reason ||= f.reason; rec.kind ||= f.kind; rec.lastSeenAt = at; rec.attempts = f.attempts; rec.autoPaused = f.autoPaused;
       if (rec.state === "closed-while-failing") { ledger.save(); return { held: "closed by a person while failing", key }; }
+      // A failure not yet on the current incident is added to it only after its status is read fresh (B1): an incident
+      // closed minutes ago must never absorb, or hold back, a new failure. Unknown is neither open nor closed: it is read
+      // again on the next sweeps, and past a short bound the failure gets its own incident and the owner is told.
+      let notThis = null;
+      if (cur && !(rec.state === "attached" && rec.incident === cur.number)) {
+        const status = await readStatus(cur);
+        if (status === "closed") cur = null;
+        else if (status === "unknown") {
+          rec.statusUnreadSince ||= at;
+          if (at - rec.statusUnreadSince < STATUS_BOUND_MS) {
+            hold(key, "status-unknown", `could not read whether incident #${cur.number} is still open; reading again before adding turn ${f.turn} to it`);
+            ledger.save(); return { key, unreadable: "status" };
+          }
+          note(`${key}:status`, "blocked", `Turn ${f.turn} is failing and Keir could not read for ${duration(at - rec.statusUnreadSince)} whether incident #${cur.number} is still open, so it is opening a new incident for this turn instead.`);
+          notThis = cur.number; cur = null;
+        } else delete rec.statusUnreadSince;
+      }
       if (cur) {
-        if (rec.state !== "attached") { rec.state = "attached"; rec.incident = cur.number; ledger.audit("turn_incident_added", { key, incident: cur.number }); hold(key, "already-open", `incident #${cur.number} is already open for turn failures; added to it`); }
+        if (rec.state !== "attached" || rec.incident !== cur.number) { rec.state = "attached"; rec.incident = cur.number; rec.attachedOpenAt = now(); ledger.audit("turn_incident_added", { key, incident: cur.number }); hold(key, "already-open", `incident #${cur.number} is already open for turn failures; added to it`); }
         if (cur.recovered || !cur.firstFailedAt) cur.firstFailedAt = f.firstFailedAt;
         await addFailure(cur, f, gate.act);
         ledger.save(); return { key, incident: cur.number };
       }
-      // A record this process opened, whose incident has since closed while the turn is still failing: a person closed it.
-      if (rec.incident && ["attached", "recovered"].includes(rec.state)) { rec.state = "closed-while-failing"; hold(key, "closed", `incident #${rec.incident} was closed while turn ${f.turn} is still failing; not reopened`); ledger.save(); return { key }; }
+      // A record attached to an incident while that incident was open, which has since closed while the turn is still
+      // failing: a person closed or merged it. It is not reopened, and the owner is told once.
+      if (rec.incident && rec.attachedOpenAt && ["attached", "recovered"].includes(rec.state)) {
+        rec.state = "closed-while-failing";
+        const past = (st().past || []).filter((p) => p.number === rec.incident).pop();
+        hold(key, "closed", `incident #${rec.incident} was closed while turn ${f.turn} is still failing; not reopened`);
+        note(`${key}:closed`, "held", `Turn ${f.turn} is still failing but its incident #${rec.incident} was ${past?.mergedInto ? `merged into #${past.mergedInto}` : "closed"}. Keir has not reopened it; open one again if players still need it.`);
+        ledger.save(); return { key };
+      }
       let list;
       try { list = await listOpenIncidents(); }
       catch (e) {
@@ -491,7 +525,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
       // awaits its own open): what happened is unknown, so it is reconciled, never simply repeated.
       if (rec.state === "opening") { rec.state = "uncertain"; rec.emptyReads = 0; ledger.audit("turn_incident_open_interrupted", { key, intentAt: rec.intentAt || null }); }
       if (rec.state === "uncertain") { const c = await reconcile(rec, list); ledger.save(); return { key, incident: c?.number || null, uncertain: !c }; }
-      const existing = list.find(isTurnIncident);
+      const existing = list.find((t) => Number(t.number) !== notThis && isTurnIncident(t));
       if (existing) {
         if (!gate.act) { preview(d, "turn-incidents", "add to incident", `${key} -> #${existing.number}`, `incident #${existing.number} "${existing.title}" is already open`, {}, now()); ledger.save(); return { key, incident: Number(existing.number), preview: true }; }
         const c = adopt(Number(existing.number), existing.title, "existing", rec);
@@ -542,7 +576,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
   function incidentForTurn(turn) {
     const s = st();
     if (s.current?.turns?.includes(turn)) return s.current.number;
-    return Object.values(s.records).find((r) => r.turn === turn && r.incident)?.incident || null;
+    return Object.values(s.records).find((r) => r.turn === turn && r.incident && r.state !== "closed-while-failing")?.incident || null;
   }
   function status() {
     const s = st();
