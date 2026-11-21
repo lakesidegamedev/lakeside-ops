@@ -18,6 +18,10 @@ const { prOfAction, prOfDecision } = require("./decisions");
 const TTL_MS = 2 * 60000;
 const KEEP_MS = 14 * 86400000;
 const MAX_READS = 15;
+// Keir 11.2: PRs a waiting job's closing condition names, or a review task's fix PR, are read at most this often and at
+// most WAIT_READS a pass, so the code-side wake check (closing.js) can tell "nothing changed" without a model run.
+const WAIT_REFRESH_MS = 30 * 60000;
+const WAIT_READS = 5;
 const repoOf = (r) => (!r ? GAME_REPO : /\//.test(r) ? canonicalRepository(r) : repositoryName(r));
 const prKey = (repo, n) => `${repo}#${n}`;
 
@@ -26,9 +30,9 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
   const store = () => { d.prTruth ||= {}; d.prTruth.prs ||= {}; d.prTruth.reasked ||= {}; return d.prTruth; };
 
   // One PR's state, or null when GitHub could not be read. Cached briefly so the decision loop stays cheap.
-  async function read(repo, number, budget) {
+  async function read(repo, number, budget, ttl = TTL_MS) {
     const t = store(), key = prKey(repo, number), cached = t.prs[key];
-    if (cached && now() - cached.checkedAt < TTL_MS) return cached;
+    if (cached && now() - cached.checkedAt < ttl) return cached;
     if (budget.left <= 0) return null;
     budget.left--;
     let pr;
@@ -121,6 +125,7 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
         changed++;
       }
     }
+    changed += await waitedPrs();
     const t = store();
     for (const [k, v] of Object.entries(t.prs)) if (now() - v.checkedAt > KEEP_MS) delete t.prs[k];
     for (const [k, at] of Object.entries(t.reasked)) if (now() - at > KEEP_MS) delete t.reasked[k];
@@ -128,7 +133,50 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
     return { changed, reads: maxReads - budget.left };
   }
 
-  return { tick, read };
+  // Keir 11.2: keep PR state fresh for waits, and move review fixes through fix in review, live and reopened.
+  async function waitedPrs() {
+    const budget = { left: WAIT_READS };
+    let changed = 0;
+    const prNum = (u) => Number(/\/AHDGame\/pull\/(\d+)\s*$/.exec(String(u || ""))?.[1] || 0);
+    for (const job of Object.values(d.jobs || {})) {
+      if (budget.left <= 0) break;
+      const review = job.reviewItem?.kind === "doc_conflict" && job.reviewItem.source === "ask";
+      const terminal = JOB_TERMINAL.includes(job.state);
+      // A finished review task is followed only while its fix PR is still open (it can still be closed unmerged).
+      if (terminal && !(review && job.reviewFix?.state === "fix_in_review" && now() - (job.updatedAt || job.at || 0) < KEEP_MS)) continue;
+      const on = job.closing?.on;
+      const waited = on && ["pr", "deploy"].includes(on.kind) && Number.isFinite(on.ref) ? on.ref : null;
+      const fixPr = review ? (job.pullRequests || []).map(prNum).filter(Boolean).at(-1) || null : null;
+      for (const n of [...new Set([waited, fixPr].filter(Boolean))]) {
+        const truth = await read(GAME_REPO, n, budget, WAIT_REFRESH_MS);
+        if (truth && n === fixPr && reviewFix(job, truth)) changed++;
+      }
+    }
+    return changed;
+  }
+  // A review item's fix is "fix in review" until its PR is merged and a deploy receipt shows it live (reviewFixLive, set by
+  // github where); a PR closed without merging reopens the item: the task is told, and woken if it had finished.
+  function reviewFix(job, truth) {
+    const rf = job.reviewFix ||= { pr: truth.number, state: "fix_in_review", at: now() };
+    if (rf.pr !== truth.number) { rf.pr = truth.number; rf.state = "fix_in_review"; rf.at = now(); }
+    const was = rf.state;
+    if (truth.state === "closed" && !truth.merged) {
+      if (was === "reopened") return false;
+      rf.state = "reopened"; rf.at = now();
+      if (job.reviewFixLive?.number === truth.number) delete job.reviewFixLive;
+      ledger.audit("review_fix_reopened", { job: job.id, item: job.reviewItem.key, pr: truth.number });
+      const content = `Fix PR #${truth.number} for ${job.reviewItem.kind} ${job.reviewItem.id} was closed without merging. The item is open again: it is not fixed. Decide whether a new fix is needed or the doc was right, and do not mark it fixed until a merged fix is live.`;
+      (job.inbox ||= []).push({ authorId: "github-truth", role: "system", at: new Date(now()).toISOString(), content });
+      if (["waiting", "blocked", "done", "dismissed"].includes(job.state)) { job.state = "queued"; job.wakeAt = 0; if (job.deadline < now()) job.deadline = now() + 24 * 3600000; }
+      return true;
+    }
+    const next = job.reviewFixLive?.number === truth.number ? "live" : truth.merged ? "merged" : "fix_in_review";
+    if (was === "fixed" || was === next) return false;
+    rf.state = next; rf.at = now();
+    return true;
+  }
+
+  return { tick, read, reviewFix };
 }
 
 // What GitHub last said about the PR an action merges, from the reconcile cache (orphans.js uses it).
