@@ -10,7 +10,7 @@ async function deliver(decision) {
   const start=source.indexOf("async function flushOutbox() {");
   const end=source.indexOf("\n// Moderation tickets",start);
   const context={ledger,config:{ownerId:"owner",staffIds:[]},killSwitch:{state:()=>({engaged:false})},delivering:false,RESUME_HORIZON_MS:86400000,
-    require:()=>({suppressOutbox:()=>false}),renderDecision:render,isAppJob:()=>false,
+    require:()=>({suppressOutbox:()=>false,etTimes:s=>s}),renderDecision:render,isAppJob:()=>false,
     ensureDm:async()=>"dm",ownerText:s=>s,redactSecrets:s=>s,chunkMessage:s=>[s],
     discord:async(_method,_route,body)=>{sent.push(body);return{id:"message"};},
     decisions:{delivered(e){decision.sentContent=e.sentContent;}},answerFeedback:{components:()=>null,delivered:async()=>{}},events:{append(){}},log:e=>errors.push(e)};

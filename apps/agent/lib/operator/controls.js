@@ -40,6 +40,9 @@ const SWITCHES = Object.freeze({
   mergeDeadEnd: { env: "KEIR_MERGE_DEAD_END", on: true, what: "a refused approved merge: repair Keir's own PR description or tell the owner what blocks it" },
   // Keir 11.3 (owner, 2026-11-21): a failed turn opens its incident in code, at once (lib/operator/turnincidents.js).
   turnIncidents: { env: "KEIR_TURN_INCIDENTS", on: true, what: "open a turn failure incident the moment a turn fails, add later failures to it and post its recovery" },
+  // Keir 11.4 (owner, 2026-11-21): owner and staff ticket commands across tickets (ticketcommands.js) and HTML previews posted as images.
+  crossTicketActions: { env: "KEIR_CROSS_TICKET_ACTIONS", on: true, what: "owner and staff ticket commands: open an incident, merge, resolve, reopen and add a person by ticket number" },
+  imageDelivery: { env: "KEIR_IMAGE_DELIVERY", on: true, what: "render a labelled interface preview from HTML and post it as an image where Keir is answering" },
 });
 const DEFAULT_FILE = "/var/lib/keir-operator/switches.json";
 const HISTORY_PER_RUN = 3;

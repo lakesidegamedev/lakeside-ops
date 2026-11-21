@@ -360,9 +360,9 @@ test("an ordinary follow-up answer is a new message, not an edit", () => {
   const job = ledger.data.jobs[first.jobId]; job.state = "running";
   app.deliver(`channel-reply:${job.id}:a`, { content: "Turn 364." }, job);
   job.state = "running"; job.inbox = [{ content: "And the next one?", role: "owner", at: new Date().toISOString() }];
-  app.deliver(`channel-reply:${job.id}:b`, { content: "21:00 UTC." }, job);
+  app.deliver(`channel-reply:${job.id}:b`, { content: "Turn 365." }, job);
   const rows = app.view().messages.filter(m => m.role === "keir");
-  assert.equal(rows.length, 2); assert.equal(rows[0].text, "Turn 364."); assert.equal(rows[1].text, "21:00 UTC."); assert.equal(rows[1].editedAt, undefined);
+  assert.equal(rows.length, 2); assert.equal(rows[0].text, "Turn 364."); assert.equal(rows[1].text, "Turn 365."); assert.equal(rows[1].editedAt, undefined);
 });
 
 test("a short remark in the app gets a quick conversational answer, not a silent task", () => {
