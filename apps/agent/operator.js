@@ -203,7 +203,7 @@ const prMention = require("./lib/operator/prmention").createPrMention({ ledger, 
     env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", ...(asReviewer && config.githubReviewerToken ? { GH_TOKEN: config.githubReviewerToken } : {}) } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null")))) });
 const dailyReview = selfImprove.createDailyReview({ ledger, config, log, drain: () => drain(), hour: Number(env.KEIR_SELF_REVIEW_HOUR || 5) });
 setInterval(() => { try { dailyReview.tick(); } catch (e) { log(`self-review: ${e.message}`); } }, 5 * 60000).unref();
-const gateway = createGateway({ ledger, config, conversation, drain: () => drain(), onWake: (ms) => setTimeout(() => tick(), ms + 50).unref(), observe: process.env.KEIR_FEEDBACK_LOG === "0" ? null : (x) => feedbackLog.observe(x) });
+const gateway = createGateway({ ledger, config, conversation, controls, drain: () => drain(), onWake: (ms) => setTimeout(() => tick(), ms + 50).unref(), observe: process.env.KEIR_FEEDBACK_LOG === "0" ? null : (x) => feedbackLog.observe(x) });
 const { createDecisions } = require("./lib/operator/decisions");
 const decisions = createDecisions({ ledger, config, discord, log, onAnswered: (x, verdict, actor, text) => {
   // Keir 2.0: owner decisions are remembered.

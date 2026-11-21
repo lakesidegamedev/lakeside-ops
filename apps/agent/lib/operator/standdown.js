@@ -174,12 +174,23 @@ function claimsOwnerWait(message) { return OWNER_WAIT.test(String(message || "")
 const YES = /^(?:yes|yeah|yep|yup|y|ok(?:ay)?|sure|approved?|go ahead|do it|ship it|go for it|sounds good|agreed)$/i;
 const NO = /^(?:no|nope|nah|n|declined?|rejected?|don'?t|do not|hold off|not now|leave it)$/i;
 const norm = (t) => String(t || "").toLowerCase().replace(/[*_`~>]/g, " ").replace(/[^a-z0-9%$.' ]+/g, " ").replace(/\s+/g, " ").trim();
+// Keir 11.2 third pass (review M1): a yes next to a question or a deferral is not an answer ("ok, let me look at the
+// numbers first"; "yes? why is it so large").
+const DEFER = /\?|\b(?:let me|let's see|first|later|hold on|hang on|wait|why|but|not sure|maybe|hmm|think|check|look)\b/i;
 // yes, no, or null. Only a standalone clause counts: "Do the refund, yes." is yes; "yeah automobiles was removed" is not.
 function yesNo(text) {
-  const clauses = String(text || "").split(/[,.;!?\n]+/).map((c) => c.trim().replace(/\s+/g, " ")).filter(Boolean);
+  const t = String(text || "");
+  const clauses = t.split(/[,.;!?\n]+/).map((c) => c.trim().replace(/\s+/g, " ")).filter(Boolean);
   const yes = clauses.some((c) => YES.test(c)), no = clauses.some((c) => NO.test(c));
-  return yes === no ? null : yes ? "yes" : "no";
+  if (yes === no) return null;
+  const rest = clauses.filter((c) => !YES.test(c) && !NO.test(c)).join(" ");
+  if (DEFER.test(rest) || /\?/.test(t)) return null;
+  return yes ? "yes" : "no";
 }
+// The message with lead-ins and politeness trimmed: "go with Refund the player please" -> "refund the player".
+const LEAD = /^(?:(?:ok(?:ay)?|yes|yeah|sure)\s+)?(?:let'?s\s+)?(?:go with|pick|choose|take|do|i choose|i pick|option)\s+/;
+const TAIL = /\s+(?:please|thanks|thank you|for now)$/;
+const bare = (text) => norm(text).replace(/[.!']/g, "").replace(LEAD, "").replace(TAIL, "").trim();
 function optionNumber(text) {
   const t = String(text || "").trim();
   const m = /^(?:option|choice|#)?\s*([1-6])\s*[.!)]?$/i.exec(t) || /\b(?:option|choice)\s*#?\s*([1-6])\b/i.exec(t) || /^(?:go with|pick|choose|take)\s+(?:option\s*)?#?([1-6])\b/i.exec(t);
@@ -191,8 +202,15 @@ function namedOption(x, text, { alone }) {
   if (!options.length) { const yn = yesNo(text); return yn ? { free: yn } : null; }
   const n = alone ? optionNumber(text) : null;
   if (n && options.some((o) => o.id === n)) return options.find((o) => o.id === n);
-  const msg = ` ${norm(text)} `;
-  const byLabel = options.filter((o) => norm(o.label).length >= 3 && msg.includes(` ${norm(o.label)} `));
+  // A label counts when it is the whole message (after "go with", "please" and the like), or when it is at least two
+  // words long and the message is not a question. "wait, why is the refund so large?" does not pick "Wait".
+  const msg = ` ${norm(text)} `, whole = bare(text);
+  const byLabel = options.filter((o) => {
+    const l = norm(o.label);
+    if (l.length < 3) return false;
+    if (whole === l.replace(/[.!']/g, "")) return true;
+    return l.split(" ").length >= 2 && !/\?/.test(String(text)) && msg.includes(` ${l} `);
+  });
   if (byLabel.length === 1) return byLabel[0];
   if (alone && options.length === 2) {
     const yn = yesNo(text), yes = options.find((o) => /^yes\b/i.test(o.label)), no = options.find((o) => /^no\b/i.test(o.label));
@@ -209,7 +227,26 @@ function repliesTo(x, replyTo, botId) {
   const body = norm(replyTo.content), q = norm(x.question).slice(0, 80);
   return q.length >= 20 && body.includes(q.slice(0, 60));
 }
-function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId = null, at = Date.now(), replyTo = null, botId = null }) {
+// Keir 11.2 third pass (review M2): a message the owner meant as an answer but that did not count must not vanish. When
+// a question is open and the message looks meant for it (a yes or no word, an option word, or words from the question),
+// the owner is told once per question, in his DMs where the question's buttons are, what is still open and how to answer.
+// A message addressed to someone else (it mentions another person) or unrelated to the question gets nothing.
+const ANSWERISH = /\b(?:yes|yeah|yep|yup|no|nope|nah|ok(?:ay)?|sure|approved?|go ahead|do it|ship it|go for it|declined?|reject(?:ed)?|option|choice)\b|^\s*#?[1-6]\s*[.!)]?\s*$/i;
+const WORDS_STOP = new Set(["this", "that", "with", "from", "have", "should", "would", "could", "there", "their", "about", "which", "what", "when", "will", "your", "they", "them", "then", "than", "into", "just", "ticket", "keir", "player"]);
+const keyWords = (t) => new Set(norm(t).split(" ").filter((w) => w.length >= 4 && !WORDS_STOP.has(w) && !/^\d+$/.test(w)));
+function meantFor(x, text, botId) {
+  const mentions = [...String(text || "").matchAll(/<@!?(\d+)>/g)].map((m) => m[1]).filter((id) => id !== String(botId || ""));
+  if (mentions.length || /^\s*@\w/.test(String(text || ""))) return false;
+  if (ANSWERISH.test(String(text || ""))) return true;
+  const mine = keyWords(text), theirs = keyWords(`${x.question} ${(x.options || []).map((o) => o.label).join(" ")}`);
+  for (const w of mine) if (theirs.has(w)) return true;
+  return false;
+}
+function howToAnswer(x) {
+  const opts = (x.options || []).map((o, i) => `${i + 1} "${o.label}"`);
+  return opts.length ? `tap a button on the question, reply to it, or name the option on its own (${opts.join(" or ")})` : "tap a button on the question, reply to it, or say yes or no on its own";
+}
+function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId = null, at = Date.now(), replyTo = null, botId = null, notify = null }) {
   if (!ticket || !ownerId || authorId !== ownerId) return [];
   const content = String(text || "").trim();
   if (!content || content.startsWith("/")) return [];
@@ -217,7 +254,8 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
   const open = Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !x.actionId && !x.binds && (x.at || 0) <= at && (jobs.some((j) => j.id === x.jobId) || Number(x.ticket) === Number(ticket)));
   const replied = open.filter((x) => repliesTo(x, replyTo, botId));
   let picks = [];
-  if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true }), reply: true }));
+  // A reply to the question counts only when it also gives an answer: "can you link the PR here?" sent as a reply is not one.
+  if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true }), reply: true })).filter((p) => p.option);
   else {
     const named = open.map((x) => ({ x, option: namedOption(x, content, { alone: open.length === 1 }) })).filter((p) => p.option);
     // A message that could answer several questions answers none of them.
@@ -225,13 +263,19 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
   }
   const answered = [];
   for (const { x, option, reply } of picks) {
-    if (option && !option.free) { x.state = "selected"; x.selectedOption = { ...option }; }
+    if (!option.free) { x.state = "selected"; x.selectedOption = { ...option }; }
     else x.state = "answered";
     x.answeredAt = at; x.answeredBy = ownerId; x.answerText = content.slice(0, 600); x.answer = content.slice(0, 600); x.answeredVia = reply ? "ticket_channel_reply" : "ticket_channel_option"; x.answerMessage = messageId;
     answered.push(x.id);
   }
   // Not an answer: kept on each open question as context, and the question stays open.
-  if (!answered.length) for (const x of open) x.channelContext = [...(x.channelContext || []), { at, text: content.slice(0, 300), message: messageId }].slice(-5);
+  if (!answered.length) for (const x of open) {
+    x.channelContext = [...(x.channelContext || []), { at, text: content.slice(0, 300), message: messageId }].slice(-5);
+    if (notify && !x.unmatchedNoticeAt && (replied.includes(x) || meantFor(x, content, botId))) {
+      x.unmatchedNoticeAt = at;
+      notify(`owner-unmatched:${x.id}`, `Ticket ${ticket}: your message "${content.slice(0, 120)}" was not taken as your answer to "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}". That question is still open. To answer, ${howToAnswer(x)}.`.replace(/[\u2013\u2014]/g, ","));
+    }
+  }
   if (answered.length) (d.ownerChannelAnswers ||= {})[ticket] = { at, text: content.slice(0, 600), message: messageId, decisions: answered };
   for (const j of jobs) {
     const mine = answered.filter((id) => d.decisions[id].jobId === j.id);
@@ -256,5 +300,5 @@ function ownerAnsweredSince(d, ticket) {
   return !newer;
 }
 
-module.exports = { yesNo, namedOption, repliesTo, stateFingerprint, noNewRefusal, limitationLine, currentQuestionReceipt, PASSED_ON, NOT_PASSED_ON, isHoldingLine, holdingClaimRefusal, capabilityClaim,
+module.exports = { yesNo, namedOption, repliesTo, meantFor, stateFingerprint, noNewRefusal, limitationLine, currentQuestionReceipt, PASSED_ON, NOT_PASSED_ON, isHoldingLine, holdingClaimRefusal, capabilityClaim,
   quoteFactors, priceVerdictRefusal, promisesFollowUp, outstandingPromise, claimsOwnerWait, applyOwnerChannelAnswer, ownerAnsweredSince };

@@ -46,7 +46,7 @@ async function catchUp(call, channelId, cursor, ingest, maxPages = 10) {
   return after;
 }
 
-function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null, onWake = null }) {
+function createGateway({ ledger, config, conversation, drain = () => {}, now = () => Date.now(), observe = null, onWake = null, controls = require("./controls").DEFAULT_CONTROLS }) {
   const d = ledger.data;
   d.conversations ||= {};
   d.summonedChannels ||= {};
@@ -235,7 +235,10 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     // Keir 10.1.14 (ticket 1842), narrowed in 11.2: an owner message answers an open question only as a Discord reply to
     // it or by naming one of its options (standdown.js). Anything else is context and the question stays open.
     if (!historical && !summonTask && nTicket && actor === config.ownerId) {
-      try { const answered = require("./standdown").applyOwnerChannelAnswer(d, { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now(), botId: config.botId,
+      // Keir 11.2 third pass (M2): a message that looked meant for an open question but did not count tells the owner once.
+      const gate = controls.gate("ownerAnswerNotice");
+      const notify = !gate.run ? null : gate.act ? (key, line) => ledger.notify(key, "owner", line) : (key, line) => require("./controls").preview(d, "channel-answers", "tell owner", key, line);
+      try { const answered = require("./standdown").applyOwnerChannelAnswer(d, { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now(), botId: config.botId, notify,
         replyTo: message.referenced_message ? { id: message.referenced_message.id, authorId: message.referenced_message.author?.id, content: message.referenced_message.content } : message.message_reference?.message_id ? { id: message.message_reference.message_id } : null });
         if (answered.length) ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save(); } catch {}
     }

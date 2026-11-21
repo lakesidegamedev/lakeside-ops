@@ -36,8 +36,11 @@ test("the three real channel messages do not answer the open question", () => {
 test("a Discord reply to the question's own message answers it", () => {
   const w = cap1860();
   w.x.sent[OWNER] = { channelId: "dm", messageId: "q1" };
-  assert.deepEqual(say(w, "no, leave it as is for now", { replyTo: { id: "q1", authorId: BOT } }), [w.x.id]);
-  assert.equal(w.x.state, "answered");
+  // Third pass (review M1): a reply must also give an answer the question can take; free text in a reply to a question
+  // with named options is context, not a choice.
+  assert.deepEqual(say(w, "no, leave it as is for now", { replyTo: { id: "q1", authorId: BOT } }), []);
+  assert.deepEqual(say(w, "Keep the current cap", { replyTo: { id: "q1", authorId: BOT } }), [w.x.id]);
+  assert.equal(w.x.state, "selected");
   assert.equal(w.x.answeredVia, "ticket_channel_reply");
   assert.equal(w.data.jobs.j1.state, "queued");
   assert.match(w.data.jobs.j1.inbox.at(-1).content, /in the ticket channel/);
@@ -48,8 +51,9 @@ test("a reply to a Keir post in the channel that carries the question answers it
   assert.deepEqual(say(w, "sure", { replyTo: { id: "p2", authorId: BOT, content: "Unrelated progress note about bonds." } }), []);
   assert.equal(w.x.state, "pending");
   const posted = `Waiting on Egg: ${w.x.question}`;
-  assert.deepEqual(say(w, "ship it", { replyTo: { id: "p3", authorId: BOT, content: posted } }), [w.x.id]);
-  assert.equal(w.x.state, "answered");
+  assert.deepEqual(say(w, "ship it", { replyTo: { id: "p3", authorId: BOT, content: posted } }), [], "named options need the option");
+  assert.deepEqual(say(w, "1", { replyTo: { id: "p3", authorId: BOT, content: posted } }), [w.x.id]);
+  assert.equal(w.x.state, "selected");
 });
 
 test("naming an option by label or number answers it", () => {
@@ -103,4 +107,49 @@ test("when a channel answer ends a question, every DM copy loses its buttons", a
   assert.deepEqual(messages.d1.edited.components, [], "the delegate's copy keeps no working buttons");
   assert.match(messages.d1.edited.content, /No longer needed\.\*\* Egg chose "Raise the demand cap" in the ticket/);
   assert.equal(w.x.closedOut, true);
+});
+
+// ---- Third pass: the review's M1 and M2 ----
+const sayN = (w, text, extra = {}) => { const sent = []; const r = say(w, text, { notify: (key, line) => sent.push({ key, line }), ...extra }); return { r, sent }; };
+
+test("M1: a non-answer sent as a reply, a common-word label in passing, and an ok before a deferral answer nothing", () => {
+  const w = cap1860();
+  w.x.sent[OWNER] = { channelId: "dm", messageId: "q1" };
+  assert.deepEqual(say(w, "can you link the PR here so I can review it?", { replyTo: { id: "q1", authorId: BOT } }), []);
+  assert.equal(w.x.state, "pending");
+  const refund = world(1842, "Ticket 1842: How should the lost build be handled?", [{ label: "Wait" }, { label: "Refund the player" }]);
+  assert.deepEqual(say(refund, "wait, why is the refund so large?"), []);
+  assert.equal(refund.x.state, "pending");
+  assert.deepEqual(say(refund, "Wait"), [refund.x.id], "the label on its own still answers");
+  const yn = world(1842, "Ticket 1842: Refund the lost shop build?", null);
+  assert.deepEqual(say(yn, "ok, let me look at the numbers first"), []);
+  assert.equal(yn.x.state, "pending");
+  assert.deepEqual(say(yn, "go with Keep the current cap please"), [], "a label from another question is not an answer");
+  const pick = cap1860();
+  assert.deepEqual(say(pick, "go with Keep the current cap please"), [pick.x.id]);
+});
+
+test("M2: an unmatched owner message that looks meant for the question tells him once, in his DMs, how to answer", () => {
+  const w = world(1842, "Ticket 1842: Refund the lost shop build?", null);
+  const first = sayN(w, "yes tell them");
+  assert.deepEqual(first.r, []);
+  assert.equal(first.sent.length, 1);
+  assert.equal(first.sent[0].key, `owner-unmatched:${w.x.id}`);
+  assert.match(first.sent[0].line, /^Ticket 1842: your message "yes tell them" was not taken as your answer to "Ticket 1842: Refund the lost shop build\?"\. That question is still open\. To answer, tap a button on the question, reply to it, or say yes or no on its own\.$/);
+  assert.equal(sayN(w, "yes tell them please").sent.length, 0, "once per question");
+  const opts = cap1860();
+  assert.match(sayN(opts, "raise it please").sent[0].line, /name the option on its own \(1 "Raise the demand cap" or 2 "Keep the current cap"\)/);
+});
+
+test("M2: the three real production messages never answer and never nag more than once; one addressed to someone else gets nothing", () => {
+  for (const [w, text] of [[ship1857(), "can you link it here for [someone] to review?"], [cap1860(), "yeah automobiles was removed"], [tech1852(), "Keir is wrong"]]) {
+    let notes = 0;
+    for (let i = 0; i < 4; i++) { const out = sayN(w, text); assert.deepEqual(out.r, []); notes += out.sent.length; }
+    assert.equal(w.x.state, "pending");
+    assert.ok(notes <= 1, `${text}: ${notes}`);
+  }
+  const elsewhere = cap1860();
+  assert.equal(sayN(elsewhere, "<@100000000000000002> yeah can you raise the cap for them?").sent.length, 0);
+  const unrelated = tech1852();
+  assert.equal(sayN(unrelated, "Keir is wrong").sent.length, 0, "nothing in it is about the question");
 });
