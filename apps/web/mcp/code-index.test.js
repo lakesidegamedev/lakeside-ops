@@ -213,6 +213,21 @@ test("the reader serves a new generation after a rename swap and keeps the old o
   assert.strictEqual(kept.generation, "g2");
   assert.strictEqual(kept.servedFrom, "current");
   assert.ok((await ci.exactLookup(kept, "US_NATIONAL_CONFIG")).results[0].found);
+  // m1: serving the replaced generation is reported, not silent.
+  assert.match(kept.stale, /could not be opened .*still serving generation g2/);
+});
+
+test("m1 opposite: a healthy swap carries no stale note", () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "index.db");
+  buildIndex(file, GAME_FILES, { generation: "g1" });
+  const reader = ci.createGenerationReader(file);
+  assert.strictEqual(reader.get().stale, undefined);
+  buildIndex(`${file}.building`, GAME_FILES, { generation: "g2" });
+  fs.renameSync(`${file}.building`, file);
+  const next = reader.get();
+  assert.strictEqual(next.generation, "g2");
+  assert.strictEqual(next.stale, undefined);
 });
 
 test("with nothing in hand the reader falls back to .previous, then reports a retryable error", () => {

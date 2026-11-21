@@ -134,8 +134,14 @@ function createGenerationReader(file, {
     }
 
     // Keep serving what we hold: an open handle on a replaced file still reads
-    // the generation it was opened on.
-    if (currentStillReadable()) return current;
+    // the generation it was opened on. Say so, so an old revision is never
+    // mistaken for the current one (m1).
+    if (currentStillReadable()) {
+      if (stat && signatureOf(stat) !== current.signature) {
+        current.stale = `the index file was replaced but the new generation could not be opened (${lastFailure ? lastFailure.message : "unknown"}); still serving generation ${current.generation || "unknown"}, which may be older than the latest build`;
+      }
+      return current;
+    }
 
     // Nothing usable in hand: the generation the pipeline keeps as .previous.
     try {

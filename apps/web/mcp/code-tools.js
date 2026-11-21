@@ -120,6 +120,7 @@ function registerCodeTools(server, {
     const out = [];
     if (t.fallback) out.push("dev index not built yet; served from the prod index");
     if (gen && gen.servedFrom === "previous") out.push("served from the previous index generation while the current one is being replaced");
+    if (gen && gen.stale) out.push(gen.stale);
     return out;
   }
 
