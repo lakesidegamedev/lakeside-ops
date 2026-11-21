@@ -221,7 +221,8 @@ function d0(x) { return ledger.data.jobs[x.jobId]?.ticket || null; }
 const { render: renderDecision } = require("./lib/operator/decisions");
 let checkingDecisions = false;
 // Keir 11.2: GitHub is read before the decision loop sends any reminder or escalation (lib/operator/prtruth.js).
-const ghRead = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
+// Keir 11.2 fourth pass: a large buffer (lib/operator/ghlist.js); the default 1 MiB overflowed on the open PR list.
+const ghRead = require("./lib/operator/ghlist").ghApi({ home: "/root" });
 const prTruth = require("./lib/operator/prtruth").createPrTruth({ ledger, api: ghRead, log, controls });
 async function checkDecisions() {
   if (checkingDecisions) return; checkingDecisions = true;
@@ -399,7 +400,8 @@ async function watchTick() {
 }
 tickers.every("watch", 5 * 60000, watchTick, { immediateMs: 1000 });
 const { createCiWatch } = require("./lib/operator/ciwatch");
-const ciApi = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root" } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
+// Keir 11.2 fourth pass: a large buffer (lib/operator/ghlist.js); the default 1 MiB overflowed on the open PR list.
+const ciApi = require("./lib/operator/ghlist").ghApi({ home: "/root" });
 const ciWatch = createCiWatch({ ledger, api: ciApi, log, onWaiting: (job, info) => broker.waitingUpdate(job, info) });
 // Developer changes related to open tickets (owner, 2026-10-14).
 const { createDevMerges } = require("./lib/operator/devmerges");
@@ -428,7 +430,7 @@ tickers.every("devmerges", 5 * 60000, async () => {
 });
 // Owner approval pings: a developer PR green except the owner's own approval (owner, 2026-11-03).
 const { createOwnerWait } = require("./lib/operator/ownerwait");
-const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain() });
+const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain(), controls });
 tickers.every("ownerwait", 5 * 60000, async () => {
   try { await ownerWait.tick(); } catch (e) { log(`ownerwait: ${e.message}`); }
 });
@@ -440,8 +442,7 @@ tickers.every("decisioncards", 60000, () => decisionCards.tick(), { immediateMs:
 tickers.every("decisioncardsweep", 6 * 3600000, () => decisionCards.sweepClosedTickets(), { immediateMs: 2 * 60000, maxMs: 5 * 60000 });
 // Keir 11.2: every open Keir PR gets one ask, a repair, a plain blocked line, or a close with a note (lib/operator/keirprs.js).
 // Writes go out as keir-bot when its token is set. KEIR_STALE_PR_DAYS (default 5) sets when an orphaned PR is closed as stale.
-const ghKeir = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000,
-  env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", ...(config.githubReviewerToken ? { GH_TOKEN: config.githubReviewerToken } : {}) } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
+const ghKeir = require("./lib/operator/ghlist").ghApi({ home: "/root", token: config.githubReviewerToken || "" });
 // Closes (KEIR_OPEN_PR_CLOSES) and branch deletions (KEIR_OPEN_PR_BRANCH_DELETES) are off until the owner turns them on;
 // GitHub writes need KEIR_GITHUB_TOKEN; KEIR_PR_CLOSE_GRACE_HOURS (48) is the first-sight and warning grace.
 const keirPrs = require("./lib/operator/keirprs").createKeirPrs({ ledger, api: ciApi, write: ghKeir, config, log, drain: () => drain(), controls,

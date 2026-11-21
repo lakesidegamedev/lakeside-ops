@@ -63,7 +63,10 @@ function createDevMerges({ ledger, api, ask = defaultAsk, now = () => Date.now()
   async function tick() {
     d.devMerges ||= { since: new Date(now() - 3600000).toISOString(), links: {} };
     const state = d.devMerges;
-    const prs = (await api([`repos/${REPO}/pulls?state=closed&base=development&sort=updated&direction=desc&per_page=40`])) || [];
+    // Keir 11.2 fourth pass: the 40 most recently updated closed PRs, only the fields used (a full page overflowed the gh
+    // buffer). An unreadable list throws: nothing is linked and the cursor does not move.
+    const { listAll, PR_FIELDS } = require("./ghlist");
+    const prs = await listAll(api, `repos/${REPO}/pulls?state=closed&base=development&sort=updated&direction=desc`, { perPage: 40, maxPages: 1, window: true, jq: PR_FIELDS });
     const mine = ownPrs();
     let newest = state.since;
     for (const pr of prs) {

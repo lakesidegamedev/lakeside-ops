@@ -15,11 +15,15 @@ function latestByName(runs) {
   return out;
 }
 
-function createOwnerWait({ ledger, api, ownerLogin = "Egg3901", now = () => Date.now(), log = () => {}, drain = () => {} }) {
+function createOwnerWait({ ledger, api, ownerLogin = "Egg3901", now = () => Date.now(), log = () => {}, drain = () => {}, controls = require("./controls").DEFAULT_CONTROLS }) {
   const d = ledger.data;
   async function tick() {
     d.ownerWait ||= {};
-    const prs = await api([`repos/${GAME_REPO}/pulls?state=open&base=development&per_page=50`]);
+    // Keir 11.2 fourth pass: every open PR, paged, only the fields used; an unreadable list throws (nothing is asked).
+    const { listAll, PR_FIELDS } = require("./ghlist");
+    const prs = await listAll(api, `repos/${GAME_REPO}/pulls?state=open&base=development`, { jq: PR_FIELDS });
+    // Review N7: Keir's own orphaned PRs are left to the open-PR pass only while that pass really asks (on, not preview).
+    const passAsks = controls.gate("openPrPass").act;
     const keirPrs = require("./keirprs");
     const index = keirPrs.ledgerIndex(d);
     for (const pr of Array.isArray(prs) ? prs : []) {
@@ -27,7 +31,7 @@ function createOwnerWait({ ledger, api, ownerLogin = "Egg3901", now = () => Date
       if (!head || pr.draft || pr.user?.login === ownerLogin || d.ownerWait[key]) continue;
       // Keir 11.2: Keir's own PRs are not a developer's. A live Keir task already owns the ask, and an orphaned one goes to
       // the open-PR pass (keirprs.js), which asks once. A PR that any task is already asking about is never asked twice.
-      if (keirPrs.isKeirPr(pr, d, index) || index.get(Number(pr.number))?.live) continue;
+      if ((passAsks && keirPrs.isKeirPr(pr, d, index)) || index.get(Number(pr.number))?.live) continue;
       const runs = latestByName((await api([`repos/${GAME_REPO}/commits/${head}/check-runs?per_page=100`]))?.check_runs);
       if (!READY.every((n) => runs.get(n)?.conclusion === "success")) continue;
       // Anything else red or still running means the author is not done; only the owner gate may be open.

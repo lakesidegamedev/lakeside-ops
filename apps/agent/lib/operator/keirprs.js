@@ -30,6 +30,7 @@ const { GAME_REPO, GITHUB_OWNER } = require("./github");
 const { hasDisclosure, withDisclosure } = require("./prdisclosure");
 const { referencedIssues } = require("./prhousekeeping");
 const controlsLib = require("./controls");
+const { listAll, PR_FIELDS, REF_FIELDS } = require("./ghlist");
 
 const KEIR_BRANCH = /^(?:keir\/|fix\/keir-)/;
 const STALE_DAYS = 5;
@@ -138,8 +139,15 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
   const d = ledger.data;
   const STALE_MS = Math.max(1, Number(staleDays) || STALE_DAYS) * 86400000;
   const GRACE_MS = Math.max(0, Number.isFinite(Number(graceHours)) ? Number(graceHours) : GRACE_HOURS) * 3600000;
-  const state = () => { d.keirPrs ||= { prs: {}, actions: [] }; d.keirPrs.prs ||= {}; d.keirPrs.actions ||= []; d.keirPrs.branches ||= {}; return d.keirPrs; };
+  // Review N7: with the pass in preview the whole pass works on a copy of its records, so preview never changes what it later
+  // does (first-sight grace, orphan clocks, asks). shadow is null when acting.
+  let shadow = null;
+  const state = () => {
+    if (shadow) return shadow;
+    d.keirPrs ||= { prs: {}, actions: [] }; d.keirPrs.prs ||= {}; d.keirPrs.actions ||= []; d.keirPrs.branches ||= {}; return d.keirPrs;
+  };
   const record = (kind, number, reason, extra = {}) => {
+    if (shadow) { preview(`record ${kind}`, `#${number}`, reason); return; }
     const s = state();
     s.actions = [...s.actions, { at: now(), kind, number, reason, ...extra }].slice(-200);
     ledger.audit(`keir_pr_${kind}`, { pr: number, reason, ...extra });
@@ -314,10 +322,10 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
 
   async function sweepOpen(budget) {
     const index = ledgerIndex(d);
-    const open = await api([`repos/${GAME_REPO}/pulls?state=open&base=development&per_page=100`]);
-    if (!Array.isArray(open)) throw new Error("open pull requests unreadable");
-    const merged = await api([`repos/${GAME_REPO}/pulls?state=closed&base=development&sort=updated&direction=desc&per_page=100`]);
-    if (!Array.isArray(merged)) throw new Error("closed pull requests unreadable");
+    // Fourth pass: paged, only the fields used, and a list that cannot be read in full stops the sweep (ghlist.js). The open
+    // list must be complete; the closed list is a window of the 300 most recently updated (where a superseding merge is).
+    const open = await listAll(api, `repos/${GAME_REPO}/pulls?state=open&base=development`, { jq: PR_FIELDS });
+    const merged = await listAll(api, `repos/${GAME_REPO}/pulls?state=closed&base=development&sort=updated&direction=desc`, { jq: PR_FIELDS, maxPages: 3, window: true });
     const mergedOnly = merged.filter((p) => p.merged_at);
     const s = state();
     const seen = new Set();
@@ -360,10 +368,13 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
           `Closing as superseded by #${sup.by.number}: ${sup.why}. Closed automatically by Keir, which opened this PR. If this change is still wanted, reopen the PR; Keir will then leave it alone.`, budget);
         continue;
       }
+      // Review N5: a weak match (or someone else's work) never closes and never stops the ask. It changes the ask's wording to
+      // the three real choices (merge it, close it as a duplicate, keep it open), and the PR stays owned until one is chosen.
+      // It is cleared when the head changes.
+      if (rec.supersedeAsk && rec.supersedeHead !== head) { delete rec.supersedeAsk; delete rec.supersedeWhy; }
       if (sup) {
-        // Weak or someone else's work: a question to the owner, never a close.
-        rec.supersedeAsk = sup.by.number;
-        await notice(pr, rec, `superseded?:${sup.by.number}`, `PR #${n} (${rec.title}) may overlap merged PR #${sup.by.number} (${sup.why}${foreign ? `; it also has ${foreign}` : ""}). Keir will not close it on that alone. Close it if it is no longer needed.`, budget);
+        rec.supersedeAsk = sup.by.number; rec.supersedeWhy = sup.why; rec.supersedeHead = head;
+        await notice(pr, rec, `superseded?:${sup.by.number}`, `PR #${n} (${rec.title}) may overlap merged PR #${sup.by.number} (${sup.why}${foreign ? `; it also has ${foreign}` : ""}). Keir will not close it on that alone; it may simply still be wanted. If it is green, Keir asks you to merge it, close it as a duplicate, or keep it open.`, budget);
       }
       const runs = latestByName((await api([`repos/${GAME_REPO}/commits/${head}/check-runs?per_page=100`]).catch(() => null))?.check_runs);
       const full = await api([`repos/${GAME_REPO}/pulls/${n}`]).catch(() => null);
@@ -375,8 +386,14 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       if (failed.includes("custom-rules") && !hasDisclosure(full.body) && !foreign && !rec.personTouched && rec.repairedHead !== head) {
         const c = can("repair");
         if (!c.act) { preview("repair description", `#${n}`, `add the Conflict of interest section custom-rules requires (not done: ${c.why})`); continue; }
+        // Review m5: a repair that keeps failing is given up after two tries at a head, with one owner line.
+        if ((rec.repairAttempts?.[head] || 0) >= MAX_ATTEMPTS) {
+          await notice(pr, rec, `repair-failed:${head}`, `PR #${n} (${rec.title}) is blocked only by its description (no Conflict of interest section), and Keir's ${MAX_ATTEMPTS} tries to add it failed. A person needs to add it.`, budget);
+          continue;
+        }
         if (budget.repairs > 0) {
           budget.repairs--;
+          rec.repairAttempts = { [head]: (rec.repairAttempts?.[head] || 0) + 1 };
           await write(["-X", "PATCH", `repos/${GAME_REPO}/pulls/${n}`, "-f", `body=${withDisclosure(full.body)}`]);
           const red = runs.get("custom-rules");
           if (red?.id) await write(["-X", "POST", `repos/${GAME_REPO}/actions/jobs/${red.id}/rerun`]).catch(() => null);
@@ -388,14 +405,18 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       const stale = now() - rec.orphanSince > STALE_MS;
       // M5: green means every check passed, custom-rules included.
       if (!failed.length && !running && readyRest && full.mergeable !== false) {
-        if (!rec.asked[head] && !rec.supersedeAsk) {
-          if (!can("ask").act) { preview("ask owner", `#${n}`, "green with no live task: one merge ask through the approval card"); continue; }
+        if (!rec.asked[head]) {
+          const overlap = rec.supersedeAsk ? ` It may overlap merged PR #${rec.supersedeAsk} (${rec.supersedeWhy || "a shared reference"}), or it may simply be ready to merge.` : "";
+          if (!can("ask").act) { preview("ask owner", `#${n}`, `green with no live task: one ${overlap ? "merge, close-as-duplicate or keep-open" : "merge"} ask`); continue; }
           if (budget.asks <= 0) continue;
           budget.asks--;
           rec.asked[head] = now();
-          ledger.createJob(`keirpr:${n}:${head}`, { kind: "command", role: "support", internalProbe: true, repository: "AHDGame", adoptedPr: n, deadline: now() + 6 * 3600000,
-            source: { at: new Date(now()).toISOString(), content: `Keir's own pull request ${n} ("${rec.title}") is green and no Keir task owns it any more, at head ${head}. Read the change (github pr ${n}), then call github merge for it. That sends the owner one approval card with your plain-language explanation; his Approve merges it. Do not post in any channel, do not push to the branch, and do not send him a GitHub link.` } });
-          record("ask_opened", n, "green with no live task", { head });
+          const how = overlap
+            ? `Read both changes (github pr ${n} and github pr ${rec.supersedeAsk}). Then ask the owner one question with raise_to_developers kind decision and exactly these options: "Merge PR ${n}", "Close PR ${n} as a duplicate of #${rec.supersedeAsk}", "Keep PR ${n} open for now". Say plainly what each PR changes and how they overlap. If he picks merge, call github merge for it (his Approve on that card merges it); if he picks close, close PR ${n} with a one-line note naming #${rec.supersedeAsk}; if he picks keep, finish.`
+            : `Read the change (github pr ${n}), then call github merge for it. That sends the owner one approval card with your plain-language explanation; his Approve merges it.`;
+          ledger.createJob(`keirpr:${n}:${head}`, { kind: "command", role: "support", internalProbe: true, repository: "AHDGame", adoptedPr: n, deadline: now() + (overlap ? 72 : 6) * 3600000,
+            source: { at: new Date(now()).toISOString(), content: `Keir's own pull request ${n} ("${rec.title}") is green and no Keir task owns it any more, at head ${head}.${overlap} ${how} Do not post in any channel, do not push to the branch, and do not send him a GitHub link.` } });
+          record("ask_opened", n, overlap ? `green with no live task; may overlap #${rec.supersedeAsk}` : "green with no live task", { head });
           drain();
           continue;
         }
@@ -416,7 +437,13 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       await notice(pr, rec, `${why.key}:${head}`, `PR #${n} (${rec.title}) is blocked: ${why.text}. No Keir task is working on it.${keepOpen ? "" : ` Keir may close it after ${day(rec.orphanSince + STALE_MS)} if nobody picks it up, and will warn first.`}`, budget);
       } catch (e) { log(`keirprs: #${pr.number}: ${String(e.message).slice(0, 160)}; retried next pass`); }
     }
-    for (const [n, rec] of Object.entries(s.prs)) if (!seen.has(Number(n)) && !rec.handsOff && now() - (rec.checkedAt || 0) > 14 * 86400000) delete s.prs[n];
+    // Review N6: what Keir did to a PR, and a person's reversal of it, is kept for as long as the PR can exist (forever, in a
+    // compact form): a PR Keir closed that a person reopens weeks later is still recognised and never closed again.
+    for (const [n, rec] of Object.entries(s.prs)) {
+      if (seen.has(Number(n)) || now() - (rec.checkedAt || 0) <= 14 * 86400000) continue;
+      if (rec.handsOff || rec.closedAt || rec.closeStartedAt || rec.personTouched) s.prs[n] = compact(rec);
+      else delete s.prs[n];
+    }
   }
 
   // Branches of closed, unmerged Keir PRs. Merged branches are deleted when Keir merges; others are left to their owner.
@@ -424,8 +451,7 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
     const index = ledgerIndex(d);
     const refs = [];
     for (const prefix of ["keir/", "fix/keir-"]) {
-      const rows = await api([`repos/${GAME_REPO}/git/matching-refs/heads/${prefix}?per_page=100`]);
-      if (!Array.isArray(rows)) throw new Error("branches unreadable");
+      const rows = await listAll(api, `repos/${GAME_REPO}/git/matching-refs/heads/${prefix}`, { jq: REF_FIELDS, maxPages: 20, key: (r) => r.ref });
       refs.push(...rows.map((r) => ({ ref: String(r.ref || "").replace(/^refs\/heads\//, ""), sha: r.object?.sha })));
     }
     const s = state();
@@ -457,17 +483,28 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
     s.branchCursor = (s.branchCursor + looked) % Math.max(1, refs.length);
   }
 
+  // A compact record of a PR no longer open: enough to recognise Keir's close and a person's reversal forever.
+  function compact(rec) {
+    const keep = ["number", "title", "closedAt", "closedHead", "closedReason", "closeStartedAt", "closeAttempts", "closeNoteAt", "handsOff", "personTouched", "firstSeenAt"];
+    return { ...Object.fromEntries(keep.filter((k) => rec[k] !== undefined).map((k) => [k, k === "title" ? String(rec[k]).slice(0, 60) : rec[k]])), asked: {}, notices: {}, compact: true, checkedAt: rec.checkedAt };
+  }
   async function tick() {
     const budget = { ...LIMITS, ...limits };
     gates = { pass: controls.gate("openPrPass"), close: controls.gate("openPrCloses", { destructive: true }), del: controls.gate("openPrBranchDeletes", { destructive: true }) };
     if (!gates.pass.run) { log(`keirprs: not run: ${gates.pass.why}`); return { ...budget, skipped: gates.pass.why }; }
+    shadow = gates.pass.act ? null : JSON.parse(JSON.stringify({ prs: {}, actions: [], branches: {}, ...(d.keirPrs || {}) }));
     // The close and delete switches sit inside the pass: with the pass on and closes off, closes are previewed.
     if (!gates.close.run && gates.close.why && !/kill switch|paused/.test(gates.close.why)) gates.close = { run: true, act: false, why: gates.close.why };
     if (!gates.del.run && gates.del.why && !/kill switch|paused/.test(gates.del.why)) gates.del = { run: true, act: false, why: gates.del.why };
-    try { await sweepOpen(budget); } catch (e) { log(`keirprs: open sweep skipped: ${String(e.message).slice(0, 200)}`); }
-    try { await sweepBranches(budget); } catch (e) { log(`keirprs: branch sweep skipped: ${String(e.message).slice(0, 200)}`); }
+    // A list that could not be read in full is "could not read, did nothing": logged, audited and returned (the preview
+    // report prints it), never treated as an empty list.
+    const unread = [];
+    try { await sweepOpen(budget); } catch (e) { unread.push(`open sweep: ${String(e.message).slice(0, 200)}`); log(`keirprs: open sweep skipped, could not read, did nothing: ${String(e.message).slice(0, 200)}`); }
+    try { await sweepBranches(budget); } catch (e) { unread.push(`branch sweep: ${String(e.message).slice(0, 200)}`); log(`keirprs: branch sweep skipped, could not read, did nothing: ${String(e.message).slice(0, 200)}`); }
+    if (unread.length && gates.pass.act) ledger.audit("keir_pr_list_unread", { unread });
+    budget.unread = unread;
     state().lastSweepAt = now();
-    ledger.save();
+    if (!shadow) ledger.save();
     return budget;
   }
   return { tick };

@@ -14,7 +14,6 @@
 // but ignored, so the report shows what would happen once they are released.
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFile } = require("node:child_process");
 const controlsLib = require("../lib/operator/controls");
 
 function parseArgs(argv) {
@@ -28,12 +27,9 @@ function parseArgs(argv) {
   return out;
 }
 
-// GET only: any argument that would make gh write is refused before gh runs.
-const WRITE_ARGS = new Set(["-X", "--method", "-f", "-F", "--field", "--raw-field", "--input"]);
+// GET only: any argument that would make gh write is refused before gh runs. Large buffer, as in the service (ghlist.js).
 function ghRead(args, { timeoutMs = 20000 } = {}) {
-  if (args.some((a) => WRITE_ARGS.has(a))) return Promise.reject(new Error("the report never writes to GitHub"));
-  return new Promise((resolve, reject) => execFile("/usr/bin/gh", ["api", ...args], { timeout: timeoutMs, env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: process.env.HOME || "/root" } },
-    (e, out) => (e ? reject(e) : resolve(JSON.parse(out || "null")))));
+  return require("../lib/operator/ghlist").ghApi({ readOnly: true, timeoutMs, home: process.env.HOME || "/root" })(args);
 }
 
 async function buildPreview({ data, settings, api, now = Date.now(), env = process.env }) {

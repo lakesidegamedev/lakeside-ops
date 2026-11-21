@@ -12,6 +12,7 @@ const ALL_ON = staticControls({ openPrCloses: "on", openPrBranchDeletes: "on" })
 const DAY = 86400000, T0 = Date.parse("2026-11-21T01:00:00Z");
 const REPO = "lakesidegamedev/AHDGame";
 const KEIR_EMAIL = "keir@localhost";
+const { ledgerIndex } = require("../lib/operator/keirprs");
 const keirCommit = (sha) => ({ sha, commit: { author: { email: KEIR_EMAIL }, committer: { email: KEIR_EMAIL }, message: "fix: x\n\nPrepared by Keir for task abc." }, parents: [{}] });
 const runs = (state) => ({
   green: [["verify", "success"], ["dependency-review", "success"], ["custom-rules", "success"]],
@@ -111,7 +112,8 @@ test("later passes finish the repairs and never repeat an ask, a notice or a clo
   // Once repaired and green, each gets its one ask, two per pass.
   assert.deepEqual(asked(w), [6725, 6781, 6784, 6791, 6798, 6799]);
   w.advance(3600000); await w.prs.tick(); w.advance(3600000); await w.prs.tick();
-  assert.deepEqual(asked(w), [6725, 6781, 6784, 6791, 6798, 6799, 6878]);
+  // Review N5: 6865 only weakly overlaps merged 6866 (both "Refs #6850"), so it is asked about too, with the three choices.
+  assert.deepEqual(asked(w), [6725, 6781, 6784, 6791, 6798, 6799, 6865, 6878]);
   assert.equal(notices(w).length, 3);
   assert.equal(w.writes.filter((x) => /state=closed/.test(x)).length, 0);
 });
@@ -352,5 +354,53 @@ test("M7: closes are off by default (previewed, the owner is not warned); the pa
     assert.deepEqual(x.writes, []);
     assert.deepEqual(Object.keys(x.data.outbox), []);
     assert.deepEqual(asked(x), []);
+  }
+});
+
+test("N5: a weak overlap never leaves a green PR ownerless: the ask offers merge, close as duplicate or keep open, and the PR stays owned", async () => {
+  const w = setup();
+  for (let i = 0; i < 6; i++) { await w.prs.tick(); w.advance(3600000); }
+  const job = Object.values(w.data.jobs).find((j) => j.adoptedPr === 6865);
+  assert.ok(job, "6865 is asked about");
+  assert.match(job.source.content, /may overlap merged PR #6866/);
+  assert.match(job.source.content, /"Merge PR 6865", "Close PR 6865 as a duplicate of #6866", "Keep PR 6865 open for now"/);
+  assert.equal(ledgerIndex(w.data).get(6865).live, true, "owned by the ask until a choice is made");
+  // The owner line no longer tells him to close it.
+  const line = w.data.outbox["pr-blocked:6865:superseded?:6866"].content;
+  assert.doesNotMatch(line, /Close it if it is no longer needed/);
+  assert.match(line, /may simply still be wanted/);
+  assert.ok(!w.writes.some((x) => /pulls\/6865 -f state=closed/.test(x)), "never closed on a weak match");
+});
+
+test("N6: a PR Keir closed is remembered after its record would have been pruned, so a late reopen is still hands-off", async () => {
+  const w = setup({ controls: require("../lib/operator/controls").staticControls({ openPrCloses: "on", openPrBranchDeletes: "on" }) });
+  const s = () => w.data.keirPrs.prs;
+  await w.prs.tick();
+  // Keir closed 6853 long ago (as the stale path does), then the PR left the open list.
+  s()[6853] = { ...s()[6853], closedAt: w.now(), closeStartedAt: w.now(), closedReason: "stale" };
+  const i = w.open.findIndex((p) => p.number === 6853); const pr = w.open.splice(i, 1)[0];
+  w.advance(21 * DAY); await w.prs.tick();
+  assert.ok(s()[6853], "kept past 14 days");
+  assert.equal(s()[6853].compact, true);
+  // Three weeks later a developer reopens it.
+  w.open.push(pr); w.advance(3600000); await w.prs.tick();
+  assert.ok(s()[6853].handsOff, "a person's reopen is recognised");
+  assert.match(w.data.outbox["keir-pr-reversed:6853"].content, /will not close, delete or ask about it again/);
+  // The other side: a record of a PR Keir never acted on is still pruned.
+  s()[9999] = { number: 9999, asked: {}, notices: {}, checkedAt: w.now() - 15 * DAY };
+  w.advance(3600000); await w.prs.tick();
+  assert.equal(s()[9999], undefined);
+});
+
+test("m5: a description repair that keeps failing is given up after two tries at a head, with one owner line", async () => {
+  const w = setup();
+  const tries = {};
+  const failing = createKeirPrs({ ledger: w.ledger, api: w.api, write: async (args) => { const m = /pulls\/(\d+)$/.exec(args[2] || ""); if (m && args.some((a) => a.startsWith("body="))) { tries[m[1]] = (tries[m[1]] || 0) + 1; throw new Error("HTTP 502"); } return {}; },
+    config: { keirGitEmail: KEIR_EMAIL, githubReviewerToken: "t" }, now: w.now, controls: ALL_ON });
+  for (let i = 0; i < 8; i++) { await failing.tick(); w.advance(3600000); }
+  assert.ok(Object.keys(tries).length >= 1);
+  for (const [n, k] of Object.entries(tries)) {
+    assert.equal(k, 2, `#${n}: two tries, then no more`);
+    assert.ok(w.data.outbox[`pr-blocked:${n}:repair-failed:h${n}`], `#${n}: one owner line`);
   }
 });
