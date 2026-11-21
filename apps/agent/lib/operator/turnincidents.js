@@ -314,7 +314,8 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
   function adopt(number, title, by, rec) {
     const s = st();
     s.current = { number, title: title || null, by, key: rec.key, turns: [rec.turn], at: now(), lastTurn: rec.turn, lastPhase: rec.phase || null, lastKind: rec.kind,
-      folded: { turn: rec.turn, count: 0 }, firstFailedAt: rec.firstFailedAt, checkedAt: now(), seenAttempts: { [rec.turn]: rec.attempts || 1 }, pausedPosted: Boolean(rec.autoPaused) };
+      // Attempts before the incident opened (a late open, a restart, an adopted incident) are counted, not lost (m1).
+      folded: { turn: rec.turn, count: Math.max(0, (rec.attempts || 1) - 1) }, firstFailedAt: rec.firstFailedAt, checkedAt: now(), seenAttempts: { [rec.turn]: rec.attempts || 1 }, pausedPosted: Boolean(rec.autoPaused) };
     rec.state = "attached"; rec.incident = number; rec.attachedOpenAt = now();
     ledger.audit("turn_incident_adopted", { key: rec.key, incident: number, by });
     return s.current;

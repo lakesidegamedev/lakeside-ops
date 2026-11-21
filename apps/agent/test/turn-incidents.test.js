@@ -600,3 +600,30 @@ test("M4, the other way: a recovery whose own record shows skipped work still sa
   assert.equal(ti.recoveryState({ success: true, outcome: "clean", abortedPhases: ["x"] }), "skipped");
   assert.equal(ti.recoveryState(null), "unknown");
 });
+
+test("m1: an incident opened late still counts the attempts before it, so the recovery gives the real retry count", async () => {
+  let down = true;
+  const r = rig({ start: "11:32" });
+  const orig = r.w.mcp.call;
+  r.w.mcp.call = async (s, tool, args, write) => { if (tool === "support_list" && down) throw new Error("fetch failed (ECONNREFUSED)"); return orig(s, tool, args, write); };
+  for (const hhmm of ["11:32", "11:40", "11:45"]) { r.set(hhmm); await r.sweep(); }
+  down = false;
+  r.set("11:50"); await r.sweep(); // opens after 11:31, 11:34 and 11:43
+  assert.equal(r.w.creates.length, 1);
+  for (const hhmm of ["12:01", "12:30"]) { r.set(hhmm); await r.sweep(); }
+  r.set(RECOVERED + 60000); await r.sweep();
+  const rec = r.w.updates.at(-1).message;
+  assert.match(rec, /Turn 108 was tried 3 more times without success/, "11:34, 11:43 and 12:00");
+});
+
+test("m1, the other way: an adopted incident opened before any retry does not invent retries", async () => {
+  const r = rig({ start: "11:32", world: { incidents: [{ ...INCIDENT_1871, createdAt: "2026-11-21T11:31:40.000Z" }] } });
+  await r.sweep();
+  r.set("11:33"); await r.sweep();
+  for (const t of [at("11:34") + 30000, at("11:44"), at("12:01")]) { r.set(t); await r.sweep(); }
+  r.set(RECOVERED + 60000); await r.sweep();
+  assert.match(r.w.updates.at(-1).message, /Turn 108 was tried 3 more times without success/, "adopted at the first attempt: three retries, not six");
+  const late = rig({ start: "13:05", world: { incidents: [INCIDENT_1871] } });
+  await late.sweep(); late.set(RECOVERED + 60000); await late.sweep();
+  assert.match(late.w.updates.at(-1).message, /Turn 108 was tried 3 more times without success/, "adopted after all four attempts: three retries, not four");
+});
