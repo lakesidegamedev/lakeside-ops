@@ -179,7 +179,7 @@ struct KeirHeader<Tools: View>: View {
         if workCount > 0 {
             Button(action: openInbox) {
                 KeirStatusPill(text: workCount == 1 ? "Working" : "\(workCount) tasks", shimmer: true) {
-                    Circle().fill(OpsTheme.mint).frame(width: 6, height: 6)
+                    OpsSpinner(size: 12)
                 }
             }
             .buttonStyle(.plain)
@@ -239,20 +239,26 @@ struct KeirTimeMark: View {
     }
 }
 
-/// Live work Keir is doing in this conversation, as an inline object.
+/// Live work Keir is doing in this conversation, as an inline object: the
+/// spinner in the icon tile and what Keir is doing this moment, shimmering.
 struct KeirLiveWorkCard: View {
     let task: JSONValue
+    /// The step running now, when the task reports one ("Reading the payroll code").
+    private var activity: String {
+        if task["steering"].bool { return "Updating direction" }
+        let running = task["live"].array.last { $0["state"].string == "running" }
+        return running?["title"].string.nonempty ?? "Working"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Image(systemName: "gearshape.2")
-                    .font(.callout).foregroundStyle(OpsTheme.mint)
+                OpsSpinner(size: 18)
                     .frame(width: 34, height: 34)
                     .background(OpsTheme.mint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(task["title"].string.nonempty ?? "Keir's work").font(.callout.weight(.semibold)).lineLimit(2)
-                    LoadingShimmer(text: task["steering"].bool ? "Updating direction" : "Working").font(.caption)
+                    OpsShimmerText(text: activity).font(.caption).lineLimit(1)
+                        .accessibilityLabel("Keir is working: \(activity)")
                 }
                 Spacer(minLength: 0)
             }

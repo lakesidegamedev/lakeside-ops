@@ -10,7 +10,7 @@ struct KeirWorkActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: KeirActivityAttributes.self) { context in
             HStack(spacing: 14) {
-                Image(systemName: context.state.stopped ? "stop.circle.fill" : "ellipsis.bubble.fill")
+                Image(systemName: context.state.stopped ? "stop.circle.fill" : context.state.count > 0 ? "progress.indicator" : "ellipsis.bubble.fill")
                     .font(.largeTitle).foregroundStyle(context.state.stopped ? .orange : .cyan)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Keir").font(.headline)
@@ -26,11 +26,11 @@ struct KeirWorkActivity: Widget {
                 DynamicIslandExpandedRegion(.trailing) { Text("\(context.state.count)").monospacedDigit() }
                 DynamicIslandExpandedRegion(.bottom) { Text(context.isStale ? "Open Keir to refresh" : context.state.count == 0 ? "No active work" : context.state.status).font(.callout).padding(.top, 4) }
             } compactLeading: {
-                Image(systemName: context.state.stopped ? "stop.fill" : context.state.status.localizedCaseInsensitiveContains("needs") ? "hand.raised.fill" : "ellipsis").foregroundStyle(context.state.stopped ? .orange : .cyan)
+                Image(systemName: context.state.stopped ? "stop.fill" : context.state.status.localizedCaseInsensitiveContains("needs") ? "hand.raised.fill" : "progress.indicator").foregroundStyle(context.state.stopped ? .orange : .cyan)
             } compactTrailing: {
                 Text("\(context.state.count)").monospacedDigit()
             } minimal: {
-                Image(systemName: context.state.stopped ? "stop.fill" : context.state.status.localizedCaseInsensitiveContains("needs") ? "hand.raised.fill" : "ellipsis").foregroundStyle(.cyan)
+                Image(systemName: context.state.stopped ? "stop.fill" : context.state.status.localizedCaseInsensitiveContains("needs") ? "hand.raised.fill" : "progress.indicator").foregroundStyle(.cyan)
             }.widgetURL(URL(string: "lakesideops://keir"))
         }
     }
@@ -154,8 +154,13 @@ struct KeirHomeView: View {
         }
     }
 
+    // Widgets render snapshots and cannot animate, so running work shows a
+    // still picture of the app's working spinner.
     private func count(_ value: Int, _ label: String) -> some View {
         HStack(spacing: 3) {
+            if label == "running" && value > 0 {
+                Image(systemName: "progress.indicator").font(.system(size: 9, weight: .semibold)).foregroundStyle(.mint)
+            }
             Text("\(value)").font(.caption.weight(.bold)).monospacedDigit().foregroundStyle(value > 0 ? .white : .secondary)
             Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
         }

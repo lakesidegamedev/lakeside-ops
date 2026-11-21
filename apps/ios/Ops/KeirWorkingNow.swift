@@ -94,8 +94,12 @@ struct KeirWorkingNow: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Circle().fill(current.map { OpsStatus.from($0["state"].string).color } ?? OpsTheme.muted)
-                        .frame(width: 7, height: 7)
+                    if let current, OpsStatus.from(current["state"].string) == .running {
+                        OpsSpinner(size: 12)
+                    } else {
+                        Circle().fill(current.map { OpsStatus.from($0["state"].string).color } ?? OpsTheme.muted)
+                            .frame(width: 7, height: 7)
+                    }
                     Text(current.map { OpsText.workTitle($0) } ?? "Keir's queue")
                         .font(.callout.weight(.semibold))
                         .lineLimit(2)
@@ -217,7 +221,8 @@ struct KeirUpdateMessage: View {
                     let state = status(item["kind"].string)
                     KeirWorkLink(link: item["link"].string, ticket: item["ticket"], jobId: item["jobId"].string, title: item["title"].string) {
                         HStack(alignment: .top, spacing: 10) {
-                            OpsStatusBadge(status: state.0, label: state.1, compact: true)
+                            // An update is history: "Started" never spins.
+                            OpsStatusBadge(status: state.0, label: state.1, compact: true, live: false)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(OpsText.updateTitle(item))
                                     .font(.callout.weight(.medium))

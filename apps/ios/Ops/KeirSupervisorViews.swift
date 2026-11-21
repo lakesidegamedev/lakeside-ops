@@ -140,11 +140,15 @@ struct KeirSupervisorJobCard: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "gearshape.2")
-                .font(.callout).foregroundStyle(OpsTheme.mint)
+            // Running spins; a queued job has not started, so it shows a still clock.
+            Group {
+                if queued {
+                    Image(systemName: OpsWorkState.queued.glyph).font(.callout).foregroundStyle(OpsWorkState.queued.color)
+                        .accessibilityHidden(true)
+                } else { OpsSpinner(size: 18) }
+            }
                 .frame(width: 34, height: 34)
-                .background(OpsTheme.mint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityHidden(true)
+                .background((queued ? OpsWorkState.queued.color : OpsTheme.mint).opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(job["title"].string.nonempty ?? "Working on your request").font(.callout.weight(.semibold)).lineLimit(2)
                 if queued { Text("Waiting to start").font(.caption).foregroundStyle(OpsTheme.muted) }

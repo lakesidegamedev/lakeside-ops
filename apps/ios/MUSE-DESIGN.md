@@ -297,6 +297,20 @@ when it is done. Everything else is a second tap away.
   with a lock, Failing checks is red with an x, Running is mint, Done is grey.
   Stale or degraded services and overdue estimates use the same orange as
   Stalled: machinery that stopped, not the owner's move.
+- **Ships**: one way of saying "working" (`OpsWorking.swift`), matched to the
+  Ask website: a 12-bar spinner (`OpsSpinner`) beside a line whose glyphs
+  carry a sweeping light band (`OpsShimmerText`). The rule: the spinner means
+  "happening right now" (Keir is working, a running task row, the button the
+  owner just tapped, a message being sent). Counts, chips, tiles and section
+  headers are category labels and use the still Running glyph,
+  `progress.indicator`. Nothing idle, done, stalled or blocked ever animates.
+  Reduce Motion shows plain secondary text and a still ring; UI tests freeze
+  both at one phase; widgets and the Live Activity use the still glyph.
+- **Ships**: every tap answers in the same frame: haptic, the tapped control
+  in its in-progress state ("Approving", "Saving your choice", "Sending"),
+  and a guard against a second tap. The confirmed state still comes from the
+  server; a failure rolls back with the reason and a retry that reuses the
+  same request key.
 - **Ships**: ages are neutral grey and escalate one way only, red and
   semibold, past a limit (`OpsAge`: two days for owner items, two hours for a
   player with no reply). Done items never escalate.

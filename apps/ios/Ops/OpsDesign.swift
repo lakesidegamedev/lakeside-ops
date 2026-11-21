@@ -40,7 +40,9 @@ enum OpsStatus: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .running: return "gearshape.2.fill"
+        // A still picture of the working spinner; the animated one is
+        // reserved for things running at this moment (see OpsWorking.swift).
+        case .running: return OpsWorkState.running.glyph
         case .waiting: return OpsWorkState.needsYou.glyph
         case .blocked: return OpsWorkState.blocked.glyph
         case .done: return OpsWorkState.done.glyph
@@ -119,7 +121,7 @@ enum OpsWorkState: String, CaseIterable {
         case .stalled: return "pause.circle.fill"
         case .blocked: return "lock.fill"
         case .failing: return "xmark.circle.fill"
-        case .running: return "gearshape.2.fill"
+        case .running: return "progress.indicator"
         case .queued: return "clock.fill"
         case .waiting: return "hourglass"
         case .done: return "checkmark.circle.fill"
@@ -198,12 +200,20 @@ struct OpsAge {
 }
 
 /// The state's glyph in its colour, sized for a dense row or a header.
+/// With `live`, a running item shows the animated spinner instead: it is
+/// happening now, not a category.
 struct OpsStateGlyph: View {
     let state: OpsWorkState
     var font: Font = .footnote
+    var live = false
+    @ScaledMetric(relativeTo: .footnote) private var spinnerSize: CGFloat = 14
     var body: some View {
-        Image(systemName: state.glyph).font(font.weight(.semibold)).foregroundStyle(state.color)
-            .frame(minWidth: 18).accessibilityHidden(true)
+        if live && state == .running {
+            OpsSpinner(tint: state.color, size: spinnerSize).frame(minWidth: 18)
+        } else {
+            Image(systemName: state.glyph).font(font.weight(.semibold)).foregroundStyle(state.color)
+                .frame(minWidth: 18).accessibilityHidden(true)
+        }
     }
 }
 
@@ -218,10 +228,12 @@ struct OpsWorkRow: View {
     var note: String = ""
     var age: OpsAge? = nil
     var stateWord: String? = nil
+    /// The item is running right now (a live queue row), not a snapshot.
+    var live = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            OpsStateGlyph(state: state)
+            OpsStateGlyph(state: state, live: live)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(OpsTheme.ink)
@@ -281,13 +293,19 @@ struct OpsStatusBadge: View {
     /// When set, the pill takes the work state's glyph and hue, so a ticket's
     /// status pill matches the Inbox and Ops exactly.
     var state: OpsWorkState? = nil
+    /// A running pill spins unless it describes the past (an update that
+    /// said "Started"). Pass false for history.
+    var live = true
 
     private var word: String { label ?? state?.title ?? status.title }
     private var tone: Color { state?.color ?? status.color }
+    private var spinning: Bool { live && symbol == nil && (state.map { $0 == .running } ?? (status == .running)) }
+    @ScaledMetric(relativeTo: .caption2) private var spinnerSize: CGFloat = 11
 
     var body: some View {
         HStack(spacing: 5) {
-            Image(systemName: symbol ?? state?.glyph ?? status.icon).font(.caption2.weight(.semibold)).accessibilityHidden(true)
+            if spinning { OpsSpinner(tint: tone, size: spinnerSize) }
+            else { Image(systemName: symbol ?? state?.glyph ?? status.icon).font(.caption2.weight(.semibold)).accessibilityHidden(true) }
             Text(word).font(compact ? .caption2.weight(.semibold) : .caption.weight(.semibold)).lineLimit(2)
         }
         .foregroundStyle(tone)
@@ -424,17 +442,20 @@ struct OpsPrimaryButton: View {
     var icon: String? = nil
     var busy = false
     var enabled = true
+    /// What the button says while its request is in flight ("Queuing a retry").
+    var busyTitle: String? = nil
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        // The haptic fires at the tap, before any request starts.
+        Button { OpsTap.tap(); action() } label: {
             HStack(spacing: 8) {
                 if busy {
-                    ProgressView().tint(OpsTheme.onAccent).accessibilityHidden(true)
+                    OpsSpinner(tint: OpsTheme.onAccent, size: 16)
                 } else if let icon {
                     Image(systemName: icon).accessibilityHidden(true)
                 }
-                Text(title).lineLimit(2).multilineTextAlignment(.center)
+                Text(busy ? busyTitle ?? title : title).lineLimit(2).multilineTextAlignment(.center)
             }
             .font(.callout.weight(.semibold))
             .frame(maxWidth: .infinity, minHeight: 44)
@@ -444,7 +465,7 @@ struct OpsPrimaryButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!enabled || busy)
-        .accessibilityLabel(title)
+        .accessibilityLabel(busy ? busyTitle ?? title : title)
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -496,12 +517,22 @@ struct OpsHealthLine: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: status.icon)
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(status.color)
-                .accessibilityHidden(true)
+            // Running is the one live state here: the spinner and a
+            // shimmering headline. Every other state is a still glyph.
+            if status == .running {
+                OpsSpinner(tint: status.color, size: 16).padding(.top, 2)
+            } else {
+                Image(systemName: status.icon)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(status.color)
+                    .accessibilityHidden(true)
+            }
             VStack(alignment: .leading, spacing: 3) {
-                Text(headline).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
+                if status == .running {
+                    OpsShimmerText(text: headline).font(.callout.weight(.semibold))
+                } else {
+                    Text(headline).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
+                }
                 if !detail.isEmpty {
                     Text(detail).font(.caption).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true)
                 }
