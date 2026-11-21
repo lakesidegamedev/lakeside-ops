@@ -148,6 +148,13 @@ function createGenerationReader(file, {
     } catch (error) {
       lastFailure = lastFailure || error; lastFailureAt = now();
     }
+    if (!stat && !current) {
+      let previousExists = true;
+      try { statSync(`${file}.previous`); } catch { previousExists = false; }
+      if (!previousExists) {
+        throw new IndexUnavailableError(`no index has been built at ${path.basename(file)} yet`, { retryable: false });
+      }
+    }
     throw new IndexUnavailableError(
       `code index temporarily unavailable (${path.basename(file)}: ${lastFailure ? lastFailure.message : "missing"}); retry in a minute`,
     );

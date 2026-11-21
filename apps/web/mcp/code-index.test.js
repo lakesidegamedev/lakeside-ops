@@ -196,8 +196,13 @@ test("with nothing in hand the reader falls back to .previous, then reports a re
   buildIndex(file, GAME_FILES, { generation: "new" });
   assert.strictEqual(reader.get().generation, "new");
 
-  const empty = ci.createGenerationReader(path.join(dir, "absent.db"));
-  assert.throws(() => empty.get(), (e) => e instanceof ci.IndexUnavailableError && e.retryable === true && /temporarily unavailable/.test(e.message));
+  const never = ci.createGenerationReader(path.join(dir, "absent.db"));
+  assert.throws(() => never.get(), (e) => e instanceof ci.IndexUnavailableError && e.retryable === false && /no index has been built/.test(e.message));
+
+  // A file that exists but cannot be read, with no fallback: retryable.
+  fs.writeFileSync(path.join(dir, "broken.db"), "not a database");
+  const broken = ci.createGenerationReader(path.join(dir, "broken.db"));
+  assert.throws(() => broken.get(), (e) => e instanceof ci.IndexUnavailableError && e.retryable === true && /temporarily unavailable/.test(e.message));
 });
 
 test("a write lock during the in-place file-map step is waited out, not reported as missing", () => {

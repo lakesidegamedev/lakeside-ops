@@ -77,6 +77,14 @@ function registerCodeTools(server, {
     return { repo: t.repo, error: error.message, retryable: error.retryable !== false };
   }
 
+  // One message for repositories that could not be read: "not built yet" is
+  // permanent until a build runs; anything else is worth a retry.
+  function unavailableMessage(failures) {
+    const transient = failures.some((f) => f.retryable);
+    const detail = failures.map((f) => `${f.repo}: ${f.error}`).join("; ");
+    return transient ? `code index temporarily unavailable, retry in a minute: ${detail}` : `code index not available: ${detail}`;
+  }
+
   server.tool(
     "code_search",
     "Hybrid (semantic + keyword + exact symbol) retrieval over indexed code. By default it searches A House Divided (code, engineering docs and player wiki: the index Ask answers players from); `repo` selects other studio code. Returns the chunks (repo, path, part, source kind, revision, score, text) plus the file list, and says when results were cut to fit maxChars. Ground a code or mechanics question here before reading files by hand; pass subQueries for a multi-part question.",
@@ -126,7 +134,7 @@ function registerCodeTools(server, {
         for (const h of kw.hits) all.push({ ...h, repo: t.repo, revision: h.revision || ci.revisionOf(gen) });
       }
       if (!all.length && failures.length) {
-        return errorResult(`code index temporarily unavailable, retry in a minute: ${failures.map((f) => `${f.repo}: ${f.error}`).join("; ")}`);
+        return errorResult(unavailableMessage(failures));
       }
       const ranked = chosen.repos.length > 1 ? [...all].sort((a, b) => b.score - a.score).slice(0, topK) : all.slice(0, topK);
       const budgeted = ci.applyBudget(ranked, maxChars);
@@ -167,7 +175,7 @@ function registerCodeTools(server, {
         const out = ci.exactLookup(gen, question, { limit, maxChars: Math.floor(maxChars / chosen.repos.length) });
         perRepo.push({ ...indexInfo(t, gen), ...out });
       }
-      if (!perRepo.length) return errorResult(`code index temporarily unavailable, retry in a minute: ${failures.map((f) => `${f.repo}: ${f.error}`).join("; ")}`);
+      if (!perRepo.length) return errorResult(unavailableMessage(failures));
       if (perRepo.every((p) => !p.terms.length)) return errorResult("no searchable literal in the question: give an identifier, a quoted phrase, or a path");
       if (perRepo.length === 1 && !failures.length) return jsonResult(perRepo[0]);
       const files = [];
@@ -198,7 +206,7 @@ function registerCodeTools(server, {
       if (chosen.repos.length !== 1) return errorResult("code_read takes one repo");
       const t = target(chosen.repos[0], source);
       let gen;
-      try { gen = generation(t); } catch (e) { return errorResult(`code index temporarily unavailable, retry in a minute: ${e.message}`); }
+      try { gen = generation(t); } catch (e) { return errorResult(unavailableMessage([unavailable(t, e)])); }
       if (/(?:^|\/)\.env|\.(?:pem|key|p12|pfx)$/i.test(filePath)) return errorResult("secret files are never indexed");
       const out = ci.readFile(gen, filePath, { maxChars, startLine, endLine });
       if (!out) return errorResult(`not in the ${t.repo === ci.GAME ? t.source + " " : ""}${t.repo} index at revision ${ci.revisionOf(gen) || "unknown"}: ${filePath}`);

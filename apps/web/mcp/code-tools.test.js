@@ -124,5 +124,8 @@ test("with the grant an internal repo is searchable and every result names its r
   assert.deepStrictEqual(both.repos.map((r) => [r.repo, r.revision]), [["game", "gamerev"], ["keir", "keirrev"]]);
   const notBuilt = (await handlers.code_exact({ question: "OPENER_TEXT", repo: ["keir", "client"], limit: 8, maxChars: 18000 })).json;
   assert.strictEqual(notBuilt.unavailable[0].repo, "client");
+  assert.strictEqual(notBuilt.unavailable[0].retryable, false);
+  const only = await handlers.code_search({ question: "q", repo: "client", topK: 2, maxChars: 30000 });
+  assert.match(only.error, /code index not available: client: no index has been built/);
   assert.strictEqual(notBuilt.complete, false, "a repo that could not be read makes the answer incomplete");
 });
