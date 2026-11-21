@@ -493,8 +493,10 @@ function describeTerm(term, kind, found, scan, { limit, maxLinesPerFile, coverag
   }
   const definitions = [];
   for (const f of scanned) for (const h of f.hits) if (h.definition) definitions.push({ path: f.path, line: h.line, kind: h.definition, text: h.text, source: f.source });
-  // Rank files: definition sites (non-test) first, then code uses by count, then tests and docs.
-  const score = f => (f.hits.some(h => h.definition) && !f.test ? 1000 : 0) + (f.test ? -500 : 0) - (SOURCE_RANK[f.source] ?? 3) * 100 + Math.min(f.hits.length, 50);
+  // Rank files: definition sites (non-test) first, then code uses by count,
+  // then tests and docs. Files the index leaves out (scripts, migrations,
+  // changelogs) rank after indexed code of the same kind.
+  const score = f => (f.hits.some(h => h.definition) && !f.test ? 1000 : 0) + (f.test ? -500 : 0) - (SOURCE_RANK[f.source] ?? 3) * 100 - (f.inIndex === false ? 250 : 0) + Math.min(f.hits.length, 50);
   const ranked = [...scanned].sort((a, b) => score(b) - score(a) || a.path.localeCompare(b.path));
   const listed = ranked.slice(0, Math.max(1, limit));
   const allScanned = scannedCount === candidates;

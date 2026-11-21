@@ -71,6 +71,7 @@ function gameGen(dir = tmpDir()) {
 const UNINDEXED = {
   "messages/en/centralBank.json": '{\n  "rateCooldown": "Another rate change occurred too recently.",\n  "invite": "Invite players with your link"\n}\n',
   "scripts/sim/run.mjs": "export const SIM_ONLY_FLAG = true;\n",
+  "scripts/migrations/fix.ts": "const ownSitesFirst = true;\nlog(ownSitesFirst);\nsave(ownSitesFirst);\n",
 };
 function gameRepo() {
   const { execFileSync } = require("child_process");
@@ -464,4 +465,12 @@ test("m3: exact lookup stops at its time budget and says the result is truncated
   const r = (await ci.exactLookup(gen, "US_NATIONAL_CONFIG", { timeBudgetMs: -1 })).results[0];
   assert.strictEqual(r.complete, false);
   assert.match(r.truncated, /time limit/);
+});
+
+test("B2: a definition in a file the index leaves out ranks after indexed definitions", async () => {
+  const { gen, scanner } = gameGenWithRepo();
+  const r = (await ci.exactLookup(gen, "ownSitesFirst", { scanner })).results[0];
+  assert.deepStrictEqual(r.files.map(f => [f.path, f.inIndex]), [["src/lib/market/rules.ts", undefined], ["scripts/migrations/fix.ts", false]]);
+  assert.strictEqual(r.foundBy, "index and repository scan");
+  assert.strictEqual(r.complete, true);
 });
