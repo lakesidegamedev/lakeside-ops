@@ -8,10 +8,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 ### For users
 
 - Keir no longer says a problem is "with the developers" when it is fixing it itself. While its own fix is being prepared, tested or waiting for approval it says so in the first person ("I am preparing a fix", "My fix is in testing", "The fix is waiting for approval to ship"). "With the developers" now needs a handoff a person on the team actually holds (an item no Keir worker took, a question for a person, or an open owner decision), and it is never said to the owner or a developer who asked Keir to do something: Keir does it, or says in one sentence what blocks it. Who is being answered is read from the message Keir replies to, so a developer asking inside a player's ticket counts as a developer. "I will come back when there is something to try" is now a tracked promise that comes due with the fix.
+- The "From:" line under a ticket answer names what the answer actually rests on: "the game's rules" only for a read of game logic, "the page's code" for interface code, "a live check of the page" when Keir looked at the page itself, and live records as before. A design suggestion, mockup, apology, status update or question gets no line, and when the code cannot tell what a read was, there is no line.
 
 ### For developers
 
 - `lib/operator/handofftruth.js`: `deflection()` runs in the ticket post guard and on every non-ticket channel and app reply. It refuses a handoff claim with no person-held receipt, a handoff claim while Keir's own coding worker, pull request or pending repair holds the work, any handoff claim to an owner or staff audience (unless it names that person's own receipt), a blanket "I cannot render", and "my ticket access is read-only". Each refusal carries the sentence to use. `ticketEvidence().escalated` no longer counts Keir's own pull requests or worker-held cards; `standdown.currentQuestionReceipt` skips worker-held cards.
+- `lib/operator/sources.js`: code reads (direct and in evidence batches) are labelled by the files they read (`fileKind`); `view_page` is recorded in the ticket's observations and labelled "a live check of the page"; `factual()` drops proposal, opinion, apology, status and question sentences (and a whole message that opens as a preview or proposal) before sourcing.
 
 ## 11.3.0 (2026-11-21)
 

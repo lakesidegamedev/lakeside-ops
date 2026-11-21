@@ -26,7 +26,8 @@ function setup() {
 const obs = (tool, args, result, at = 1) => ({ key: String(at) + tool, task: "old", tool: "read_tool", at, input: JSON.stringify({ server: "gamestate", tool, args }), result: JSON.stringify(result) });
 const SECTOR = obs("trace_sector", { region: "Norland", sector: "Oil" }, { revenue: 41288610 }, 5);
 const OVERVIEW = obs("game_overview", {}, { currentTurn: 675, players: 120 }, 3);
-const CODE = { ...obs("code_search", { question: "x" }, { hits: ["tax is 12.5 percent"] }, 4), input: JSON.stringify({ server: "ops-knowledge", tool: "code_search", args: { question: "x" } }) };
+// Keir 11.4: a code read is named by the files it read; this one read game logic.
+const CODE = { ...obs("code_search", { question: "x" }, { files: ["src/lib/economy/tax.ts"], hits: ["tax is 12.5 percent"] }, 4), input: JSON.stringify({ server: "ops-knowledge", tool: "code_search", args: { question: "x" } }) };
 const seed = (f, rows) => { f.ledger.data.ticketObservations = { 123: rows }; f.ledger.data.ruleLookupRefused = { 123: 1 }; };
 
 test("a number from an earlier activation's observation is accepted", async () => {
@@ -109,4 +110,49 @@ test("end to end: the posted ticket reply carries the Checked line", async () =>
 test("audit 2026-11-13: a rule or cause never borrows an unrelated read; only a code read sources it", () => {
   assert.equal(sources.checkedLine("Only the chair can file.", [OVERVIEW, SECTOR]), null);
   assert.equal(sources.checkedLine("Only the chair can file.", [OVERVIEW, CODE]), "From: the game's rules.");
+});
+
+// Keir 11.4 (ticket 1872, owner 2026-11-21): the line names what was actually read, or nothing.
+const codeRead = (file, at = 4) => ({ ...obs("code_read", { path: file }, { path: file, files: [file] }, at), input: JSON.stringify({ server: "ops-knowledge", tool: "code_read", args: { path: file } }) });
+const LIVE = { key: "lv", task: "old", tool: "view_page", at: 7, input: JSON.stringify({ path: "/corporation/130" }), result: JSON.stringify({ title: "Company", text: "This page hit an unexpected problem" }) };
+const REPLY_1872 = "This one is on our side, not your browser or your account. The page gets a successful reply from the server but cannot read the company details in it, so it gives up and shows the error panel.\n\nI reproduced it while signed out, so it is not your setup. I am preparing a fix and will come back when there is something to try.";
+
+test("1872: a page crash diagnosed from the page's code and a live look names those, never the game's rules", () => {
+  assert.equal(sources.checkedLine(REPLY_1872, [codeRead("src/components/corporation/CorporationDetail.tsx"), LIVE]), "From: the page's code and a live check of the page.");
+  assert.equal(sources.checkedLine(REPLY_1872, [LIVE]), "From: a live check of the page.");
+  assert.equal(sources.checkedLine(REPLY_1872, [codeRead("src/app/corporation/[id]/page.tsx")]), "From: the page's code.");
+});
+
+test("a read whose files cannot be told apart gives no line rather than a wrong one", () => {
+  const vague = { ...obs("code_search", { question: "x" }, { hits: ["no file named"] }, 4), input: JSON.stringify({ server: "ops-knowledge", tool: "code_search", args: { question: "x" } }) };
+  assert.equal(sources.checkedLine(REPLY_1872, [vague]), null);
+  assert.equal(sources.checkedLine("Only the chair can file.", [codeRead("scripts/misc/thing.sh")]), null);
+});
+
+test("look-alike: a real rule answer read from the rules code keeps its source line", () => {
+  assert.equal(sources.checkedLine("Only the chair can file a motion.", [codeRead("src/lib/legislature/motions.ts")]), "From: the game's rules.");
+  assert.equal(sources.checkedLine("Only the chair can file a motion.", [codeRead("src/lib/legislature/motions.ts"), LIVE]), "From: the game's rules.", "a live page check is never put beside a rule");
+});
+
+test("1875: a proposal, mockup, apology, status line or question carries no source line", () => {
+  const rules = codeRead("src/lib/market/retoolHint.ts");
+  for (const m of ["I would split the tooltip into two lines, because the 55% and the 20% measure different things.",
+    "Here is the proposed wording: the plant line first, then the market line, since the shortage is separate.",
+    "Preview of the proposed wording, not the live page. The market shortage cannot be read from the plant figure.",
+    "Sorry, that tooltip is confusing.", "Can you tell me which plant it was?", "I am preparing a fix because the label is wrong."]) {
+    assert.equal(sources.checkedLine(m, [rules]), null, m);
+  }
+});
+
+test("an evidence batch of code reads is named by its files", () => {
+  const batch = { key: "b", task: "old", tool: "evidence_batch", at: 5, input: JSON.stringify({ queries: [{ op: "service", server: "ops-knowledge", tool: "code_read", args: { path: "src/lib/turn/corporation/fundedProducerTurn.ts" } }] }), result: JSON.stringify({ results: [{ path: "src/lib/turn/corporation/fundedProducerTurn.ts" }] }) };
+  assert.equal(sources.describe(batch), "the game's rules");
+});
+
+test("a live page check is recorded as an observation so the line can name it", () => {
+  const { ledger, job } = setup();
+  require("../lib/operator/investigation-memory").record(ledger, job, "view_page", { path: "/corporation/130" }, { title: "Company", text: "error", image: { data: "x".repeat(10) } }, 5);
+  const row = ledger.data.ticketObservations[123].at(-1);
+  assert.equal(row.tool, "view_page");
+  assert.ok(!/"image"/.test(row.result), "the screenshot itself is not stored");
 });
