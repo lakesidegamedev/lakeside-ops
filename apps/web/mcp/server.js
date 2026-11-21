@@ -89,10 +89,18 @@ async function embedText(text, isQuery = false) {
   return Array.from(out.data);
 }
 
-// Live ticket status on kanban cards, read from the same tickets collection the
-// support tools read. One reader per process so its short cache is shared.
+// Live ticket status on kanban cards. This server's MONGODB_URI is the ops
+// store, which holds no tickets, so the ticket database is named separately
+// (ticket-db.js: TICKETS_MONGODB_ENV_FILE, the game database env file the
+// dashboard and support server load). Without it, a standalone install's
+// single database is tried; a database with no tickets collection reads as
+// "ticket status unknown" and the reconcile pass skips ticket rules.
+// One reader per process so its short cache is shared.
 const { createTicketStatusReader } = require("../kanban-tickets");
-const kanbanTicketStatus = createTicketStatusReader({ getDb: () => store.getDb(MONGODB_URI) });
+const kanbanTicketDbConfig = require("../ticket-db");
+const kanbanTicketDb = kanbanTicketDbConfig.createTicketDb(process.env, { fallback: { getDb: () => store.getDb(MONGODB_URI), source: "this server's MONGODB_URI" } });
+const kanbanTicketStatus = createTicketStatusReader({ getDb: kanbanTicketDb.getDb, unavailable: kanbanTicketDb.error, hint: kanbanTicketDbConfig.HOW_TO_CONFIGURE });
+console.error(`[kanban] ticket status from ${kanbanTicketDb.source || `nowhere (${kanbanTicketDb.error})`}`);
 // Pull request and alert state for kanban_reconcile (gh CLI, read-only systemctl).
 const kanbanSourceReaders = require("../kanban-sources").createSourceReaders();
 

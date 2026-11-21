@@ -352,6 +352,55 @@ describe("reconcile pass", () => {
     assert.equal((await runTicketReconcile({ store: k, reader, limit: 10 })).changed, 3);
   });
 
+  it("a reachable database with no tickets collection reads as unknown and changes nothing", async () => {
+    // Review M2: the tool server's own database answers every query with nothing.
+    const card = k.add({ product: "ahd", title: TITLE, ticket_role: "own", start: true }, { actor: "claude" });
+    closeTicket(1852, clock.toISOString());
+    let lists = 0;
+    const wrongDb = { databaseName: "a-house-divided", collection: () => ({ find: () => ({ toArray: async () => [] }) }),
+      listCollections: () => ({ toArray: async () => { lists += 1; return []; } }) };
+    const wrong = createTicketStatusReader({ getDb: async () => wrongDb, now: () => clock.getTime() });
+    const out = await runTicketReconcile({ store: k, reader: wrong });
+    assert.equal(out.tickets_readable, false);
+    assert.match(out.ticket_error, /database a-house-divided has no tickets collection/);
+    assert.equal(out.changed, 0);
+    assert.equal(k.get(card.id).lane, "now");
+    const got = await decorateItem(k.get(card.id), wrong);
+    assert.equal(got.ticket_status[0].status, "unknown");
+    assert.match(got.ticket_status[0].note, /has no tickets collection/);
+    assert.doesNotMatch(got.ticket_status[0].summary, /not found|no ticket 1852/, "never says the ticket does not exist");
+    assert.equal(got.ticket_warning, undefined);
+    assert.ok(lists >= 1);
+    // Not configured at all: the same honest unknown, saying what is missing.
+    const none = createTicketStatusReader({ getDb: null, unavailable: "no ticket database configured: set TICKETS_MONGODB_ENV_FILE" });
+    const bare = await decorateItem(k.get(card.id), none);
+    assert.match(bare.ticket_status[0].summary, /ticket status unknown \(the ticket service could not be read \(no ticket database configured: set TICKETS_MONGODB_ENV_FILE\)\)/);
+    assert.equal((await runTicketReconcile({ store: k, reader: none })).changed, 0);
+  });
+
+  it("the real tickets database with one unknown number still reads the others and checks the collection once", async () => {
+    let lists = 0;
+    const realDb = async () => {
+      const db = await tickets.getDb();
+      return { ...db, listCollections: () => ({ toArray: async () => { lists += 1; return [{ name: "tickets" }]; } }) };
+    };
+    const ok = createTicketStatusReader({ getDb: realDb, now: () => clock.getTime() });
+    const own = k.add({ product: "ahd", title: TITLE, ticket_role: "own", lane: "backlog" }, { actor: "claude" });
+    const odd = k.add({ product: "ahd", title: "Odd thing (ticket 99999)", lane: "backlog" }, { actor: "claude" });
+    closeTicket(1852, clock.toISOString());
+    const out = await runTicketReconcile({ store: k, reader: ok });
+    assert.equal(out.tickets_readable, true);
+    assert.deepEqual(out.counts, { completed: 1 });
+    assert.deepEqual(out.skipped_unknown_tickets, [99999]);
+    assert.equal(k.get(own.id).lane, "done");
+    const got = await decorateItem(k.get(odd.id), ok);
+    assert.match(got.ticket_status[0].note, /ticket 99999 was not found in the ticket records this server reads/);
+    assert.equal(lists, 0, "rows came back, so no collection check was needed");
+    await decorateItem(k.get(odd.id), ok);
+    await runTicketReconcile({ store: k, reader: ok });
+    assert.ok(lists <= 1, "checked at most once per process");
+  });
+
   it("leaves a card alone when its ticket number is not in the records", async () => {
     const card = k.add({ product: "ahd", title: "Odd thing (ticket 99999)", lane: "backlog" }, { actor: "claude" });
     const out = await runTicketReconcile({ store: k, reader });

@@ -8,11 +8,12 @@
 // backfill touches the live file.
 // The ops web app runs the same pass every 10 minutes (kanban-tickets.js).
 //
-//   OPS_KANBAN_DB=/path/kanban.db MONGODB_URI=... node scripts/kanban-reconcile.js [--apply] [--limit N]
+//   OPS_KANBAN_DB=/path/kanban.db TICKETS_MONGODB_ENV_FILE=/path/game-db.env node scripts/kanban-reconcile.js [--apply] [--limit N]
 //
-// Tickets are read from the tickets collection in TICKETS_DB_NAME (default
-// "a-house-divided", the database the dashboard reads); without MONGODB_URI
-// the ticket rules are skipped. Pull requests are read with the gh CLI and
+// Tickets are read as ticket-db.js describes: TICKETS_MONGODB_ENV_FILE or
+// TICKETS_MONGODB_URI, else MONGODB_URI; database TICKETS_DB_NAME (default
+// "a-house-divided", the database the dashboard reads). Without any, or
+// when the database has no tickets collection, the ticket rules are skipped. Pull requests are read with the gh CLI and
 // unit state with systemctl (KANBAN_SOURCE_GITHUB=off / KANBAN_ALERT_SYSTEMD=off
 // skip them). A .env beside the app is loaded when present, as server.js does.
 
@@ -26,6 +27,7 @@ if (fs.existsSync(envPath)) require("dotenv").config({ path: envPath });
 const { openKanban, defaultDbPath } = require("../kanban-store");
 const { createTicketStatusReader, runReconcile } = require("../kanban-tickets");
 const { createSourceReaders } = require("../kanban-sources");
+const { createTicketDb } = require("../ticket-db");
 
 const apply = process.argv.includes("--apply");
 const li = process.argv.indexOf("--limit");
@@ -45,23 +47,18 @@ async function main() {
   const live = defaultDbPath();
   const snapshot = apply ? null : await snapshotOf(live);
   const kanban = openKanban(snapshot || live);
-  let client = null;
+  const env = !process.env.TICKETS_MONGODB_ENV_FILE && !process.env.TICKETS_MONGODB_URI && process.env.MONGODB_URI
+    ? { ...process.env, TICKETS_MONGODB_URI: process.env.MONGODB_URI, TICKETS_MONGODB_DIRECT_CONNECTION: "true" } : process.env;
+  const ticketDb = createTicketDb(env);
   try {
-    let reader = null;
-    if (process.env.MONGODB_URI) {
-      const { MongoClient } = require("mongodb");
-      client = new MongoClient(process.env.MONGODB_URI, { maxPoolSize: 2, serverSelectionTimeoutMS: 10_000, directConnection: true });
-      await client.connect();
-      reader = createTicketStatusReader({ getDb: () => client.db(process.env.TICKETS_DB_NAME || "a-house-divided"), timeoutMs: 15_000 });
-    } else {
-      console.error("[kanban-reconcile] MONGODB_URI not set: ticket rules skipped");
-    }
+    if (ticketDb.error) console.error(`[kanban-reconcile] ${ticketDb.error}: ticket rules skipped`);
+    const reader = createTicketStatusReader({ getDb: ticketDb.getDb, unavailable: ticketDb.error, timeoutMs: 15_000 });
     const out = await runReconcile({ store: kanban, reader, ...createSourceReaders(), dryRun: !apply, limit });
-    console.log(JSON.stringify({ db: live, ...(snapshot ? { snapshot } : {}), ...out }, null, 2));
+    console.log(JSON.stringify({ db: live, ...(snapshot ? { snapshot } : {}), tickets_from: ticketDb.source, ...out }, null, 2));
   } finally {
     kanban.close();
     if (snapshot) fs.rmSync(path.dirname(snapshot), { recursive: true, force: true });
-    if (client) await client.close().catch(() => {});
+    await ticketDb.close();
   }
 }
 

@@ -60,18 +60,28 @@ function ageText(ms) {
   return `${Math.round(m / 60)} hours`;
 }
 
-// getDb: async () => a Mongo db with the tickets collection.
-function createTicketStatusReader({ getDb, ttlMs = DEFAULT_TTL_MS, timeoutMs = DEFAULT_TIMEOUT_MS, now = () => Date.now() } = {}) {
+// getDb: async () => a Mongo db with the tickets collection (ticket-db.js
+// says which one). unavailable: why there is no getDb, shown on every card.
+function createTicketStatusReader({ getDb, unavailable = null, hint = null, ttlMs = DEFAULT_TTL_MS, timeoutMs = DEFAULT_TIMEOUT_MS, now = () => Date.now() } = {}) {
   const cache = new Map(); // number -> { snapshot, fetchedAt }
   let lastError = null;
+  let collectionSeen = false;
 
   async function fetch(numbers) {
-    if (!getDb) throw new Error("no ticket database configured");
+    if (!getDb) throw new Error(unavailable || "no ticket database configured");
     const db = await withTimeout(Promise.resolve(getDb()), timeoutMs);
     const rows = await withTimeout(db.collection("tickets").find(
       { ticketNumber: { $in: numbers } },
       { projection: { ticketNumber: 1, title: 1, status: 1, closedAt: 1, resolvedAt: 1, mergedInto: 1, mergedAt: 1, statusHistory: 1, "resolution.message": 1, "resolution.summary": 1 } },
     ).toArray(), timeoutMs);
+    // Nothing found: make sure this is the ticket database at all. A
+    // database without a tickets collection (the wrong URI) is unreadable,
+    // never "no such ticket".
+    if (!rows.length && !collectionSeen && typeof db.listCollections === "function") {
+      const found = await withTimeout(db.listCollections({ name: "tickets" }, { nameOnly: true }).toArray(), timeoutMs);
+      if (!found.length) throw new Error(`database ${db.databaseName || "?"} has no tickets collection, so this server is not reading the ticket records${hint ? `: ${hint}` : ""}`);
+      collectionSeen = true;
+    } else if (rows.length) collectionSeen = true;
     return rows;
   }
 
@@ -96,7 +106,7 @@ function createTicketStatusReader({ getDb, ttlMs = DEFAULT_TTL_MS, timeoutMs = D
           found.add(n);
           cache.set(n, { snapshot: ticketSnapshot(row), fetchedAt });
         }
-        for (const n of need) if (!found.has(n)) cache.set(n, { snapshot: { number: n, state: "unknown", label: "ticket status unknown", note: `no ticket ${n} in the ticket records` }, fetchedAt });
+        for (const n of need) if (!found.has(n)) cache.set(n, { snapshot: { number: n, state: "unknown", label: "ticket status unknown", note: `ticket ${n} was not found in the ticket records this server reads` }, fetchedAt });
         lastError = null;
       } catch (error) {
         failed = String(error && error.message || error).slice(0, 200);
