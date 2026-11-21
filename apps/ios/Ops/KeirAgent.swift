@@ -309,7 +309,7 @@ struct ActivityView: View {
 
     @ViewBuilder private var ownerSections: some View {
         if !visibleOwner.isEmpty {
-            Section {
+            Group {
                 queueHeader(AttentionCenter.label, state: .needsYou, count: visibleOwner.count, identifier: "inbox-attention-count")
                 ForEach(visibleOwner) { item in
                     ownerCard(item)
@@ -340,6 +340,8 @@ struct ActivityView: View {
         }
     }
 
+    /// Plain groups, not List sections: a section adds its own tall gap
+    /// above each header, which cost a row per section.
     /// Lists of like items are dense rows on one shared surface per section,
     /// all with the same anatomy. Only Needs-you items, which ask the owner
     /// for a decision, get standalone cards.
@@ -348,7 +350,7 @@ struct ActivityView: View {
             let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0.item) == key }
             let state = OpsWorkState.from(filter: key)
             if key == "failing" && !visibleFailures.isEmpty {
-                Section {
+                Group {
                     queueHeader("Failing checks", state: .failing, count: visibleFailures.count)
                     OpsGroup {
                         ForEach(Array(visibleFailures.enumerated()), id: \.element["number"].string) { index, pr in
@@ -362,7 +364,7 @@ struct ActivityView: View {
                 }
             }
             if !rows.isEmpty {
-                Section {
+                Group {
                     queueHeader(title, state: state, count: rows.count)
                     OpsGroup {
                         ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in

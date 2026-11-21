@@ -306,7 +306,7 @@ final class LaunchTests: XCTestCase {
         let app = launch()
         go(app, "Activity")
         XCTAssertTrue(app.buttons["work-filter-stuck"].waitForExistence(timeout: 10))
-        app.buttons["work-filter-stuck"].tap()
+        goToFilter(app, "work-filter-stuck")
         XCTAssertTrue(find(app, "Verify an interrupted action").waitForExistence(timeout: 10))
         XCTAssertFalse(find(app, "Bond coupon ledger", timeout: 1).exists)
         capture(app, "Ticket queue filtered to stuck work")
@@ -869,11 +869,18 @@ final class LaunchTests: XCTestCase {
         }
     }
 
+    /// Taps an Inbox filter chip, first dragging the chip row toward it when
+    /// it is off screen. The drag runs along the chip row itself, at the
+    /// chip's own height, so it never lands on the search field or a list row.
     private func goToFilter(_ app: XCUIApplication, _ identifier: String) {
         let chip = app.buttons[identifier]
-        for _ in 0..<4 where !chip.isHittable {
-            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.90, dy: 0.18))
-            let end = app.coordinate(withNormalizedOffset: CGVector(dx: 0.18, dy: 0.18))
+        XCTAssertTrue(chip.waitForExistence(timeout: 10))
+        for _ in 0..<8 where !chip.isHittable {
+            let screen = app.frame
+            let y = chip.frame.midY / max(screen.height, 1)
+            let towardRight = chip.frame.midX > screen.width / 2
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.85 : 0.15, dy: y))
+            let end = app.coordinate(withNormalizedOffset: CGVector(dx: towardRight ? 0.25 : 0.75, dy: y))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
         XCTAssertTrue(chip.isHittable)
@@ -925,9 +932,12 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(approve.isEnabled)
         // Top, middle (Unanswered, Stalled, the long queued title) and bottom.
         capture(app, "\(theme) Inbox all top")
-        for _ in 0..<2 { app.swipeUp() }
+        // A short drag, about half a screen, so the middle sections show.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+            .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.32)))
+        sleep(1)
         capture(app, "\(theme) Inbox all middle")
-        for _ in 0..<4 { app.swipeUp() }
+        for _ in 0..<5 { app.swipeUp() }
         capture(app, "\(theme) Inbox all bottom")
         let search = app.searchFields.firstMatch
         for _ in 0..<6 where !search.isHittable { app.swipeDown() }
@@ -940,7 +950,7 @@ final class LaunchTests: XCTestCase {
         returnToTabs()
         go(app, "Activity")
         XCTAssertTrue(blocked.waitForExistence(timeout: 10))
-        blocked.tap()
+        goToFilter(app, "work-filter-stuck")
         capturePage("Inbox blocked", scrolls: 3)
         // Neighbouring chips stay in view because the selected one is
         // scrolled to the middle: Stalled, then Unanswered, then back.
