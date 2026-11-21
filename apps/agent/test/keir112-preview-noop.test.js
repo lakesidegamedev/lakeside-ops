@@ -104,7 +104,8 @@ test("N7: the live-notice repeat check belongs to the post budget switch; off or
   const run = async (controls) => {
     const f = setup({ config: { controls } });
     const d = f.ledger.data;
-    f.job.releaseEvidence = { abc1234def: { at: f.now() - 60000, main: true, development: true, staging: true } };
+    f.job.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/7001"];
+    f.job.releaseEvidence = { abc1234def: { at: f.now() - 60000, main: true, development: true, staging: true, repository: "AHDGame", pr: 7001 } };
     d.statusCards = { 123: { messageId: "9", channelId: f.job.channelId, items: [], liveNotified: [] } };
     d.ticketPosts = { 123: [{ at: f.now() - 30000, text: "The fix is now live on the main server.", jobId: f.job.id }] };
     f.advance(20);

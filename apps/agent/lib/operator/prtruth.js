@@ -194,7 +194,8 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
       const rg = controls.gate("reviewGate");
       for (const n of [...new Set([waited, fixPr].filter(Boolean))]) {
         const truth = await read(GAME_REPO, n, budget, WAIT_REFRESH_MS);
-        if (truth && n === waited && on.kind === "deploy" && !terminal) changed += await mainCheck(job, truth, budget);
+        // Review 3 F1: only a PR this job's own records tie to its fix may be read as "live"; a number in wait text is not.
+        if (truth && n === waited && on.kind === "deploy" && !terminal && require("./livecoverage").jobOwnsPr(d, job, truth.repo || GAME_REPO, n)) changed += await mainCheck(job, truth, budget);
         if (!truth || n !== fixPr || !rg.run) continue;
         if (!rg.act || !act) { if (truth.state === "closed" && !truth.merged && job.reviewFix?.state !== "reopened") preview("reopen review item", `job ${job.id}`, `fix PR #${n} closed without merging`); continue; }
         if (reviewFix(job, truth)) changed++;
@@ -214,7 +215,7 @@ function createPrTruth({ ledger, api, now = () => Date.now(), log = () => {}, ma
     if (!truth.onMain) return 0;
     if (!act) { preview("tell job fix is live", `job ${job.id}`, `PR #${truth.number}'s merge reached the main server`); return 0; }
     const key = String(truth.mergeSha).slice(0, 10), prior = job.releaseEvidence?.[key] || {};
-    (job.releaseEvidence ||= {})[key] = { ...prior, at: prior.at || now(), development: true, staging: true, main: true, repository: prior.repository || "AHDGame", turnWorker: prior.turnWorker === true, source: prior.source || "github-truth" };
+    (job.releaseEvidence ||= {})[key] = { ...prior, at: prior.at || now(), development: true, staging: true, main: true, repository: "AHDGame", turnWorker: prior.turnWorker === true, source: "github-truth", pr: Number(truth.number), mergeSha: String(truth.mergeSha) };
     ledger.audit("deploy_wait_reached_main", { job: job.id, ticket: job.ticket || null, pr: truth.number });
     tell(job, `PR #${truth.number} is now on the main server (Keir read its merge on main). This is what the wait "${String(job.closing?.waitingOn || "").slice(0, 160)}" was for. If the player was told a fix is coming, tell them it is live in one plain line, without PR numbers, and check the reported behaviour before calling it fixed.`);
     return 1;

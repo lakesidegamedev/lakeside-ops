@@ -25,6 +25,7 @@ test("a where lookup of another ticket's change is not this ticket's own live re
   const { ownMainReceipt } = require("../lib/operator/livecoverage");
   const lookup = { id: "a", releaseEvidence: { "9f06": { main: true, source: "lookup" } } };
   assert.equal(ownMainReceipt([lookup]), false);
-  assert.equal(ownMainReceipt([{ id: "a", pullRequests: ["pr/1"], releaseEvidence: { x: { main: true } } }]), true);
-  assert.equal(ownMainReceipt([lookup, { id: "b", releaseEvidence: { y: { main: true, source: "dev-merges" } } }]), true);
+  // Review 3 F1: the receipt must be for the ticket's own PR (repository and number), written for that merge.
+  assert.equal(ownMainReceipt([{ id: "a", pullRequests: ["https://github.com/lakesidegamedev/AHDGame/pull/1"], releaseEvidence: { x: { main: true, repository: "AHDGame", pr: 1 } } }]), true);
+  assert.equal(ownMainReceipt([lookup, { id: "b", releaseEvidence: { y: { main: true, source: "dev-merges", pr: 6900 } } }]), true);
 });

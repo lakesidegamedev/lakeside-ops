@@ -85,10 +85,11 @@ function applies(job) {
 }
 
 // What kind of wait a sentence describes, when the model did not say. Order matters: a PR named in the wait wins.
+// Review 3 F1: only "PR" or "pull request" before a number names a PR; a bare "#1900" is as likely a ticket or an issue.
 function infer(text, { waitFor, turnWatch, pendingDecision } = {}) {
   const t = String(text || "");
-  const pr = /\b(?:PR|pull request)\s*#?(\d{3,6})\b|#(\d{4,6})\b/i.exec(t);
-  if (pr) return { kind: /\b(?:deploy|live|release|main server|promot)/i.test(t) ? "deploy" : "pr", ref: Number(pr[1] || pr[2]) };
+  const pr = /\b(?:PR|pull request)\s*#?(\d{3,6})\b/i.exec(t);
+  if (pr) return { kind: /\b(?:deploy|live|release|main server|promot)/i.test(t) ? "deploy" : "pr", ref: Number(pr[1]) };
   const turn = /\bturn\s+(\d{1,5})\b/i.exec(t);
   if (turnWatch?.turn) return { kind: "turn", ref: Number(turnWatch.turn) };
   if (turn) return { kind: "turn", ref: Number(turn[1]) };
@@ -143,6 +144,9 @@ function observe(d, job, now) {
     }
     case "pr": case "deploy": {
       const n = Number.isFinite(on.ref) ? on.ref : heldPr(job);
+      // Review 3 F1: a deploy wait resolves in code only on a PR this job's own records tie to its fix; any other number
+      // goes to the model to look.
+      if (on.kind === "deploy" && n && !require("./livecoverage").jobOwnsPr(d, job, "AHDGame", n)) return { checkable: false, why: `PR ${n} is not one this job opened or was approved to merge` };
       const pr = prState(d, n, now);
       if (!pr) return { checkable: false, why: n ? "PR state not read recently" : "no PR named" };
       if (on.kind === "pr") return { checkable: true, mark: `pr:${n}:${pr.state}:${pr.head || ""}`, reached: pr.state !== "open" };

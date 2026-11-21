@@ -51,7 +51,8 @@ test("a merged fix moves a one-fix card to Tested with no model run, and a secon
 test("the main server release moves the card and wakes the model once to check the player's figures", async () => {
   const f = await setup();
   f.job.effects["merge:1"] = { state: "done" };
-  f.job.releaseEvidence = { a: { development: true, staging: true, main: true } };
+  f.job.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/7001"];
+  f.job.releaseEvidence = { a: { development: true, staging: true, main: true, repository: "AHDGame", pr: 7001 } };
   const moved = await f.broker.stageTick();
   assert.equal(moved[0].stage, "main");
   assert.equal(f.job.state, "queued");
@@ -72,7 +73,8 @@ test("a card with several fixes, an answered fix and a blocked fix are left to t
 
 test("a human interruption defers the live notice and the stage tick delivers it once after the reply", async () => {
   const f = await setup();
-  f.job.releaseEvidence = { patch: { development: true, staging: true, main: true } };
+  f.job.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/7001"];
+  f.job.releaseEvidence = { patch: { development: true, staging: true, main: true, repository: "AHDGame", pr: 7001 } };
   f.job.inbox = [{ messageId: "m", authorId: "p", channelId: f.job.channelId, role: "player" }];
   await f.broker.stageTick();
   const card = f.ledger.data.statusCards[123];

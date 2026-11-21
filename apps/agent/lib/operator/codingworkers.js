@@ -498,7 +498,7 @@ function createCodingWorkers({
     }
     const job = jobOf(run);
     if (job) {
-      (job.releaseEvidence ||= {})[run.mergeSha ? run.mergeSha.slice(0, 10) : run.mainSha.slice(0, 10)] = { at: now(), development: true, staging: true, main: true, repository: "AHDGame", turnWorker: run.worker === true, source: "coding-workers" };
+      (job.releaseEvidence ||= {})[run.mergeSha ? run.mergeSha.slice(0, 10) : run.mainSha.slice(0, 10)] = { at: now(), development: true, staging: true, main: true, repository: "AHDGame", turnWorker: run.worker === true, source: "coding-workers", ...(Number(run.pr) ? { pr: Number(run.pr) } : {}) };
       (job.pullRequests ||= []).push(`https://github.com/${REPO}/pull/${run.pr}`);
     }
     run.state = "done"; run.endedAt = now(); note(run, "live");

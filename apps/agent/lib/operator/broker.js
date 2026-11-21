@@ -763,7 +763,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       development: { done: merged || release.some((r) => r.development) },
       staging: { done: release.some((r) => r.staging) },
       main: { done: release.some((r) => r.main) && require("./livecoverage").mainCovered(jobs) },
-      mainOwn: { done: require("./livecoverage").ownMainReceipt(jobs) },
+      mainOwn: { done: require("./livecoverage").ownMainReceipt(jobs, Object.values(d.actions || {})) },
       // "Live, confirmed in game" (review 2026-10-19: 1602's card said it for a
       // change that never moved the player's mine): a turn processed after
       // the fix, then a game read after that turn.
@@ -3926,8 +3926,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         out.meaning = desktop ? "main means the desktop fix is merged in source, not necessarily released or installed. Verify a client release before claiming it is live." : "main = merged for web; it is live once github deployed shows the main server running a commit that contains it. turn-worker/production = turn processing source; it is live once github deployed shows the turn worker running it. Web-only fixes are live with main; turn fixes are live only once turn-worker/production contains them. staging = the fix is in the sandbox release line, but the sandbox server is rebuilt by hand and can lag staging by days: never wait for it to update, and do not ask anyone to start it. Once main contains a fix and github deployed shows it running, the sandbox step is done; verify on the main server instead.";
         // Release claims in ticket copy are checked against these receipts.
-        const ownPr = input.number && (job.pullRequests || []).some((u) => Number(String(u).split("/").pop()) === Number(input.number));
-        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, ...(ownPr ? {} : { source: "lookup" }) };
+        // Review 3 F1: owned means this repository and this number, held by the job (not the same number in another repo).
+        const ownPr = input.number && require("./livecoverage").jobOwnsPr(d, job, repo, input.number);
+        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, ...(input.number ? { pr: Number(input.number) } : {}), ...(ownPr ? {} : { source: "lookup" }) };
         ledger.save();
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
           const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));
