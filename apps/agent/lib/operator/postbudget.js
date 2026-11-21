@@ -64,6 +64,36 @@ function repeatsTurnAnswer({ posts, humanAt, message }) {
   return a.length && a.every((k) => b.has(k)) ? prior : null;
 }
 
+// Keir 11.2 second pass: turn commentary is opt-in. "A turn ran" is never by itself a reason to post. A turn report goes
+// out only when it answers the player (they wrote since Keir last posted), corrects something, keeps a recorded promise
+// that is due, or is the specific turn result the job's closing condition calls for; a called-for report that repeats the
+// previous report's answer is still refused (the item 8 rule, now part of this one rule).
+const REPORT = /\bturns?\s+\d+\s*(?::|has (?:now )?run|ran\b|has been processed|brought|figures|held|answers|results?\b|was\b|is in\b)|\b(?:on|after|by|since) turn \d+\b|\b(?:this|last|latest|that) turn(?:'s)?\b|\bthe (?:next )?turn has (?:now )?run\b|\b\w+ turns? (?:running|in a row)\b/i;
+function isTurnReport(text) { return REPORT.test(String(text || "")); }
+// { posts, humanAt, message, correction, promiseDue, calledFor } -> null (may post) or { why, refusal, prior }.
+// lastKeirAt: Keir's last post from a durable record (the post window above is emptied after an hour of quiet).
+// Why a post may go out under the turn rule: null (not a turn report), "correction", "answer", "promise" or "closing";
+// "refused" when it may not.
+function turnPostVia({ posts, humanAt, message, correction = false, promiseDue = false, calledFor = false, lastKeirAt = 0 }) {
+  if (!isTurnReport(message) || /\?\s*$/.test(String(message).trim())) return null;
+  if (correction) return "correction";
+  const lastAt = Math.max((posts || []).filter((p) => !isCard(p)).at(-1)?.at || 0, lastKeirAt || 0);
+  // The first answer on a ticket, or one after the player wrote, answers them; only an unprompted follow-up is commentary.
+  if (!lastAt || (humanAt || 0) > lastAt) return "answer";
+  if (promiseDue) return "promise";
+  if (calledFor && !repeatsTurnAnswer({ posts, humanAt, message })) return "closing";
+  return "refused";
+}
+function turnPostRule(args) {
+  if (turnPostVia(args) !== "refused") return null;
+  const { posts, humanAt, message, calledFor } = args;
+  if (calledFor) {
+    const prior = repeatsTurnAnswer({ posts, humanAt, message });
+    return { why: "same turn answer", prior, refusal: `Not posted: this turn report gives the same answer as the last one ("${String(prior.text).slice(0, 140)}") and the player has not written since. Post a turn report only when the answer changes; keep checking privately.` };
+  }
+  return { why: "turn not called for", refusal: "Not posted: a turn having run is not a reason to post. A turn report goes out only when the player asked, a promise you made is due, or your closing condition (closesWhen and waitingOn) calls for this turn's result. Keep checking privately, or set waitOn {kind: \"turn\", ref: N} for the one turn whose result the player needs." };
+}
+
 // The ticket's main release receipt: one key per shipped change set, and when it arrived.
 function mainReceipt(jobs) {
   const rows = (jobs || []).flatMap((j) => Object.entries(j.releaseEvidence || {}).filter(([, r]) => r && r.main).map(([k, r]) => ({ k, at: Number(r.at) || 0 })));
@@ -76,4 +106,4 @@ function liveAlreadySaid({ posts, receipt, humanAt }) {
   return (posts || []).find((p) => !isCard(p) && p.at >= receipt.at && p.at > (humanAt || 0) && liveClaim(p.text)) || null;
 }
 
-module.exports = { hourly, hourlyRefusal, recentRun, isTurnUpdate, answerOf, repeatsTurnAnswer, mainReceipt, liveAlreadySaid, liveClaim, DEFAULT_PER_HOUR, HOUR };
+module.exports = { isTurnReport, turnPostRule, turnPostVia, hourly, hourlyRefusal, recentRun, isTurnUpdate, answerOf, repeatsTurnAnswer, mainReceipt, liveAlreadySaid, liveClaim, DEFAULT_PER_HOUR, HOUR };
