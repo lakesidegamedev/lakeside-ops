@@ -16,17 +16,14 @@ const { esc } = require("./shell");
 const keir = require("./keir");
 
 const DONE = ["resolved", "closed", "rejected"];
+const { ticketStatusLabel, ticketState } = require("../ticket-status");
 
-const STATUS = {
-  open: { label: "Open", color: "#d29922" },
-  investigating: { label: "Investigating", color: "#58a6ff" },
-  in_progress: { label: "In progress", color: "#a371f7" },
-  awaiting_player: { label: "Waiting on player", color: "#db8a3a" },
-  reopened: { label: "Reopened", color: "#f85149" },
-  resolved: { label: "Resolved", color: "#3fb950" },
-  closed: { label: "Closed", color: "#6c747e" },
-  rejected: { label: "Rejected", color: "#8b949e" },
-};
+// People see Open or Closed (owner, 2026-11-21); the stored value only picks
+// the chip colour. Labels come from the shared ticket-status mapping.
+const STATUS = Object.fromEntries(Object.entries({
+  open: "#d29922", investigating: "#58a6ff", in_progress: "#a371f7", awaiting_player: "#db8a3a",
+  reopened: "#f85149", resolved: "#6c747e", closed: "#6c747e", rejected: "#6c747e",
+}).map(([status, color]) => [status, { label: ticketStatusLabel(status), color }]));
 
 // Keir job states, in words a newcomer understands.
 const JOB = {
@@ -75,7 +72,7 @@ function buildLive({ active, closed }, hub) {
     const prs = (k.prs || []).map((p) => ({ n: p.number, state: p.state || (p.merged ? "merged" : "") }));
     if (t.prNumber && !prs.some((p) => p.n === t.prNumber)) prs.push({ n: t.prNumber, state: "" });
     return {
-      n: t.ticketNumber, title: t.title || "Untitled ticket", status: t.status, category: t.category || "", player: reporterOf(t),
+      n: t.ticketNumber, title: t.title || "Untitled ticket", status: t.status, label: ticketStatusLabel(t), category: t.category || "", player: reporterOf(t),
       created: ms(t.createdAt), updated: ms(t.updatedAt),
       job: jobState, wakeAt: (w && w.wakeAt) || (k.active && k.active.wakeAt) || null,
       summary: summary.slice(0, 600), model: keir.modelName(w && w.model), rounds: (w && w.rounds) || 0, attempts: k.attempts || 0,
@@ -102,15 +99,15 @@ function buildLive({ active, closed }, hub) {
     } : null,
     cards,
     feed: ((hub && hub.stream && hub.stream.feed) || []).slice(0, 10).map((f) => ({ at: f.at, text: f.text, ticket: f.ticket, model: keir.modelName(f.model) })),
-    closed: closed.map((t) => ({ n: t.ticketNumber, title: t.title, status: t.status, at: ms(t.resolvedAt || t.closedAt), player: reporterOf(t), pr: t.prNumber || null, open: ms(t.createdAt) })),
+    closed: closed.map((t) => ({ n: t.ticketNumber, title: t.title, status: t.status, label: ticketStatusLabel(t), at: ms(t.resolvedAt || t.closedAt), player: reporterOf(t), pr: t.prNumber || null, open: ms(t.createdAt) })),
   };
 }
 
 async function loadHistory(db) {
-  const rows = await db.collection("tickets").find({}, { projection: { ticketNumber: 1, title: 1, status: 1, category: 1, createdAt: 1, closedAt: 1, resolvedAt: 1, prNumber: 1, tags: 1, "reporter.characterName": 1, "reporter.username": 1, discordDisplayName: 1, discordUsername: 1 } })
+  const rows = await db.collection("tickets").find({}, { projection: { ticketNumber: 1, title: 1, status: 1, category: 1, createdAt: 1, closedAt: 1, resolvedAt: 1, prNumber: 1, tags: 1, mergedInto: 1, "reporter.characterName": 1, "reporter.username": 1, discordDisplayName: 1, discordUsername: 1 } })
     .sort({ ticketNumber: -1 }).limit(5000).toArray();
   return rows.map((t) => ({
-    n: t.ticketNumber, t: t.title || "", s: t.status, c: t.category || "", r: reporterOf(t),
+    n: t.ticketNumber, t: t.title || "", s: t.status, l: ticketStatusLabel(t), x: ticketState(t), c: t.category || "", r: reporterOf(t),
     o: t.createdAt ? new Date(t.createdAt).toISOString().slice(0, 10) : "", d: (t.resolvedAt || t.closedAt) ? new Date(t.resolvedAt || t.closedAt).toISOString().slice(0, 10) : "",
     p: t.prNumber || 0, g: (Array.isArray(t.tags) ? t.tags : []).slice(0, 4).map(String),
   }));
@@ -216,7 +213,7 @@ function makeTicketHubBody(live) {
 </div>
 <div id="tab-history" hidden>
   <section class="hcard"><div class="ht-tools"><input id="htQ" type="search" placeholder="Search by number, title, player or tag" autocomplete="off">
-  <select id="htS"><option value="">Any status</option>${Object.entries(STATUS).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("")}</select>
+  <select id="htS"><option value="">Any status</option><option value="open">Open</option><option value="closed">Closed</option></select>
   <select id="htC"><option value="">Any category</option></select>
   <select id="htP"><option value="">With or without a PR</option><option value="1">Has a PR</option><option value="0">No PR</option></select></div>
   <div class="ht-scroll"><table class="ht"><thead><tr><th data-k="n">#</th><th data-k="t">Title</th><th data-k="s">Status</th><th data-k="c">Category</th><th data-k="r">Player</th><th data-k="o">Opened</th><th data-k="d">Closed</th><th data-k="p">PR</th></tr></thead><tbody id="htBody"><tr><td colspan="8" class="d" style="text-align:center;padding:24px">Loading ticket history…</td></tr></tbody></table></div>
@@ -243,7 +240,7 @@ function jobPill(c){if(c.decision)return pill('Needs your decision','#d29922');v
 function card(c){var j=JOB[c.job]||{color:'#6c747e',sprite:'idle'};var col=c.decision?'#d29922':j.color;
 var prs=(c.prs||[]).map(function(p){return'<span class="tag">PR #'+esc(p.n)+(p.state?' '+esc(p.state):'')+'</span>'}).join('');
 return'<a class="tc'+(c.decision?' decision':'')+'" href="/tickets/'+c.n+'" style="--c:'+col+'"><div class="tc-top"><span class="tc-num">#'+c.n+'</span>'+jobPill(c)+'<span class="tc-age">opened '+rel(c.created)+'</span></div>'+
-'<h3>'+esc(c.title)+'</h3><div class="tc-who">'+esc(c.player)+(c.category?'<span class="tag">'+esc(c.category)+'</span>':'')+(ST[c.status]?'<span class="tag">'+esc(ST[c.status].label)+'</span>':'')+'</div>'+
+'<h3>'+esc(c.title)+'</h3><div class="tc-who">'+esc(c.player)+(c.category?'<span class="tag">'+esc(c.category)+'</span>':'')+(c.label||ST[c.status]?'<span class="tag">'+esc(c.label||ST[c.status].label)+'</span>':'')+'</div>'+
 '<div class="tc-keir"><div class="ksprite m" data-state="'+(c.decision?'alert':j.sprite)+'" style="--ks:32px"></div>'+(c.summary?'<p>'+esc(c.summary)+'</p>':'<p class="none">Keir has not written anything on this ticket yet.</p>')+'</div>'+
 '<div class="tc-foot">'+(c.model?'<span class="tag">'+esc(c.model)+'</span>':'')+(c.rounds?'<span>'+c.rounds+' steps</span>':'')+prs+'<span class="sp"></span>'+(c.lastKeirAt?'<span>Keir '+rel(c.lastKeirAt)+'</span>':'')+'</div></a>'}
 function head(k){if(!k){$('kHead').innerHTML='<div class="kh-sprite"><div class="ksprite" data-state="sleeping" style="--ks:80px"></div></div><div><div class="kh-top"><h2>Keir status is unavailable</h2></div><div class="kh-sub">The ticket list below still comes straight from the database.</div></div>';$('kStats').innerHTML='';return}
@@ -262,7 +259,7 @@ function renderLive(){head(live.keir);
 $('laneCount').textContent=live.cards.length;$('liveAt').textContent='Updated '+hm(live.at);
 $('lane').innerHTML=live.cards.length?live.cards.map(card).join(''):'<div class="tk-empty">No open tickets. Nice.</div>';
 setHtml($('kFeed'),(live.feed||[]).length?live.feed.map(function(f){return'<div class="fi"><time>'+hm(f.at)+'</time><span>'+(f.ticket?'<a href="/tickets/'+f.ticket+'">#'+f.ticket+'</a> ':'')+esc(String(f.text||'').replace(/^Worked on ticket \\d+ /,'worked '))+(f.model?' <small>· '+esc(f.model)+'</small>':'')+'</span></div>'}).join(''):'<div class="tk-empty">Nothing in the last few hours.</div>');
-setHtml($('kClosed'),(live.closed||[]).length?live.closed.map(function(c){var s=ST[c.status]||{label:c.status};return'<div class="fi"><time>'+rel(c.at).replace(' ago','')+'</time><span><a href="/tickets/'+c.n+'">#'+c.n+' '+esc(c.title)+'</a> <small>· '+esc(s.label)+(c.at&&c.open?' after '+dur(c.at-c.open):'')+'</small></span></div>'}).join(''):'<div class="tk-empty">No tickets closed in 14 days.</div>');
+setHtml($('kClosed'),(live.closed||[]).length?live.closed.map(function(c){var s={label:c.label||(ST[c.status]||{}).label||'Closed'};return'<div class="fi"><time>'+rel(c.at).replace(' ago','')+'</time><span><a href="/tickets/'+c.n+'">#'+c.n+' '+esc(c.title)+'</a> <small>· '+esc(s.label)+(c.at&&c.open?' after '+dur(c.at-c.open):'')+'</small></span></div>'}).join(''):'<div class="tk-empty">No tickets closed in 14 days.</div>');
 if(window.keirSprites)window.keirSprites()}
 function refresh(){if(document.hidden||$('tab-live').hidden)return;fetch('/api/hub/tickets/live',{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.ok?r.json():null}).then(function(d){if(d){var x=$('lane').scrollLeft;live=d;renderLive();$('lane').scrollLeft=x}}).catch(function(){})}
 renderLive();setInterval(refresh,20000);document.addEventListener('visibilitychange',refresh);
@@ -270,11 +267,11 @@ $('laneL').addEventListener('click',function(){$('lane').scrollBy({left:-370,beh
 var loaded={};function show(t){['live','history','perf'].forEach(function(x){$('tab-'+x).hidden=x!==t});document.querySelectorAll('#tkTabs button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-tab')===t)});history.replaceState(null,'',t==='live'?location.pathname:'#'+t);if(t==='history'&&!loaded.h){loaded.h=1;loadHistory()}if(t==='perf'&&!loaded.p){loaded.p=1;loadPerf()}if(t==='live')refresh()}
 $('tkTabs').addEventListener('click',function(e){var b=e.target.closest('button');if(b)show(b.getAttribute('data-tab'))});
 var rows=[],limit=100,sortK='n',dir=-1;
-function chip(s){var m=ST[s]||{label:s,color:'#8b949e'};return pill(m.label,m.color)}
+function chip(s,l){var m=ST[s]||{label:'Open',color:'#8b949e'};return pill(l||m.label,m.color)}
 function renderHist(){var q=$('htQ').value.trim().toLowerCase(),s=$('htS').value,c=$('htC').value,p=$('htP').value;
-var list=rows.filter(function(r){if(s&&r.s!==s)return false;if(c&&r.c!==c)return false;if(p==='1'&&!r.p)return false;if(p==='0'&&r.p)return false;if(q){var h=('#'+r.n+' '+r.t+' '+r.r+' '+(r.g||[]).join(' ')+' '+r.c).toLowerCase();var w=q.split(/\\s+/);for(var i=0;i<w.length;i++)if(h.indexOf(w[i])<0)return false}return true});
+var list=rows.filter(function(r){if(s&&(r.x||'open')!==s)return false;if(c&&r.c!==c)return false;if(p==='1'&&!r.p)return false;if(p==='0'&&r.p)return false;if(q){var h=('#'+r.n+' '+r.t+' '+r.r+' '+(r.g||[]).join(' ')+' '+r.c).toLowerCase();var w=q.split(/\\s+/);for(var i=0;i<w.length;i++)if(h.indexOf(w[i])<0)return false}return true});
 list.sort(function(a,b){var x=a[sortK],y=b[sortK];if(typeof x==='number')return(x-y)*dir;return String(x||'').localeCompare(String(y||''))*dir});
-setHtml($('htBody'),list.slice(0,limit).map(function(r){return'<tr data-n="'+r.n+'"><td class="n">#'+r.n+'</td><td class="t" title="'+esc(r.t)+'">'+esc(r.t)+'</td><td>'+chip(r.s)+'</td><td>'+esc(r.c)+'</td><td>'+esc(r.r)+'</td><td class="d">'+esc(r.o)+'</td><td class="d">'+esc(r.d)+'</td><td class="d">'+(r.p?'#'+r.p:'')+'</td></tr>'}).join('')||'<tr><td colspan="8" class="d" style="text-align:center;padding:24px">No tickets match.</td></tr>');
+setHtml($('htBody'),list.slice(0,limit).map(function(r){return'<tr data-n="'+r.n+'"><td class="n">#'+r.n+'</td><td class="t" title="'+esc(r.t)+'">'+esc(r.t)+'</td><td>'+chip(r.s,r.l)+'</td><td>'+esc(r.c)+'</td><td>'+esc(r.r)+'</td><td class="d">'+esc(r.o)+'</td><td class="d">'+esc(r.d)+'</td><td class="d">'+(r.p?'#'+r.p:'')+'</td></tr>'}).join('')||'<tr><td colspan="8" class="d" style="text-align:center;padding:24px">No tickets match.</td></tr>');
 $('htMore').hidden=list.length<=limit}
 function loadHistory(){fetch('/api/hub/tickets/history',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){rows=d.items||[];var cats={};rows.forEach(function(r){if(r.c)cats[r.c]=1});setHtml($('htC'),'<option value="">Any category</option>'+Object.keys(cats).sort().map(function(c){return'<option>'+esc(c)+'</option>'}).join(''));renderHist()})}
 ['htQ','htS','htC','htP'].forEach(function(id){$(id).addEventListener(id==='htQ'?'input':'change',function(){limit=100;renderHist()})});
@@ -290,9 +287,9 @@ var d=pts.map(function(p,i){var x=P+(p.at-x0)/(x1-x0||1)*(W-P),y=H-P-(p.v/max)*(
 var g='';for(var i=0;i<=2;i++){var y=8+(H-P-8)*i/2;g+='<line class="grid-line" x1="'+P+'" x2="'+W+'" y1="'+y+'" y2="'+y+'"/><text class="axis" x="0" y="'+(y+3)+'">'+fmt(max*(1-i/2))+'</text>'}
 return'<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none">'+g+'<path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>'}
 function loadPerf(){fetch('/api/hub/tickets/performance',{credentials:'same-origin'}).then(function(r){return r.json()}).then(function(d){var p=d.perf||{},r=p.resolved||{},a=p.assisted||{};
-var h='<div class="statbar"><div class="stat"><div class="k">Resolved by Keir, 30d</div><div class="v">'+(r.tickets!=null?r.tickets:'n/a')+'</div><div class="s">'+(a.tickets||0)+' more with Keir helping</div></div>'+
+var h='<div class="statbar"><div class="stat"><div class="k">Closed by Keir, 30d</div><div class="v">'+(r.tickets!=null?r.tickets:'n/a')+'</div><div class="s">'+(a.tickets||0)+' more with Keir helping</div></div>'+
 '<div class="stat"><div class="k">Time to resolve</div><div class="v">'+dur(r.resolutionMs&&r.resolutionMs.median)+'</div><div class="s">typical; slow ones '+dur(r.resolutionMs&&r.resolutionMs.p90)+'</div></div>'+
-'<div class="stat"><div class="k">Keir runs per ticket</div><div class="v">'+(r.activations&&r.activations.median!=null?Math.round(r.activations.median):'n/a')+'</div><div class="s">typical resolved ticket</div></div>'+
+'<div class="stat"><div class="k">Keir runs per ticket</div><div class="v">'+(r.activations&&r.activations.median!=null?Math.round(r.activations.median):'n/a')+'</div><div class="s">typical closed ticket</div></div>'+
 '<div class="stat"><div class="k">Still open</div><div class="v">'+(p.pending!=null?p.pending:'n/a')+'</div><div class="s">'+(p.reopenedTickets||0)+' reopened in 30d</div></div>'+
 '<div class="stat"><div class="k">Closed, 7 days</div><div class="v">'+d.closed7+'</div><div class="s">all tickets</div></div></div>';
 h+='<div class="pf-grid"><section class="hcard pf-chart"><h3>Keir runs per day</h3>'+bars(d.usage,['ok','failed'],['#4cc2d4','#f85149'],2)+'<div class="legend"><span><i style="background:#4cc2d4"></i>Finished</span><span><i style="background:#f85149"></i>Failed or cut off</span></div></section>'+
@@ -300,7 +297,7 @@ h+='<div class="pf-grid"><section class="hcard pf-chart"><h3>Keir runs per day</
 '<section class="hcard pf-chart"><h3>Open tickets over time</h3>'+line(d.tracker.map(function(t){return{at:t.at,v:t.open||0}}),'#d29922',function(v){return Math.round(v)})+'<div class="pf-note">From the hourly tracker. It keeps 90 days and survives restarts and new releases.</div></section>'+
 '<section class="hcard pf-chart"><h3>Clean finish rate, 24h rolling</h3>'+line(d.tracker.filter(function(t){return t.success24h!=null}).map(function(t){return{at:t.at,v:Math.round(t.success24h*100)}}),'#3fb950',function(v){return Math.round(v)+'%'})+'</section></div>';
 var models=d.models||[];if(models.length){var top=models[0].n||1;h+='<section class="hcard" style="margin-top:12px"><div class="hcard-head"><h3>Which models did the work, 14 days</h3></div><div class="pf-models">'+models.map(function(m){return'<div><div>'+esc(m.name)+'<div class="bar"><i style="width:'+(m.n/top*100)+'%"></i></div></div><span style="text-align:right;color:var(--text-2)">'+m.n+' runs</span></div>'}).join('')+'</div></section>'}
-h+='<div class="pf-note">"Resolved by Keir" counts tickets where Keir is the recorded resolver. "Helping" means Keir worked the ticket but someone else closed it. A run is one Keir work session, not a player message.</div>';
+h+='<div class="pf-note">"Closed by Keir" counts tickets where Keir recorded the closing answer. "Helping" means Keir worked the ticket but someone else closed it. A run is one Keir work session, not a player message.</div>';
 $('tab-perf').innerHTML=h}).catch(function(){$('tab-perf').innerHTML='<div class="tk-empty">Keir performance is unavailable right now.</div>'})}
 var start=(location.hash||'').slice(1);if(start==='history'||start==='perf')show(start);
 })();`;

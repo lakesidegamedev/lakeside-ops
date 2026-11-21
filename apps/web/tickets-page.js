@@ -2,6 +2,7 @@
 // Self-contained body/CSS generators for the /tickets list + detail views.
 // Rendered server-side and wrapped with the shared admin shell (renderShell).
 const { icon } = require("./ui-kit");
+const { ticketStatusLabel, ticketState } = require("./ticket-status");
 const {
   getResolution,
   isTerminalStatus,
@@ -147,7 +148,7 @@ const COMMUNITY_CSS = `
 .cm-badge.b-triaging{background:var(--amber-soft,rgba(245,180,80,.15));color:var(--amber,#f5b450)}
 .cm-badge.b-assessed,.cm-badge.b-planned{background:var(--accent-soft);color:var(--accent)}
 .cm-badge.b-in_progress{background:var(--accent-soft);color:var(--accent)}
-.cm-badge.b-resolved,.cm-badge.b-completed{background:var(--green-soft,rgba(80,200,120,.15));color:var(--green,#50c878)}
+.cm-badge.b-closed,.cm-badge.b-resolved,.cm-badge.b-completed{background:var(--green-soft,rgba(80,200,120,.15));color:var(--green,#50c878)}
 .cm-badge.b-closed,.cm-badge.b-wont_fix,.cm-badge.b-not_implementing{background:var(--glass-2);color:var(--text-3)}
 .cm-flag{display:inline-flex;align-items:center;gap:.25rem;font-size:.72rem;color:var(--text-3)}
 .cm-flag.has{color:var(--green,#50c878)}
@@ -302,6 +303,13 @@ function statusBadge(status, label = null) {
   return `<span class="cm-badge b-${esc(s)}">${esc(label || s.replace(/_/g, " "))}</span>`;
 }
 
+// A ticket reads Open or Closed (or "Closed, merged into N"), whatever the
+// stored status. Suggestions keep statusBadge and their own words.
+function ticketStatusBadge(ticket, label = null) {
+  const t = ticket || {};
+  return `<span class="cm-badge b-${ticketState(t)}">${esc(label || ticketStatusLabel(t))}</span>`;
+}
+
 // Triage-state badge for list rows. `assess` is { complexity, risk } (or null).
 // Renders a green "Triaged" badge with complexity·risk chips when an assessment
 // exists, else a muted "Awaiting triage" badge.
@@ -321,7 +329,7 @@ function triageBadge(assess) {
 // scrambled one. Numbers without a token yet (never swept) keep the numeric
 // staff link, which redirects once the token exists.
 function makeTicketsListBody({ tickets, page, totalPages, status, total, tokens = null }) {
-  const statuses = ["all", "open", "triaging", "assessed", "in_progress", "resolved", "closed", "wont_fix"];
+  const statuses = ["all", "open", "closed"];
   const cur = status || "all";
   const tabs = statuses
     .map((s) => `<a class="cm-tab ${s === cur ? "on" : ""}" href="/tickets${s === "all" ? "" : "?status=" + s}">${esc(s.replace(/_/g, " "))}</a>`)
@@ -339,7 +347,7 @@ function makeTicketsListBody({ tickets, page, totalPages, status, total, tokens 
               <div class="cm-title">${esc(t.title || "(untitled)")}</div>
               <div class="cm-sub">${t.category ? `<span>${esc(t.category)}</span>` : ""}<span>${esc(reporter)}</span><span>${esc(fmtDate(t.createdAt))}</span></div>
             </span>
-            <span class="cm-right">${triageBadge(t.triage)}${statusBadge(t.status)}</span>
+            <span class="cm-right">${triageBadge(t.triage)}${ticketStatusBadge(t)}</span>
           </a>`;
         })
         .join("")
@@ -720,9 +728,9 @@ function renderPublicReceiptBody({ ticket, github }) {
       <header class="cm-receipt-hero">
         <div class="cm-receipt-kicker">Support receipt</div>
         <h1 class="cm-receipt-title">${esc(t.title || "Your support report")}</h1>
-        <div class="cm-receipt-status">${statusBadge(t.status || "open", publicStatusLabel(t.status || "open"))}<span>${esc(receiptReady ? "This report is complete." : terminal ? "The outcome is recorded." : "This report is still in progress.")}</span></div>
-        <p class="cm-receipt-intro">${esc(receiptReady ? "Your report has been resolved. This page is the permanent record of what you reported, what we changed, and what to do next." : terminal ? "Your report outcome is recorded. The player-facing resolution details are being prepared for this receipt." : "Your report has been received. This page is the permanent record of the work and updates connected to it.")}</p>
-        <div class="cm-receipt-meta">${t.category ? `<span>${esc(t.category)}</span>` : ""}<span>Reported ${esc(fmtDate(t.createdAt))}</span>${receiptReady ? `<span>Resolved ${esc(fmtDate(receipt.resolvedAt || t.closedAt))}</span>` : `<span>Last updated ${esc(fmtDate(t.updatedAt || t.createdAt))}</span>`}</div>
+        <div class="cm-receipt-status">${ticketStatusBadge(t, publicStatusLabel(t.status || "open"))}<span>${esc(receiptReady ? "This report is complete." : terminal ? "The outcome is recorded." : "This report is still in progress.")}</span></div>
+        <p class="cm-receipt-intro">${esc(receiptReady ? "Your report is closed. This page is the permanent record of what you reported, what we changed, and what to do next." : terminal ? "Your report outcome is recorded. The player-facing resolution details are being prepared for this receipt." : "Your report has been received. This page is the permanent record of the work and updates connected to it.")}</p>
+        <div class="cm-receipt-meta">${t.category ? `<span>${esc(t.category)}</span>` : ""}<span>Reported ${esc(fmtDate(t.createdAt))}</span>${receiptReady ? `<span>Closed ${esc(fmtDate(receipt.resolvedAt || t.closedAt))}</span>` : `<span>Last updated ${esc(fmtDate(t.updatedAt || t.createdAt))}</span>`}</div>
       </header>
       <nav class="cm-receipt-toolbar" aria-label="Receipt actions"><button type="button" id="receipt-copy">Copy receipt link</button><button type="button" id="receipt-refresh">Refresh status</button><button type="button" id="receipt-print">Print receipt</button><span id="receipt-action-status" role="status" aria-live="polite"></span></nav>
       ${reportedPanel}
@@ -854,7 +862,7 @@ function makeTicketDetailBody({ ticket, assessment, fixSession, github, viewer =
         <textarea id="cm-close-msg" placeholder="Plain-language summary for the player: what was fixed or decided."></textarea>
         <textarea id="cm-close-actions" placeholder="Actions taken, one per line."></textarea>
         <textarea id="cm-close-followup" placeholder="Follow-up for the player, if any."></textarea>
-        <label class="cm-launch-note" for="cm-close-source">How was this resolved?</label>
+        <label class="cm-launch-note" for="cm-close-source">How was this closed?</label>
         <select id="cm-close-source" style="max-width:20rem;padding:.55rem .7rem;border-radius:var(--r-md);border:1px solid var(--border);background:var(--glass-1);color:var(--text);font:inherit">
           <option value="ops">Support operation</option>
           <option value="discord">Discord request</option>
@@ -889,7 +897,7 @@ function makeTicketDetailBody({ ticket, assessment, fixSession, github, viewer =
     body: `${isStaff
         ? `<a class="cm-back" href="/tickets">${icon("arrow-left", { size: 14 })} All tickets</a>`
         : `<a class="cm-back" href="https://www.ahousedividedgame.com">${icon("arrow-left", { size: 14 })} Back to the game</a>`}
-      <div class="cm-dhead"><h1>${isStaff ? `#${esc(t.ticketNumber)} ` : ""}${esc(t.title || "(untitled)")}</h1>${statusBadge(t.status)}</div>
+      <div class="cm-dhead"><h1>${isStaff ? `#${esc(t.ticketNumber)} ` : ""}${esc(t.title || "(untitled)")}</h1>${ticketStatusBadge(t)}</div>
       <div class="cm-dmeta">${meta.join("")}</div>
       ${renderReportSummary({ ticket: t, github, viewer })}
       ${renderTrackedWork(tracked, viewer, t)}

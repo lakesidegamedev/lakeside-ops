@@ -81,6 +81,10 @@ function buildBoard(store) {
       evidence: it.evidence_url || null, by: ownerName(created.get(it.id)), source: it.source,
       area: it.area || "", cls: it.class || "", parent: it.parent_id || null,
       kids: kids.has(it.id) ? { open: kids.get(it.id).open, done: kids.get(it.id).done } : null,
+      tickets: it.tickets || [], ticketRole: it.ticket_role || null, closesWithTicket: Boolean(it.closes_with_ticket),
+      // The assignee of a Now card has reported nothing for a day.
+      noActivity: it.activity === "no recent activity", activityNote: it.activity ? it.stale_reason : null,
+      lastProgressAt: ms(it.last_activity_at) || null, lastProgressRaw: it.last_progress_at || null,
     };
   };
   const monitors = [], progress = [], next = [], inbox = [], blocked = [], backlog = [];
@@ -178,6 +182,8 @@ const BOARD_CSS = `
 .kc2:hover{border-color:var(--border-3);background:var(--surface-2)}
 .kc2.hot{box-shadow:inset 3px 0 0 var(--red)}
 .kc2.quiet{box-shadow:inset 3px 0 0 var(--amber)}
+.tix{font-size:11px;line-height:1.35;color:var(--text-2)}
+.tix.warn{color:var(--red);padding:6px 8px;border-radius:7px;background:color-mix(in srgb,var(--red) 10%,transparent)}
 .kc2 .top{display:flex;align-items:center;gap:6px;min-width:0}
 .bdg{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px 0 5px;border-radius:6px;font-size:11px;font-weight:550;color:color-mix(in srgb,var(--bc) 82%,var(--pill-mix));background:color-mix(in srgb,var(--bc) 13%,transparent);border:1px solid color-mix(in srgb,var(--bc) 24%,transparent);white-space:nowrap}
 .bdg .icon{color:var(--bc)}
@@ -231,7 +237,7 @@ dialog.wb-dlg::backdrop{background:rgba(0,0,0,.55)}
 function makeBoardBody(board) {
   const body = `<div class="wb">
 <div class="page-h"><div><h1>Work board</h1><div class="sub" id="wbSub"></div></div>
-<div class="actions wb-tools"><div class="wb-cls" id="wbCls"><button class="on" data-c="">All</button><button data-c="project">Projects</button><button data-c="issue">Issues</button><button data-c="idea">Ideas</button></div><select id="wbProduct" aria-label="Product"><option value="">All products</option></select><select id="wbArea" aria-label="Area"><option value="">All areas</option></select><input id="wbQ" type="search" placeholder="Filter cards" autocomplete="off"><button class="hub-btn" type="button" id="wbAdd">${icon("plus", { size: 13 })}Add card</button></div></div>
+<div class="actions wb-tools"><div class="wb-cls" id="wbCls"><button class="on" data-c="">All</button><button data-c="project">Projects</button><button data-c="issue">Issues</button><button data-c="idea">Ideas</button></div><select id="wbProduct" aria-label="Product"><option value="">All products</option></select><select id="wbArea" aria-label="Area"><option value="">All areas</option></select><input id="wbQ" type="search" placeholder="Filter cards" autocomplete="off"><a class="hub-btn" href="/kanban/counters" title="Keir's automatic tool-gap and failure counts, kept off the board">Automatic counts</a><button class="hub-btn" type="button" id="wbAdd">${icon("plus", { size: 13 })}Add card</button></div></div>
 <div class="wb-mon" id="wbMon"></div>
 <div class="statbar" id="wbStats"></div>
 <div id="wbAttnWrap"></div>
@@ -270,9 +276,10 @@ var STAGE={backlog:0,inbox:1,next:2,blocked:3,now:3,done:4},TC={blocked:'var(--r
 var SN={backlog:'Backlog',inbox:'Filed',next:'Next',now:'In progress',blocked:'Blocked',done:'Done'};
 function track(c){var n=STAGE[c.lane]||0,col=TC[c.lane]||'var(--accent)',h='';for(var i=1;i<=4;i++)h+='<i class="'+(i<=n?'on':'')+'"></i>';return'<div class="trk" style="--tc:'+col+'" title="'+esc(SN[c.lane]||'')+'">'+h+'</div>'}
 function steps(c){var t=c.kids.done+c.kids.open;return'<div class="stp"><span>'+esc(c.kids.done)+' of '+esc(t)+' steps</span><span class="sb"><i style="width:'+esc(Math.round(100*c.kids.done/Math.max(1,t)))+'%"></i></span></div>'}
-function card(c,extra){var q=c.lane==='now'&&c.quietDays>=B.quietDays;var cls='kc2'+(extra?' '+extra:'')+(q?' quiet':'');
-var when=q?'<span style="color:var(--amber)">quiet '+esc(c.quietDays)+'d</span>':'<span>'+rel(c.lane==='done'?c.closedAt:c.lastAt)+'</span>';
-return'<button class="'+cls+'" type="button" data-id="'+esc(c.id)+'" style="--pc:'+(PC[c.product]||'#8b949e')+'" title="'+esc(c.progress||c.title)+'"><div class="top">'+(st.product?'':'<span class="pd" title="'+esc(PN[c.product]||'')+'"></span>')+badgeArea(c)+'<span style="flex:1"></span>'+badgeCls(c)+'</div><div class="tt">'+esc(c.title)+'</div>'+(c.kids?steps(c):track(c))+'<div class="ft">'+(c.owner?'<span class="who"><span class="av">'+esc(ini(c.owner))+'</span>'+esc(c.owner)+'</span>':'<span>Unassigned</span>')+'<span class="sp"></span>'+(c.github?'<span class="gh">#'+esc(c.github.n)+'</span>':'')+when+'</div></button>'}
+function tix(c){if(!c.ticketStatus||!c.ticketStatus.length)return'';return'<div class="tix'+(c.ticketWarning?' warn':'')+'"'+(c.ticketWarning?' title="'+esc(c.ticketWarning)+'"':'')+'>'+(c.ticketLabel?'<b>'+esc(c.ticketLabel)+'</b> · ':'')+c.ticketStatus.map(function(t){return'Ticket '+esc(t.n)+': '+esc(t.status==='unknown'?'ticket status unknown':t.status)}).join(' · ')+'</div>'}
+function card(c,extra){var q=c.lane==='now'&&(c.quietDays>=B.quietDays||c.noActivity);var cls='kc2'+(extra?' '+extra:'')+(q?' quiet':'')+(c.ticketWarning?' hot':'');
+var when=c.lane==='now'&&c.noActivity?'<span style="color:var(--amber)" title="'+esc(c.activityNote||'')+'">no recent activity</span>':q?'<span style="color:var(--amber)">quiet '+esc(c.quietDays)+'d</span>':'<span>'+rel(c.lane==='done'?c.closedAt:c.lastAt)+'</span>';
+return'<button class="'+cls+'" type="button" data-id="'+esc(c.id)+'" style="--pc:'+(PC[c.product]||'#8b949e')+'" title="'+esc(c.progress||c.title)+'"><div class="top">'+(st.product?'':'<span class="pd" title="'+esc(PN[c.product]||'')+'"></span>')+badgeArea(c)+'<span style="flex:1"></span>'+badgeCls(c)+'</div><div class="tt">'+esc(c.title)+'</div>'+tix(c)+(c.kids?steps(c):track(c))+'<div class="ft">'+(c.owner?'<span class="who"><span class="av">'+esc(ini(c.owner))+'</span>'+esc(c.owner)+'</span>':'<span>Unassigned</span>')+'<span class="sp"></span>'+(c.github?'<span class="gh">#'+esc(c.github.n)+'</span>':'')+when+'</div></button>'}
 function row(c){return'<div class="r2" data-id="'+esc(c.id)+'">'+badgeArea(c,true)+'<b>'+esc(c.title)+'</b>'+badgeCls(c)+'<span class="d">'+rel(c.lastAt)+'</span></div>'}
 function byArea(a){var g={},order=[];a.forEach(function(c){var k=c.area&&UI.area[c.area]?c.product+':'+c.area:'_'+c.product;if(!g[k]){g[k]=[];order.push(k)}g[k].push(c)});order.sort(function(x,y){return g[y].length-g[x].length});
 return order.map(function(k){var c0=g[k][0],a=UI.area[c0.area],n=areaName(c0)||PN[c0.product]||'Other';return'<div class="ah" style="--ac:'+(a?a.color:'#8b949e')+'"><span class="ai">'+(a?a.svg:'')+'</span>'+esc(n)+'<span class="n">'+esc(g[k].length)+'</span></div>'+g[k].map(function(c){return card(c)}).join('')}).join('')}
@@ -290,9 +297,9 @@ setHtml($('wbStats'),'<div class="stat"><div class="k">Shipped this week</div><d
 '<div class="stat"><div class="k">Stuck</div><div class="v">'+k.stuck+'</div><div class="s">'+(k.stuck?'<span class="warn">blocked or quiet '+B.quietDays+'+ days</span>':'nothing stuck')+'</div></div>'+
 '<div class="stat"><div class="k">Next</div><div class="v">'+k.next+'</div><div class="s">picked, not started</div></div>'+
 '<div class="stat"><div class="k">Inbox</div><div class="v">'+k.inbox+'</div><div class="s">filed, not picked up</div></div>');
-var quiet=B.progress.filter(function(c){return c.quietDays>=B.quietDays&&ok(c)});
-setHtml($('wbAttnWrap'),quiet.length?'<div class="sec-h" style="margin-top:0"><h2>Gone quiet</h2><span class="count">'+quiet.length+'</span><span style="font-size:11.5px;color:var(--text-3)">in progress but no update for '+B.quietDays+'+ days. Open one to move it back to Next.</span></div><div class="wb-attn">'+quiet.map(function(c){return card(c,'attn')}).join('')+'</div>':'');
-var prog=B.progress.filter(function(c){return ok(c)&&!(c.quietDays>=B.quietDays)});var groups={};prog.forEach(function(c){var o=c.owner||'Unassigned';(groups[o]=groups[o]||[]).push(c)});
+var quiet=B.progress.filter(function(c){return (c.quietDays>=B.quietDays||c.noActivity)&&ok(c)});
+setHtml($('wbAttnWrap'),quiet.length?'<div class="sec-h" style="margin-top:0"><h2>Gone quiet</h2><span class="count">'+quiet.length+'</span><span style="font-size:11.5px;color:var(--text-3)">in progress but no progress from the assignee for a day or more. Open one to move it back to Next.</span></div><div class="wb-attn">'+quiet.map(function(c){return card(c,'attn')}).join('')+'</div>':'');
+var prog=B.progress.filter(function(c){return ok(c)&&!(c.quietDays>=B.quietDays||c.noActivity)});var groups={};prog.forEach(function(c){var o=c.owner||'Unassigned';(groups[o]=groups[o]||[]).push(c)});
 var names=Object.keys(groups).sort(function(a,b){return groups[b].length-groups[a].length});
 setHtml($('lProgress'),names.length?names.map(function(n){return'<div class="grp2"><span class="av">'+esc(ini(n))+'</span>'+esc(n)+'<span class="n">'+esc(groups[n].length)+'</span></div>'+groups[n].map(function(c){return card(c)}).join('')}).join(''):'<div class="wb-empty">Nothing in progress.</div>');
 $('cProgress').textContent=prog.length;
@@ -311,7 +318,7 @@ function openCard(id){setHtml(dlg,'<div class="dlg-b"><div class="wb-empty">Load
 var lanes=['now','next','blocked','inbox','backlog','done'],LN={now:'In progress',next:'Next',blocked:'Blocked',inbox:'Inbox',backlog:'Backlog',done:'Done'};
 var ev=(it.events||[]).filter(function(e){return !(e.event_type==='progress'&&/^[{[]|"\\w+":/.test(String(e.summary||'').slice(0,80)))}).slice(0,25).map(function(e){return'<div class="ev"><time>'+esc(String(e.created_at||'').slice(5,16).replace('T',' '))+'</time><div><b>'+esc(e.event_type)+'</b> <span style="color:var(--text-3)">'+esc(e.actor||'')+'</span>'+(e.summary?'<p>'+esc(String(e.summary).slice(0,600))+'</p>':'')+(e.evidence_url?'<p><a class="link" style="color:var(--accent)" href="'+esc(e.evidence_url)+'" target="_blank" rel="noopener">evidence</a></p>':'')+'</div></div>'}).join('');
 setHtml(dlg,'<div class="dlg-h"><div style="flex:1;min-width:0"><div style="font-size:11px;color:var(--text-3);margin-bottom:4px">'+esc(PN[it.product]||it.product)+' · #'+it.id+' · '+esc(LN[it.lane]||it.lane)+'</div><h3>'+esc(it.title)+'</h3></div><button class="hub-icon-btn" type="button" data-close aria-label="Close">'+'✕'+'</button></div>'+
-'<div class="dlg-b"><div class="dlg-row"><span>Held by</span><div>'+esc(it.assigned_to||'Nobody')+'</div></div><div class="dlg-row"><span>Impact</span><div>'+esc(it.impact)+' · '+esc(it.kind||'')+'</div></div>'+(it.github?'<div class="dlg-row"><span>GitHub</span><div><a style="color:var(--accent)" href="'+esc(it.github.url)+'" target="_blank" rel="noopener">'+esc(it.github.repo)+'#'+it.github.number+'</a></div></div>':'')+(it.evidence_url?'<div class="dlg-row"><span>Evidence</span><div><a style="color:var(--accent)" href="'+esc(it.evidence_url)+'" target="_blank" rel="noopener">link</a></div></div>':'')+
+'<div class="dlg-b">'+(it.ticket_warning?'<div class="tix warn" style="font-size:12.5px">'+esc(it.ticket_warning)+'</div>':'')+(it.ticket_status&&it.ticket_status.length?'<div class="dlg-row"><span>'+(it.ticket_label?esc(it.ticket_label):'Ticket')+'</span><div>'+it.ticket_status.map(function(t){return esc(t.summary)+(t.resolution?' <span style="color:var(--text-3)">('+esc(t.resolution)+')</span>':'')}).join('<br>')+'</div></div>':'')+'<div class="dlg-row"><span>Held by</span><div>'+esc(it.assigned_to||'Nobody')+(it.activity_warning?' <span style="color:var(--amber)">'+esc(it.activity_warning)+'</span>':'')+'</div></div><div class="dlg-row"><span>Last progress</span><div>'+esc(it.last_activity_at?String(it.last_activity_at).slice(0,16).replace('T',' ')+' UTC':'never')+'</div></div><div class="dlg-row"><span>Impact</span><div>'+esc(it.impact)+' · '+esc(it.kind||'')+'</div></div>'+(it.github?'<div class="dlg-row"><span>GitHub</span><div><a style="color:var(--accent)" href="'+esc(it.github.url)+'" target="_blank" rel="noopener">'+esc(it.github.repo)+'#'+it.github.number+'</a></div></div>':'')+(it.evidence_url?'<div class="dlg-row"><span>Evidence</span><div><a style="color:var(--accent)" href="'+esc(it.evidence_url)+'" target="_blank" rel="noopener">link</a></div></div>':'')+
 (it.children&&it.children.length?'<div><div class="area-h" style="padding-left:0">Steps in this project</div>'+it.children.map(function(k){return'<div class="ev" style="grid-template-columns:80px minmax(0,1fr)"><time>'+esc(k.lane)+'</time><div><a href="#" data-open="'+esc(k.id)+'" style="color:var(--text)">#'+esc(k.id)+' '+esc(k.title)+'</a></div></div>'}).join('')+'</div>':'')+(it.detail?'<div class="detail">'+esc(it.detail)+'</div>':'')+'<div class="form"><label class="wide">Add a note<textarea id="dNote" placeholder="What changed? Visible to agents and people."></textarea></label></div><div>'+(ev||'<div class="wb-empty">No history.</div>')+'</div><div class="wb-err" id="dErr"></div></div>'+
 '<div class="dlg-f"><span style="font-size:11px;color:var(--text-3)">Move to</span>'+lanes.filter(function(l){return l!==it.lane}).map(function(l){return'<button class="hub-btn ghost" type="button" data-lane="'+l+'">'+LN[l]+'</button>'}).join('')+'<span class="sp"></span><button class="hub-btn ghost" type="button" data-release>Release</button><button class="hub-btn" type="button" data-note>Save note</button></div>');
 dlg.querySelector('[data-close]').onclick=function(){dlg.close()};
@@ -327,4 +334,25 @@ $('aGo').onclick=function(){var t=$('aT').value.trim();if(!t){$('aE').textConten
 setInterval(function(){if(!document.hidden&&!dlg.open)reload()},60000);
 })();`;
 
-module.exports = { buildBoard, makeBoardBody, ownerName, cleanProgress };
+// Put each linked ticket's live status (Open or Closed) on the board's cards,
+// and the warning when a card is still open although its ticket closed. Never
+// throws: unreadable tickets show "ticket status unknown".
+async function addTicketStatus(board, reader) {
+  const { decorateItems } = require("../kanban-tickets");
+  const groups = ["monitors", "progress", "next", "inbox", "blocked", "backlog", "done"];
+  const cards = groups.flatMap((g) => board[g] || []).filter((c) => c.tickets && c.tickets.length);
+  if (!cards.length) return board;
+  const decorated = await decorateItems(cards.map((c) => ({ id: c.id, lane: c.lane, tickets: c.tickets, ticket_role: c.ticketRole, closes_with_ticket: c.closesWithTicket,
+    github: c.github ? { repo: c.github.repo } : null, assigned_to: c.rawOwner, last_progress_at: c.lastProgressRaw, activity: c.noActivity ? "no recent activity" : null, stale_reason: c.activityNote })), reader);
+  const byId = new Map(decorated.map((d) => [d.id, d]));
+  for (const c of cards) {
+    const d = byId.get(c.id);
+    if (!d) continue;
+    c.ticketStatus = (d.ticket_status || []).map((s) => ({ n: s.number, status: s.status, summary: s.summary }));
+    c.ticketWarning = d.ticket_warning || null;
+    c.ticketLabel = d.ticket_label || null;
+  }
+  return board;
+}
+
+module.exports = { buildBoard, makeBoardBody, addTicketStatus, ownerName, cleanProgress };

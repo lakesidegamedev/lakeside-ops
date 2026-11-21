@@ -1,0 +1,1416 @@
+{
+ "cards": [
+  {
+   "id": 255580,
+   "product": "a-house-divided",
+   "title": "Auto-promote held staging->main at 142820536a67: PR #6999 conflicted or closed",
+   "detail": "[14:19:41] #6999 1428205 custom-rules:in_progress dependency-review:ok verify:ok\nPR #6999 state=closed\nhttps://github.com/lakesidegamedev/AHDGame/pull/6999",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-20T14:20:13.230Z",
+   "updated_at": "2026-11-20T14:20:13.230Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-20T14:20:13.230Z"
+    }
+   ]
+  },
+  {
+   "id": 255560,
+   "product": "a-house-divided",
+   "title": "Auto-promote held staging->main at 7e5b92b8c3ae: adds a data migration (PR #6987)",
+   "detail": "staging -> main changes src/lib/migrations/registry.ts. Merge by hand via the promote skill and run the migration after deploy (step 7).\nhttps://github.com/lakesidegamedev/AHDGame/pull/6987",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-20T03:43:58.923Z",
+   "updated_at": "2026-11-20T03:43:58.923Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-20T03:43:58.923Z"
+    }
+   ]
+  },
+  {
+   "id": 255526,
+   "product": "a-house-divided",
+   "title": "Auto-promote held staging->main at 458c2740bca5: PR #6911 conflicted or closed",
+   "detail": "[13:11:04] #6911 458c274 custom-rules:in_progress dependency-review:ok verify:ok\nPR #6911 state=closed\nhttps://github.com/lakesidegamedev/AHDGame/pull/6911",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-19T13:11:35.333Z",
+   "updated_at": "2026-11-19T13:11:35.333Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-19T13:11:35.333Z"
+    }
+   ]
+  },
+  {
+   "id": 255365,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-16T11:35:35.076Z",
+   "updated_at": "2026-11-16T11:35:35.076Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-16T11:35:35.076Z"
+    }
+   ]
+  },
+  {
+   "id": 255527,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-19T13:27:31.404Z",
+   "updated_at": "2026-11-19T13:27:31.404Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-19T13:27:31.404Z"
+    }
+   ]
+  },
+  {
+   "id": 255523,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-19T10:57:33.915Z",
+   "updated_at": "2026-11-19T10:57:33.915Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-19T10:57:33.915Z"
+    }
+   ]
+  },
+  {
+   "id": 255542,
+   "product": "a-house-divided",
+   "title": "Auto-promote held staging->main at 2c4c79487c08: PR #6949 conflicted or closed",
+   "detail": "[00:39:16] #6949 2c4c794 custom-rules:in_progress dependency-review:ok verify:ok\nPR #6949 state=closed\nhttps://github.com/lakesidegamedev/AHDGame/pull/6949",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-20T00:39:47.308Z",
+   "updated_at": "2026-11-20T00:39:47.308Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-20T00:39:47.308Z"
+    }
+   ]
+  },
+  {
+   "id": 255502,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-19T00:20:46.885Z",
+   "updated_at": "2026-11-19T00:20:46.885Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-19T00:20:46.885Z"
+    }
+   ]
+  },
+  {
+   "id": 255370,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-16T15:28:32.996Z",
+   "updated_at": "2026-11-16T15:28:32.996Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-16T15:28:32.996Z"
+    }
+   ]
+  },
+  {
+   "id": 255373,
+   "product": "a-house-divided",
+   "title": "Service FAILED: ask-game-index",
+   "detail": "Status: no status file\nLast log lines:\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)\n[game-index] failed: corporate-warfare, grand-century, electioneer, urban-sprawl\nask-game-index.service: Main process exited, code=exited, status=1/FAILURE\nask-game-index.service: Failed with result 'exit-code'.\nFailed to start ask-game-index.service - Rebuild and publish Ask retrieval indexes for the single-player games.\nask-game-index.service: Consumed 20.348s CPU time over 3min 39.083s wall clock time, 229.5M memory peak.\nask-game-index.service: Triggering OnFailure= dependencies.\nHost: contabo-vps18. Status files: <path> Unit logs: journalctl -u <unit>.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-16T22:30:46.106Z",
+   "updated_at": "2026-11-16T22:30:46.106Z",
+   "area": "infra",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "backup-alert",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-16T22:30:46.106Z"
+    }
+   ]
+  },
+  {
+   "id": 255555,
+   "product": "a-house-divided",
+   "title": "Auto-promote held development->staging at fe1ce4a3596e: PR #6973 conflicted or closed",
+   "detail": "PR #6973 state=closed\nhttps://github.com/lakesidegamedev/AHDGame/pull/6973",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-20T02:54:24.306Z",
+   "updated_at": "2026-11-20T02:54:24.306Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-20T02:54:24.306Z"
+    }
+   ]
+  },
+  {
+   "id": 255587,
+   "product": "a-house-divided",
+   "title": "Auto-promote held staging->main at b609f3983f08: adds a data migration (PR #7007)",
+   "detail": "staging -> main changes src/lib/migrations/registry.ts. Merge by hand via the promote skill and run the migration after deploy (step 7).\nhttps://github.com/lakesidegamedev/AHDGame/pull/7007",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-21T00:56:42.102Z",
+   "updated_at": "2026-11-21T00:56:42.102Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-21T00:56:42.102Z"
+    }
+   ]
+  },
+  {
+   "id": 255337,
+   "product": "a-house-divided",
+   "title": "Backup unit FAILED: ahd-us-prod-backup",
+   "detail": "Status: 2026-11-15T10:39:42Z failed no turn-safe start (idle lock, UTC :26-:30, next turn >= 25 min) within 70 minutes\nLast log lines:\nStarting ahd-us-prod-backup.service - Back up US production Mongo (ahd-mongo) to the EU box over the interlink...\nwaiting for a turn-safe start (idle lock, UTC :26-:30)\nbackup failed: no turn-safe start (idle lock, UTC :26-:30, next turn >= 25 min) within 70 minutes\nahd-us-prod-backup.service: Main process exited, code=exited, status=1/FAILURE\nahd-us-prod-backup.service: Failed with result 'exit-code'.\nFailed to start ahd-us-prod-backup.service - Back up US production Mongo (ahd-mongo) to the EU box over the interlink.\nahd-us-prod-backup.service: Consumed 1min 52.622s CPU time over 1h 12min 52.709s wall clock time, 174.4M memory peak.\nahd-us-prod-backup.service: Triggering OnFailure= dependencies.\nHost: contabo-vps18. Status files: <path> Unit logs: journalctl -u <unit>.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-15T10:39:50.798Z",
+   "updated_at": "2026-11-15T10:39:50.798Z",
+   "area": "infra",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "backup-alert",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-15T10:39:50.798Z"
+    }
+   ]
+  },
+  {
+   "id": 255509,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-19T02:41:33.583Z",
+   "updated_at": "2026-11-19T02:41:33.583Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-19T02:41:33.583Z"
+    }
+   ]
+  },
+  {
+   "id": 255493,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-18T20:33:39.453Z",
+   "updated_at": "2026-11-18T20:33:39.453Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-18T20:33:39.453Z"
+    }
+   ]
+  },
+  {
+   "id": 255518,
+   "product": "a-house-divided",
+   "title": "Auto-promote held development->staging at 4454f13cd53e: required check failed (PR #6904)",
+   "detail": "[05:25:43] #6904 4454f13 custom-rules:ok dependency-review:ok verify:absent\n[05:26:17] #6904 4454f13 custom-rules:ok dependency-review:ok verify:failure\nREQUIRED_FAILED verify=failure\nhttps://github.com/lakesidegamedev/AHDGame/pull/6904",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-19T05:26:18.026Z",
+   "updated_at": "2026-11-19T05:26:18.026Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-19T05:26:18.026Z"
+    }
+   ]
+  },
+  {
+   "id": 255402,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoServerSelectionError: Server selection timed out after 2000 ms\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-17T15:15:51.847Z",
+   "updated_at": "2026-11-17T15:15:51.847Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-17T15:15:51.847Z"
+    }
+   ]
+  },
+  {
+   "id": 255443,
+   "product": "a-house-divided",
+   "title": "AHD turn-hold monitor CANNOT READ production",
+   "detail": "The turn-hold monitor could not read production gameState, so a held turn would NOT be reported until this is fixed.\nError: MongoNetworkError: connect ECONNREFUSED 127.0.0.1:27028\nCheck lakeside-us-mongo-tunnel.service and the HEAL_MONGODB_URI_PROD entry in the ops dashboard env.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-18T01:06:35.400Z",
+   "updated_at": "2026-11-18T01:06:35.400Z",
+   "area": "turns",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "turn-hold-monitor",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-18T01:06:35.400Z"
+    }
+   ]
+  },
+  {
+   "id": 255378,
+   "product": "a-house-divided",
+   "title": "Service FAILED: rag-reindex",
+   "detail": "Status: no status file\nLast log lines:\n# skipped 0\n# todo 0\n# duration_ms 155.785569\nrag-reindex.service: Main process exited, code=exited, status=1/FAILURE\nrag-reindex.service: Failed with result 'exit-code'.\nFailed to start rag-reindex.service - Source-aware Ask index refresh (code, docs, and wiki).\nrag-reindex.service: Consumed 7min 54.321s CPU time over 7min 51.966s wall clock time, 2G memory peak.\nrag-reindex.service: Triggering OnFailure= dependencies.\nHost: contabo-vps18. Status files: <path> Unit logs: journalctl -u <unit>.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-16T23:44:04.752Z",
+   "updated_at": "2026-11-16T23:44:04.752Z",
+   "area": "infra",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "backup-alert",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-16T23:44:04.752Z"
+    }
+   ]
+  },
+  {
+   "id": 255484,
+   "product": "a-house-divided",
+   "title": "Auto-promote held development->staging at 38669bb79068: required check failed (PR #6847)",
+   "detail": "[16:47:09] #6847 38669bb custom-rules:ok dependency-review:ok verify:failure\nREQUIRED_FAILED verify=failure\nhttps://github.com/lakesidegamedev/AHDGame/pull/6847",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-18T16:47:09.790Z",
+   "updated_at": "2026-11-18T16:47:09.790Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-18T16:47:09.790Z"
+    }
+   ]
+  },
+  {
+   "id": 255538,
+   "product": "a-house-divided",
+   "title": "Auto-promote held development->staging at cc01148719a9: required check failed (PR #6935)",
+   "detail": "[23:41:29] #6935 cc01148 custom-rules:ok dependency-review:ok verify:failure\nREQUIRED_FAILED verify=failure\nhttps://github.com/lakesidegamedev/AHDGame/pull/6935",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-19T23:41:29.559Z",
+   "updated_at": "2026-11-19T23:41:29.559Z",
+   "area": "releases",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "ahd-auto-promote",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-19T23:41:29.559Z"
+    }
+   ]
+  },
+  {
+   "id": 255363,
+   "product": "a-house-divided",
+   "title": "Backup unit FAILED: ask-game-index",
+   "detail": "Status: no status file\nLast log lines:\n[game-index] embedding rejected 3043 chars (embed 500); retrying on the first half\n[game-index] embedding rejected 3043 chars (fetch failed); retrying on the first half\nask-game-index.service: start operation timed out. Terminating.\nask-game-index.service: Main process exited, code=killed, status=15/TERM\nask-game-index.service: Failed with result 'timeout'.\nFailed to start ask-game-index.service - Rebuild and publish Ask retrieval indexes for the single-player games.\nask-game-index.service: Consumed 28.226s CPU time over 4h 282ms wall clock time, 115.8M memory peak.\nask-game-index.service: Triggering OnFailure= dependencies.\nHost: contabo-vps18. Status files: <path> Unit logs: journalctl -u <unit>.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "ops",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-16T08:23:09.689Z",
+   "updated_at": "2026-11-16T08:23:09.689Z",
+   "area": "infra",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "backup-alert",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-16T08:23:09.689Z"
+    }
+   ]
+  },
+  {
+   "id": 254959,
+   "product": "lakeside-mcp",
+   "title": "A read for governmentFormations without raw database queries",
+   "detail": "Tasks had to read the governmentFormations collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 5 times across 2 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "next",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 8 hits across 2 tasks in 7 days.",
+   "last_progress_at": "2026-11-09T00:59:08.200Z",
+   "evidence_url": null,
+   "created_at": "2026-11-02T01:26:26.551Z",
+   "updated_at": "2026-11-09T00:59:08.200Z",
+   "area": "capabilities",
+   "class": "idea",
+   "parent_id": 255031,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 8 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-09T00:59:08.200Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 13 hits across 4 tasks in 7 days.",
+     "created_at": "2026-11-04T04:43:54.562Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "platform-agents-write-rotated-20260929",
+     "summary": "Now 10 hits across 4 tasks in 7 days.",
+     "created_at": "2026-11-03T03:57:17.569Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "platform-agents-write-rotated-20260929",
+     "summary": "Added to next",
+     "created_at": "2026-11-02T01:26:26.551Z"
+    }
+   ]
+  },
+  {
+   "id": 255330,
+   "product": "lakeside-mcp",
+   "title": "A read for retiredCharacters without raw database queries",
+   "detail": "Tasks had to read the retiredCharacters collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 3 times across 2 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-14T16:05:15.290Z",
+   "updated_at": "2026-11-14T16:05:15.290Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-14T16:05:15.290Z"
+    }
+   ]
+  },
+  {
+   "id": 254943,
+   "product": "lakeside-mcp",
+   "title": "turn_anomalies: wrong argument names",
+   "detail": "Calls to turn_anomalies failed with wrong argument names. Either the tool should accept what tasks send (aliases, both id forms) or a better-shaped read is missing.\n\nSeen 8 times across 4 tasks in the last 7 days.\nExamples:\n- {\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Input validation error: Invalid arguments for tool turn_anomalies: [\\n {\\n \\\"code\\\": \\\"unrecognized_keys\\\",\\n \\\"keys\\\": [\\n \\\"limit\\\"\\n ],\\n \\\"mess\n- {\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Input validation error: Invalid arguments for tool turn_anomalies: [\\n {\\n \\\"code\\\": \\\"unrecognized_keys\\\",\\n \\\"keys\\\": [\\n \\\"limit\\\"\\n ],\\n \\\"mess\n- {\"content\":[{\"type\":\"text\",\"text\":\"MCP error -32602: Input validation error: Invalid arguments for tool turn_anomalies: [\\n {\\n \\\"code\\\": \\\"unrecognized_keys\\\",\\n \\\"keys\\\": [\\n \\\"limit\\\"\\n ],\\n \\\"mess\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "next",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 3 hits across 3 tasks in 7 days.",
+   "last_progress_at": "2026-11-02T23:11:45.257Z",
+   "evidence_url": null,
+   "created_at": "2026-11-01T22:26:12.758Z",
+   "updated_at": "2026-11-02T23:11:45.257Z",
+   "area": "capabilities",
+   "class": "issue",
+   "parent_id": 255031,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "platform-agents-write-rotated-20260929",
+     "summary": "Now 3 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-02T23:11:45.257Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "platform-agents-write-rotated-20260929",
+     "summary": "Added to next",
+     "created_at": "2026-11-01T22:26:12.758Z"
+    }
+   ]
+  },
+  {
+   "id": 255033,
+   "product": "lakeside-mcp",
+   "title": "A read for statePartyOrg without raw database queries",
+   "detail": "Tasks had to read the statePartyOrg collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 3 times across 2 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 6 hits across 2 tasks in 7 days.",
+   "last_progress_at": "2026-11-20T03:44:17.238Z",
+   "evidence_url": null,
+   "created_at": "2026-11-03T07:22:49.487Z",
+   "updated_at": "2026-11-20T03:44:17.238Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 6 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-20T03:44:17.238Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 12 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-10T01:59:11.438Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 14 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-07T10:19:31.637Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 13 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-06T09:23:58.655Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 4 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-04T07:43:47.066Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "unnamed",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-03T07:22:49.487Z"
+    }
+   ]
+  },
+  {
+   "id": 255064,
+   "product": "lakeside-mcp",
+   "title": "A read for identityObservations without raw database queries",
+   "detail": "Tasks had to read the identityObservations collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 35 times across 2 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "high",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 20 hits across 3 tasks in 7 days.",
+   "last_progress_at": "2026-11-10T16:03:07.741Z",
+   "evidence_url": null,
+   "created_at": "2026-11-03T18:32:07.913Z",
+   "updated_at": "2026-11-10T16:03:07.741Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 20 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-10T16:03:07.741Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 36 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-04T18:49:48.696Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-03T18:32:07.913Z"
+    }
+   ]
+  },
+  {
+   "id": 255150,
+   "product": "lakeside-mcp",
+   "title": "A read for corporationPortfolioHistory without raw database queries",
+   "detail": "Tasks had to read the corporationPortfolioHistory collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 3 times across 2 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-07T15:59:15.958Z",
+   "updated_at": "2026-11-07T15:59:15.958Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-07T15:59:15.958Z"
+    }
+   ]
+  },
+  {
+   "id": 255021,
+   "product": "lakeside-mcp",
+   "title": "A read for federalBudgets without raw database queries",
+   "detail": "Tasks had to read the federalBudgets collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 6 times across 3 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 3 hits across 2 tasks in 7 days.",
+   "last_progress_at": "2026-11-10T01:59:11.539Z",
+   "evidence_url": null,
+   "created_at": "2026-11-03T03:57:17.669Z",
+   "updated_at": "2026-11-10T01:59:11.539Z",
+   "area": "capabilities",
+   "class": "idea",
+   "parent_id": 255031,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 3 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-10T01:59:11.539Z"
+    },
+    {
+     "event_type": "moved",
+     "actor": "system",
+     "summary": "lane next -> inbox (no owner, never picked up)",
+     "created_at": "2026-11-04T03:57:38.344Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "platform-agents-write-rotated-20260929",
+     "summary": "Added to next",
+     "created_at": "2026-11-03T03:57:17.669Z"
+    }
+   ]
+  },
+  {
+   "id": 255111,
+   "product": "lakeside-mcp",
+   "title": "A read for healRuns without raw database queries",
+   "detail": "Tasks had to read the healRuns collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 8 times across 2 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 4 hits across 2 tasks in 7 days.",
+   "last_progress_at": "2026-11-16T21:49:19.924Z",
+   "evidence_url": null,
+   "created_at": "2026-11-06T12:23:59.451Z",
+   "updated_at": "2026-11-16T21:49:19.924Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 4 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-16T21:49:19.924Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 7 hits across 4 tasks in 7 days.",
+     "created_at": "2026-11-14T20:05:16.949Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 8 hits across 5 tasks in 7 days.",
+     "created_at": "2026-11-11T23:06:36.117Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 6 hits across 4 tasks in 7 days.",
+     "created_at": "2026-11-09T16:59:10.631Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 10 hits across 4 tasks in 7 days.",
+     "created_at": "2026-11-08T16:59:07.994Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 9 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-07T15:59:05.781Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-06T12:23:59.451Z"
+    }
+   ]
+  },
+  {
+   "id": 255149,
+   "product": "lakeside-mcp",
+   "title": "A read for commodityFlows without raw database queries",
+   "detail": "Tasks had to read the commodityFlows collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 3 times across 3 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-07T15:59:15.847Z",
+   "updated_at": "2026-11-07T15:59:15.847Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-07T15:59:15.847Z"
+    }
+   ]
+  },
+  {
+   "id": 255008,
+   "product": "lakeside-mcp",
+   "title": "A read for bonds without raw database queries",
+   "detail": "Tasks had to read the bonds collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 4 times across 3 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 42 hits across 5 tasks in 7 days.",
+   "last_progress_at": "2026-11-20T05:11:50.451Z",
+   "evidence_url": null,
+   "created_at": "2026-11-02T23:11:45.230Z",
+   "updated_at": "2026-11-20T05:11:50.451Z",
+   "area": "capabilities",
+   "class": "idea",
+   "parent_id": 255031,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 42 hits across 5 tasks in 7 days.",
+     "created_at": "2026-11-20T05:11:50.451Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 24 hits across 4 tasks in 7 days.",
+     "created_at": "2026-11-19T04:44:11.736Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 9 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-18T18:48:52.387Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 4 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-18T15:48:53.453Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 13 hits across 6 tasks in 7 days.",
+     "created_at": "2026-11-15T21:31:31.612Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 14 hits across 7 tasks in 7 days.",
+     "created_at": "2026-11-14T20:05:16.873Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 15 hits across 8 tasks in 7 days.",
+     "created_at": "2026-11-13T19:28:58.811Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 37 hits across 14 tasks in 7 days.",
+     "created_at": "2026-11-10T17:03:10.771Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 40 hits across 15 tasks in 7 days.",
+     "created_at": "2026-11-09T16:59:10.347Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 29 hits across 11 tasks in 7 days.",
+     "created_at": "2026-11-08T16:59:07.906Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 28 hits across 10 tasks in 7 days.",
+     "created_at": "2026-11-07T14:45:49.656Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 25 hits across 8 tasks in 7 days.",
+     "created_at": "2026-11-06T12:23:59.057Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 6 hits across 4 tasks in 7 days.",
+     "created_at": "2026-11-05T12:51:13.066Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 5 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-04T00:43:47.401Z"
+    },
+    {
+     "event_type": "moved",
+     "actor": "system",
+     "summary": "lane next -> inbox (no owner, never picked up)",
+     "created_at": "2026-11-03T23:14:22.878Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "platform-agents-write-rotated-20260929",
+     "summary": "Added to next",
+     "created_at": "2026-11-02T23:11:45.230Z"
+    }
+   ]
+  },
+  {
+   "id": 255066,
+   "product": "lakeside-mcp",
+   "title": "A read for altClusters without raw database queries",
+   "detail": "Tasks had to read the altClusters collection through heal-ops raw queries because no purpose-built read covers it.\n\nSeen 7 times across 3 tasks in the last 7 days.\n\nFiled automatically from Keir's failed and workaround reads; repeats raise its count.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "Now 7 hits across 2 tasks in 7 days.",
+   "last_progress_at": "2026-11-10T05:59:11.449Z",
+   "evidence_url": null,
+   "created_at": "2026-11-03T18:32:08.456Z",
+   "updated_at": "2026-11-10T05:59:11.449Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 7 hits across 2 tasks in 7 days.",
+     "created_at": "2026-11-10T05:59:11.449Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Now 8 hits across 3 tasks in 7 days.",
+     "created_at": "2026-11-04T18:49:48.759Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-03T18:32:08.456Z"
+    }
+   ]
+  },
+  {
+   "id": 255399,
+   "product": "lakeside-mcp",
+   "title": "Keir failure spike: reasoning/unanswered_finish_refused: unanswered_finish_refused",
+   "detail": "Fingerprint reasoning:unanswered_finish_refused:0dbfb588. Total 12, last 24 hours 10 (7 day average 1.7 a day). Tickets: 1833, 1837, 1836, 1838, 1842.\n\nSamples:\n- attempt ? job c37d9468d678: unanswered_finish_refused\n- attempt ? job 6b6cc5ccbd4c: unanswered_finish_refused\n- attempt ? job 6b6cc5ccbd4c: unanswered_finish_refused\n\nNext step: Run keir-failures.js show reasoning:unanswered_finish_refused:0dbfb588 --context 5 to read the model transcript around the failure, then fix the guard, tool or prompt that caused it.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-17T09:27:09.827Z",
+   "updated_at": "2026-11-17T09:27:09.827Z",
+   "area": "keir",
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-17T09:27:09.827Z"
+    }
+   ]
+  },
+  {
+   "id": 255446,
+   "product": "lakeside-mcp",
+   "title": "Keir failure new: tool/refused_other (channel_reply): {\"code\":-32001,\"message\":\"invalid or missing bearer token\"}",
+   "detail": "Fingerprint tool:refused_other:ebdd10be. Total 4, last 24 hours 4. Tickets: 1853, 1852.\n\nSamples:\n- attempt ? job 5ebf84eaccb7: {\"code\":-32001,\"message\":\"invalid or missing bearer token\"}\n- attempt ? job 879da8bc5a77: {\"code\":-32001,\"message\":\"invalid or missing bearer token\"}\n- attempt ? job 6df995ac3b58: {\"code\":-32001,\"message\":\"invalid or missing bearer token\"}\n\nNext step: Run keir-failures.js show tool:refused_other:ebdd10be --context 5 to read the model transcript around the failure, then fix the guard, tool or prompt that caused it.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-18T01:37:41.025Z",
+   "updated_at": "2026-11-18T01:37:41.025Z",
+   "area": "keir",
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-18T01:37:41.025Z"
+    }
+   ]
+  },
+  {
+   "id": 255357,
+   "product": "lakeside-mcp",
+   "title": "Keir failure new: tool/raw_read_fallback (raw_read): collection characters",
+   "detail": "Fingerprint tool:raw_read_fallback:4de9c79d. Total 3, last 24 hours 3. Tickets: none.\n\nSamples:\n- attempt ? job 4da931965788: collection characters\n- attempt ? job 4da931965788: collection characters\n- attempt ? job 4da931965788: collection characters\n\nNext step: Run keir-failures.js show tool:raw_read_fallback:4de9c79d --context 5 to read the model transcript around the failure, then fix the guard, tool or prompt that caused it.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-16T02:08:51.072Z",
+   "updated_at": "2026-11-16T02:08:51.072Z",
+   "area": "keir",
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-16T02:08:51.072Z"
+    }
+   ]
+  },
+  {
+   "id": 255477,
+   "product": "lakeside-mcp",
+   "title": "Keir failure new: tool/refused_other (read_tools): Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.",
+   "detail": "Fingerprint tool:refused_other:f7e5d124. Total 5, last 24 hours 5. Tickets: none.\n\nSamples:\n- attempt ? job 5b8cf2e8461e: Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.\n- attempt ? job 5b8cf2e8461e: Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.\n- attempt ? job 5b8cf2e8461e: Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.\n\nNext step: Run keir-failures.js show tool:refused_other:f7e5d124 --context 5 to read the model transcript around the failure, then fix the guard, tool or prompt that caused it.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-18T11:49:09.633Z",
+   "updated_at": "2026-11-18T11:49:09.633Z",
+   "area": "keir",
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-18T11:49:09.633Z"
+    }
+   ]
+  },
+  {
+   "id": 255355,
+   "product": "lakeside-mcp",
+   "title": "Keir failure new: tool/raw_read_fallback (raw_read): collection statePartyOrg",
+   "detail": "Fingerprint tool:raw_read_fallback:c8a1bbea. Total 5, last 24 hours 5. Tickets: none.\n\nSamples:\n- attempt ? job 04f05415110a: collection statePartyOrg\n- attempt ? job 04f05415110a: collection statePartyOrg\n- attempt ? job 04f05415110a: collection statePartyOrg\n\nNext step: Run keir-failures.js show tool:raw_read_fallback:c8a1bbea --context 5 to read the model transcript around the failure, then fix the guard, tool or prompt that caused it.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-16T00:50:29.513Z",
+   "updated_at": "2026-11-16T00:50:29.513Z",
+   "area": "keir",
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-16T00:50:29.513Z"
+    }
+   ]
+  },
+  {
+   "id": 255569,
+   "product": "lakeside-mcp",
+   "title": "Keir failure new: process/crash: activation: activation aborted: no result before the 15-minute turn limit",
+   "detail": "Fingerprint process:crash:f2cbc93a. Total 1, last 24 hours 1. Tickets: none.\n\nSamples:\n- attempt ? job ?: activation: activation aborted: no result before the 15-minute turn limit\n\nNext step: Run keir-failures.js show process:crash:f2cbc93a --context 5 to read the model transcript around the failure, then fix the guard, tool or prompt that caused it.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "bug",
+   "assigned_to": null,
+   "progress_summary": "Keir failure new: process/crash: activation: activation aborted: no result before the 15-minute turn limit",
+   "last_progress_at": "2026-11-21T05:20:49.459Z",
+   "evidence_url": null,
+   "created_at": "2026-11-20T08:35:17.923Z",
+   "updated_at": "2026-11-21T05:20:49.459Z",
+   "area": "keir",
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Keir failure new: process/crash: activation: activation aborted: no result before the 15-minute turn limit",
+     "created_at": "2026-11-21T05:20:49.459Z"
+    },
+    {
+     "event_type": "progress",
+     "actor": "keir",
+     "summary": "Keir failure new: process/crash: activation: activation aborted: no result before the 15-minute turn limit",
+     "created_at": "2026-11-20T15:33:57.326Z"
+    },
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox",
+     "created_at": "2026-11-20T08:35:17.923Z"
+    }
+   ]
+  },
+  {
+   "id": 254935,
+   "product": "lakeside-mcp",
+   "title": "Support-lane tasks cannot read or close their own follow-up kanban items",
+   "detail": "Keir could not do this from a support task.\n\nRaised by Keir from ticket 1730.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-01T18:13:47.111Z",
+   "updated_at": "2026-11-01T18:13:47.111Z",
+   "area": "capabilities",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to next",
+     "created_at": "2026-11-01T18:13:47.111Z"
+    }
+   ]
+  },
+  {
+   "id": 254668,
+   "product": "lakeside-mcp",
+   "title": "Support intake cannot bind a ticket to the reporting player",
+   "detail": "Keir could not do this from a support task.\n\nRaised by Keir.",
+   "lane": "next",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": "2026-11-10T18:44:27.963Z",
+   "evidence_url": null,
+   "created_at": "2026-10-21T20:04:30.938Z",
+   "updated_at": "2026-11-10T18:44:27.963Z",
+   "area": "capabilities",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to next",
+     "created_at": "2026-10-21T20:04:30.938Z"
+    }
+   ]
+  },
+  {
+   "id": 254939,
+   "product": "lakeside-mcp",
+   "title": "trace_ledger has no per-entity view, so a corporation's cash movement cannot be traced to journal entries",
+   "detail": "Keir could not do this from a support task.\n\nRaised by Keir from ticket 1730.",
+   "lane": "next",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": "2026-11-01T22:36:25.041Z",
+   "evidence_url": null,
+   "created_at": "2026-11-01T22:14:46.090Z",
+   "updated_at": "2026-11-01T22:36:25.041Z",
+   "area": "capabilities",
+   "class": "issue",
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to next",
+     "created_at": "2026-11-01T22:14:46.090Z"
+    }
+   ]
+  },
+  {
+   "id": 255627,
+   "product": "lakeside-mcp",
+   "title": "Allow review of large coding patches by file or range",
+   "detail": "Keir could not do this from a support task.\n\nRaised by Keir.",
+   "lane": "inbox",
+   "impact": "medium",
+   "kind": "capability",
+   "assigned_to": null,
+   "progress_summary": "",
+   "last_progress_at": null,
+   "evidence_url": null,
+   "created_at": "2026-11-21T09:35:54.014Z",
+   "updated_at": "2026-11-21T09:35:54.014Z",
+   "area": null,
+   "class": null,
+   "parent_id": null,
+   "events": [
+    {
+     "event_type": "created",
+     "actor": "keir",
+     "summary": "Added to inbox (Next needs an owner, so this waits in the inbox)",
+     "created_at": "2026-11-21T09:35:54.014Z"
+    }
+   ]
+  }
+ ],
+ "pull_requests": {
+  "lakesidegamedev/AHDGame#6999": {
+   "closed_at": "2026-11-20T14:20:02Z",
+   "merged": true,
+   "merged_at": "2026-11-20T14:20:02Z",
+   "sha": "99aa310ff3d4e5a3f6b16b7bb2a31fa4d34f66a6",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#6987": {
+   "closed_at": "2026-11-20T04:09:58Z",
+   "merged": true,
+   "merged_at": "2026-11-20T04:09:58Z",
+   "sha": "e50f76cb7d000687e25295d9626ccb9616ca1b4f",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#6911": {
+   "closed_at": "2026-11-19T13:11:22Z",
+   "merged": true,
+   "merged_at": "2026-11-19T13:11:22Z",
+   "sha": "1a80481cb0f07263bd3a2b9eff0823afc72b7174",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#6949": {
+   "closed_at": "2026-11-20T00:39:44Z",
+   "merged": true,
+   "merged_at": "2026-11-20T00:39:44Z",
+   "sha": "03b1215ad18bd4ec967370587590c65f150ba13c",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#6973": {
+   "closed_at": "2026-11-20T02:54:23Z",
+   "merged": true,
+   "merged_at": "2026-11-20T02:54:23Z",
+   "sha": "cc160a622c8e3daea3cd64e27f3c4d0012676ba0",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#7007": {
+   "closed_at": "2026-11-21T02:39:20Z",
+   "merged": true,
+   "merged_at": "2026-11-21T02:39:20Z",
+   "sha": "8eac0a794838696843b8e05bcf0a36384d031bfa",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#6904": {
+   "closed_at": "2026-11-19T07:10:50Z",
+   "merged": true,
+   "merged_at": "2026-11-19T07:10:50Z",
+   "sha": "4bc62f6777d82ee66ff036406152550c0b751d5d",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#6847": {
+   "closed_at": "2026-11-18T16:56:25Z",
+   "merged": true,
+   "merged_at": "2026-11-18T16:56:25Z",
+   "sha": "08190bf893f5719985c762183e84a7fb7513f879",
+   "state": "closed"
+  },
+  "lakesidegamedev/AHDGame#6935": {
+   "closed_at": "2026-11-19T23:50:13Z",
+   "merged": true,
+   "merged_at": "2026-11-19T23:50:13Z",
+   "sha": "a5986f9b63ea1748b1654d87f60511d67bb091e5",
+   "state": "closed"
+  }
+ },
+ "note": "Cards from the live ops kanban on 2026-11-21 (Keir's automatic counter cards, the monitor-filed cards, and a few deliberate capability cards), trimmed to the fields the tests need, with machine paths masked. pull_requests: the real state of the held promotions' pull requests on 2026-11-21."
+}

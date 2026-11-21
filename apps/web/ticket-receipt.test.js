@@ -107,7 +107,7 @@ test("public timeline omits internal status notes and includes safe updates", ()
   const timeline = publicTimeline(ticket);
   assert.deepEqual(
     timeline.map((event) => event.label),
-    ["Report received", "Work in progress", "Game data corrected", "Resolved"],
+    ["Report received", "Work in progress", "Game data corrected", "Closed"],
   );
   assert.ok(
     timeline.every(

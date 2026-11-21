@@ -85,9 +85,10 @@ test("a numbered ticket reads exactly one support record and returns its chronol
   assert.deepEqual([first.kind, first.actor, first.text], ["player_ask", "player", "My pension did not pay out this turn."]);
   const times = out.timeline.map((e) => Date.parse(e.at));
   assert.deepEqual(times, [...times].sort((a, b) => a - b), "timeline is chronological");
-  const changes = out.timeline.filter((e) => e.kind === "status_change").map((e) => [e.status, e.actor]);
-  assert.deepEqual(changes, [["in_progress", "keir"], ["resolved", "staff-one"]]);
-  assert.deepEqual([out.status.current, out.status.lastSetBy], ["resolved", "staff-one"]);
+  const changes = out.timeline.filter((e) => e.kind === "status_change").map((e) => [e.status, e.stage || null, e.actor]);
+  assert.deepEqual(changes, [["Open", "in_progress", "keir"], ["Closed", null, "staff-one"]]);
+  assert.deepEqual([out.status.current, out.status.lastSetBy], ["Closed", "staff-one"]);
+  assert.doesNotMatch(JSON.stringify(out.status), /resolved/i);
   assert.match(out.status.meaning, /not proof/);
   // Replies carry no sender in the record, so none is invented.
   assert.ok(out.timeline.filter((e) => e.kind === "player_update").every((e) => /^not recorded/.test(e.actor)));

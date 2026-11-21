@@ -128,7 +128,7 @@ async function describeServer(def, token) {
   };
 }
 
-function registerFleetTools(server, { jsonResult, errorResult }) {
+function registerFleetTools(server, { jsonResult, errorResult, kanban = null }) {
   server.tool(
     "mcp_fleet_status",
     "List the MCP servers this platform hosts and what each one actually exposes right now: reachability, tool names, prompt count and resource count, read live from the servers themselves rather than from a hand-written catalogue. Use it to find the tool you need instead of guessing a server name or a tool name.",
@@ -173,20 +173,42 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
 
   server.tool(
     "mcp_capability_requests",
-    "List the open MCP capability requests on the lakeside-mcp board: what an agent or a member of staff has asked the MCP fleet for and does not have yet. Read this before building a tool, and check it before saying a capability does not exist.",
+    "What the MCP fleet is missing. counters: Keir's automatic tool-gap and failure counts (one row per signature, e.g. raw:corporateSectors), most frequent and most recent first, with counts for the last 7 and 30 days, distinct tasks and the tickets involved; this is how the studio decides which tool to build next. requests: the capability cards someone chose to track on the lakeside-mcp board. Read this before building a tool, and check it before saying a capability does not exist. Promote a counter to a card with kanban_counter_promote.",
     {
       limit: z.number().int().min(1).max(200).optional().default(50),
       include_closed: z.boolean().optional().default(false),
+      counters: z.boolean().optional().default(true).describe("Include the automatic counters (default true)"),
+      family: z.enum(["tool gap", "failure alert"]).optional().describe("Only counters of this family"),
+      q: z.string().max(120).optional().describe("Substring of a counter's signature or title"),
     },
-    async ({ limit, include_closed }) => {
+    async ({ limit, include_closed, counters, family, q }) => {
+      let counterList = null;
+      let counterError = null;
+      if (counters !== false) {
+        try {
+          const store = (kanban || require("../kanban-store").sharedKanban)();
+          counterList = store.counters.list({ family: family || null, q: q || null, limit });
+        } catch (error) {
+          counterError = `the counter list could not be read: ${error.message}`;
+        }
+      }
+      const withCounters = (out) => ({
+        ...out,
+        ...(counterList ? { counters_total: counterList.total, counters: counterList.counters } : {}),
+        ...(counterError ? { counters_error: counterError } : {}),
+      });
       const token = process.env.OPS_KNOWLEDGE_MCP_TOKEN || process.env.MCP_FLEET_TOKEN;
       if (!token) {
+        if (counterList) return jsonResult(withCounters({ ok: true, count: 0, requests: [], requests_error: "no fleet token configured (OPS_KNOWLEDGE_MCP_TOKEN), so the capability cards were not read" }));
         return errorResult("no fleet token configured: set OPS_KNOWLEDGE_MCP_TOKEN (a read-scoped agent token) so this server can read the capability board");
       }
       const knowledge = MCP_DEFS.find((d) => d.key === "ops-knowledge");
       if (!knowledge) return errorResult("the ops-knowledge server is not in the catalogue");
       const reply = await callTool(localUrl(knowledge), "kanban_list", { product: "lakeside-mcp", limit: Math.min(limit * 2, 200) }, token);
-      if (reply.error) return errorResult(`the capability board could not be read: ${reply.error}`);
+      if (reply.error) {
+        if (counterList) return jsonResult(withCounters({ ok: true, count: 0, requests: [], requests_error: `the capability board could not be read: ${reply.error}` }));
+        return errorResult(`the capability board could not be read: ${reply.error}`);
+      }
       const rows = (reply.result && reply.result.items) || [];
       const cards = rows
         .filter((r) => (r.kind || "") === "capability")
@@ -203,7 +225,7 @@ function registerFleetTools(server, { jsonResult, errorResult }) {
           age_days: r.age_days ?? null,
           progress_summary: r.progress_summary || "",
         }));
-      return jsonResult({ ok: true, count: cards.length, requests: cards });
+      return jsonResult(withCounters({ ok: true, count: cards.length, requests: cards }));
     }
   );
 }

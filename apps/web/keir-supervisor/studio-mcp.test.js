@@ -56,7 +56,7 @@ test("queue distinguishes support reply receipts from a fresh coordinator wait",
     return { count: 1, items: [{ number: 10, title: "Test ticket", status: "open", replyState: { state: "delivered" } }] };
   } });
   const result = await evidence.queue();
-  assert.deepEqual(result.items, [{ number: 10, title: "Test ticket", status: "open", reply: "delivered", work: "waiting", waitingFor: "player_reply", nextCheckAt: new Date(now + 60000).toISOString(), priorActivations: 3, implementationHeld: false, ownerDecisionPending: false }]);
+  assert.deepEqual(result.items, [{ number: 10, title: "Test ticket", status: "Open", reply: "delivered", work: "waiting", waitingFor: "player_reply", nextCheckAt: new Date(now + 60000).toISOString(), priorActivations: 3, implementationHeld: false, ownerDecisionPending: false }]);
   delete ledger.jobs.a.waitingFor;
   ledger.supportOwner = { tickets: { 10: "owner" } };
   ledger.decisions = { "decision-fixture": { jobId: "a", ticket: 10, state: "pending" } };

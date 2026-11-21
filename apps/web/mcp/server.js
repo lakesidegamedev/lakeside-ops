@@ -89,6 +89,21 @@ async function embedText(text, isQuery = false) {
   return Array.from(out.data);
 }
 
+// Live ticket status on kanban cards. This server's MONGODB_URI is the ops
+// store, which holds no tickets, so the ticket database is named separately
+// (ticket-db.js: TICKETS_MONGODB_ENV_FILE, the game database env file the
+// dashboard and support server load). Without it, a standalone install's
+// single database is tried; a database with no tickets collection reads as
+// "ticket status unknown" and the reconcile pass skips ticket rules.
+// One reader per process so its short cache is shared.
+const { createTicketStatusReader } = require("../kanban-tickets");
+const kanbanTicketDbConfig = require("../ticket-db");
+const kanbanTicketDb = kanbanTicketDbConfig.createTicketDb(process.env, { fallback: { getDb: () => store.getDb(MONGODB_URI), source: "this server's MONGODB_URI" } });
+const kanbanTicketStatus = createTicketStatusReader({ getDb: kanbanTicketDb.getDb, unavailable: kanbanTicketDb.error, hint: kanbanTicketDbConfig.HOW_TO_CONFIGURE });
+console.error(`[kanban] ticket status from ${kanbanTicketDb.source || `nowhere (${kanbanTicketDb.error})`}`);
+// Pull request and alert state for kanban_reconcile (gh CLI, read-only systemctl).
+const kanbanSourceReaders = require("../kanban-sources").createSourceReaders();
+
 async function main() {
   const db = await store.getDb(MONGODB_URI);
   await store.ensureIndexes(db);
@@ -466,11 +481,11 @@ async function main() {
     }
 
     // Product kanban (same store as the dashboard /kanban page).
-    registerKanbanTools(server, { auth, jsonResult, errorResult });
+    registerKanbanTools(server, { auth, jsonResult, errorResult, ticketStatus: kanbanTicketStatus, ...kanbanSourceReaders });
     registerCwTelemetryTools(server, { jsonResult, errorResult });
 
     // The fleet describing itself, read live from every hosted server.
-    registerFleetTools(server, { jsonResult, errorResult });
+    registerFleetTools(server, { jsonResult, errorResult, kanban: require("../kanban-store").sharedKanban });
 
     // Reports, company knowledge and the tracker (MCP fleet consolidation).
     registerReportTools(server, auth);

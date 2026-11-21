@@ -3011,6 +3011,20 @@ const { makeEngineBody } = require('./engine-page');
 const { handleEconomyRoute } = require('./economy/routes');
 const { makeTrackerBody } = require('./tracker-page');
 const { handleKanbanRoute } = require("./kanban-routes");
+// Kanban cards show their sources' live state and follow them (tickets, pull
+// requests, alerts). The ticket reader is shared by the page, the API and the
+// reconcile timer (short cache). The timer runs every KANBAN_TICKET_RECONCILE_MS
+// (default 10 minutes) and only reports what it would change, recorded for
+// GET /api/kanban/reconcile and kanban_reconcile; KANBAN_RECONCILE_AUTO_APPLY=on
+// lets it apply, KANBAN_TICKET_RECONCILE=off stops it.
+// KANBAN_SOURCE_GITHUB=off / KANBAN_ALERT_SYSTEMD=off skip pull request and
+// unit checks.
+const { createTicketStatusReader, createReconcileTimer } = require("./kanban-tickets");
+const kanbanTicketStatus = createTicketStatusReader({ getDb: () => getDb() });
+const kanbanSourceReaders = require("./kanban-sources").createSourceReaders();
+if (process.env.NODE_ENV !== "test") {
+  createReconcileTimer({ getStore: () => require("./kanban-store").sharedKanban(), readers: { reader: kanbanTicketStatus, ...kanbanSourceReaders } }).start();
+}
 const { handleSuggestionSwipeRoute } = require("./suggestion-swipe-routes");
 const { handleKeirInboxRoute } = require("./keir-inbox-routes");
 const { handleCwTelemetryRoute, makeLimiter: makeCwTelemetryLimiter } = require("./cw-telemetry-routes");
@@ -4232,7 +4246,7 @@ const server = http.createServer(async (req, res) => {
   if (await handleHubRoute(req, res, url, {
     resolveSession, addSecurityHeaders, getDb, knowledgeStore, getConfig,
     publishedDir: PUBLISHED_REPORTS_DIR, legacyDir: require("path").join(__dirname, "reports"),
-    kanban: require("./kanban-store").sharedKanban,
+    kanban: require("./kanban-store").sharedKanban, ticketStatus: kanbanTicketStatus,
   })) return;
 
   if ((req.method === "GET" || req.method === "HEAD") && pathname === "/") {
@@ -4508,7 +4522,7 @@ const server = http.createServer(async (req, res) => {
 
   // ─── KANBAN ──────────────────────────────────────────────────────
   // Admin product kanban (/kanban, /api/kanban/*). Store: kanban-store.js.
-  if (await handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell })) return;
+  if (await handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, ticketStatus: kanbanTicketStatus, ...kanbanSourceReaders })) return;
 
   // ─── SUGGESTION SWIPE ────────────────────────────────────────────
   // Blind two-person triage of unreviewed suggestions (/suggestions/swipe,
@@ -5366,7 +5380,12 @@ const server = http.createServer(async (req, res) => {
       const db = await getDb();
       const status = url.searchParams.get("status");
       const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10) || 1);
-      const filter = status && status !== "all" ? { status } : {};
+      // Open and Closed are what people see; older ?status=<stored value> links still work.
+      const { CLOSED_STATUSES } = require("./ticket-status");
+      const closedList = [...CLOSED_STATUSES];
+      const filter = status === "closed" ? { $or: [{ status: { $in: closedList } }, { mergedInto: { $exists: true, $ne: null } }] }
+        : status === "open" ? { status: { $nin: closedList }, $or: [{ mergedInto: { $exists: false } }, { mergedInto: null }] }
+        : status && status !== "all" ? { status } : {};
       const total = await db.collection("tickets").countDocuments(filter);
       const totalPages = Math.max(1, Math.ceil(total / COMMUNITY_PAGE_SIZE));
       const tickets = await db.collection("tickets").find(filter)

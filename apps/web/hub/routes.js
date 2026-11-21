@@ -18,6 +18,7 @@ const library = require("./library");
 const tickets = require("./tickets");
 const keir = require("./keir");
 const board = require("./board");
+const counters = require("./counters");
 const { renderMarkdown } = require("./markdown");
 const { PROGRAMS } = require("../program-tracker");
 
@@ -42,7 +43,7 @@ const staticCache = new Map();
 
 function isHubPath(p) {
   return p === "/" || Object.prototype.hasOwnProperty.call(STATIC, p) || p === "/library" || p.startsWith("/library/") || p === "/reports" || SLUG_RE.test(p)
-    || p === "/tickets" || p === "/kanban" || p.startsWith("/api/hub/") || RETIRED.has(p);
+    || p === "/tickets" || p === "/kanban" || p === "/kanban/counters" || p.startsWith("/api/hub/") || RETIRED.has(p);
 }
 
 let countsCache = { at: 0, v: null };
@@ -91,7 +92,7 @@ async function route(req, res, url, ctx) {
   const pathname = url.pathname;
   if (!(req.method === "GET" || req.method === "HEAD")) return false;
   if (!isHubPath(pathname)) return false;
-  const { resolveSession, addSecurityHeaders, getDb, knowledgeStore, publishedDir, legacyDir, kanban, getConfig } = ctx;
+  const { resolveSession, addSecurityHeaders, getDb, knowledgeStore, publishedDir, legacyDir, kanban, getConfig, ticketStatus = null } = ctx;
   if (Object.prototype.hasOwnProperty.call(STATIC, pathname)) {
     const [file, type] = STATIC[pathname];
     let buf = staticCache.get(file);
@@ -175,8 +176,19 @@ async function route(req, res, url, ctx) {
     return json(200, { groups: await search(url.searchParams.get("q") || "", { getDb, knowledgeStore, kanban, dirs }) });
   }
 
+  // Automatic counts (kanban-counters.js), kept off the board.
+  if (pathname === "/kanban/counters" || pathname === "/api/hub/counters") {
+    const family = ["tool gap", "failure alert"].includes(url.searchParams.get("family")) ? url.searchParams.get("family") : "";
+    let list = null;
+    let error = null;
+    try { list = kanban().counters.list({ family: family || null, limit: 300 }); } catch (e) { error = e.message; }
+    if (pathname !== "/kanban/counters") return error ? json(500, { error }) : json(200, list);
+    const { extraCss, body } = counters.makeCountersBody({ list, error, family });
+    return html(renderHubPage({ title: "Automatic counts", active: "board", extraCss, body }));
+  }
+
   if (pathname === "/kanban" || pathname === "/api/hub/board") {
-    const data = board.buildBoard(kanban());
+    const data = await board.addTicketStatus(board.buildBoard(kanban()), ticketStatus);
     if (pathname !== "/kanban") return json(200, data);
     const { extraCss, body } = board.makeBoardBody(data);
     return html(renderHubPage({ title: "Work board", active: "board", extraCss, body }));

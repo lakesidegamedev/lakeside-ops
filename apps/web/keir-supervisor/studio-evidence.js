@@ -1,4 +1,11 @@
 "use strict";
+const { ticketStatusLabel, isTicketClosed } = require("../ticket-status");
+// Open or Closed for people and agents; an open ticket's working stage (for
+// example in_progress) is kept beside it. "resolved" is never shown.
+const shownStatus = (value) => {
+  const stored = String(value || "").trim().toLowerCase();
+  return isTicketClosed(stored) ? { status: "Closed" } : { status: "Open", ...(stored && stored !== "open" ? { stage: stored.slice(0, 40) } : {}) };
+};
 // Read-only studio evidence for the owner's private supervisor. Two fixed
 // reads and nothing else:
 //
@@ -228,7 +235,7 @@ function summariseTicket(raw, number, at) {
   events.push(ask);
 
   for (const h of arr("statusHistory")) {
-    events.push({ at: stamp(h.at), actor: actor(h.by), kind: "status_change", status: text(h.status, 40), ...(text(h.source, 30) ? { via: text(h.source, 30) } : {}), ...(text(h.note, 200) ? { note: text(h.note, 200) } : {}) });
+    events.push({ at: stamp(h.at), actor: actor(h.by), kind: "status_change", ...shownStatus(h.status), ...(text(h.source, 30) ? { via: text(h.source, 30) } : {}), ...(text(h.note, 200) ? { note: text(h.note, 200) } : {}) });
   }
 
   const updates = [];
@@ -292,7 +299,7 @@ function summariseTicket(raw, number, at) {
     ticket: number, state: "read", source: "support · support_get", checkedAt: new Date(at).toISOString(),
     title: text(raw.title, 160), category: text(raw.category, 40),
     ...(investigation ? { privateInvestigation: true, note: "Private investigation: there is no player channel and nothing here was sent to a player." } : {}),
-    status: { current: text(raw.status, 40), lastSetBy: lastChange ? lastChange.actor : NOT_RECORDED, lastSetAt: lastChange ? lastChange.at : null,
+    status: { current: ticketStatusLabel(raw), ...(isTicketClosed(raw) ? {} : shownStatus(raw.status).stage ? { stage: shownStatus(raw.status).stage } : {}), lastSetBy: lastChange ? lastChange.actor : NOT_RECORDED, lastSetAt: lastChange ? lastChange.at : null,
       meaning: "A status is a label someone set. It is not proof that anything was done." },
     playerAsk: ask,
     otherMessages: { count: messages.length, latest: messages.slice(-3).map((m) => text(m, 300)), note: "Stored without author or time; do not attribute them to anyone." },
@@ -369,7 +376,7 @@ function createStudioEvidence({ mcpCall, configPath, ledgerPath, now = () => Dat
         job.wakeAt >= snapshotAt && job.wakeAt < snapshotAt + 366 * 86400000 ? new Date(job.wakeAt).toISOString() : null;
       const implementationOwner = ledger?.supportOwner?.tickets?.[row.number];
       return {
-        number: row.number, title: text(row.title, 180), status: text(row.status, 40),
+        number: row.number, title: text(row.title, 180), status: ticketStatusLabel(row),
         reply: ["delivered", "no_receipt"].includes(row.replyState?.state) ? row.replyState.state : "unknown",
         work: current ? stalled ? "stalled" : job.state : null, waitingFor, nextCheckAt,
         priorActivations: current && Number.isSafeInteger(job.activationCount) ? job.activationCount : null,

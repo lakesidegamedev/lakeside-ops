@@ -133,7 +133,8 @@ describe("makeTicketDetailBody", () => {
     });
     const pub = makeTicketDetailBody({ ticket, assessment: null, fixSession: null, github: githubRecord(), viewer: "public" }).body;
     assert.match(pub, /Support receipt/);
-    assert.match(pub, /Resolved/);
+    assert.match(pub, /Closed/);
+    assert.doesNotMatch(pub, />Resolved</);
     assert.match(pub, /What we did/);
     assert.match(pub, /restored the missing title/i);
     assert.match(pub, /Restored the affected game record/);

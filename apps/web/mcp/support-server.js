@@ -70,7 +70,12 @@ async function refreshDiscordUrls(urls) {
   } catch { return {}; }
 }
 
+// ticket_status is what people and agents read: Open, Closed, or "Closed,
+// merged into N". status stays the stored value because Keir's ticket logic
+// still compares it; nothing should show it to a person.
+const { ticketStatusLabel, isTicketClosed } = require("../ticket-status");
 const ticketShape = (t) => ({
+  ticket_status: ticketStatusLabel(t),
   resolutionAttribution: t.resolutionAttribution || null,
   kind: "ticket", number: t.ticketNumber, title: t.title, category: t.category, status: t.status,
   conversation: { channelId: t.discordChannelId || null, previousChannelId: t.reopenRequest?.oldChannelId || null, reopenRequestId: t.reopenRequest?.state === "complete" ? t.reopenRequest.id : null, reopenedAt: t.reopenRequest?.state === "complete" ? t.reopenRequest.completedAt : null },
@@ -147,7 +152,7 @@ async function main() {
         const q = {}; if (status) q.status = status; if (tag) q.tags = tag; if (category) q.category = category;
         if (kind !== "suggestion") {
           const tq = { ...q, category: category && category !== "investigation" ? category : { $ne: "investigation" } }; if (category === "investigation") tq._id = { $exists: false }; if (openOnly) Object.assign(tq, OPEN_TICKET);
-          (await Tickets.find(tq).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: s.kind, number: s.number, title: s.title, status: s.status, category: s.category, tags: s.tags, hasImage: s.images.length > 0, createdAt: s.createdAt, ...(includeReplyState ? { replyState: ticketReplyState(t, GUILD_ID) } : {}) }); });
+          (await Tickets.find(tq).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: s.kind, number: s.number, title: s.title, ticket_status: s.ticket_status, status: s.status, category: s.category, tags: s.tags, hasImage: s.images.length > 0, createdAt: s.createdAt, ...(includeReplyState ? { replyState: ticketReplyState(t, GUILD_ID) } : {}) }); });
         }
         if (kind !== "ticket") {
           const sq = { ...q }; if (openOnly) sq.status = { $nin: ["closed", "resolved", "rejected", "done", "completed"] };
@@ -181,7 +186,7 @@ async function main() {
         const rx = { $regex: query.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), $options: "i" };
         const filt = { $or: [{ title: rx }, { description: rx }, { tags: rx }] };
         const out = [];
-        if (kind !== "suggestion") (await Tickets.find({ ...filt, category: { $ne: "investigation" } }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: "ticket", number: s.number, title: s.title, status: s.status, tags: s.tags, hasImage: s.images.length > 0 }); });
+        if (kind !== "suggestion") (await Tickets.find({ ...filt, category: { $ne: "investigation" } }).limit(limit).toArray()).forEach((t) => { const s = ticketShape(t); out.push({ kind: "ticket", number: s.number, title: s.title, ticket_status: s.ticket_status, status: s.status, tags: s.tags, hasImage: s.images.length > 0 }); });
         if (kind !== "ticket") (await Suggestions.find(filt).limit(limit).toArray()).forEach((g) => { const s = suggestionShape(g); out.push({ kind: "suggestion", number: s.number, title: s.title, status: s.status, tags: s.tags, hasImage: s.images.length > 0 }); });
         return jsonResult({ query, count: out.length, results: out.slice(0, limit) });
       });
@@ -190,16 +195,23 @@ async function main() {
       { kind: z.enum(["ticket", "suggestion", "all"]).optional().default("all"), limit: z.number().int().min(1).max(40).optional().default(20) },
       async ({ kind, limit }) => {
         const out = [];
-        if (kind !== "suggestion") (await Tickets.find({ category: { $ne: "investigation" }, imageUrls: { $exists: true, $ne: [] } }).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => out.push({ kind: "ticket", number: t.ticketNumber, title: t.title, status: t.status, images: (t.imageUrls || []).length }));
+        if (kind !== "suggestion") (await Tickets.find({ category: { $ne: "investigation" }, imageUrls: { $exists: true, $ne: [] } }).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((t) => out.push({ kind: "ticket", number: t.ticketNumber, title: t.title, ticket_status: ticketStatusLabel(t), status: t.status, images: (t.imageUrls || []).length }));
         if (kind !== "ticket") (await Suggestions.find({ screenshotUrl: { $nin: [null, ""] } }).sort({ createdAt: -1 }).limit(limit).toArray()).forEach((g) => out.push({ kind: "suggestion", number: g.issueNumber, title: g.title, status: g.status, images: 1 }));
         return jsonResult({ count: out.length, items: out });
       });
 
     server.tool("support_stats", "Support overview: ticket/suggestion counts by status & category, top tags, how many have screenshots, open backlog.", {}, async () => {
       const byStatus = async (col, field) => (await col.aggregate([{ $group: { _id: `$${field}`, n: { $sum: 1 } } }, { $sort: { n: -1 } }]).toArray()).map((x) => `${x._id || "?"}:${x.n}`);
+      // Open or Closed counts, the words people use; byStatus keeps the stored split for diagnostics.
+      const byTicketStatus = async () => {
+        const counts = { Open: 0, Closed: 0 };
+        for (const x of await Tickets.aggregate([{ $group: { _id: { status: "$status", merged: { $ne: [{ $ifNull: ["$mergedInto", null] }, null] } }, n: { $sum: 1 } } }]).toArray())
+          counts[isTicketClosed({ status: x._id.status, mergedInto: x._id.merged ? 1 : null }) ? "Closed" : "Open"] += x.n;
+        return [`Open:${counts.Open}`, `Closed:${counts.Closed}`];
+      };
       const topTags = async (col) => (await col.aggregate([{ $unwind: "$tags" }, { $group: { _id: "$tags", n: { $sum: 1 } } }, { $sort: { n: -1 } }, { $limit: 10 }]).toArray()).map((x) => `${x._id}(${x.n})`);
       return jsonResult({
-        tickets: { total: await Tickets.countDocuments(), open: await Tickets.countDocuments(OPEN_TICKET), byStatus: await byStatus(Tickets, "status"), byCategory: await byStatus(Tickets, "category"), withImages: await Tickets.countDocuments({ imageUrls: { $exists: true, $ne: [] } }) },
+        tickets: { total: await Tickets.countDocuments(), open: await Tickets.countDocuments(OPEN_TICKET), byTicketStatus: await byTicketStatus(), byStatus: await byStatus(Tickets, "status"), byCategory: await byStatus(Tickets, "category"), withImages: await Tickets.countDocuments({ imageUrls: { $exists: true, $ne: [] } }) },
         suggestions: { total: await Suggestions.countDocuments(), byStatus: await byStatus(Suggestions, "status"), byCategory: await byStatus(Suggestions, "category"), withImages: await Suggestions.countDocuments({ screenshotUrl: { $nin: [null, ""] } }) },
         topTags: await topTags(Suggestions),
       });
@@ -300,7 +312,7 @@ async function main() {
             $set: { status, updatedAt: now, closedAt: now, closedBy: auth.name || "agent" },
             $push: { statusHistory: { status, at: now, by: auth.name || "agent", source: "mcp", note: "closed; earlier resolution receipt kept" } },
           });
-          return jsonResult({ ok: true, kind: "ticket", number, status, receipt: prior, receiptKept: true, notification: { status: "not_requested", reason: "the player already has the resolution receipt" } });
+          return jsonResult({ ok: true, kind: "ticket", number, ticket_status: "Closed", status, receipt: prior, receiptKept: true, notification: { status: "not_requested", reason: "the player already has the resolution receipt" } });
         }
         const proposed = normalizeResolution({ message, actions, followUp, source }, { by: auth.name || "agent", now });
         const privateReply = require("../ticket-private-reply");
@@ -372,6 +384,7 @@ async function main() {
           ok: true,
           kind: "ticket",
           number,
+          ticket_status: ticketStatusLabel(refreshed || { status }),
           status,
           receipt: getResolution(refreshed || { resolution: receipt }),
           receiptUrl: existing.category === "investigation" ? null : ticketPublicUrl(number),
