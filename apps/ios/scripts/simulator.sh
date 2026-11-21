@@ -11,7 +11,7 @@ case "${OPS_TEST_SCOPE:-full}" in
   critic) retry_args=(-parallel-testing-enabled NO); test_args+=(-only-testing:OpsUITests/LaunchTests/testCriticScreens) ;;
   review)
     retry_args=(-parallel-testing-enabled NO)
-    test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testReviewScreensInLight -only-testing:OpsUITests/LaunchTests/testReviewScreensInOLED)
+    test_args+=(-only-testing:OpsSessionTests -only-testing:OpsUITests/LaunchTests/testReviewScreensInLight -only-testing:OpsUITests/LaunchTests/testReviewScreensInOLED -only-testing:OpsUITests/LaunchTests/testVoiceScreensInLight -only-testing:OpsUITests/LaunchTests/testVoiceScreensInOLED)
     ;;
   owner)
     test_args+=(

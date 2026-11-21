@@ -97,7 +97,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 var item = route
                 if !["conversation", "voice"].contains(lane), item["provider"] as? String == "Ollama" { item["available"] = false; item["reason"] = "Unavailable for this role; use DeepSeek for conversation." }
                 return item
-            }) }), "defaults": ["conversation": "claude:fixture", "coding": "codex:fixture", "investigation": "codex:fixture", "coordination": "claude:fixture"]]
+            }) }), "defaults": ["conversation": "claude:fixture", "voice": "codex:fixture", "coding": "codex:fixture", "investigation": "codex:fixture", "coordination": "claude:fixture"]]
         }
         func controls(_ body: [String: Any]?) -> [String: Any] {
             lock.lock(); defer { lock.unlock() }

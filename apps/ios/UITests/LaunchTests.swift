@@ -956,6 +956,28 @@ final class LaunchTests: XCTestCase {
         chip.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
+    func testVoiceScreensInLight() { captureVoiceScreens("light", "Light") }
+    func testVoiceScreensInOLED() { captureVoiceScreens("dark", "OLED") }
+
+    /// The voice screen pinned to each state (`--uitest-voice-state`), so Keir's
+    /// portrait, the status line and the voice in use can be judged in stills.
+    private func captureVoiceScreens(_ appearance: String, _ theme: String) {
+        let states = [("listening", "I'm listening"), ("thinking", "Thinking"), ("preparing", "Preparing voice"),
+                      ("speaking", "Keir is speaking"), ("fallback", "Keir is speaking"), ("stopped", "Keir is stopped")]
+        for (state, status) in states {
+            let app = launch(appearance: appearance, ["--uitest-voice-state", state])
+            chooseFromMenu(app, "keir-microphone", "Voice conversation", until: { app.staticTexts["Keir voice"].exists })
+            XCTAssertTrue(app.staticTexts["Keir voice"].waitForExistence(timeout: 5), state)
+            XCTAssertTrue(find(app, status, timeout: 5).exists, "\(state) reads \(status)")
+            let voiceLine = state == "fallback" ? "Apple · fallback voice for the rest" : "Microsoft Ava · online voice"
+            XCTAssertTrue(app.staticTexts[voiceLine].exists, "\(state) names the voice in use")
+            XCTAssertTrue(app.buttons["keir-voice-model"].exists)
+            capture(app, "\(theme) Voice \(state)")
+            app.buttons["End voice mode"].tap()
+            app.terminate()
+        }
+    }
+
     func testReviewScreensInLight() { captureReviewScreens("light", "Light") }
     func testReviewScreensInOLED() { captureReviewScreens("dark", "OLED") }
 
