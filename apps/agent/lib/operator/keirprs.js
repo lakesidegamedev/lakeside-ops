@@ -5,27 +5,41 @@
 // finished, five red on a missing Conflict of interest section, one red on verify, one conflicting, one superseded by a
 // merged fix. 22 branches of closed Keir PRs were left behind. This pass runs hourly and gives every open Keir PR with no
 // live owner exactly one of:
-//   - superseded by a merged PR for the same issue or ticket: closed with a note, branch deleted;
 //   - its only blocker is Keir's own description (no Conflict of interest section): the description is repaired;
-//   - green (only the owner's approval missing): one ask per head, through the normal approval card;
-//   - blocked (red check, conflict): one plain line to the owner per head and reason;
-//   - still sitting after KEIR_STALE_PR_DAYS with no owner: closed as stale with a note, branch deleted.
+//   - green on every check (only the owner's approval missing): one ask per head, through the normal approval card;
+//   - blocked (a red check, a conflict): one plain line to the owner per head and reason;
+//   - superseded or stale: the owner is told first that Keir plans to close it and when; it is closed only after that
+//     warning and a grace period, with a note on the PR saying why and how to undo it.
 // Branches of closed, unmerged Keir PRs are deleted.
 //
-// Safety: only PRs Keir created (a keir/ branch by keir-bot, or a fix/keir- branch of a recorded coding worker run, or a
-// PR recorded in Keir's ledger on a Keir branch) are ever touched, and a PR or branch with a commit from anyone else, or a
-// web edit or base merge made on GitHub, is never closed or deleted. Every write is logged with its reason, bounded per
-// pass, and recorded so it is not repeated. If GitHub cannot be read the pass does nothing and tries again next hour.
+// Third pass (review B1, B2, M4, M5, m5, m6, M7):
+//   - Keir never fights a person. A PR Keir closed that is open again, or a branch Keir deleted that exists again, was a
+//     person's decision: Keir records it, tells the owner once, and never acts on that PR or branch again. Every close and
+//     delete writes its intent to the ledger before it happens, so a restart or a half-failed write never repeats it
+//     blind. A close or delete that keeps failing is given up after two tries and the owner is told once.
+//   - "Superseded" needs strong evidence: both PRs say they close the same issue (fixes, closes or resolves; never Refs),
+//     that issue is closed, and every file Keir's PR changes is also changed by the merged PR. Anything weaker is a
+//     question to the owner, never a close.
+//   - Someone else's work is never closed: a commit authored or committed by anyone but Keir, a change made on GitHub, a
+//     merge commit, a new head pushed while no Keir task owned the PR, or a comment or review from a person.
+//   - A PR red only on custom-rules is never treated as green.
+//   - Closes and branch deletions each have their own switch (default off), every action can run in preview, GitHub
+//     writes need Keir's own token (KEIR_GITHUB_TOKEN), and everything stops under the kill switch or a pause.
 const { JOB_TERMINAL } = require("./machines");
 const { GAME_REPO, GITHUB_OWNER } = require("./github");
 const { hasDisclosure, withDisclosure } = require("./prdisclosure");
 const { referencedIssues } = require("./prhousekeeping");
+const controlsLib = require("./controls");
 
 const KEIR_BRANCH = /^(?:keir\/|fix\/keir-)/;
 const STALE_DAYS = 5;
+// A PR is never closed before this long after the pass first saw it, nor before this long after the owner was warned.
+const GRACE_HOURS = 48;
+const MAX_ATTEMPTS = 2;
 const LIMITS = Object.freeze({ closes: 3, deletes: 10, asks: 2, notices: 3, repairs: 3, reads: 60 });
 const READY = ["verify", "dependency-review"];
 const RUN_LIVE = new Set(["queued", "running", "checks", "merge_ready", "to_staging", "to_main", "verifying"]);
+const MARK = "<!-- keir:auto -->";
 function latestByName(runs) {
   const out = new Map();
   for (const r of runs || []) { const prior = out.get(r.name); if (!prior || String(r.started_at || "") >= String(prior.started_at || "")) out.set(r.name, r); }
@@ -60,6 +74,7 @@ function ledgerIndex(d) {
   return known;
 }
 function workerBranches(d) { return new Set(Object.values(d.codingWorkers?.runs || {}).map((r) => r.branch).filter(Boolean)); }
+function liveWorkerOn(d, ref) { return Object.values(d.codingWorkers?.runs || {}).some((r) => r.branch === ref && RUN_LIVE.has(r.state)); }
 
 // Keir made this PR: a Keir branch, and either keir-bot authored it or Keir's records hold it.
 function isKeirPr(pr, d, index = ledgerIndex(d)) {
@@ -70,18 +85,36 @@ function isKeirPr(pr, d, index = ledgerIndex(d)) {
   return index.has(Number(pr.number));
 }
 
-// A commit that is not Keir's: another author, or a change made on GitHub's web (edit, update branch, merge base).
-// commits: GitHub's PR commit list. Returns a reason, or null when every commit is Keir's.
-function foreignCommit(commits, keirEmail) {
+// A commit that is not Keir's. commits: GitHub's PR commit list. Returns a reason, or null when every commit is Keir's.
+// Keir's commits carry Keir's git identity as both author and committer. A coding worker's branch (fix/keir-) also allows
+// the worker's identity, taken from the first commit only when that commit's author and committer agree. A commit message
+// proves nothing ("Prepared by Keir" survives a cherry-pick or an amend), so it is not read.
+function foreignCommit(commits, keirEmail, { worker = false } = {}) {
   if (!Array.isArray(commits) || !commits.length) return "commits unreadable";
-  const first = commits[0]?.commit?.author?.email || "";
-  const allowed = new Set([String(keirEmail || "").toLowerCase(), first.toLowerCase()].filter(Boolean));
+  const allowed = new Set([String(keirEmail || "").toLowerCase()].filter(Boolean));
+  const first = commits[0]?.commit || {};
+  const fa = String(first.author?.email || "").toLowerCase(), fc = String(first.committer?.email || "").toLowerCase();
+  if (worker && fa && fa === fc) allowed.add(fa);
   for (const c of commits) {
     const author = String(c.commit?.author?.email || "").toLowerCase();
     const committer = String(c.commit?.committer?.email || "").toLowerCase();
     if (c.committer?.login === "web-flow" || /noreply@github\.com$/.test(committer)) return "a change made on GitHub";
     if ((c.parents || []).length > 1) return "a merge commit";
-    if (!/Prepared by Keir/.test(c.commit?.message || "") && !allowed.has(author)) return "a commit by someone else";
+    if (!allowed.has(author)) return "a commit by someone else";
+    if (!allowed.has(committer)) return "a commit rebased or amended by someone else";
+  }
+  return null;
+}
+
+// A comment or review on the PR from a person (not Keir, not a bot). Keir's own comments carry its marker or sign-off,
+// which matters when Keir writes under an account a person also uses.
+const KEIR_TEXT = /<!-- keir|Closed automatically by Keir|Prepared by Keir/;
+function personActivity(comments, reviews) {
+  for (const c of [...(comments || []), ...(reviews || [])]) {
+    const login = String(c.user?.login || "");
+    if (!login || c.user?.type === "Bot" || /\[bot\]$|^keir-bot$|^github-actions$/i.test(login)) continue;
+    if (KEIR_TEXT.test(String(c.body || ""))) continue;
+    return `${c.pull_request_review_id !== undefined || c.state ? "a review" : "a comment"} by ${login}`;
   }
   return null;
 }
@@ -95,53 +128,188 @@ function plainReason(failed, mergeable) {
   return { key: failed[0] || "unknown", text: `the ${failed[0] || "required"} check failed` };
 }
 
-function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now(), log = () => {}, staleDays = STALE_DAYS, limits = LIMITS, drain = () => {} }) {
+// Issues a PR says it closes (fixes, closes, resolves). "Refs #N" is a partial fix or an umbrella and never counts.
+function closingIssues(pr) {
+  const text = `${pr?.body || ""}`;
+  return new Set([...text.matchAll(/\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+((?:#\d+(?:,\s*)?)+)/gi)].flatMap((m) => [...m[1].matchAll(/#(\d+)/g)].map((x) => Number(x[1]))));
+}
+
+function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now(), log = () => {}, staleDays = STALE_DAYS, graceHours = GRACE_HOURS, limits = LIMITS, drain = () => {}, controls = controlsLib.DEFAULT_CONTROLS }) {
   const d = ledger.data;
   const STALE_MS = Math.max(1, Number(staleDays) || STALE_DAYS) * 86400000;
-  const state = () => { d.keirPrs ||= { prs: {}, actions: [] }; d.keirPrs.prs ||= {}; d.keirPrs.actions ||= []; return d.keirPrs; };
+  const GRACE_MS = Math.max(0, Number.isFinite(Number(graceHours)) ? Number(graceHours) : GRACE_HOURS) * 3600000;
+  const state = () => { d.keirPrs ||= { prs: {}, actions: [] }; d.keirPrs.prs ||= {}; d.keirPrs.actions ||= []; d.keirPrs.branches ||= {}; return d.keirPrs; };
   const record = (kind, number, reason, extra = {}) => {
     const s = state();
     s.actions = [...s.actions, { at: now(), kind, number, reason, ...extra }].slice(-200);
     ledger.audit(`keir_pr_${kind}`, { pr: number, reason, ...extra });
     log(`keirprs: ${kind} #${number}: ${reason}`);
   };
+  const day = (ms) => new Date(ms).toISOString().slice(0, 10);
+  let gates = null;
+  // What this pass may do right now. A GitHub write also needs Keir's own token: without it the write would go out under
+  // the box's default account (the owner's), so it is only previewed.
+  function can(kind) {
+    const g = kind === "close" ? gates.close : kind === "delete" ? gates.del : gates.pass;
+    if (!g.run) return { act: false, why: g.why };
+    if (["close", "delete", "repair", "comment"].includes(kind) && g.act && !config.githubReviewerToken) return { act: false, why: "KEIR_GITHUB_TOKEN is not set, so GitHub writes would go out under the owner's account" };
+    return g;
+  }
+  const preview = (action, target, reason, extra) => controlsLib.preview(d, "open-prs", action, target, reason, extra, now());
+
+  // A person reversed one of Keir's actions: never act on it again, tell the owner once.
+  function handsOff(rec, why) {
+    if (rec.handsOff) return;
+    rec.handsOff = { at: now(), why };
+    record("reversal", rec.number, why);
+  }
+  function tellReversal(rec) {
+    if (!rec.handsOff || rec.handsOff.toldAt) return;
+    const text = `PR #${rec.number}${rec.title ? ` (${rec.title})` : ""}: ${rec.handsOff.why}. Keir takes that as a person's decision and will not close, delete or ask about it again.`;
+    if (!can("notice").act) { preview("tell owner", `#${rec.number}`, text); return; }
+    ledger.notify(`keir-pr-reversed:${rec.number}`, "owner", text);
+    rec.handsOff.toldAt = now();
+  }
+
+  async function notice(pr, rec, key, text, budget) {
+    if (rec.notices[key]) return false;
+    if (!can("notice").act) { preview("owner line", `#${pr.number}:${key}`, text); return false; }
+    if (budget.notices <= 0) return false;
+    budget.notices--;
+    rec.notices[key] = now();
+    ledger.notify(`pr-blocked:${pr.number}:${key}`, "owner", text);
+    record("owner_notice", pr.number, key);
+    return true;
+  }
 
   async function close(pr, rec, reason, comment, budget) {
+    if ((rec.closeAttempts || 0) >= MAX_ATTEMPTS) {
+      if (!rec.closeGaveUpAt) {
+        rec.closeGaveUpAt = now();
+        record("close_given_up", pr.number, `${rec.closeAttempts} attempts failed`);
+        if (can("notice").act) ledger.notify(`keir-pr-close-failed:${pr.number}`, "owner", `Keir tried ${rec.closeAttempts} times to close PR #${pr.number} (${rec.title}) and GitHub refused each time. It is left open; Keir will not try again.`);
+      }
+      return false;
+    }
+    const c = can("close");
+    if (!c.act) { preview("close", `#${pr.number}`, `${reason} (not done: ${c.why})`, { title: rec.title }); return false; }
     if (budget.closes <= 0) return false;
     budget.closes--;
-    // The note goes once per PR: a close that fails after it is retried next pass without a second note.
-    if (!rec.closeNoteAt) { await write(["-X", "POST", `repos/${GAME_REPO}/issues/${pr.number}/comments`, "-f", `body=${comment}`]); rec.closeNoteAt = now(); ledger.save(); }
-    await write(["-X", "PATCH", `repos/${GAME_REPO}/pulls/${pr.number}`, "-f", "state=closed"]);
-    rec.closedAt = now(); rec.closedReason = reason;
+    // Intent first, so a restart or a failure between the writes is recognised as Keir's own attempt.
+    rec.closeStartedAt = now(); rec.closeAttempts = (rec.closeAttempts || 0) + 1; rec.closeReason = reason;
+    ledger.save();
+    try {
+      // The note goes once per PR: a close that fails after it is retried next pass without a second note.
+      if (!rec.closeNoteAt) { await write(["-X", "POST", `repos/${GAME_REPO}/issues/${pr.number}/comments`, "-f", `body=${comment}\n\n${MARK}`]); rec.closeNoteAt = now(); ledger.save(); }
+      await write(["-X", "PATCH", `repos/${GAME_REPO}/pulls/${pr.number}`, "-f", "state=closed"]);
+    } catch (e) {
+      rec.closeFailedAt = now(); rec.closeError = String(e.message).slice(0, 200);
+      record("close_failed", pr.number, rec.closeError);
+      ledger.save();
+      return false;
+    }
+    rec.closedAt = now(); rec.closedReason = reason; rec.closedHead = pr.head?.sha || null;
     record("closed", pr.number, reason);
+    ledger.save();
     await deleteBranch(pr.head.ref, pr.number, pr.head.sha, budget).catch((e) => log(`keirprs: branch ${pr.head.ref}: ${String(e.message).slice(0, 160)}`));
     return true;
   }
+
   async function deleteBranch(ref, number, sha, budget) {
-    if (budget.deletes <= 0 || !KEIR_BRANCH.test(ref)) return false;
+    if (!KEIR_BRANCH.test(ref)) return false;
+    const s = state(), b = s.branches[ref];
+    if (b?.handsOff || (b?.attempts || 0) >= MAX_ATTEMPTS) return false;
+    if (liveWorkerOn(d, ref)) return false;
     const live = await api([`repos/${GAME_REPO}/git/ref/heads/${ref}`]).catch((e) => (/404|Not Found/i.test(String(e.message)) ? { gone: true } : null));
     if (!live) return false; // unreadable: try later
     if (live.gone) return false;
-    if (sha && live.object?.sha && live.object.sha !== sha) { record("branch_kept", number, "someone pushed after the PR closed", { branch: ref }); return false; }
+    if (b?.deletedAt || (b?.deleteStartedAt && !b.failedAt)) { branchRestored(ref, number); return false; }
+    if (sha && live.object?.sha && live.object.sha !== sha) { keptOnce(ref, number, live.object.sha, "someone pushed after the PR closed"); return false; }
+    const c = can("delete");
+    if (!c.act) { preview("delete branch", ref, `its pull request #${number} was closed without merging (not done: ${c.why})`); return false; }
+    if (budget.deletes <= 0) return false;
     budget.deletes--;
-    await write(["-X", "DELETE", `repos/${GAME_REPO}/git/refs/heads/${ref}`]);
+    const rec = (s.branches[ref] = { pr: number, sha: sha || live.object?.sha || null, deleteStartedAt: now(), attempts: (b?.attempts || 0) + 1 });
+    ledger.save();
+    try { await write(["-X", "DELETE", `repos/${GAME_REPO}/git/refs/heads/${ref}`]); }
+    catch (e) { rec.failedAt = now(); rec.error = String(e.message).slice(0, 200); record("branch_delete_failed", number, rec.error, { branch: ref }); ledger.save(); return false; }
+    rec.deletedAt = now();
     record("branch_deleted", number, "its pull request was closed without merging", { branch: ref });
+    ledger.save();
     return true;
   }
+  function keptOnce(ref, number, sha, why) {
+    const s = state(), b = (s.branches[ref] ||= { pr: number });
+    if (b.keptSha === sha) return;
+    b.keptSha = sha;
+    record("branch_kept", number, why, { branch: ref });
+  }
+  // A branch Keir deleted exists again: a person restored it.
+  function branchRestored(ref, number) {
+    const s = state(), b = (s.branches[ref] ||= { pr: number });
+    if (b.handsOff) return;
+    b.handsOff = { at: now(), why: "restored after Keir deleted it" };
+    record("reversal", number, `branch ${ref} restored after Keir deleted it`, { branch: ref });
+    const rec = number && s.prs[number];
+    if (rec) { handsOff(rec, `its branch ${ref} was restored after Keir deleted it`); tellReversal(rec); }
+    else if (can("notice").act) ledger.notify(`keir-branch-restored:${ref}`, "owner", `Branch ${ref} (PR #${number}) was restored after Keir deleted it. Keir takes that as a person's decision and will not delete it again.`);
+    else preview("tell owner", ref, "branch restored after Keir deleted it");
+  }
 
-  // A merged PR that covers the same fix: it shares a referenced issue, or names the same ticket as Keir's task.
-  function supersededBy(pr, merged, index) {
-    const mine = referencedIssues(pr);
+  // A merged PR that covers the same fix. strong: both close the same issue (fixes, closes, resolves), the issue is closed,
+  // and every file Keir's PR changes is changed by the merged PR too. weak: a shared reference of any kind, or the merged
+  // PR names Keir's ticket; never enough to close.
+  async function supersededBy(pr, merged, index, budget) {
+    const mineClose = closingIssues(pr), mineAny = referencedIssues(pr);
     const tickets = new Set([...(index.get(Number(pr.number))?.jobs || [])].map((id) => d.jobs?.[id]?.ticket).filter(Boolean).map(Number));
     const created = Date.parse(pr.created_at || "") || 0;
+    let weak = null;
     for (const m of merged) {
       if (Number(m.number) === Number(pr.number) || !m.merged_at || Date.parse(m.merged_at) < created) continue;
-      const theirs = referencedIssues(m);
-      if ([...mine].some((n) => theirs.has(n))) return m;
+      const shared = [...mineClose].filter((n) => closingIssues(m).has(n));
+      if (shared.length && budget.reads >= 3) {
+        budget.reads -= 3;
+        const issue = await api([`repos/${GAME_REPO}/issues/${shared[0]}`]).catch(() => null);
+        const mine = await api([`repos/${GAME_REPO}/pulls/${pr.number}/files?per_page=100`]).catch(() => null);
+        const theirs = await api([`repos/${GAME_REPO}/pulls/${m.number}/files?per_page=100`]).catch(() => null);
+        const files = Array.isArray(mine) && Array.isArray(theirs) ? { mine: mine.map((f) => f.filename), theirs: new Set(theirs.map((f) => f.filename)) } : null;
+        if (issue?.state === "closed" && files && files.mine.length && files.mine.every((f) => files.theirs.has(f))) return { by: m, strength: "strong", why: `both close issue #${shared[0]}, which is closed, and #${m.number} changes every file this PR changes` };
+        weak ||= { by: m, strength: "weak", why: `both say they close issue #${shared[0]}, but ${issue?.state !== "closed" ? "that issue is still open" : !files ? "their files could not be compared" : "they change different files"}` };
+        continue;
+      }
+      const any = [...mineAny].find((n) => referencedIssues(m).has(n));
+      if (any && !weak) weak = { by: m, strength: "weak", why: `both mention issue #${any}` };
       const text = `${m.title || ""}\n${m.body || ""}`;
-      if ([...tickets].some((t) => new RegExp(`\\btickets?\\s*#?\\s*${t}\\b`, "i").test(text))) return m;
+      const t = [...tickets].find((x) => new RegExp(`\\btickets?\\s*#?\\s*${x}\\b`, "i").test(text));
+      if (t && !weak) weak = { by: m, strength: "weak", why: `#${m.number} names ticket ${t}` };
     }
-    return null;
+    return weak;
+  }
+
+  // The owner is warned first; the close happens only after the grace period, and never if a person is involved.
+  async function warnThenClose(pr, rec, kind, reason, warnText, closeNote, budget) {
+    if (rec.personTouched || rec.foreign) return false;
+    // With closes off (the default) or in preview, nothing is said to the owner about a close that will not happen.
+    const c = can("close");
+    if (!c.act) { preview("close", `#${pr.number}`, `${reason} (not done: ${c.why})`, { title: rec.title }); return false; }
+    if (now() - (rec.firstSeenAt || now()) < GRACE_MS) return false;
+    rec.warned ||= {};
+    if (!rec.warned[kind]) {
+      const when = day(now() + GRACE_MS);
+      const sent = await notice(pr, rec, `will-close:${kind}`, `${warnText} Keir plans to close PR #${pr.number} on ${when} with a note. To keep it, comment on it or tell Keir; a person's comment, push or reopen stops Keir for good.`, budget);
+      if (sent) rec.warned[kind] = now();
+      return false;
+    }
+    if (now() - rec.warned[kind] < GRACE_MS) return false;
+    // Last check before closing: a person who commented or reviewed since owns the decision.
+    if (budget.reads < 2) return false;
+    budget.reads -= 2;
+    const comments = await api([`repos/${GAME_REPO}/issues/${pr.number}/comments?per_page=100`]).catch(() => null);
+    const reviews = await api([`repos/${GAME_REPO}/pulls/${pr.number}/reviews?per_page=100`]).catch(() => null);
+    if (!Array.isArray(comments) || !Array.isArray(reviews)) return false; // unreadable: no guess
+    const person = personActivity(comments, reviews);
+    if (person) { rec.personTouched = person; record("person_activity", pr.number, person); return false; }
+    return close(pr, rec, reason, closeNote, budget);
   }
 
   async function sweepOpen(budget) {
@@ -159,20 +327,43 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       const n = Number(pr.number), head = pr.head?.sha;
       seen.add(n);
       const rec = (s.prs[n] ||= { number: n, firstSeenAt: now(), asked: {}, notices: {} });
-      rec.title = String(pr.title || "").slice(0, 120); rec.head = head; rec.checkedAt = now();
-      if (index.get(n)?.live) { delete rec.orphanSince; rec.owner = "live task"; continue; }
+      rec.asked ||= {}; rec.notices ||= {};
+      rec.title = String(pr.title || "").slice(0, 120); rec.checkedAt = now();
+      // B1: Keir closed it and it is open again. If Keir's own close attempt never landed, it is a failed close; otherwise
+      // a person reopened it. Read the PR's events when unsure.
+      if (!rec.handsOff && (rec.closedAt || rec.closeStartedAt)) {
+        let reopened = Boolean(rec.closedAt);
+        if (!reopened && rec.closeStartedAt) {
+          const events = await api([`repos/${GAME_REPO}/issues/${n}/events?per_page=100`]).catch(() => null);
+          if (!Array.isArray(events)) continue; // unsure: do nothing this pass
+          reopened = events.some((e) => e.event === "reopened");
+        }
+        if (reopened) handsOff(rec, "it was reopened after Keir closed it");
+      }
+      if (rec.handsOff) { tellReversal(rec); rec.head = head; continue; }
+      const wasOrphan = Boolean(rec.orphanSince);
+      if (index.get(n)?.live) { delete rec.orphanSince; rec.owner = "live task"; rec.head = head; continue; }
+      // M4: a new head while no Keir task owned the PR was pushed by someone else.
+      if (wasOrphan && rec.head && head && rec.head !== head) { rec.personTouched ||= "new commits pushed while no Keir task owned it"; rec.orphanSince = now(); record("person_activity", n, rec.personTouched, { head }); }
+      rec.head = head;
       rec.owner = null;
       rec.orphanSince ||= now();
       if (budget.reads <= 0) break;
       budget.reads -= 3;
       const commits = await api([`repos/${GAME_REPO}/pulls/${n}/commits?per_page=100`]).catch(() => null);
-      const foreign = foreignCommit(commits, config.keirGitEmail);
+      const foreign = foreignCommit(commits, config.keirGitEmail, { worker: /^fix\/keir-/.test(pr.head?.ref || "") && workerBranches(d).has(pr.head.ref) });
       rec.foreign = foreign;
-      const by = supersededBy(pr, mergedOnly, index);
-      if (by) {
-        if (foreign) { await notice(pr, rec, `superseded:${by.number}`, `PR #${n} (${rec.title}) looks superseded by merged PR #${by.number}, but it has ${foreign}, so Keir left it open. Close it if it is no longer needed.`, budget); continue; }
-        await close(pr, rec, `superseded by #${by.number}`, `Closing as superseded: #${by.number} is merged and covers the same fix. Closed automatically by Keir, which opened this PR.`, budget);
+      const sup = await supersededBy(pr, mergedOnly, index, budget);
+      if (sup?.strength === "strong" && !foreign && !rec.personTouched) {
+        await warnThenClose(pr, rec, `superseded:${sup.by.number}`, `superseded by #${sup.by.number}`,
+          `PR #${n} (${rec.title}) looks superseded by merged PR #${sup.by.number}: ${sup.why}.`,
+          `Closing as superseded by #${sup.by.number}: ${sup.why}. Closed automatically by Keir, which opened this PR. If this change is still wanted, reopen the PR; Keir will then leave it alone.`, budget);
         continue;
+      }
+      if (sup) {
+        // Weak or someone else's work: a question to the owner, never a close.
+        rec.supersedeAsk = sup.by.number;
+        await notice(pr, rec, `superseded?:${sup.by.number}`, `PR #${n} (${rec.title}) may overlap merged PR #${sup.by.number} (${sup.why}${foreign ? `; it also has ${foreign}` : ""}). Keir will not close it on that alone. Close it if it is no longer needed.`, budget);
       }
       const runs = latestByName((await api([`repos/${GAME_REPO}/commits/${head}/check-runs?per_page=100`]).catch(() => null))?.check_runs);
       const full = await api([`repos/${GAME_REPO}/pulls/${n}`]).catch(() => null);
@@ -181,19 +372,24 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       const running = [...runs.values()].some((r) => r.status !== "completed");
       const readyRest = READY.every((name) => runs.get(name)?.conclusion === "success");
       // Keir's own description is the blocker: repair it once per head, then let the check run again.
-      if (failed.includes("custom-rules") && !hasDisclosure(full.body) && !foreign && rec.repairedHead !== head && budget.repairs > 0) {
-        budget.repairs--;
-        await write(["-X", "PATCH", `repos/${GAME_REPO}/pulls/${n}`, "-f", `body=${withDisclosure(full.body)}`]);
-        const red = runs.get("custom-rules");
-        if (red?.id) await write(["-X", "POST", `repos/${GAME_REPO}/actions/jobs/${red.id}/rerun`]).catch(() => null);
-        rec.repairedHead = head;
-        record("description_repaired", n, "added the Conflict of interest section custom-rules requires");
-        continue;
+      if (failed.includes("custom-rules") && !hasDisclosure(full.body) && !foreign && !rec.personTouched && rec.repairedHead !== head) {
+        const c = can("repair");
+        if (!c.act) { preview("repair description", `#${n}`, `add the Conflict of interest section custom-rules requires (not done: ${c.why})`); continue; }
+        if (budget.repairs > 0) {
+          budget.repairs--;
+          await write(["-X", "PATCH", `repos/${GAME_REPO}/pulls/${n}`, "-f", `body=${withDisclosure(full.body)}`]);
+          const red = runs.get("custom-rules");
+          if (red?.id) await write(["-X", "POST", `repos/${GAME_REPO}/actions/jobs/${red.id}/rerun`]).catch(() => null);
+          rec.repairedHead = head;
+          record("description_repaired", n, "added the Conflict of interest section custom-rules requires");
+        }
+        continue; // repaired now, or next pass when this pass's repairs are used up
       }
-      const otherRed = failed.filter((name) => name !== "custom-rules");
       const stale = now() - rec.orphanSince > STALE_MS;
-      if (!otherRed.length && !running && readyRest && full.mergeable !== false) {
-        if (!rec.asked[head]) {
+      // M5: green means every check passed, custom-rules included.
+      if (!failed.length && !running && readyRest && full.mergeable !== false) {
+        if (!rec.asked[head] && !rec.supersedeAsk) {
+          if (!can("ask").act) { preview("ask owner", `#${n}`, "green with no live task: one merge ask through the approval card"); continue; }
           if (budget.asks <= 0) continue;
           budget.asks--;
           rec.asked[head] = now();
@@ -203,29 +399,24 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
           drain();
           continue;
         }
-        if (stale && !foreign && now() - rec.asked[head] > STALE_MS) await close(pr, rec, `stale: asked on ${new Date(rec.asked[head]).toISOString().slice(0, 10)} with no answer`, `Closing as stale: this change was put to the owner and nobody carried it forward for ${Math.round(STALE_MS / 86400000)} days. Closed automatically by Keir, which opened this PR; it can be reopened if still wanted.`, budget);
+        const askedAt = rec.asked[head];
+        if (stale && askedAt && now() - askedAt > STALE_MS) await warnThenClose(pr, rec, "stale", `stale: asked on ${day(askedAt)} with no answer`,
+          `PR #${n} (${rec.title}) was put to the owner on ${day(askedAt)} and nobody has carried it forward.`,
+          `Closing as stale: this change was put to the owner on ${day(askedAt)} and nobody carried it forward for ${Math.round(STALE_MS / 86400000)} days. Closed automatically by Keir, which opened this PR. If it is still wanted, reopen it; Keir will then leave it alone.`, budget);
         continue;
       }
       if (running) continue;
-      const why = plainReason(otherRed.length ? otherRed : failed, full.mergeable);
-      if (stale && !foreign) {
-        await close(pr, rec, `stale: blocked (${why.key})`, `Closing as stale: ${why.text}, and no Keir task or person has carried it forward for ${Math.round((now() - rec.orphanSince) / 86400000)} days. Closed automatically by Keir, which opened this PR; it can be reopened if still wanted.`, budget);
+      const why = plainReason(failed, full.mergeable);
+      if (stale && !foreign && !rec.personTouched) {
+        await warnThenClose(pr, rec, "stale", `stale: blocked (${why.key})`, `PR #${n} (${rec.title}) is blocked: ${why.text}, and no Keir task or person has carried it forward since ${day(rec.orphanSince)}.`,
+          `Closing as stale: ${why.text}, and no Keir task or person has carried it forward for ${Math.round((now() - rec.orphanSince) / 86400000)} days. Closed automatically by Keir, which opened this PR. If it is still wanted, reopen it; Keir will then leave it alone.`, budget);
         continue;
       }
-      const closes = new Date(rec.orphanSince + STALE_MS).toISOString().slice(0, 10);
-      await notice(pr, rec, `${why.key}:${head}`, `PR #${n} (${rec.title}) is blocked: ${why.text}. No Keir task is working on it.${foreign ? "" : ` Keir will close it on ${closes} unless someone picks it up.`}`, budget);
+      const keepOpen = foreign || rec.personTouched || !can("close").act;
+      await notice(pr, rec, `${why.key}:${head}`, `PR #${n} (${rec.title}) is blocked: ${why.text}. No Keir task is working on it.${keepOpen ? "" : ` Keir may close it after ${day(rec.orphanSince + STALE_MS)} if nobody picks it up, and will warn first.`}`, budget);
       } catch (e) { log(`keirprs: #${pr.number}: ${String(e.message).slice(0, 160)}; retried next pass`); }
     }
-    for (const [n, rec] of Object.entries(s.prs)) if (!seen.has(Number(n)) && now() - (rec.checkedAt || 0) > 14 * 86400000) delete s.prs[n];
-  }
-
-  async function notice(pr, rec, key, text, budget) {
-    if (rec.notices[key] || budget.notices <= 0) return false;
-    budget.notices--;
-    rec.notices[key] = now();
-    ledger.notify(`pr-blocked:${pr.number}:${key}`, "owner", text);
-    record("owner_notice", pr.number, key);
-    return true;
+    for (const [n, rec] of Object.entries(s.prs)) if (!seen.has(Number(n)) && !rec.handsOff && now() - (rec.checkedAt || 0) > 14 * 86400000) delete s.prs[n];
   }
 
   // Branches of closed, unmerged Keir PRs. Merged branches are deleted when Keir merges; others are left to their owner.
@@ -238,30 +429,41 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       refs.push(...rows.map((r) => ({ ref: String(r.ref || "").replace(/^refs\/heads\//, ""), sha: r.object?.sha })));
     }
     const s = state();
+    // B1: a branch Keir deleted exists again.
+    for (const { ref } of refs) { const b = s.branches[ref]; if (b && !b.handsOff && (b.deletedAt || (b.deleteStartedAt && !b.failedAt))) branchRestored(ref, b.pr); }
+    const hist = controlsLib.history(d, "openPrBranches", { controls, now: now(), act: can("delete").act });
     s.branchCursor = (s.branchCursor || 0) % Math.max(1, refs.length);
     const order = [...refs.slice(s.branchCursor), ...refs.slice(0, s.branchCursor)];
     let looked = 0;
     for (const { ref, sha } of order) {
       if (budget.deletes <= 0 || budget.reads <= 0 || looked >= 20) break;
-      looked++; budget.reads--;
+      looked++;
+      const b = s.branches[ref];
+      if (b?.handsOff || (b?.attempts || 0) >= MAX_ATTEMPTS || liveWorkerOn(d, ref)) continue;
+      budget.reads--;
       const prs = await api([`repos/${GAME_REPO}/pulls?state=all&head=${GITHUB_OWNER}:${ref}&per_page=10`]).catch(() => null);
       if (!Array.isArray(prs) || !prs.length) continue;
       if (prs.some((p) => p.state === "open" || p.merged_at)) continue;
       const pr = prs[0];
-      if (!isKeirPr(pr, d, index)) continue;
-      if (pr.head?.sha && sha && pr.head.sha !== sha) { record("branch_kept", pr.number, "the branch moved after its PR closed", { branch: ref }); continue; }
+      if (!isKeirPr(pr, d, index) || index.get(Number(pr.number))?.live || s.prs[pr.number]?.handsOff) continue;
+      if (pr.head?.sha && sha && pr.head.sha !== sha) { keptOnce(ref, pr.number, sha, "the branch moved after its PR closed"); continue; }
+      const age = hist.check(Date.parse(pr.closed_at || "") || NaN);
+      if (age === "too old" || age === "later") continue;
       budget.reads--;
-      const foreign = foreignCommit(await api([`repos/${GAME_REPO}/pulls/${pr.number}/commits?per_page=100`]).catch(() => null), config.keirGitEmail);
-      if (foreign) { continue; }
-      budget.deletes--;
-      await write(["-X", "DELETE", `repos/${GAME_REPO}/git/refs/heads/${ref}`]);
-      record("branch_deleted", pr.number, "its pull request was closed without merging", { branch: ref });
+      const foreign = foreignCommit(await api([`repos/${GAME_REPO}/pulls/${pr.number}/commits?per_page=100`]).catch(() => null), config.keirGitEmail, { worker: /^fix\/keir-/.test(ref) && workerBranches(d).has(ref) });
+      if (foreign) { keptOnce(ref, pr.number, sha, foreign); continue; }
+      await deleteBranch(ref, pr.number, sha, budget);
     }
     s.branchCursor = (s.branchCursor + looked) % Math.max(1, refs.length);
   }
 
   async function tick() {
     const budget = { ...LIMITS, ...limits };
+    gates = { pass: controls.gate("openPrPass"), close: controls.gate("openPrCloses", { destructive: true }), del: controls.gate("openPrBranchDeletes", { destructive: true }) };
+    if (!gates.pass.run) { log(`keirprs: not run: ${gates.pass.why}`); return { ...budget, skipped: gates.pass.why }; }
+    // The close and delete switches sit inside the pass: with the pass on and closes off, closes are previewed.
+    if (!gates.close.run && gates.close.why && !/kill switch|paused/.test(gates.close.why)) gates.close = { run: true, act: false, why: gates.close.why };
+    if (!gates.del.run && gates.del.why && !/kill switch|paused/.test(gates.del.why)) gates.del = { run: true, act: false, why: gates.del.why };
     try { await sweepOpen(budget); } catch (e) { log(`keirprs: open sweep skipped: ${String(e.message).slice(0, 200)}`); }
     try { await sweepBranches(budget); } catch (e) { log(`keirprs: branch sweep skipped: ${String(e.message).slice(0, 200)}`); }
     state().lastSweepAt = now();
@@ -271,4 +473,4 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
   return { tick };
 }
 
-module.exports = { createKeirPrs, isKeirPr, foreignCommit, ledgerIndex, plainReason, KEIR_BRANCH, STALE_DAYS, LIMITS };
+module.exports = { createKeirPrs, isKeirPr, foreignCommit, personActivity, closingIssues, ledgerIndex, plainReason, KEIR_BRANCH, STALE_DAYS, GRACE_HOURS, LIMITS, MARK };

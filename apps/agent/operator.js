@@ -121,6 +121,11 @@ const ledger = createLedger(path.join(config.stateDir, "ledger.json"));
 // Keir 8.4: kill switch (a file read at runtime), hard caps and guarded periodic jobs.
 const killSwitch = require("./lib/operator/killswitch").createKillSwitch({ file: env.KEIR_KILL_SWITCH_FILE || path.join(config.stateDir, "kill-switch"), env });
 const limits = require("./lib/operator/limits").createLimits({ file: env.KEIR_LIMITS_FILE || path.join(config.stateDir, "limits.json"), env });
+// Keir 11.2 third pass (review M7): one switch per new unattended behaviour, a preview mode and a bounded first start,
+// read at each pass from <state dir>/switches.json and the environment (lib/operator/controls.js). Every new pass also
+// stops under the kill switch or a pause; pull request closes and branch deletions also wait out the production hold.
+const prodHoldUntil = () => { try { const until = Date.parse(require("node:fs").readFileSync(env.KEIR_PROD_HOLD_FILE || path.join(config.stateDir, "prod-hold"), "utf8").trim()); return until > Date.now() ? new Date(until).toISOString() : null; } catch { return null; } };
+const controls = require("./lib/operator/controls").createControls({ file: env.KEIR_SWITCHES_FILE || path.join(config.stateDir, "switches.json"), env, killSwitch, data: ledger.data, prodHold: prodHoldUntil });
 const tickers = require("./lib/operator/ticker").createTickers({ log: (m) => console.log(`[keir] ${m}`) });
 const diary = require("./lib/operator/diary").createDiary({ stateDir: config.stateDir, ledger, ownerId: config.ownerId, botId: config.botId, staffIds: config.staffIds });
 // Keir 5.1 routing lock: lanes never run a model that measurably failed them.
@@ -431,8 +436,11 @@ tickers.every("decisioncardsweep", 6 * 3600000, () => decisionCards.sweepClosedT
 // Writes go out as keir-bot when its token is set. KEIR_STALE_PR_DAYS (default 5) sets when an orphaned PR is closed as stale.
 const ghKeir = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000,
   env: { PATH: "/usr/local/bin:/usr/bin:/bin", HOME: "/root", ...(config.githubReviewerToken ? { GH_TOKEN: config.githubReviewerToken } : {}) } }, (e, out) => e ? reject(e) : resolve(JSON.parse(out || "null"))));
-const keirPrs = require("./lib/operator/keirprs").createKeirPrs({ ledger, api: ciApi, write: ghKeir, config, log, drain: () => drain(), staleDays: Number(env.KEIR_STALE_PR_DAYS || 5) });
-tickers.every("keirprs", 60 * 60000, async () => { if (killSwitch.state()?.engaged) return; await keirPrs.tick(); }, { immediateMs: 10 * 60000, maxMs: 5 * 60000 });
+// Closes (KEIR_OPEN_PR_CLOSES) and branch deletions (KEIR_OPEN_PR_BRANCH_DELETES) are off until the owner turns them on;
+// GitHub writes need KEIR_GITHUB_TOKEN; KEIR_PR_CLOSE_GRACE_HOURS (48) is the first-sight and warning grace.
+const keirPrs = require("./lib/operator/keirprs").createKeirPrs({ ledger, api: ciApi, write: ghKeir, config, log, drain: () => drain(), controls,
+  staleDays: Number(env.KEIR_STALE_PR_DAYS || 5), graceHours: Number(env.KEIR_PR_CLOSE_GRACE_HOURS || 48) });
+tickers.every("keirprs", 60 * 60000, async () => { await keirPrs.tick(); }, { immediateMs: 10 * 60000, maxMs: 5 * 60000 });
 tickers.every("ciwatch", 60000, async () => {
   try { await ciWatch.tick(); } catch (e) { log(`ciwatch: ${e.message}`); }
   // Keir 10: cards move on receipts, without a model run (broker.stageTick).

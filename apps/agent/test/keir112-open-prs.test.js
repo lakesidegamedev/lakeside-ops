@@ -5,6 +5,9 @@ const test = require("node:test");
 const assert = require("node:assert");
 const { createKeirPrs, foreignCommit, isKeirPr } = require("../lib/operator/keirprs");
 const { createOwnerWait } = require("../lib/operator/ownerwait");
+const { staticControls } = require("../lib/operator/controls");
+// Closes and branch deletions are off by default (review M7); these tests switch them on unless a test says otherwise.
+const ALL_ON = staticControls({ openPrCloses: "on", openPrBranchDeletes: "on" });
 
 const DAY = 86400000, T0 = Date.parse("2026-11-21T01:00:00Z");
 const REPO = "lakesidegamedev/AHDGame";
@@ -36,7 +39,7 @@ function inventory() {
   return { open, merged };
 }
 
-function setup({ fail = false, open, merged, branches = [], closedPrs = {}, commits = {} } = {}) {
+function setup({ fail = false, open, merged, branches = [], closedPrs = {}, commits = {}, comments = {}, reviews = {}, events = {}, issues = {}, files = {}, controls = ALL_ON, token = "keir-bot-token", graceHours = 48 } = {}) {
   const inv = inventory();
   open ||= inv.open; merged ||= inv.merged;
   const data = { jobs: {}, actions: {}, decisions: {}, outbox: {}, audit: [], seen: {}, codingWorkers: { runs: { r1: { id: "r1", branch: "fix/keir-v2re46", pr: 6865, state: "needs_owner", ticket: 1857 } } } };
@@ -53,6 +56,11 @@ function setup({ fail = false, open, merged, branches = [], closedPrs = {}, comm
     if (/pulls\?state=open&base=development/.test(route)) return open;
     if (/pulls\?state=closed&base=development/.test(route)) return merged;
     if ((m = /pulls\/(\d+)\/commits/.exec(route))) return commits[m[1]] || [keirCommit("c" + m[1])];
+    if ((m = /issues\/(\d+)\/events/.exec(route))) return events[m[1]] || [];
+    if ((m = /issues\/(\d+)\/comments/.exec(route))) return comments[m[1]] || [];
+    if ((m = /pulls\/(\d+)\/reviews/.exec(route))) return reviews[m[1]] || [];
+    if ((m = /pulls\/(\d+)\/files/.exec(route))) return files[m[1]] || [{ filename: `src/${m[1]}.ts` }];
+    if ((m = /issues\/(\d+)$/.exec(route))) return issues[m[1]] || { number: Number(m[1]), state: "open" };
     if ((m = /commits\/h(\d+)\/check-runs/.exec(route))) return { check_runs: runs(byNumber[m[1]]._checks) };
     if ((m = /pulls\/(\d+)$/.exec(route))) return byNumber[m[1]] || closedPrs[m[1]];
     if ((m = /git\/matching-refs\/heads\/(.+?)\?/.exec(route))) return branches.filter((b) => b.ref.startsWith(m[1])).map((b) => ({ ref: `refs/heads/${b.ref}`, object: { sha: b.sha } }));
@@ -69,27 +77,26 @@ function setup({ fail = false, open, merged, branches = [], closedPrs = {}, comm
     if (args[1] === "PATCH" && pr && args.includes("state=closed") && byNumber[pr[1]]) { const i = open.indexOf(byNumber[pr[1]]); if (i >= 0) open.splice(i, 1); }
     return {};
   };
-  const prs = createKeirPrs({ ledger, api, write, config: { keirGitEmail: KEIR_EMAIL }, now: () => clock });
-  return { data, ledger, prs, writes, api, advance: (ms) => { clock += ms; } };
+  const prs = createKeirPrs({ ledger, api, write, config: { keirGitEmail: KEIR_EMAIL, githubReviewerToken: token }, now: () => clock, controls, graceHours });
+  return { data, ledger, prs, writes, api, open, branches, byNumber, advance: (ms) => { clock += ms; }, now: () => clock };
 }
 const asked = (w) => Object.values(w.data.jobs).filter((j) => j.adoptedPr).map((j) => j.adoptedPr).sort();
 const notices = (w) => Object.keys(w.data.outbox).filter((k) => k.startsWith("pr-blocked:"));
 
-test("first pass over the 21 Nov inventory: superseded closed, descriptions repaired, green asked once, blocked reported once", async () => {
+test("first pass over the 21 Nov inventory: nothing closed on first sight, descriptions repaired, green asked once, blocked reported once", async () => {
   const w = setup();
   await w.prs.tick();
-  // 6865 is superseded by 6866 (same issue): closed with a note and its branch deleted.
-  assert.ok(w.writes.some((x) => /issues\/6865\/comments .*Closing as superseded: #6866 is merged/.test(x)));
-  assert.ok(w.writes.includes(`-X PATCH repos/${REPO}/pulls/6865 -f state=closed`));
-  assert.ok(w.writes.includes(`-X DELETE repos/${REPO}/git/refs/heads/fix/keir-v2re46`));
+  // 6865 and merged 6866 share only "Refs #6850": that is weak evidence (review B2). One question to the owner, no close.
+  assert.ok(!w.writes.some((x) => /state=closed|DELETE/.test(x)), w.writes.join("\n"));
+  assert.match(w.data.outbox["pr-blocked:6865:superseded?:6866"].content, /may overlap merged PR #6866 \(both mention issue #6850\)\. Keir will not close it on that alone/);
   // Missing Conflict of interest section on Keir's own PRs: repaired (three per pass), and the check re-run.
   const repaired = w.writes.filter((x) => /-X PATCH .*pulls\/(\d+) -f body=.*## Conflict of interest/s.test(x));
   assert.equal(repaired.length, 3);
   // Green, no live task: one ask each, budget two per pass. 6976 has a live task and is left to it.
   assert.deepEqual(asked(w), [6725, 6781]);
   // Red verify and conflict: one plain line each.
-  assert.deepEqual(notices(w).sort(), ["pr-blocked:6853:verify:h6853", "pr-blocked:6887:conflict:h6887"]);
-  assert.match(w.data.outbox["pr-blocked:6853:verify:h6853"].content, /PR #6853 \(feat: frame party and government leadership portraits\) is blocked: the build and test check failed\. No Keir task is working on it\. Keir will close it on 2026-11-26/);
+  assert.deepEqual(notices(w).sort(), ["pr-blocked:6853:verify:h6853", "pr-blocked:6865:superseded?:6866", "pr-blocked:6887:conflict:h6887"]);
+  assert.match(w.data.outbox["pr-blocked:6853:verify:h6853"].content, /PR #6853 \(feat: frame party and government leadership portraits\) is blocked: the build and test check failed\. No Keir task is working on it\. Keir may close it after 2026-11-26 if nobody picks it up, and will warn first/);
   // Nobody else's PR is touched.
   for (const n of [6757, 6635, 6642, 6976]) assert.ok(!w.writes.some((x) => new RegExp(`/${n}\\b`).test(x)), String(n));
   for (const text of Object.values(w.data.outbox).map((o) => o.content)) assert.doesNotMatch(text, /[\u2013\u2014]/);
@@ -105,21 +112,31 @@ test("later passes finish the repairs and never repeat an ask, a notice or a clo
   assert.deepEqual(asked(w), [6725, 6781, 6784, 6791, 6798, 6799]);
   w.advance(3600000); await w.prs.tick(); w.advance(3600000); await w.prs.tick();
   assert.deepEqual(asked(w), [6725, 6781, 6784, 6791, 6798, 6799, 6878]);
-  assert.equal(notices(w).length, 2);
-  assert.equal(w.writes.filter((x) => /state=closed/.test(x)).length, 1);
+  assert.equal(notices(w).length, 3);
+  assert.equal(w.writes.filter((x) => /state=closed/.test(x)).length, 0);
 });
 
-test("after the stale period an unanswered or blocked orphan is closed with a note; a foreign commit keeps it open", async () => {
+// Stale: the owner is warned first, the close comes a grace period later, with a note that says how to undo it.
+async function toStaleClose(w) {
+  await w.prs.tick();
+  for (const j of Object.values(w.data.jobs)) if (j.adoptedPr) j.state = "done";
+  w.advance(5 * DAY + 3600000); await w.prs.tick(); // warning
+  w.advance(49 * 3600000); await w.prs.tick(); // close
+}
+
+test("after the stale period an orphan is warned about, then closed with a note after the grace; a foreign commit keeps it open", async () => {
   const commits = { 6887: [keirCommit("a"), { sha: "b", commit: { author: { email: "dev@example.com" }, committer: { email: "dev@example.com" }, message: "rebase" }, parents: [{}] }] };
   const w = setup({ commits });
   await w.prs.tick();
-  // The ask tasks ended without an answer (their action expired); the PRs are orphaned again.
   for (const j of Object.values(w.data.jobs)) if (j.adoptedPr) j.state = "done";
   w.advance(5 * DAY + 3600000);
   await w.prs.tick();
-  assert.ok(w.writes.some((x) => /issues\/6853\/comments .*Closing as stale: the build and test check failed/.test(x)));
+  assert.ok(!w.writes.some((x) => /state=closed/.test(x)), "warned, not closed");
+  assert.match(w.data.outbox["pr-blocked:6853:will-close:stale"].content, /Keir plans to close PR #6853 on 2026-11-28 with a note\. To keep it, comment on it or tell Keir/);
+  w.advance(49 * 3600000);
+  await w.prs.tick();
+  assert.ok(w.writes.some((x) => /issues\/6853\/comments .*Closing as stale: the build and test check failed.*If it is still wanted, reopen it; Keir will then leave it alone/s.test(x)));
   assert.ok(w.writes.includes(`-X PATCH repos/${REPO}/pulls/6853 -f state=closed`));
-  assert.ok(w.writes.some((x) => /issues\/6725\/comments .*Closing as stale: this change was put to the owner/.test(x)));
   assert.ok(!w.writes.some((x) => /pulls\/6887 -f state=closed/.test(x)), "a person pushed to 6887: never closed");
 });
 
@@ -178,15 +195,162 @@ test("isKeirPr: a keir/ branch by keir-bot, or a recorded worker branch; a perso
   assert.equal(isKeirPr({ number: 3, user: { login: "keir-bot" }, head: { ref: "feat/x" } }, d), false);
 });
 
-test("a close that fails after its note is retried without a second note", async () => {
+test("a close that fails after its note is retried once without a second note, then given up with one owner line (m5)", async () => {
   const w = setup();
-  const realWrite = w.writes;
   let failClose = true;
-  const prs = createKeirPrs({ ledger: w.ledger, api: w.api, now: () => T0, config: { keirGitEmail: KEIR_EMAIL },
-    write: async (args) => { realWrite.push(args.join(" ")); if (failClose && args.includes("state=closed")) throw new Error("HTTP 403"); return {}; } });
+  const prs = createKeirPrs({ ledger: w.ledger, api: w.api, now: w.now, config: { keirGitEmail: KEIR_EMAIL, githubReviewerToken: "t" }, controls: ALL_ON,
+    write: async (args) => { w.writes.push(args.join(" ")); if (failClose && args.includes("state=closed")) throw new Error("HTTP 403"); return {}; } });
   await prs.tick();
+  for (const j of Object.values(w.data.jobs)) if (j.adoptedPr) j.state = "done";
+  w.advance(5 * DAY + 3600000); await prs.tick();
+  w.advance(49 * 3600000); await prs.tick();
+  w.advance(3600000); await prs.tick();
+  w.advance(3600000); await prs.tick();
+  w.advance(3600000); await prs.tick();
+  assert.equal(w.writes.filter((x) => /issues\/6725\/comments/.test(x)).length, 1);
+  assert.equal(w.writes.filter((x) => /pulls\/6725 -f state=closed/.test(x)).length, 2, "two tries, never a third");
+  assert.match(w.data.outbox["keir-pr-close-failed:6725"].content, /tried 2 times to close PR #6725/);
   failClose = false;
-  await prs.tick();
-  assert.equal(realWrite.filter((x) => /issues\/6865\/comments/.test(x)).length, 1);
-  assert.equal(realWrite.filter((x) => /pulls\/6865 -f state=closed/.test(x)).length, 2);
+  w.advance(3600000); await prs.tick();
+  assert.equal(w.writes.filter((x) => /pulls\/6725 -f state=closed/.test(x)).length, 2);
+});
+
+// ---- Third pass: the independent review's scenarios (B1, B2, M4, M5, m6, M7) ----
+const one = (number, ref, { checks = "verify", body = "Part.\n\n## Conflict of interest\n\n- [x] no", created = "2026-11-10T00:00:00Z", mergeable = true } = {}) =>
+  ({ number, title: `PR ${number}`, user: { login: "keir-bot" }, draft: false, state: "open", created_at: created, head: { ref, sha: `h${number}`, repo: { full_name: REPO } }, base: { ref: "development" }, body, mergeable, _checks: checks });
+const closesOf = (w, n) => w.writes.filter((x) => new RegExp(`pulls/${n} -f state=closed`).test(x)).length;
+const deletesOf = (w, ref) => w.writes.filter((x) => x === `-X DELETE repos/${REPO}/git/refs/heads/${ref}`).length;
+
+test("B1: a PR a person reopens after Keir closed it is never closed again, its branch never deleted again, and the owner hears once", async () => {
+  const pr = one(7001, "keir/task-a");
+  const w = setup({ open: [pr], merged: [] });
+  await w.prs.tick();
+  w.advance(5 * DAY + 3600000); await w.prs.tick(); // warned
+  w.advance(49 * 3600000); await w.prs.tick(); // closed, branch deleted
+  assert.equal(closesOf(w, 7001), 1);
+  assert.equal(deletesOf(w, "keir/task-a"), 1);
+  // The owner restores the branch and reopens the PR, meaning to merge it.
+  w.open.push(pr); w.branches.push({ ref: "keir/task-a", sha: "h7001" });
+  for (let i = 0; i < 6; i++) { w.advance(3600000); await w.prs.tick(); }
+  w.advance(10 * DAY); await w.prs.tick();
+  assert.equal(closesOf(w, 7001), 1, "never closed again");
+  assert.equal(deletesOf(w, "keir/task-a"), 1, "never deleted again");
+  assert.equal(w.writes.filter((x) => /issues\/7001\/comments/.test(x)).length, 1);
+  const told = Object.keys(w.data.outbox).filter((k) => /^keir-pr-reversed:7001$|keir-branch-restored/.test(k));
+  assert.deepEqual(told, ["keir-pr-reversed:7001"]);
+  assert.match(w.data.outbox["keir-pr-reversed:7001"].content, /reopened after Keir closed it\. Keir takes that as a person's decision and will not close, delete or ask about it again/);
+  assert.ok(w.data.keirPrs.prs[7001].handsOff);
+});
+
+test("B1: a branch Keir deleted that a person restores is never deleted again", async () => {
+  const closed = { number: 5900, state: "closed", merged_at: null, user: { login: "keir-bot" }, head: { ref: "keir/task-old", sha: "s1", repo: { full_name: REPO } } };
+  const branches = [{ ref: "keir/task-old", sha: "s1", prs: [closed] }];
+  const w = setup({ open: [], merged: [], branches });
+  await w.prs.tick();
+  assert.equal(deletesOf(w, "keir/task-old"), 1);
+  w.branches.push({ ref: "keir/task-old", sha: "s1", prs: [closed] });
+  for (let i = 0; i < 4; i++) { w.advance(3600000); await w.prs.tick(); }
+  assert.equal(deletesOf(w, "keir/task-old"), 1);
+  assert.equal(Object.keys(w.data.outbox).filter((k) => /keir-branch-restored:keir\/task-old/.test(k)).length, 1);
+  assert.ok(w.data.keirPrs.branches["keir/task-old"].handsOff);
+});
+
+test("B1: a close Keir started but never confirmed is checked against the PR's events: a reopen is a person's decision", async () => {
+  const w = setup({ open: [one(7002, "keir/task-b")], merged: [], events: { 7002: [{ event: "closed" }, { event: "reopened", actor: { login: "Egg3901" } }] } });
+  w.data.keirPrs = { prs: { 7002: { number: 7002, firstSeenAt: T0 - 9 * DAY, orphanSince: T0 - 9 * DAY, asked: {}, notices: {}, warned: { stale: T0 - 3 * DAY }, closeStartedAt: T0 - DAY, closeAttempts: 1 } }, actions: [], branches: {} };
+  await w.prs.tick();
+  assert.equal(closesOf(w, 7002), 0);
+  assert.ok(w.data.keirPrs.prs[7002].handsOff);
+  assert.ok(w.data.outbox["keir-pr-reversed:7002"]);
+});
+
+test("B2: two parts of one fix that both say Refs #6850 are never closed as superseded, however long they sit", async () => {
+  const part1 = { number: 7000, title: "part 1", body: "Refs #6850", merged_at: "2026-11-20T00:00:00Z", head: { ref: "keir/task-p1" } };
+  const w = setup({ open: [one(7001, "keir/task-p2", { checks: "green", body: "Part 2.\n\n## Conflict of interest\n\n- [x] no\n\nRefs #6850", created: "2026-11-19T00:00:00Z" })], merged: [part1] });
+  for (let i = 0; i < 12; i++) { await w.prs.tick(); w.advance(DAY); }
+  assert.equal(closesOf(w, 7001), 0);
+  assert.equal(deletesOf(w, "keir/task-p2"), 0);
+  assert.match(w.data.outbox["pr-blocked:7001:superseded?:7000"].content, /may overlap merged PR #7000 \(both mention issue #6850\)\. Keir will not close it on that alone/);
+  assert.equal(Object.keys(w.data.outbox).filter((k) => k.startsWith("pr-blocked:7001")).length, 1, "one question, never repeated");
+});
+
+test("B2: a shared closing keyword is not enough when the issue is open or the files differ", async () => {
+  for (const [issues, files] of [[{ 6850: { state: "open" } }, {}], [{ 6850: { state: "closed" } }, { 7001: [{ filename: "a.ts" }], 7000: [{ filename: "b.ts" }] }]]) {
+    const merged = [{ number: 7000, body: "Fixes #6850", merged_at: "2026-11-20T00:00:00Z", head: { ref: "x" } }];
+    const w = setup({ open: [one(7001, "keir/task-c", { body: "Fix.\n\n## Conflict of interest\n\n- [x] no\n\nFixes #6850", created: "2026-11-19T00:00:00Z" })], merged, issues, files });
+    for (let i = 0; i < 6; i++) { await w.prs.tick(); w.advance(DAY); }
+    assert.equal(closesOf(w, 7001), 0);
+    assert.ok(w.data.outbox["pr-blocked:7001:superseded?:7000"]);
+  }
+});
+
+test("B2: a true duplicate is closed only after first-sight grace and a warning, with a note saying why and how to undo it", async () => {
+  const merged = [{ number: 7000, body: "Fixes #6850", merged_at: "2026-11-20T00:00:00Z", head: { ref: "x" } }];
+  const w = setup({ open: [one(7001, "keir/task-d", { checks: "green", body: "Fix.\n\n## Conflict of interest\n\n- [x] no\n\nFixes #6850", created: "2026-11-19T00:00:00Z" })], merged,
+    issues: { 6850: { state: "closed" } }, files: { 7001: [{ filename: "a.ts" }], 7000: [{ filename: "a.ts" }, { filename: "b.ts" }] } });
+  await w.prs.tick();
+  assert.equal(closesOf(w, 7001), 0, "never on first sight");
+  w.advance(47 * 3600000); await w.prs.tick();
+  assert.equal(closesOf(w, 7001), 0);
+  w.advance(2 * 3600000); await w.prs.tick();
+  assert.match(w.data.outbox["pr-blocked:7001:will-close:superseded:7000"].content, /looks superseded by merged PR #7000: both close issue #6850, which is closed, and #7000 changes every file this PR changes\. Keir plans to close PR #7001 on/);
+  assert.equal(closesOf(w, 7001), 0);
+  w.advance(49 * 3600000); await w.prs.tick();
+  assert.equal(closesOf(w, 7001), 1);
+  assert.ok(w.writes.some((x) => /issues\/7001\/comments .*Closing as superseded by #7000: both close issue #6850.*If this change is still wanted, reopen the PR; Keir will then leave it alone\./s.test(x)));
+});
+
+test("M4: a rebase, an amend or a cherry-pick by a person is someone else's work", () => {
+  const rebased = { commit: { author: { email: KEIR_EMAIL }, committer: { email: "owner@example.com" }, message: "fix: x\n\nPrepared by Keir for task abc." }, parents: [{}] };
+  assert.equal(foreignCommit([keirCommit("a"), rebased], KEIR_EMAIL), "a commit rebased or amended by someone else");
+  const picked = { commit: { author: { email: "dev@example.com" }, committer: { email: "dev@example.com" }, message: "fix: y\n\nPrepared by Keir for task abc." }, parents: [{}] };
+  assert.equal(foreignCommit([picked], KEIR_EMAIL), "a commit by someone else", "the message proves nothing and the first author is not trusted on a keir/ branch");
+  assert.equal(foreignCommit([picked], KEIR_EMAIL, { worker: true }), null, "a worker branch's own identity");
+});
+
+test("M4: a push while no Keir task owned the PR, or a person's comment, stops any close", async () => {
+  const pr = one(7003, "keir/task-e");
+  const w = setup({ open: [pr], merged: [] });
+  await w.prs.tick();
+  w.advance(4 * DAY); pr.head.sha = "h7003b"; await w.prs.tick(); // a person resolved the conflict and pushed
+  w.advance(DAY + 3600000); await w.prs.tick();
+  w.advance(3 * DAY); await w.prs.tick();
+  w.advance(3 * DAY); await w.prs.tick();
+  assert.equal(closesOf(w, 7003), 0);
+  assert.match(w.data.keirPrs.prs[7003].personTouched, /new commits pushed/);
+  const pr2 = one(7004, "keir/task-f");
+  const w2 = setup({ open: [pr2], merged: [], comments: { 7004: [{ user: { login: "Egg3901" }, body: "I'll take this one" }] } });
+  await toStaleClose(w2); w2.advance(3 * DAY); await w2.prs.tick();
+  assert.equal(closesOf(w2, 7004), 0);
+  assert.match(w2.data.keirPrs.prs[7004].personTouched, /a comment by Egg3901/);
+});
+
+test("M5: a PR red only on custom-rules with the section present is reported blocked, never asked about as green", async () => {
+  const w = setup({ open: [one(7005, "keir/task-g", { checks: "coi" })], merged: [] });
+  await w.prs.tick(); w.advance(3600000); await w.prs.tick();
+  assert.deepEqual(asked(w), []);
+  assert.match(w.data.outbox["pr-blocked:7005:custom-rules:h7005"].content, /is blocked: the description check failed/);
+});
+
+test("m6: without Keir's own token no GitHub write is made; the would-be writes are previewed", async () => {
+  const w = setup({ token: "" });
+  await w.prs.tick();
+  assert.deepEqual(w.writes, []);
+  const items = Object.values(w.data.preview.items);
+  assert.ok(items.some((x) => x.action === "repair description" && /KEIR_GITHUB_TOKEN is not set/.test(x.reason)));
+});
+
+test("M7: closes are off by default (previewed, the owner is not warned); the pass switch and the kill switch stop everything", async () => {
+  const w = setup({ open: [one(7006, "keir/task-h")], merged: [], controls: staticControls() });
+  await toStaleClose(w); w.advance(3 * DAY); await w.prs.tick();
+  assert.equal(closesOf(w, 7006), 0);
+  assert.ok(!w.data.outbox["pr-blocked:7006:will-close:stale"], "no warning about a close that will not happen");
+  assert.match(w.data.preview.items["open-prs:close:#7006"].reason, /stale: blocked \(verify\) \(not done: openPrCloses is off\)/);
+  for (const controls of [staticControls({ openPrPass: "off" }), staticControls({ openPrCloses: "on" }, { held: "owner" }), staticControls({ openPrCloses: "on" }, { preview: true })]) {
+    const x = setup({ controls });
+    await x.prs.tick();
+    assert.deepEqual(x.writes, []);
+    assert.deepEqual(Object.keys(x.data.outbox), []);
+    assert.deepEqual(asked(x), []);
+  }
 });
