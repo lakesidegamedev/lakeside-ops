@@ -3013,34 +3013,17 @@ const { makeTrackerBody } = require('./tracker-page');
 const { handleKanbanRoute } = require("./kanban-routes");
 // Kanban cards show their sources' live state and follow them (tickets, pull
 // requests, alerts). The ticket reader is shared by the page, the API and the
-// reconcile timer (short cache). The pass runs every KANBAN_TICKET_RECONCILE_MS
-// (default 10 minutes); KANBAN_TICKET_RECONCILE=off stops it, =dry logs what
-// it would change. KANBAN_SOURCE_GITHUB=off / KANBAN_ALERT_SYSTEMD=off skip
-// pull request and unit checks.
-const { createTicketStatusReader, runReconcile } = require("./kanban-tickets");
+// reconcile timer (short cache). The timer runs every KANBAN_TICKET_RECONCILE_MS
+// (default 10 minutes) and only reports what it would change, recorded for
+// GET /api/kanban/reconcile and kanban_reconcile; KANBAN_RECONCILE_AUTO_APPLY=on
+// lets it apply, KANBAN_TICKET_RECONCILE=off stops it.
+// KANBAN_SOURCE_GITHUB=off / KANBAN_ALERT_SYSTEMD=off skip pull request and
+// unit checks.
+const { createTicketStatusReader, createReconcileTimer } = require("./kanban-tickets");
 const kanbanTicketStatus = createTicketStatusReader({ getDb: () => getDb() });
 const kanbanSourceReaders = require("./kanban-sources").createSourceReaders();
-{
-  const mode = String(process.env.KANBAN_TICKET_RECONCILE || "on").toLowerCase();
-  const every = Math.max(60_000, Number(process.env.KANBAN_TICKET_RECONCILE_MS) || 10 * 60_000);
-  let running = false;
-  const tick = async () => {
-    if (running) return;
-    running = true;
-    try {
-      const out = await runReconcile({ store: require("./kanban-store").sharedKanban(), reader: kanbanTicketStatus, ...kanbanSourceReaders, dryRun: mode === "dry" });
-      // Quiet when there is nothing to do.
-      if (out.changed || out.ticket_error || out.pull_request_error) console.log(`[kanban-sources] ${JSON.stringify({ dry_run: out.dry_run, by_source: out.by_source, changed: out.changed, deferred: out.deferred, error: out.ticket_error || null, pr_error: out.pull_request_error || null })}`);
-    } catch (error) {
-      console.warn("[kanban-sources] reconcile failed:", error.message);
-    } finally {
-      running = false;
-    }
-  };
-  if (mode !== "off" && process.env.NODE_ENV !== "test") {
-    setTimeout(tick, 2 * 60_000).unref?.();
-    setInterval(tick, every).unref?.();
-  }
+if (process.env.NODE_ENV !== "test") {
+  createReconcileTimer({ getStore: () => require("./kanban-store").sharedKanban(), readers: { reader: kanbanTicketStatus, ...kanbanSourceReaders } }).start();
 }
 const { handleSuggestionSwipeRoute } = require("./suggestion-swipe-routes");
 const { handleKeirInboxRoute } = require("./keir-inbox-routes");

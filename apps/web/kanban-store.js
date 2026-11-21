@@ -510,6 +510,18 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   db.exec("CREATE INDEX IF NOT EXISTS kanban_items_alert ON kanban_items(alert_key) WHERE alert_key IS NOT NULL");
   backfillTicketRefs(db);
   backfillSourceRefs(db);
+  // What each reconcile run did or, when it only reported, would have done.
+  // The timer is report-only by default, so this is where a person reads
+  // its proposals before automatic apply is turned on.
+  db.exec(`CREATE TABLE IF NOT EXISTS kanban_reconcile_runs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    trigger    TEXT NOT NULL,
+    dry_run    INTEGER NOT NULL,
+    changed    INTEGER NOT NULL,
+    summary    TEXT NOT NULL,
+    changes    TEXT NOT NULL
+  )`);
 
   const iso = () => now().toISOString();
 
@@ -1497,6 +1509,23 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
 
   // Lane health for brief and list: per lane, cards with no activity for
   // PARKED_DAYS and cards nobody holds.
+  // Keep a record of a reconcile run (the last RUNS_KEPT are kept).
+  const RUNS_KEPT = 200;
+  function recordReconcileRun(result, { trigger = "timer" } = {}) {
+    const { changes = [], ...summary } = result || {};
+    const info = db.prepare("INSERT INTO kanban_reconcile_runs (created_at, trigger, dry_run, changed, summary, changes) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(iso(), String(trigger).slice(0, 40), summary.dry_run ? 1 : 0, Number(summary.changed) || 0, JSON.stringify(summary), JSON.stringify(changes.slice(0, 500)));
+    db.prepare("DELETE FROM kanban_reconcile_runs WHERE id <= ?").run(Number(info.lastInsertRowid) - RUNS_KEPT);
+    return Number(info.lastInsertRowid);
+  }
+  function reconcileRuns({ trigger = null, limit = 1, withChanges = true } = {}) {
+    const rows = trigger
+      ? db.prepare("SELECT * FROM kanban_reconcile_runs WHERE trigger = ? ORDER BY id DESC LIMIT ?").all(trigger, Math.min(Math.max(Number(limit) || 1, 1), 50))
+      : db.prepare("SELECT * FROM kanban_reconcile_runs ORDER BY id DESC LIMIT ?").all(Math.min(Math.max(Number(limit) || 1, 1), 50));
+    return rows.map((r) => ({ id: r.id, at: r.created_at, trigger: r.trigger, dry_run: Boolean(r.dry_run), changed: r.changed,
+      ...JSON.parse(r.summary), ...(withChanges ? { changes: JSON.parse(r.changes) } : {}) }));
+  }
+
   function laneHealth(slug = null) {
     const cutoff = new Date(now().getTime() - PARKED_DAYS * DAY_MS).toISOString();
     const rows = db.prepare(`SELECT lane, COUNT(*) AS cards,
@@ -1635,6 +1664,8 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     logEvent,
     ticketNumbersToCheck,
     reconcileTickets,
+    recordReconcileRun,
+    reconcileRuns,
   };
 }
 

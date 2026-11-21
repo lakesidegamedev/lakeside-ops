@@ -54,6 +54,7 @@ async function main() {
     if (ticketDb.error) console.error(`[kanban-reconcile] ${ticketDb.error}: ticket rules skipped`);
     const reader = createTicketStatusReader({ getDb: ticketDb.getDb, unavailable: ticketDb.error, timeoutMs: 15_000 });
     const out = await runReconcile({ store: kanban, reader, ...createSourceReaders(), dryRun: !apply, limit });
+    if (apply) kanban.recordReconcileRun(out, { trigger: "script" });
     console.log(JSON.stringify({ db: live, ...(snapshot ? { snapshot } : {}), tickets_from: ticketDb.source, ...out }, null, 2));
   } finally {
     kanban.close();

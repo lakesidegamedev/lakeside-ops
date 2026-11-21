@@ -7,7 +7,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { openKanban } = require("./kanban-store");
-const { createTicketStatusReader, runTicketReconcile, decorateItem } = require("./kanban-tickets");
+const { createTicketStatusReader, runTicketReconcile, decorateItem, createReconcileTimer, reconcileTimerSettings } = require("./kanban-tickets");
 const { registerKanbanTools } = require("./mcp/kanban-tools");
 
 const HOUR = 3_600_000;
@@ -548,6 +548,58 @@ describe("assigned means a live session", () => {
     later(48 * HOUR);
     assert.equal(k.get(card.id).activity, null);
     assert.equal((await runTicketReconcile({ store: k, reader })).changed, 0);
+  });
+});
+
+describe("the reconcile timer", () => {
+  beforeEach(fresh);
+
+  it("reports and records what it would change, and changes nothing, by default", async () => {
+    // Review M4: a deploy must not start writing to the live board by itself.
+    const card = k.add({ product: "ahd", title: TITLE, ticket_role: "own", start: true }, { actor: "claude" });
+    closeTicket(1852, clock.toISOString());
+    const logs = [];
+    const timer = createReconcileTimer({ getStore: () => k, readers: { reader }, env: {}, log: (m) => logs.push(m) });
+    assert.deepEqual(timer.settings, { enabled: true, autoApply: false, every: 600_000 });
+    const rows = () => JSON.stringify([k.db.prepare("SELECT * FROM kanban_items").all(), k.db.prepare("SELECT * FROM kanban_events").all()]);
+    const before = rows();
+    const out = await timer.tick();
+    assert.equal(out.dry_run, true);
+    assert.equal(rows(), before, "the board is untouched");
+    assert.equal(k.get(card.id).lane, "now");
+    assert.match(logs[0], /"dry_run":true,"would_change":1/);
+    const [run] = k.reconcileRuns({ trigger: "timer" });
+    assert.equal(run.dry_run, true);
+    assert.deepEqual(run.changes.map((c) => [c.id, c.action]), [[card.id, "completed"]]);
+    // The dry-run tool returns the timer's proposals.
+    const dry = (await tools().kanban_reconcile({ dry_run: true })).o;
+    assert.equal(dry.last_timer_run.id, run.id);
+    assert.equal(dry.last_timer_run.changes[0].id, card.id);
+  });
+
+  it("applies only when automatic apply is turned on, or when a caller with write scope asks", async () => {
+    const card = k.add({ product: "ahd", title: TITLE, ticket_role: "own", start: true }, { actor: "claude" });
+    closeTicket(1852, clock.toISOString());
+    const timer = createReconcileTimer({ getStore: () => k, readers: { reader }, env: { KANBAN_RECONCILE_AUTO_APPLY: "on" }, log: () => {} });
+    const out = await timer.tick();
+    assert.equal(out.dry_run, false);
+    assert.equal(k.get(card.id).lane, "done");
+    assert.equal(k.reconcileRuns({ trigger: "timer" })[0].dry_run, false);
+    // A caller with write scope applies on demand; without it, refused.
+    const other = k.add({ product: "ahd", title: "Answer the player (ticket 1852)", ticket_role: "own", lane: "backlog", force: true }, { actor: "claude" });
+    const applied = (await tools().kanban_reconcile({ dry_run: false })).o;
+    assert.equal(applied.dry_run, false);
+    assert.equal(k.get(other.id).lane, "done");
+    const readOnly = {};
+    registerKanbanTools({ tool: (name, _d, _s, fn) => { readOnly[name] = fn; } }, { auth: { name: "ro", scopes: { write: false } }, jsonResult: (o) => ({ ok: true, o }), errorResult: (m) => ({ ok: false, m }), store: () => k, ticketStatus: reader });
+    assert.deepEqual(await readOnly.kanban_reconcile({ dry_run: false }), { ok: false, m: "this token has no write scope" });
+  });
+
+  it("can be switched off, and other values do not turn apply on", () => {
+    assert.equal(reconcileTimerSettings({ KANBAN_TICKET_RECONCILE: "off" }).enabled, false);
+    assert.equal(createReconcileTimer({ getStore: () => k, env: { KANBAN_TICKET_RECONCILE: "off" }, log: () => {} }).start(), false);
+    for (const v of ["", "1", "true", "dry", "yes"]) assert.equal(reconcileTimerSettings({ KANBAN_RECONCILE_AUTO_APPLY: v }).autoApply, false, v);
+    assert.equal(reconcileTimerSettings({ KANBAN_TICKET_RECONCILE: "on" }).autoApply, false, "the old switch alone never applies");
   });
 });
 

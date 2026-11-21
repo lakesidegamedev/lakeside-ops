@@ -13,7 +13,7 @@
 
 const { sharedKanban } = require("./kanban-store");
 const { makeKanbanBody } = require("./kanban-page");
-const { decorateItem, decorateList, decorateBrief, runReconcile } = require("./kanban-tickets");
+const { decorateItem, decorateList, decorateBrief, runReconcile, lastTimerRun, reconcileTimerSettings } = require("./kanban-tickets");
 
 const ITEM_RE = /^\/api\/kanban\/items\/(\d+)$/;
 const REPORT_RE = /^\/api\/kanban\/items\/(\d+)\/report$/;
@@ -108,11 +108,16 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
     if (RECONCILE_PATHS.has(pathname)) {
       if (session.role !== "admin") return send(404, { error: "Not found" });
       const readers = { reader: ticketStatus, prReader, alertReader };
-      if (req.method === "GET") return send(200, await runReconcile({ store: store(), ...readers, dryRun: true }));
+      if (req.method === "GET") {
+        const out = await runReconcile({ store: store(), ...readers, dryRun: true });
+        return send(200, { ...out, last_timer_run: lastTimerRun(store()), automatic_apply: reconcileTimerSettings().autoApply });
+      }
       if (req.method === "POST") {
         if (!sameOrigin(req)) return send(403, { error: "Invalid request origin" });
         const body = await readJson(req);
-        return send(200, await runReconcile({ store: store(), ...readers, dryRun: body.dry_run !== false, limit: body.limit }));
+        const out = await runReconcile({ store: store(), ...readers, dryRun: body.dry_run !== false, limit: body.limit });
+        if (!out.dry_run) store().recordReconcileRun(out, { trigger: "route" });
+        return send(200, out);
       }
     }
     // Automatic counts, and promoting one to a card. Admin only.

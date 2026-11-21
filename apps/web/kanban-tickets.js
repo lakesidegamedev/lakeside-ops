@@ -282,6 +282,66 @@ async function runReconcile({ store, reader, prReader = null, alertReader = null
 // The first pass's name for the same single pass.
 const runTicketReconcile = runReconcile;
 
+// The timer in the ops web app. Report-only unless automatic apply is
+// turned on:
+//   KANBAN_TICKET_RECONCILE=off      no timer at all
+//   KANBAN_RECONCILE_AUTO_APPLY=on   the timer applies what it finds
+//                                    (default: it only reports)
+//   KANBAN_TICKET_RECONCILE_MS       how often (default 10 minutes)
+// Every timer run is recorded in the kanban database (kanban_reconcile_runs),
+// readable through GET /api/kanban/reconcile and the kanban_reconcile tool,
+// so its proposals can be read before automatic apply is turned on.
+function reconcileTimerSettings(env = process.env) {
+  const mode = String(env.KANBAN_TICKET_RECONCILE || "").trim().toLowerCase();
+  return {
+    enabled: mode !== "off",
+    autoApply: String(env.KANBAN_RECONCILE_AUTO_APPLY || "").trim().toLowerCase() === "on",
+    every: Math.max(60_000, Number(env.KANBAN_TICKET_RECONCILE_MS) || 10 * 60_000),
+  };
+}
+
+function createReconcileTimer({ getStore, readers = {}, env = process.env, log = console.log, warn = console.warn } = {}) {
+  const settings = reconcileTimerSettings(env);
+  let running = false;
+  async function tick() {
+    if (running) return null;
+    running = true;
+    try {
+      const store = getStore();
+      const out = await runReconcile({ store, ...readers, dryRun: !settings.autoApply });
+      store.recordReconcileRun(out, { trigger: "timer" });
+      // Quiet when there is nothing to do.
+      if (out.changed || out.ticket_error || out.pull_request_error) {
+        log(`[kanban-sources] ${JSON.stringify({ dry_run: out.dry_run, ...(out.dry_run ? { would_change: out.changed } : { changed: out.changed }), by_source: out.by_source, deferred: out.deferred, error: out.ticket_error || null, pr_error: out.pull_request_error || null })}`);
+      }
+      return out;
+    } catch (error) {
+      warn("[kanban-sources] reconcile failed:", error.message);
+      return null;
+    } finally {
+      running = false;
+    }
+  }
+  function start({ firstAfterMs = 2 * 60_000 } = {}) {
+    if (!settings.enabled) return false;
+    setTimeout(tick, firstAfterMs).unref?.();
+    setInterval(tick, settings.every).unref?.();
+    log(`[kanban-sources] reconcile timer every ${Math.round(settings.every / 60_000)} minutes, ${settings.autoApply ? "applying changes (KANBAN_RECONCILE_AUTO_APPLY=on)" : "report only (set KANBAN_RECONCILE_AUTO_APPLY=on to apply)"}`);
+    return true;
+  }
+  return { tick, start, settings };
+}
+
+// The timer's latest record, for the dry-run route and tool.
+function lastTimerRun(store) {
+  try {
+    const [run] = store.reconcileRuns({ trigger: "timer", limit: 1 });
+    return run || null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   createTicketStatusReader,
   ticketSnapshot,
@@ -293,4 +353,7 @@ module.exports = {
   decorateBrief,
   runTicketReconcile,
   runReconcile,
+  reconcileTimerSettings,
+  createReconcileTimer,
+  lastTimerRun,
 };

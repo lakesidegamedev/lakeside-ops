@@ -5,7 +5,7 @@
 // token; writes need a token with write scope.
 
 const { z } = require("zod");
-const { decorateItem, decorateList, decorateBrief, runReconcile } = require("../kanban-tickets");
+const { decorateItem, decorateList, decorateBrief, runReconcile, lastTimerRun } = require("../kanban-tickets");
 const { sharedKanban, OPEN_LANES, LANES, REPORT_EVENTS, KINDS, CLASSES, AREAS, WIP_CAP, RELEASE_DAYS, normalizeActor } = require("../kanban-store");
 const AREA_HELP = "Area inside the product. " + Object.entries(AREAS).map(([p, a]) => `${p}: ${Object.keys(a).join("/")}`).join("; ");
 const CLASS_HELP = "project (multi-step program; other cards can name it as parent_id), issue (something broken or owed: bug, ticket follow-up, release step) or idea (a proposal nobody committed to)";
@@ -173,12 +173,16 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
 
   server.tool(
     "kanban_reconcile",
-    "Make cards agree with what they were raised from, now (the ops web app also runs this every 10 minutes). Ticket: a ticket's own card closes when the ticket closes; a follow-up stays open, relabelled. Pull request: merged closes the card unless work is still owed after the merge (then it is relabelled with what is owed); closed without merging sends it back to the inbox, unassigned. Alert: the condition cleared closes the card. A Now card with no progress for 24 hours goes back to Next, unassigned. A source that cannot be read is left alone. dry_run (default true here) lists what would change without changing anything.",
+    "Make cards agree with what they were raised from. The ops web app runs this every 10 minutes in report-only mode (it records what it would change; last_timer_run shows its latest proposals) unless automatic apply is turned on. Ticket: only a card filed as the ticket's own status or question closes when the ticket closes; every other ticket card stays open, relabelled as a follow-up; a merged ticket moves its cards to the target ticket. Pull request: merged closes only the card filed as that one pull request's card with nothing owed; any other is relabelled with what is owed; closed without merging sends it back to the inbox, unassigned. Alert: the condition cleared closes the card. A Now card with no progress for 24 hours goes back to Next, unassigned. A source that cannot be read is left alone. dry_run (default true) lists what would change without changing anything; dry_run false applies and needs write scope.",
     {
       dry_run: z.boolean().optional().default(true),
       limit: z.number().int().min(1).max(500).optional().describe("At most this many cards changed (default 50)"),
     },
-    async ({ dry_run, limit }) => guarded((k) => runReconcile({ store: k, reader: ticketStatus, prReader, alertReader, dryRun: dry_run !== false, limit }), { write: dry_run === false }),
+    async ({ dry_run, limit }) => guarded(async (k) => {
+      const out = await runReconcile({ store: k, reader: ticketStatus, prReader, alertReader, dryRun: dry_run !== false, limit });
+      if (!out.dry_run) k.recordReconcileRun(out, { trigger: "kanban_reconcile" });
+      return { ...out, last_timer_run: lastTimerRun(k) };
+    }, { write: dry_run === false }),
   );
 
   server.tool(
