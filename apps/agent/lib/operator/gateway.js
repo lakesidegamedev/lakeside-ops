@@ -4,6 +4,7 @@ const { JOB_TERMINAL } = require("./machines");
 const { ticketClaim } = require("./ticketClaim");
 const authority = require("./authority");
 const takeover = require("./supporttakeover");
+const ownerClose = require("./ownerclose");
 
 const { quickQuestion, isQuick } = require("./conversation");
 const { ackFacts } = require("./admission");
@@ -104,6 +105,10 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     const controlText = s.content.replace(new RegExp(`<@!?${config.botId}>`, "g"), "").replace(/^\s*\/?(?:keir|keith)\b[,:]?/i, "").trim();
     const controlAddress = (channel.type === 1 && role !== "player") || message.referenced_message?.author?.id === config.botId ||
       (message.mentions || []).some(u => u.id === config.botId) || new RegExp(`^\\s*(?:<@!?${config.botId}>|\\/?(?:keir|keith)\\b)`, "i").test(s.content);
+    // Ticket 1860: the owner telling Keir in a ticket's own channel to close "this ticket" lifts the owner's closure hold
+    // on that ticket at once, so the tool guard and the autocloser stop blocking the close the owner just asked for.
+    if (!historical && !summonTask && nTicket && actor === config.ownerId && controlAddress && ownerClose.asksToCloseThisTicket(controlText, nTicket))
+      ownerClose.liftOwnerHold(ledger, nTicket, { by: actor, message: message.id, how: "owner asked in the ticket channel" });
     const pauseVerb = /^(?:please\s+)?(pause|resume)(?:\s+(?:this ticket|here|for now|now))?(?:\s+please)?[.!]*$/i.exec(controlText);
     const quietPause = /^(?:please\s+)?stop\s+(?:talking|replying|posting)(?:\s+(?:here|for now|now|in this ticket))?(?:[\s,]+please)?[.!]*$/i.test(controlText);
     if (!historical && !summonTask && nTicket && role === "owner" && controlAddress && (pauseVerb || quietPause)) {

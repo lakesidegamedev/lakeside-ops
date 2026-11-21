@@ -127,6 +127,9 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
     if (!gate.run) throw new Error(`Not done: ticket commands are off right now (${gate.why}). Tell the requester exactly that.`);
     const { texts, requestId } = await requestTexts(job);
     const named = namedNumbers(texts);
+    // Ticket 1860: the owner's "close this ticket" in a ticket's own channel names that ticket; the channel identifies it.
+    const channelTicket = require("./ownerclose").ownerChannelClose(config, job, texts);
+    if (channelTicket) named.add(channelTicket);
     const by = job.actorId === config.ownerId ? "owner's" : "staff member's";
     const tickets = [...new Set((input.tickets || (input.ticket ? [input.ticket] : [])).map(Number).filter((n) => Number.isSafeInteger(n) && n > 0))];
     if (!gate.act) {
@@ -186,9 +189,20 @@ function createTicketCommands({ ledger, config, mcp, discord, effect, now = () =
       // closes). Each ticket then passes the single-ticket closure guards, and the call goes through callSupport.
       const message = publicText(input.message || "").trim();
       if (message.length < 8) throw new Error("Give the player-facing closing message.");
-      if (!allNamed) { const c = confirmation(job, "resolve", tickets, null, `The request did not name ${tickets.filter((n) => !named.has(n)).join(", ")} by number.`); if (!c.ok) return c.result; }
+      const owner = job.actorId === config.ownerId;
       const results = [];
-      for (const n of tickets) {
+      // Only the owner lifts the owner's closure hold. A staff close of a held ticket is refused here, before the owner is
+      // asked a question whose yes could not lift it anyway.
+      let open = tickets;
+      if (!owner) {
+        const held = new Set(Object.values(d.jobs).filter((j) => j.ownerClosureHold).map((j) => Number(ticketOf(j))));
+        for (const n of tickets.filter((x) => held.has(x))) { const why = "the owner put a hold on closing it, and only the owner can lift it"; results.push({ ticket: n, closed: false, why }); ledger.audit("ticket_command_resolve_refused", { job: job.id, ticket: n, by: job.actorId, why }); }
+        open = tickets.filter((x) => !held.has(x));
+      }
+      if (open.length && !open.every((n) => named.has(n))) { const c = confirmation(job, "resolve", open, null, `The request did not name ${open.filter((n) => !named.has(n)).join(", ")} by number.`); if (!c.ok) return results.length ? { ...c.result, refused: results } : c.result; if (owner) for (const n of open) named.add(n); }
+      for (const n of open) {
+        // The owner's own instruction to close n, named or confirmed, is the owner lifting the hold on n.
+        if (owner && named.has(n)) require("./ownerclose").liftOwnerHold(ledger, n, { by: job.actorId, job: job.id, how: "owner ticket_command" });
         const no = await closureRefusal(job, n, message, { named: named.has(n) }, signal);
         if (no) { results.push({ ticket: n, closed: false, why: no }); ledger.audit("ticket_command_resolve_refused", { job: job.id, ticket: n, by: job.actorId, why: no.slice(0, 160) }); continue; }
         try {

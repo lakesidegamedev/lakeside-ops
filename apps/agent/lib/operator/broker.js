@@ -63,6 +63,7 @@ const sharedAnswer = require("./sharedanswer");
 const { pendingHandoffs, parkedOnHandoffs } = require("./developerwatch");
 const { isAppJob } = require("./appchannel");
 const { createSupportDirectives } = require("./supportdirective");
+const ownerClose = require("./ownerclose");
 const { MUSE_TOOLS } = require("./appmuse");
 const UNANSWERED = /\?|<@!?&?\d+>|^\s*(?:how|what|why|when|where|which|who|can|could|is|are|do|does|if|help)\b/i;
 // A filing that asks for an owner call rather than a fix.
@@ -614,7 +615,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const jobs = Object.values(d.jobs).filter((j) => Number(ticketOf(j)) === Number(n));
     const tj = d.jobs[d.seen[`ticket:${n}`]] || jobs.find((j) => j.kind === "ticket") || null;
     if (["moderation", "investigation"].includes(t.category) || (tj?.channelId && isModerationChannel(ledger, tj.channelId))) return "moderators handle moderation tickets; Keir does not close them";
-    if (jobs.some((j) => j.ownerClosureHold) && !(job.actorId === config.ownerId && named)) return "the owner put a hold on closing it; only the owner can lift it, by naming the ticket";
+    if (jobs.some((j) => j.ownerClosureHold) && !(job.actorId === config.ownerId && named)) return job.actorId === config.ownerId ? "it has a closure hold from an earlier owner follow-up, and this request neither named it by number nor came from its own channel" : "the owner put a hold on closing it, and only the owner can lift it";
     const ids = new Set(jobs.map((j) => j.id));
     const mine = Object.values(d.decisions || {}).filter((x) => ids.has(x.jobId));
     const ev = ticketEvidence(n);
@@ -4630,7 +4631,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!SUPPORT_WRITES.includes(input.tool)) throw new Error(`support write is outside standing permission: tool must be one of ${SUPPORT_WRITES.join(", ")}. To answer the player: tool "support_public_update", args {"message": "..."}.`);
 
       const rows = await supportAuthority(job, undefined, { decisionNotice: input.tool === "support_public_update" });
-      if (input.tool === "support_resolve" && (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)) throw new Error("Ticket closure is held by an explicit owner follow-up. Continue investigating and communicating; do not resolve or close it.");
+      if (input.tool === "support_resolve" && (job.ownerClosureHold || d.jobs[d.seen[`ticket:${job.ticket}`]]?.ownerClosureHold)) {
+        // Ticket 1860: the owner asking in this ticket's own channel to close it lifts the hold; anyone else is still held.
+        const ownerAsked = ownerClose.ownerChannelClose(config, job);
+        if (ownerAsked && ownerAsked === Number(job.ticket)) ownerClose.liftOwnerHold(ledger, ownerAsked, { by: job.actorId, job: job.id, how: "owner asked in the ticket channel" });
+        else if (job.actorId === config.ownerId) throw new Error(`Not closed: ticket closure is held by an explicit owner follow-up on ticket ${job.ticket}, and this request did not come from the owner in that ticket's own channel or name it by number. Tell the owner exactly that in one line; use ticket_command op resolve with the ticket number if they asked to close it.`);
+        else throw new Error("Ticket closure is held by an explicit owner follow-up. Continue investigating and communicating; do not resolve or close it.");
+      }
       const args = { ...(input.args || {}), number: job.ticket };
       delete args.evidence; delete args.update_key; delete args.reply_to; // Keir 11.1: only the broker names a staged chart, an update key or a reply target, never the model.
       if (input.tool !== "support_resolve") args.kind = "ticket";
