@@ -237,7 +237,7 @@ dialog.wb-dlg::backdrop{background:rgba(0,0,0,.55)}
 function makeBoardBody(board) {
   const body = `<div class="wb">
 <div class="page-h"><div><h1>Work board</h1><div class="sub" id="wbSub"></div></div>
-<div class="actions wb-tools"><div class="wb-cls" id="wbCls"><button class="on" data-c="">All</button><button data-c="project">Projects</button><button data-c="issue">Issues</button><button data-c="idea">Ideas</button></div><select id="wbProduct" aria-label="Product"><option value="">All products</option></select><select id="wbArea" aria-label="Area"><option value="">All areas</option></select><input id="wbQ" type="search" placeholder="Filter cards" autocomplete="off"><button class="hub-btn" type="button" id="wbAdd">${icon("plus", { size: 13 })}Add card</button></div></div>
+<div class="actions wb-tools"><div class="wb-cls" id="wbCls"><button class="on" data-c="">All</button><button data-c="project">Projects</button><button data-c="issue">Issues</button><button data-c="idea">Ideas</button></div><select id="wbProduct" aria-label="Product"><option value="">All products</option></select><select id="wbArea" aria-label="Area"><option value="">All areas</option></select><input id="wbQ" type="search" placeholder="Filter cards" autocomplete="off"><a class="hub-btn" href="/kanban/counters" title="Keir's automatic tool-gap and failure counts, kept off the board">Automatic counts</a><button class="hub-btn" type="button" id="wbAdd">${icon("plus", { size: 13 })}Add card</button></div></div>
 <div class="wb-mon" id="wbMon"></div>
 <div class="statbar" id="wbStats"></div>
 <div id="wbAttnWrap"></div>

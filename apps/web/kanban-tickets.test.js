@@ -102,10 +102,10 @@ describe("ticket 1852, end to end", () => {
     assert.deepEqual(out.counts, { completed: 1 });
     const after = k.get(card.id);
     assert.equal(after.lane, "done");
-    const ev = after.events.find((e) => e.event_type === "ticket_closed");
+    const ev = after.events.find((e) => e.event_type === "source_closed");
     assert.match(ev.summary, /Ticket 1852 was closed on 17 Nov \(Fixed\. The free technology/);
     assert.match(ev.summary, /ticket's own work, so it closes with it/);
-    assert.equal(ev.actor, "ticket-sync");
+    assert.equal(ev.actor, "source-sync");
     assert.equal((await t.kanban_get({ id: card.id })).o.ticket_warning, undefined, "a done card carries no warning");
   });
 
@@ -132,7 +132,7 @@ describe("ticket 1852, end to end", () => {
     assert.equal(after.lane, "next");
     assert.equal(after.assigned_to, null);
     assert.equal(after.title, `Follow-up from closed ticket 1852: ${TITLE}`);
-    const ev = after.events.find((e) => e.event_type === "ticket_follow_up");
+    const ev = after.events.find((e) => e.event_type === "source_follow_up");
     assert.match(ev.summary, /stays open as follow-up work/);
     assert.match(ev.summary, /claude:s1 unassigned/);
     assert.match(ev.summary, /Title was: "Tech tree/);
@@ -374,7 +374,7 @@ describe("ticket links on cards", () => {
     const brief = (await t.kanban_brief({ limit: 10 })).o;
     assert.match(brief.now[0].ticket_warning, /^Ticket 1852 was closed/);
     assert.deepEqual(brief.now[0].tickets, [`Ticket 1852: Closed on 17 Nov`]);
-    const dry = (await t.kanban_ticket_reconcile({ dry_run: true })).o;
+    const dry = (await t.kanban_reconcile({ dry_run: true })).o;
     assert.equal(dry.dry_run, true);
     assert.equal(dry.changes.length, 1);
   });

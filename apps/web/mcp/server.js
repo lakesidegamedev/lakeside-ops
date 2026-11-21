@@ -93,6 +93,8 @@ async function embedText(text, isQuery = false) {
 // support tools read. One reader per process so its short cache is shared.
 const { createTicketStatusReader } = require("../kanban-tickets");
 const kanbanTicketStatus = createTicketStatusReader({ getDb: () => store.getDb(MONGODB_URI) });
+// Pull request and alert state for kanban_reconcile (gh CLI, read-only systemctl).
+const kanbanSourceReaders = require("../kanban-sources").createSourceReaders();
 
 async function main() {
   const db = await store.getDb(MONGODB_URI);
@@ -471,11 +473,11 @@ async function main() {
     }
 
     // Product kanban (same store as the dashboard /kanban page).
-    registerKanbanTools(server, { auth, jsonResult, errorResult, ticketStatus: kanbanTicketStatus });
+    registerKanbanTools(server, { auth, jsonResult, errorResult, ticketStatus: kanbanTicketStatus, ...kanbanSourceReaders });
     registerCwTelemetryTools(server, { jsonResult, errorResult });
 
     // The fleet describing itself, read live from every hosted server.
-    registerFleetTools(server, { jsonResult, errorResult });
+    registerFleetTools(server, { jsonResult, errorResult, kanban: require("../kanban-store").sharedKanban });
 
     // Reports, company knowledge and the tracker (MCP fleet consolidation).
     registerReportTools(server, auth);

@@ -3011,12 +3011,15 @@ const { makeEngineBody } = require('./engine-page');
 const { handleEconomyRoute } = require('./economy/routes');
 const { makeTrackerBody } = require('./tracker-page');
 const { handleKanbanRoute } = require("./kanban-routes");
-// Kanban cards show their ticket's live status and follow it. The reader is
-// shared by the page, the API and the reconcile timer (short cache). The pass
-// runs every KANBAN_TICKET_RECONCILE_MS (default 10 minutes);
-// KANBAN_TICKET_RECONCILE=off stops it, =dry logs what it would change.
-const { createTicketStatusReader, runTicketReconcile } = require("./kanban-tickets");
+// Kanban cards show their sources' live state and follow them (tickets, pull
+// requests, alerts). The ticket reader is shared by the page, the API and the
+// reconcile timer (short cache). The pass runs every KANBAN_TICKET_RECONCILE_MS
+// (default 10 minutes); KANBAN_TICKET_RECONCILE=off stops it, =dry logs what
+// it would change. KANBAN_SOURCE_GITHUB=off / KANBAN_ALERT_SYSTEMD=off skip
+// pull request and unit checks.
+const { createTicketStatusReader, runReconcile } = require("./kanban-tickets");
 const kanbanTicketStatus = createTicketStatusReader({ getDb: () => getDb() });
+const kanbanSourceReaders = require("./kanban-sources").createSourceReaders();
 {
   const mode = String(process.env.KANBAN_TICKET_RECONCILE || "on").toLowerCase();
   const every = Math.max(60_000, Number(process.env.KANBAN_TICKET_RECONCILE_MS) || 10 * 60_000);
@@ -3025,11 +3028,11 @@ const kanbanTicketStatus = createTicketStatusReader({ getDb: () => getDb() });
     if (running) return;
     running = true;
     try {
-      const out = await runTicketReconcile({ store: require("./kanban-store").sharedKanban(), reader: kanbanTicketStatus, dryRun: mode === "dry" });
+      const out = await runReconcile({ store: require("./kanban-store").sharedKanban(), reader: kanbanTicketStatus, ...kanbanSourceReaders, dryRun: mode === "dry" });
       // Quiet when there is nothing to do.
-      if (out.changed || out.ticket_error) console.log(`[kanban-tickets] ${JSON.stringify({ dry_run: out.dry_run, counts: out.counts, changed: out.changed, deferred: out.deferred, error: out.ticket_error || null })}`);
+      if (out.changed || out.ticket_error || out.pull_request_error) console.log(`[kanban-sources] ${JSON.stringify({ dry_run: out.dry_run, by_source: out.by_source, changed: out.changed, deferred: out.deferred, error: out.ticket_error || null, pr_error: out.pull_request_error || null })}`);
     } catch (error) {
-      console.warn("[kanban-tickets] reconcile failed:", error.message);
+      console.warn("[kanban-sources] reconcile failed:", error.message);
     } finally {
       running = false;
     }
@@ -4536,7 +4539,7 @@ const server = http.createServer(async (req, res) => {
 
   // ─── KANBAN ──────────────────────────────────────────────────────
   // Admin product kanban (/kanban, /api/kanban/*). Store: kanban-store.js.
-  if (await handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, ticketStatus: kanbanTicketStatus })) return;
+  if (await handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, ticketStatus: kanbanTicketStatus, ...kanbanSourceReaders })) return;
 
   // ─── SUGGESTION SWIPE ────────────────────────────────────────────
   // Blind two-person triage of unreviewed suggestions (/suggestions/swipe,

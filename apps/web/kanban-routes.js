@@ -13,12 +13,15 @@
 
 const { sharedKanban } = require("./kanban-store");
 const { makeKanbanBody } = require("./kanban-page");
-const { decorateItem, decorateList, decorateBrief, runTicketReconcile } = require("./kanban-tickets");
+const { decorateItem, decorateList, decorateBrief, runReconcile } = require("./kanban-tickets");
 
 const ITEM_RE = /^\/api\/kanban\/items\/(\d+)$/;
 const REPORT_RE = /^\/api\/kanban\/items\/(\d+)\/report$/;
 const COLLABORATE_RE = /^\/api\/kanban\/items\/(\d+)\/collaborate$/;
-const RECONCILE_PATH = "/api/kanban/ticket-reconcile";
+// The reconcile pass (tickets, pull requests, alerts); the first pass's path still works.
+const RECONCILE_PATHS = new Set(["/api/kanban/reconcile", "/api/kanban/ticket-reconcile"]);
+const COUNTERS_PATH = "/api/kanban/counters";
+const PROMOTE_PATH = "/api/kanban/counters/promote";
 
 function isKanbanPath(pathname) {
   return pathname === "/kanban" || pathname === "/api/kanban" || pathname.startsWith("/api/kanban/");
@@ -44,7 +47,7 @@ async function readJson(req, limit = 64 * 1024) {
 
 // ticketStatus: a kanban-tickets reader; linked cards show the live ticket
 // status from it, or "ticket status unknown" without it.
-async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, store = sharedKanban, ticketStatus = null }) {
+async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecurityHeaders, renderShell, store = sharedKanban, ticketStatus = null, prReader = null, alertReader = null }) {
   if (!isKanbanPath(pathname)) return false;
 
   const send = (status, data) => {
@@ -101,16 +104,25 @@ async function handleKanbanRoute(req, res, pathname, { resolveSession, addSecuri
     if (req.method === "GET" && pathname === "/api/kanban/brief") return send(200, await decorateBrief(store().brief({}), ticketStatus));
     const itemMatch = pathname.match(ITEM_RE);
     if (req.method === "GET" && itemMatch) return send(200, await decorateItem(store().get(Number(itemMatch[1]), { events: 60 }), ticketStatus));
-    // Ticket reconcile: GET is the dry run (changes nothing), POST applies.
-    // Admin only.
-    if (pathname === RECONCILE_PATH) {
+    // Reconcile: GET is the dry run (changes nothing), POST applies. Admin only.
+    if (RECONCILE_PATHS.has(pathname)) {
       if (session.role !== "admin") return send(404, { error: "Not found" });
-      if (!ticketStatus) return send(503, { error: "ticket records are not connected to this server" });
-      if (req.method === "GET") return send(200, await runTicketReconcile({ store: store(), reader: ticketStatus, dryRun: true }));
+      const readers = { reader: ticketStatus, prReader, alertReader };
+      if (req.method === "GET") return send(200, await runReconcile({ store: store(), ...readers, dryRun: true }));
       if (req.method === "POST") {
         if (!sameOrigin(req)) return send(403, { error: "Invalid request origin" });
         const body = await readJson(req);
-        return send(200, await runTicketReconcile({ store: store(), reader: ticketStatus, dryRun: body.dry_run !== false, limit: body.limit }));
+        return send(200, await runReconcile({ store: store(), ...readers, dryRun: body.dry_run !== false, limit: body.limit }));
+      }
+    }
+    // Automatic counts, and promoting one to a card. Admin only.
+    if (pathname === COUNTERS_PATH || pathname === PROMOTE_PATH) {
+      if (session.role !== "admin") return send(404, { error: "Not found" });
+      if (req.method === "GET" && pathname === COUNTERS_PATH) return send(200, store().counters.list({ limit: 300 }));
+      if (req.method === "POST" && pathname === PROMOTE_PATH) {
+        if (!sameOrigin(req)) return send(403, { error: "Invalid request origin" });
+        const body = await readJson(req);
+        return send(200, store().counters.promote({ signature: body.signature, title: body.title, detail: body.detail, impact: body.impact, lane: body.lane, actor }));
       }
     }
 

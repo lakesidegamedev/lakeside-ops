@@ -217,14 +217,17 @@ async function decorateBrief(brief, reader, opts) {
   return out;
 }
 
-// The reconcile pass. Reads every needed ticket fresh (never the cache); when
-// that read fails, ticket rules do nothing this run.
-async function runTicketReconcile({ store, reader, dryRun = false, limit } = {}) {
+// The reconcile pass: tickets, pull requests and alerts in one run. Each
+// source is read fresh (never from a display cache); a kind whose reader is
+// missing or failed is skipped this run, the others still go ahead.
+//   reader: ticket status reader; prReader: kanban-sources
+//   createPullRequestReader; alertReader: createAlertReader.
+async function runReconcile({ store, reader, prReader = null, alertReader = null, dryRun = false, limit } = {}) {
   const numbers = store.ticketNumbersToCheck();
   let statuses = new Map();
-  let ticketsReadable = true;
+  let ticketsReadable = Boolean(reader) || !numbers.length;
   let error = null;
-  if (numbers.length) {
+  if (numbers.length && reader) {
     try {
       statuses = await reader.statuses(numbers, { fresh: true });
       if (numbers.every((n) => (statuses.get(n) || {}).state === "unknown") && reader.lastError && reader.lastError()) {
@@ -236,9 +239,35 @@ async function runTicketReconcile({ store, reader, dryRun = false, limit } = {})
       error = String(e && e.message || e);
     }
   }
-  const result = store.reconcileTickets({ statuses, ticketsReadable, dryRun, limit });
-  return { ...result, tickets_checked: numbers.length, ...(error ? { ticket_error: `ticket service unreachable, ticket rules skipped: ${error}` } : {}) };
+  const prRefs = store.pullRequestsToCheck ? store.pullRequestsToCheck() : [];
+  let prStates = new Map();
+  let prsReadable = Boolean(prReader);
+  let prError = null;
+  if (prRefs.length && prReader) {
+    try {
+      prStates = await prReader.states(prRefs, { fresh: true });
+      const failure = prReader.lastError && prReader.lastError();
+      if (failure && [...prStates.values()].every((p) => p.state === "unknown")) { prsReadable = false; prError = failure.message; }
+    } catch (e) {
+      prsReadable = false;
+      prError = String(e && e.message || e);
+    }
+  }
+  const alertEntries = store.alertsToCheck ? store.alertsToCheck() : [];
+  let alertStates = new Map();
+  let alertsReadable = Boolean(alertReader);
+  if (alertEntries.length && alertReader) {
+    try { alertStates = await alertReader.states(alertEntries); } catch { alertsReadable = false; }
+  }
+  const result = store.reconcile({ statuses, ticketsReadable, prStates, prsReadable, alertStates, alertsReadable, dryRun, limit });
+  return {
+    ...result, tickets_checked: numbers.length, pull_requests_checked: prRefs.length, alerts_checked: alertEntries.length,
+    ...(error ? { ticket_error: `ticket service unreachable, ticket rules skipped: ${error}` } : {}),
+    ...(prError ? { pull_request_error: `GitHub unreachable, pull request rules skipped: ${prError}` } : {}),
+  };
 }
+// The first pass's name for the same single pass.
+const runTicketReconcile = runReconcile;
 
 module.exports = {
   createTicketStatusReader,
@@ -250,4 +279,5 @@ module.exports = {
   decorateList,
   decorateBrief,
   runTicketReconcile,
+  runReconcile,
 };
