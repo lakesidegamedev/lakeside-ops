@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.4.0 (2026-11-21)
+
 ### For users
 
 - Keir no longer says a problem is "with the developers" when it is fixing it itself. While its own fix is being prepared, tested or waiting for approval it says so in the first person ("I am preparing a fix", "My fix is in testing", "The fix is waiting for approval to ship"). These guards refuse only the false claim, not the words: "You cannot create a second company", "The developers have said this works as intended" and "Your report is with the team now" go out as written. After two refusals in one go, Keir's answer is posted without the false sentence instead of being replaced by "no confirmed answer". "With the developers" now needs a handoff a person on the team actually holds (an item no Keir worker took, a question for a person, or an open owner decision), and it is never said to the owner or a developer who asked Keir to do something: Keir does it, or says in one sentence what blocks it. Who is being answered is read from the message Keir replies to, so a developer asking inside a player's ticket counts as a developer. "I will come back when there is something to try" is now a tracked promise that comes due with the fix.
