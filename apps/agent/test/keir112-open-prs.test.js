@@ -60,7 +60,7 @@ function setup({ fail = false, open, merged, branches = [], closedPrs = {}, comm
     if ((m = /issues\/(\d+)\/events/.exec(route))) return events[m[1]] || [];
     if ((m = /issues\/(\d+)\/comments/.exec(route))) return comments[m[1]] || [];
     if ((m = /pulls\/(\d+)\/reviews/.exec(route))) return reviews[m[1]] || [];
-    if ((m = /pulls\/(\d+)\/files/.exec(route))) return files[m[1]] || [{ filename: `src/${m[1]}.ts` }];
+    if ((m = /pulls\/(\d+)\/files/.exec(route))) return (typeof files[m[1]] === "function" ? files[m[1]](route) : files[m[1]]) || [{ filename: `src/${m[1]}.ts` }];
     if ((m = /issues\/(\d+)$/.exec(route))) return issues[m[1]] || { number: Number(m[1]), state: "open" };
     if ((m = /commits\/h(\d+)\/check-runs/.exec(route))) return { check_runs: runs(byNumber[m[1]]._checks) };
     if ((m = /pulls\/(\d+)$/.exec(route))) return byNumber[m[1]] || closedPrs[m[1]];
@@ -203,7 +203,8 @@ test("a close that fails after its note is retried once without a second note, t
   const prs = createKeirPrs({ ledger: w.ledger, api: w.api, now: w.now, config: { keirGitEmail: KEIR_EMAIL, githubReviewerToken: "t" }, controls: ALL_ON,
     write: async (args) => { w.writes.push(args.join(" ")); if (failClose && args.includes("state=closed")) throw new Error("HTTP 403"); return {}; } });
   await prs.tick();
-  for (const j of Object.values(w.data.jobs)) if (j.adoptedPr) j.state = "done";
+  // Each ask job raised its decision and ended (review 3 m1: a job that never asked would be asked again).
+  for (const j of Object.values(w.data.jobs)) if (j.adoptedPr) { j.state = "done"; w.data.decisions[`q${j.adoptedPr}`] = { id: `q${j.adoptedPr}`, jobId: j.id, askKey: `pr:AHDGame:${j.adoptedPr}`, state: "expired" }; }
   w.advance(5 * DAY + 3600000); await prs.tick();
   w.advance(49 * 3600000); await prs.tick();
   w.advance(3600000); await prs.tick();
@@ -456,4 +457,39 @@ test("F5: every switch combination: closes and deletes happen only when all leve
     checked++;
   }
   assert.equal(checked, 54);
+});
+
+// Review 3 m4: the superseded check compares every page of both file lists.
+test("m4: a PR over 100 files is compared on all its files; one file beyond the first page keeps it from a strong match", async () => {
+  const paged = (names) => (route) => { const page = Number(/[?&]page=(\d+)/.exec(route)?.[1] || 1); return names.slice((page - 1) * 100, page * 100).map((filename) => ({ filename })); };
+  const many = Array.from({ length: 150 }, (_, i) => `src/f${i}.ts`);
+  for (const [theirs, strong] of [[many, true], [many.slice(0, 100), false]]) {
+    const merged = [{ number: 7000, body: "Fixes #6850", merged_at: "2026-11-20T00:00:00Z", head: { ref: "x" } }];
+    const w = setup({ open: [one(7001, "keir/task-m4", { checks: "green", body: "Fix.\n\n## Conflict of interest\n\n- [x] no\n\nFixes #6850", created: "2026-11-19T00:00:00Z" })], merged,
+      issues: { 6850: { state: "closed" } }, files: { 7001: paged(many), 7000: paged(theirs) } });
+    await w.prs.tick(); w.advance(49 * 3600000); await w.prs.tick();
+    assert.equal(Boolean(w.data.outbox["pr-blocked:7001:will-close:superseded:7000"]), strong, `theirs has ${theirs.length} files`);
+  }
+});
+
+// Review 3 m1: an ask job that ended without raising a decision did not ask. The head is asked once more, never claimed.
+test("m1: an ask job that ends without a decision leads to one more ask for that head; a raised decision ends it", async () => {
+  const w = setup({ open: [one(7001, "keir/task-m1", { checks: "green" })], merged: [] });
+  await w.prs.tick();
+  const jobs = () => Object.values(w.data.jobs).filter((j) => j.adoptedPr === 7001);
+  assert.equal(jobs().length, 1);
+  jobs()[0].state = "dismissed";
+  w.advance(3600000); await w.prs.tick();
+  assert.equal(jobs().length, 2, "asked again");
+  jobs()[1].state = "done";
+  for (let i = 0; i < 3; i++) { w.advance(3600000); await w.prs.tick(); }
+  assert.equal(jobs().length, 2, "two tries per head, no loop");
+  // The other side: a job that raised its decision is never re-asked.
+  const v = setup({ open: [one(7002, "keir/task-m1b", { checks: "green" })], merged: [] });
+  await v.prs.tick();
+  const job = Object.values(v.data.jobs).find((j) => j.adoptedPr === 7002);
+  v.data.decisions.q = { id: "q", jobId: job.id, askKey: "pr:AHDGame:7002", state: "pending" };
+  job.state = "done";
+  for (let i = 0; i < 3; i++) { v.advance(3600000); await v.prs.tick(); }
+  assert.equal(Object.values(v.data.jobs).filter((j) => j.adoptedPr === 7002).length, 1);
 });

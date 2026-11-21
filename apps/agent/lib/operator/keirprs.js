@@ -278,8 +278,10 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       if (shared.length && budget.reads >= 3) {
         budget.reads -= 3;
         const issue = await api([`repos/${GAME_REPO}/issues/${shared[0]}`]).catch(() => null);
-        const mine = await api([`repos/${GAME_REPO}/pulls/${pr.number}/files?per_page=100`]).catch(() => null);
-        const theirs = await api([`repos/${GAME_REPO}/pulls/${m.number}/files?per_page=100`]).catch(() => null);
+        // Review 3 m4: every page of both file lists (GitHub lists at most 3000 files); an incomplete list compares nothing.
+        const files_ = (num) => listAll(api, `repos/${GAME_REPO}/pulls/${num}/files`, { jq: "[.[] | {filename}]", maxPages: 30, key: (f) => f.filename }).catch(() => null);
+        const mine = await files_(pr.number);
+        const theirs = await files_(m.number);
         const files = Array.isArray(mine) && Array.isArray(theirs) ? { mine: mine.map((f) => f.filename), theirs: new Set(theirs.map((f) => f.filename)) } : null;
         if (issue?.state === "closed" && files && files.mine.length && files.mine.every((f) => files.theirs.has(f))) return { by: m, strength: "strong", why: `both close issue #${shared[0]}, which is closed, and #${m.number} changes every file this PR changes` };
         weak ||= { by: m, strength: "weak", why: `both say they close issue #${shared[0]}, but ${issue?.state !== "closed" ? "that issue is still open" : !files ? "their files could not be compared" : "they change different files"}` };
@@ -405,6 +407,12 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
       const stale = now() - rec.orphanSince > STALE_MS;
       // M5: green means every check passed, custom-rules included.
       if (!failed.length && !running && readyRest && full.mergeable !== false) {
+        // Review 3 m1: the ask is recorded when its job starts. A job that ended without raising any decision about this PR
+        // never asked, so the head is asked once more (two tries per head), never claimed as put to the owner.
+        const tries = rec.askTries?.[head] || 1, askJob = d.jobs?.[d.seen?.[`keirpr:${n}:${head}${tries > 1 ? `:${tries}` : ""}`]];
+        if (rec.asked[head] && tries < 2 && askJob && JOB_TERMINAL.includes(askJob.state) && !Object.values(d.decisions || {}).some((x) => x.askKey === `pr:AHDGame:${n}`)) {
+          rec.askTries = { [head]: tries + 1 }; delete rec.asked[head];
+        }
         if (!rec.asked[head]) {
           const overlap = rec.supersedeAsk ? ` It may overlap merged PR #${rec.supersedeAsk} (${rec.supersedeWhy || "a shared reference"}), or it may simply be ready to merge.` : "";
           if (!can("ask").act) { preview("ask owner", `#${n}`, `green with no live task: one ${overlap ? "merge, close-as-duplicate or keep-open" : "merge"} ask`); continue; }
@@ -414,7 +422,7 @@ function createKeirPrs({ ledger, api, write, config = {}, now = () => Date.now()
           const how = overlap
             ? `Read both changes (github pr ${n} and github pr ${rec.supersedeAsk}). Then ask the owner one question with raise_to_developers kind decision and exactly these options: "Merge PR ${n}", "Close PR ${n} as a duplicate of #${rec.supersedeAsk}", "Keep PR ${n} open for now". Say plainly what each PR changes and how they overlap. If he picks merge, call github merge for it (his Approve on that card merges it); if he picks close, close PR ${n} with a one-line note naming #${rec.supersedeAsk}; if he picks keep, finish.`
             : `Read the change (github pr ${n}), then call github merge for it. That sends the owner one approval card with your plain-language explanation; his Approve merges it.`;
-          ledger.createJob(`keirpr:${n}:${head}`, { kind: "command", role: "support", internalProbe: true, repository: "AHDGame", adoptedPr: n, deadline: now() + (overlap ? 72 : 6) * 3600000,
+          ledger.createJob(`keirpr:${n}:${head}${(rec.askTries?.[head] || 1) > 1 ? `:${rec.askTries[head]}` : ""}`, { kind: "command", role: "support", internalProbe: true, repository: "AHDGame", adoptedPr: n, deadline: now() + (overlap ? 72 : 6) * 3600000,
             source: { at: new Date(now()).toISOString(), content: `Keir's own pull request ${n} ("${rec.title}") is green and no Keir task owns it any more, at head ${head}.${overlap} ${how} Do not post in any channel, do not push to the branch, and do not send him a GitHub link.` } });
           record("ask_opened", n, overlap ? `green with no live task; may overlap #${rec.supersedeAsk}` : "green with no live task", { head });
           drain();
