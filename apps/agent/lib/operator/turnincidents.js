@@ -148,11 +148,11 @@ const PLAIN_PHASES = {
   commodityPrices: "the commodity price step", economicModel: "the economy step", fiscalYear: "the government budget step",
   billLifecycle: "the step that moves bills through legislatures", elections: "the elections step", electionTurn: "the elections step",
 };
+// A step with no plain name is never shown as its internal name (release review m5), only in neutral words.
+const UNNAMED_STEP = "one of the turn's steps";
 function plainPhase(phase) {
   if (!phase) return null;
-  if (PLAIN_PHASES[phase]) return PLAIN_PHASES[phase];
-  const words = String(phase).replace(/Turn$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[^A-Za-z ]+/g, " ").trim().toLowerCase();
-  return words && words.length <= 40 ? `the ${words} step` : "one of the turn's processing steps";
+  return PLAIN_PHASES[phase] || UNNAMED_STEP;
 }
 const clock = (t) => `${new Date(t).toISOString().slice(11, 16)} UTC`;
 function duration(ms) {
@@ -439,7 +439,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
       if (await postOnce(cur, `paused:${f.turn}`, pausedMessage(f, cur.folded?.count ? cur.folded : null), act)) cur.folded = { turn: f.turn, count: 0 };
       return;
     }
-    if (f.phase && cur.lastPhase && f.phase !== cur.lastPhase && now() - (cur.lastPostAt || 0) >= FOLD_MIN_MS) {
+    if (f.phase && cur.lastPhase && plainPhase(f.phase) !== plainPhase(cur.lastPhase) && now() - (cur.lastPostAt || 0) >= FOLD_MIN_MS) {
       cur.lastPhase = f.phase;
       if (await postOnce(cur, `step:${f.turn}:${f.phase}`, newStepMessage(f, cur.folded?.count ? cur.folded : null), act)) cur.folded = { turn: f.turn, count: 0 };
       return;

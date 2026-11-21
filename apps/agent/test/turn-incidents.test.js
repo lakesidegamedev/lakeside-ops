@@ -627,3 +627,14 @@ test("m1, the other way: an adopted incident opened before any retry does not in
   await late.sweep(); late.set(RECOVERED + 60000); await late.sweep();
   assert.match(late.w.updates.at(-1).message, /Turn 108 was tried 3 more times without success/, "adopted after all four attempts: three retries, not four");
 });
+
+test("m5: a step with no plain name is described in neutral words, never by its internal name", () => {
+  const f = { turn: 110, kind: "failed", firstFailedAt: at("14:01"), attempts: 1 };
+  for (const phase of ["nppBillSponsorship", "ukJrSurpriseTurn", "prospectingResolution", "SomePhase_v2"]) {
+    const text = [ti.openingMessage({ ...f, phase }), ti.newTurnMessage({ ...f, phase }, null)].join(" ");
+    assert.match(text, /in one of the turn's steps/, phase);
+    assert.doesNotMatch(text, /npp|sponsorship|surprise|prospecting|some phase|v2/i, phase);
+  }
+  assert.match(ti.openingMessage({ ...f, phase: "corporationTurn" }), /in the step that runs companies' production and sales/, "known steps keep their plain names");
+  assert.doesNotMatch(ti.openingMessage({ ...f, phase: null }), /step/, "no step named when none is known");
+});
