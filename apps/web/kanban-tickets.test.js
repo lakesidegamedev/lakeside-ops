@@ -80,11 +80,34 @@ const TITLE = "Tech tree R&D prices are unreachable at real R&D income (ticket 1
 describe("ticket 1852, end to end", () => {
   beforeEach(fresh);
 
-  it("the ticket's own card is completed with a note when the ticket closes", async () => {
+  it("Keir's developer handoff stays open as a follow-up when the player's ticket closes", async () => {
+    // Review B1: Keir answers the player, closes the ticket, and files this
+    // card because work remains. Closing it with the ticket loses the work.
     const t = tools();
-    const card = (await t.kanban_add({ product: "ahd", title: TITLE, detail: "Raised by Keir from ticket 1852.", start: true, actor: "claude:s1" })).o;
+    const card = (await t.kanban_add({ product: "ahd", title: TITLE, detail: "R&D prices sit far above real R&D income.\n\nRaised by Keir from ticket 1852.", kind: "task", lane: "next", assigned_to: "keir", actor: "keir" })).o;
+    assert.deepEqual(card.tickets, [1852]);
+    assert.equal(card.ticket_role, "follow_up");
+    assert.equal(card.closes_with_ticket, false);
+    later(11 * HOUR);
+    closeTicket(1852, clock.toISOString());
+    later(4 * 24 * HOUR);
+    const got = (await t.kanban_get({ id: card.id })).o;
+    assert.match(got.ticket_warning, /^Ticket 1852 was closed on 17 Nov\. This card is leftover follow-up work, not the ticket\./);
+    const out = await runTicketReconcile({ store: k, reader });
+    assert.deepEqual(out.counts, { follow_up: 1 });
+    const after = k.get(card.id);
+    assert.equal(after.lane, "next", "not completed");
+    assert.equal(after.title, `Follow-up from closed ticket 1852: ${TITLE}`);
+    assert.equal(after.assigned_to, null, "the quiet assignee is removed");
+    assert.equal((await runTicketReconcile({ store: k, reader })).changed, 0);
+  });
+
+  it("a card the caller filed as the ticket's own work is completed with a note when the ticket closes", async () => {
+    const t = tools();
+    const card = (await t.kanban_add({ product: "ahd", title: TITLE, ticket: 1852, ticket_role: "own", start: true, actor: "claude:s1" })).o;
     assert.deepEqual(card.tickets, [1852]);
     assert.equal(card.ticket_role, "own");
+    assert.equal(card.closes_with_ticket, true);
     assert.equal(card.ticket_status[0].status, "Open");
     assert.equal(card.ticket_warning, undefined);
 
@@ -104,6 +127,7 @@ describe("ticket 1852, end to end", () => {
     assert.equal(after.lane, "done");
     const ev = after.events.find((e) => e.event_type === "source_closed");
     assert.match(ev.summary, /Ticket 1852 was closed on 17 Nov \(Fixed\. The free technology/);
+    assert.match(before.ticket_warning, /filed as the ticket's own status or question.*The reconcile pass will close it/);
     assert.match(ev.summary, /ticket's own work, so it closes with it/);
     assert.equal(ev.actor, "source-sync");
     assert.equal((await t.kanban_get({ id: card.id })).o.ticket_warning, undefined, "a done card carries no warning");
@@ -170,7 +194,7 @@ describe("reconcile pass", () => {
   });
 
   it("a dry run reports the change and changes nothing", async () => {
-    const card = k.add({ product: "ahd", title: TITLE, start: true }, { actor: "claude" });
+    const card = k.add({ product: "ahd", title: TITLE, ticket: 1852, ticket_role: "own", start: true }, { actor: "claude" });
     closeTicket(1852, clock.toISOString());
     const rows = () => JSON.stringify([k.db.prepare("SELECT * FROM kanban_items").all(), k.db.prepare("SELECT * FROM kanban_events").all()]);
     const before = rows();
@@ -182,7 +206,7 @@ describe("reconcile pass", () => {
   });
 
   it("an own card naming several tickets closes only when all are closed", async () => {
-    const card = k.add({ product: "ahd", title: "Cap and price fixes (tickets 1852 and 1853)", start: true }, { actor: "claude" });
+    const card = k.add({ product: "ahd", title: "Cap and price fixes (tickets 1852 and 1853)", ticket_role: "own", start: true }, { actor: "claude" });
     assert.deepEqual(card.tickets, [1852, 1853]);
     closeTicket(1852, clock.toISOString());
     assert.equal((await runTicketReconcile({ store: k, reader })).changed, 0);
@@ -205,9 +229,9 @@ describe("reconcile pass", () => {
   });
 
   it("a reopened ticket notes every card it closed and reopens only the most recent", async () => {
-    const older = k.add({ product: "ahd", title: TITLE, start: true }, { actor: "claude" });
+    const older = k.add({ product: "ahd", title: TITLE, ticket_role: "own", start: true }, { actor: "claude" });
     later(HOUR);
-    const newer = k.add({ product: "ahd", title: "Second look at the tech cap (ticket 1852)", force: true, lane: "next", assigned_to: "codex" }, { actor: "claude" });
+    const newer = k.add({ product: "ahd", title: "Second look at the tech cap (ticket 1852)", ticket_role: "own", force: true, lane: "next", assigned_to: "codex" }, { actor: "claude" });
     later(HOUR);
     closeTicket(1852, clock.toISOString());
     assert.equal((await runTicketReconcile({ store: k, reader })).changed, 2);
@@ -236,7 +260,7 @@ describe("reconcile pass", () => {
     assert.equal((await runTicketReconcile({ store: k, reader })).changed, 0, "live assignee, already labelled: nothing to do");
     assert.equal(k.get(live.id).title, title);
     // The hand sweep relabels an existing own card by editing its title.
-    const own = k.add({ product: "ahd", title: "Unreachable R&D prices (ticket 1852)", force: true, lane: "backlog" }, { actor: "claude" });
+    const own = k.add({ product: "ahd", title: "Unreachable R&D prices (ticket 1852)", ticket_role: "own", force: true, lane: "backlog" }, { actor: "claude" });
     assert.equal(own.ticket_role, "own");
     k.update(own.id, { title: `Follow-up from closed ticket 1852: ${own.title}` }, { actor: "sweep" });
     assert.equal(k.get(own.id).ticket_role, "follow_up");
@@ -323,11 +347,40 @@ describe("ticket links on cards", () => {
     const d = Number(insert.run("Follow-up from closed ticket 1852: balance", "", stamp, stamp).lastInsertRowid);
     k.close();
     k = openKanban(dbPath, { now: () => clock });
-    assert.deepEqual([k.get(a).tickets, k.get(a).ticket_role, k.get(a).ticket_link], [[1852], "own", "inferred"]);
+    assert.deepEqual([k.get(a).tickets, k.get(a).ticket_role, k.get(a).ticket_link, k.get(a).closes_with_ticket], [[1852], "follow_up", "inferred", false]);
     assert.deepEqual(k.get(b).tickets, []);
     assert.equal(k.get(b).ticket_role, null);
     assert.deepEqual(k.get(c).tickets, [1852]);
     assert.equal(k.get(d).ticket_role, "follow_up");
+  });
+
+  it("only an own form or an explicit ticket_role own closes with the ticket", async () => {
+    const status = k.add({ product: "ahd", title: "Ticket 1852: no confirmed answer for the player", detail: "Ticket 1852 reached the end of its task without an answer.\n\nRaised by Keir from ticket 1852.", lane: "next", assigned_to: "keir" }, { actor: "keir" });
+    const question = k.add({ product: "ahd", title: "Which tech cap should apply? (ticket 1852)", detail: "Raised by Keir from ticket 1852.", lane: "backlog", force: true }, { actor: "keir" });
+    const explicit = k.add({ product: "ahd", title: "Tech cap fix", ticket: 1852, lane: "backlog", force: true }, { actor: "claude" });
+    const told = k.add({ product: "ahd", title: "Answer the player on the cap", ticket: 1852, ticket_role: "own", lane: "backlog", force: true }, { actor: "claude" });
+    assert.deepEqual([status, question, explicit, told].map((c) => [c.ticket_role, c.closes_with_ticket]),
+      [["own", true], ["follow_up", false], ["follow_up", false], ["own", true]]);
+    // A caller's role survives a later title edit.
+    k.update(told.id, { title: "Answer the player on the tech cap" }, { actor: "claude" });
+    assert.equal(k.get(told.id).closes_with_ticket, true);
+    closeTicket(1852, clock.toISOString());
+    later(HOUR);
+    const out = await runTicketReconcile({ store: k, reader });
+    assert.deepEqual(out.counts, { completed: 2, follow_up: 2 });
+    assert.deepEqual([status, question, explicit, told].map((c) => k.get(c.id).lane), ["done", "backlog", "backlog", "done"]);
+  });
+
+  it("a card linked as own by the previous version is re-read once as a follow-up", () => {
+    const stamp = clock.toISOString();
+    const insert = k.db.prepare("INSERT INTO kanban_items (product, title, detail, lane, created_at, updated_at, ticket_refs, ticket_role, ticket_link) VALUES ('a-house-divided', ?, '', 'backlog', ?, ?, '[1852]', 'own', 'inferred')");
+    const handoff = Number(insert.run(TITLE, stamp, stamp).lastInsertRowid);
+    const status = Number(insert.run("Ticket 1852: no confirmed answer for the player", stamp, stamp).lastInsertRowid);
+    k.db.exec("ALTER TABLE kanban_items DROP COLUMN ticket_role_by");
+    k.close();
+    k = openKanban(dbPath, { now: () => clock });
+    assert.deepEqual([k.get(handoff).ticket_role, k.get(handoff).closes_with_ticket], ["follow_up", false]);
+    assert.deepEqual([k.get(status).ticket_role, k.get(status).closes_with_ticket], ["own", true]);
   });
 
   it("work_report can attach a ticket; an explicit link survives title edits", async () => {

@@ -1,0 +1,2153 @@
+{
+ "_about": "Every card on the 612-card kanban of 2026-11-21 (before the hand sweep) whose words name a support ticket, with what the sweep did to it, and the real state of each ticket named, read the same afternoon. Card text other than the ticket references is redacted. Used by kanban-ticket-replay.test.js.",
+ "captured_at": "2026-11-21",
+ "board_cards": 612,
+ "cards": [
+  {
+   "id": 255529,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-19T14:05:53.477Z",
+   "updated_at": "2026-11-21T04:08:49.025Z",
+   "last_progress_at": "2026-11-21T04:08:49.025Z",
+   "github_repo": null,
+   "title": "Card 255529 [...] (ticket 1859)",
+   "detail": "Raised by Keir from ticket 1859.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255471,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-18T06:56:54.949Z",
+   "updated_at": "2026-11-21T04:07:49.507Z",
+   "last_progress_at": "2026-11-21T04:07:49.507Z",
+   "github_repo": null,
+   "title": "Card 255471 [...] (ticket 1855)",
+   "detail": "Raised by Keir from ticket 1855.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255356,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-16T01:54:39.952Z",
+   "updated_at": "2026-11-21T04:07:04.009Z",
+   "last_progress_at": "2026-11-21T04:07:04.009Z",
+   "github_repo": null,
+   "title": "Card 255356 [...] (ticket 1832)",
+   "detail": "Ticket 1832 [...]\nRaised by Keir from ticket 1832.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255532,
+   "product": "a-house-divided",
+   "kind": "feature",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-19T20:59:46.139Z",
+   "updated_at": "2026-11-19T20:59:46.139Z",
+   "last_progress_at": null,
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255532",
+   "detail": "[...] ticket 1862 [...]\nRaised by Keir from ticket 1862.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255524,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-19T13:10:35.484Z",
+   "updated_at": "2026-11-19T13:10:35.484Z",
+   "last_progress_at": null,
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255524",
+   "detail": "Raised by Keir from ticket 1859.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255522,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-19T10:23:34.502Z",
+   "updated_at": "2026-11-19T10:23:34.502Z",
+   "last_progress_at": null,
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255522",
+   "detail": "Raised by Keir from ticket 1859.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255492,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-18T20:32:22.641Z",
+   "updated_at": "2026-11-18T20:46:14.391Z",
+   "last_progress_at": "2026-11-18T20:46:14.391Z",
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255492",
+   "detail": "Raised by Keir from ticket 1857.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255473,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-18T08:26:20.218Z",
+   "updated_at": "2026-11-18T08:32:44.299Z",
+   "last_progress_at": "2026-11-18T08:32:44.299Z",
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255473",
+   "detail": "Raised by Keir from ticket 1856.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255437,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-17T23:59:07.554Z",
+   "updated_at": "2026-11-17T23:59:07.554Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255437 [...] (ticket 1845)",
+   "detail": "[...] ticket 1845 [...]\nRaised by Keir from ticket 1845.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "4 follow-up"
+   }
+  },
+  {
+   "id": 255431,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-17T21:56:43.872Z",
+   "updated_at": "2026-11-17T21:56:43.872Z",
+   "last_progress_at": null,
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255431",
+   "detail": "Raised by Keir from ticket 1852.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255393,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-17T06:11:07.329Z",
+   "updated_at": "2026-11-17T06:11:07.329Z",
+   "last_progress_at": null,
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255393",
+   "detail": "Raised by Keir from ticket 1842.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255382,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-17T00:15:43.452Z",
+   "updated_at": "2026-11-17T00:15:43.452Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Ticket 1837: no confirmed answer for the player",
+   "detail": "Ticket 1837 [...] Ticket 1837 [...]\nRaised by Keir from ticket 1837.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255353,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-16T00:48:59.845Z",
+   "updated_at": "2026-11-16T01:52:45.230Z",
+   "last_progress_at": "2026-11-16T01:52:45.230Z",
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255353",
+   "detail": "Raised by Keir from ticket 1832.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255323,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-13T21:41:40.163Z",
+   "updated_at": "2026-11-13T21:41:40.163Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Ticket 1829: no confirmed answer for the player",
+   "detail": "Ticket 1829 [...]\nRaised by Keir from ticket 1829.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255245,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-10T20:16:29.265Z",
+   "updated_at": "2026-11-11T23:16:53.655Z",
+   "last_progress_at": "2026-11-11T23:16:53.655Z",
+   "github_repo": null,
+   "title": "Card 255245 [...] (ticket 1815)",
+   "detail": "Raised by Keir from ticket 1815.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255282,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-11T11:53:53.228Z",
+   "updated_at": "2026-11-11T11:53:53.228Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255282 [...] (ticket 1819)",
+   "detail": "Raised by Keir from ticket 1819.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "2 stale"
+   }
+  },
+  {
+   "id": 255262,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-11T03:40:17.671Z",
+   "updated_at": "2026-11-11T03:40:17.671Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255262 [...] (ticket 1818)",
+   "detail": "[...] ticket 1818) [...]\nRaised by Keir from ticket 1818.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "4 follow-up"
+   }
+  },
+  {
+   "id": 255238,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-10T17:36:38.066Z",
+   "updated_at": "2026-11-10T17:36:38.066Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255238 [...] (ticket 1812)",
+   "detail": "Raised by Keir from ticket 1812.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "3 duplicate"
+   }
+  },
+  {
+   "id": 255236,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-10T16:40:14.723Z",
+   "updated_at": "2026-11-10T17:35:08.159Z",
+   "last_progress_at": "2026-11-10T17:35:08.159Z",
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255236",
+   "detail": "Raised by Keir from ticket 1812.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255237,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-10T17:31:09.988Z",
+   "updated_at": "2026-11-10T17:31:09.988Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255237 [...] (ticket 1813)",
+   "detail": "Raised by Keir from ticket 1813.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255223,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-09T19:32:19.839Z",
+   "updated_at": "2026-11-09T19:32:19.839Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255223",
+   "detail": "Raised by Keir from ticket 1799.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255222,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-09T18:17:11.633Z",
+   "updated_at": "2026-11-09T18:17:11.633Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255222 [...] (ticket 1808)",
+   "detail": "Raised by Keir from ticket 1808.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255221,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-09T16:50:49.684Z",
+   "updated_at": "2026-11-09T16:50:49.684Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255221 [...] (ticket 1803)",
+   "detail": "Raised by Keir from ticket 1803.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255219,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-09T14:46:17.968Z",
+   "updated_at": "2026-11-09T14:46:17.968Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255219 [...] (ticket 1806)",
+   "detail": "Raised by Keir from ticket 1806.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255204,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-09T03:13:46.682Z",
+   "updated_at": "2026-11-09T03:13:46.682Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255204 [...] (ticket 1802)",
+   "detail": "Raised by Keir from ticket 1802.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255203,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-09T00:06:06.038Z",
+   "updated_at": "2026-11-09T00:06:06.038Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255203 [...] (ticket 1801)",
+   "detail": "Raised by Keir from ticket 1801.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "2 stale"
+   }
+  },
+  {
+   "id": 255200,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-08T23:40:43.669Z",
+   "updated_at": "2026-11-08T23:40:43.669Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255200 [...] (ticket 1800)",
+   "detail": "Raised by Keir from ticket 1800.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255199,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-08T23:20:25.663Z",
+   "updated_at": "2026-11-08T23:20:25.663Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255199",
+   "detail": "Raised by Keir from ticket 1798.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255196,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-08T19:21:07.842Z",
+   "updated_at": "2026-11-08T19:21:07.842Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255196 [...] (ticket 1799)",
+   "detail": "Raised by Keir from ticket 1799.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255191,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-08T17:43:33.410Z",
+   "updated_at": "2026-11-08T17:43:33.410Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255191 [...] (ticket 1798)",
+   "detail": "Ticket 1798 [...]\nRaised by Keir from ticket 1798.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "2 stale"
+   }
+  },
+  {
+   "id": 255172,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-07T23:52:35.961Z",
+   "updated_at": "2026-11-07T23:52:35.961Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255172 [...] (ticket 1794)",
+   "detail": "Raised by Keir from ticket 1794.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 255124,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-07T13:57:43.545Z",
+   "updated_at": "2026-11-07T13:57:43.545Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255124 [...] (ticket 1792)",
+   "detail": "[...] (ticket 1792 [...] (ticket 1391) [...]\nRaised by Keir from ticket 1792.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "2 stale"
+   }
+  },
+  {
+   "id": 255117,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-07T11:02:31.261Z",
+   "updated_at": "2026-11-07T11:02:31.261Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255117 [...] (ticket 1791)",
+   "detail": "Raised by Keir from ticket 1791.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "4 follow-up"
+   }
+  },
+  {
+   "id": 255104,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-06T03:14:55.908Z",
+   "updated_at": "2026-11-06T03:14:55.908Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255104 [...] (ticket 1777)",
+   "detail": "Raised by Keir from ticket 1777.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "4 follow-up"
+   }
+  },
+  {
+   "id": 255004,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-02T19:45:27.248Z",
+   "updated_at": "2026-11-02T19:45:27.248Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 255004",
+   "detail": "[...] ticket 1756 [...]\nRaised by Keir from ticket 1756.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254935,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-01T18:13:47.111Z",
+   "updated_at": "2026-11-01T18:13:47.111Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254935",
+   "detail": "[...] ticket 1730 [...]\nRaised by Keir from ticket 1730.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254934,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-01T17:52:33.572Z",
+   "updated_at": "2026-11-01T17:52:33.572Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254934",
+   "detail": "[...] ticket 1730 [...]\n[...] ticket 1730 [...]\n[...] ticket 1730 [...]\nRaised by Keir from ticket 1730.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254910,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-11-01T01:19:58.140Z",
+   "updated_at": "2026-11-01T01:19:58.140Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254910 [...] (ticket 1741)",
+   "detail": "Raised by Keir from ticket 1741.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "4 follow-up"
+   }
+  },
+  {
+   "id": 254791,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-25T16:35:23.547Z",
+   "updated_at": "2026-10-25T16:35:23.547Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254791",
+   "detail": "Raised by Keir from ticket 1680.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254700,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-23T02:29:39.256Z",
+   "updated_at": "2026-10-23T02:29:39.256Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254700",
+   "detail": "Raised by Keir from ticket 1663.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254695,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-22T22:27:32.509Z",
+   "updated_at": "2026-10-22T22:27:32.509Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254695",
+   "detail": "Raised by Keir from ticket 1649.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254688,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-22T18:38:10.485Z",
+   "updated_at": "2026-10-22T18:38:10.485Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254688",
+   "detail": "Ticket 1658 [...]\nRaised by Keir from ticket 1658.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "3 duplicate"
+   }
+  },
+  {
+   "id": 254681,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-22T16:46:55.389Z",
+   "updated_at": "2026-10-22T16:46:55.389Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254681",
+   "detail": "Raised by Keir from ticket 1656.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254665,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-21T17:48:32.370Z",
+   "updated_at": "2026-10-21T17:48:32.370Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254665",
+   "detail": "Raised by Keir from ticket 1599.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254624,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-20T02:40:46.424Z",
+   "updated_at": "2026-10-20T02:40:46.424Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254624 [...] (ticket 1636)",
+   "detail": "Raised by Keir from ticket 1636.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "3 duplicate"
+   }
+  },
+  {
+   "id": 254622,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-20T02:27:19.354Z",
+   "updated_at": "2026-10-20T02:27:19.354Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254622 [...] (ticket 1636)",
+   "detail": "Ticket 1636. [...]\nRaised by Keir from ticket 1636.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "4 follow-up"
+   }
+  },
+  {
+   "id": 254593,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-19T16:19:57.890Z",
+   "updated_at": "2026-10-19T16:19:57.890Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254593 [...] (ticket 1600)",
+   "detail": "[...] incident 1600 [...]\nRaised by Keir from ticket 1600.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 254583,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": "issue",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-19T12:40:33.738Z",
+   "updated_at": "2026-10-19T12:40:33.738Z",
+   "last_progress_at": null,
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 254583",
+   "detail": "Ticket 1625 [...]\nRaised by Keir from ticket 1625.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254577,
+   "product": "a-house-divided",
+   "kind": "feature",
+   "class": "idea",
+   "lane": "inbox",
+   "assigned_to": null,
+   "created_at": "2026-10-19T00:12:26.852Z",
+   "updated_at": "2026-10-19T00:12:26.852Z",
+   "last_progress_at": null,
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 254577",
+   "detail": "Raised by Keir from ticket 1623.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255429,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": "issue",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-11-17T21:37:09.912Z",
+   "updated_at": "2026-11-20T22:16:28.304Z",
+   "last_progress_at": "2026-11-17T21:54:53.704Z",
+   "github_repo": null,
+   "title": "Card 255429 Ticket 1852 [...]",
+   "detail": "[...]",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254702,
+   "product": "a-house-divided",
+   "kind": "audit",
+   "class": "issue",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-10-23T04:53:04.293Z",
+   "updated_at": "2026-11-03T05:32:42.957Z",
+   "last_progress_at": "2026-10-24T00:24:15.257Z",
+   "github_repo": null,
+   "title": "Card 254702 [...] ticket 1654 [...]",
+   "detail": "",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "2 stale"
+   }
+  },
+  {
+   "id": 254909,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": "issue",
+   "lane": "next",
+   "assigned_to": "keir",
+   "created_at": "2026-11-01T01:07:33.391Z",
+   "updated_at": "2026-11-01T01:07:33.391Z",
+   "last_progress_at": null,
+   "github_repo": null,
+   "title": "Card 254909 [...] (ticket #1741)",
+   "detail": "[...]",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "2 stale"
+   }
+  },
+  {
+   "id": 254561,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": "project",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-10-18T16:38:40.861Z",
+   "updated_at": "2026-11-21T05:15:31.172Z",
+   "last_progress_at": "2026-11-21T05:15:31.172Z",
+   "github_repo": null,
+   "title": "Card 254561",
+   "detail": "[...] (ticket 1600) [...]",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255472,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": null,
+   "lane": "next",
+   "assigned_to": "codex",
+   "created_at": "2026-11-18T07:32:27.698Z",
+   "updated_at": "2026-11-18T14:08:40.755Z",
+   "last_progress_at": "2026-11-18T14:08:31.294Z",
+   "github_repo": null,
+   "title": "Card 255472",
+   "detail": "Raised by Keir from ticket 1853.",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 254939,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "issue",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-11-01T22:14:46.090Z",
+   "updated_at": "2026-11-01T22:36:25.041Z",
+   "last_progress_at": "2026-11-01T22:36:25.041Z",
+   "github_repo": null,
+   "title": "Card 254939",
+   "detail": "Raised by Keir from ticket 1730.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254763,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "issue",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-10-24T13:29:04.930Z",
+   "updated_at": "2026-10-26T04:14:25.629Z",
+   "last_progress_at": "2026-10-26T04:14:25.629Z",
+   "github_repo": null,
+   "title": "Card 254763",
+   "detail": "[...] ticket 1669 [...]\n[...] ticket 1669 [...]\n[...] ticket 1670 [...]\nRaised by Keir from ticket 1669.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254701,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-10-23T03:08:04.844Z",
+   "updated_at": "2026-10-24T21:24:36.619Z",
+   "last_progress_at": "2026-10-24T21:24:36.619Z",
+   "github_repo": null,
+   "title": "Card 254701",
+   "detail": "Ticket 1654 [...]\nRaised by Keir from ticket 1654.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254673,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "issue",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-10-22T04:30:08.220Z",
+   "updated_at": "2026-10-23T12:56:35.629Z",
+   "last_progress_at": "2026-10-23T12:56:35.629Z",
+   "github_repo": null,
+   "title": "Card 254673",
+   "detail": "[...] ticket 1651 [...]\nRaised by Keir from ticket 1651.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254707,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-10-23T05:02:30.523Z",
+   "updated_at": "2026-10-23T12:13:14.516Z",
+   "last_progress_at": "2026-10-23T12:13:14.516Z",
+   "github_repo": null,
+   "title": "Card 254707",
+   "detail": "[...] ticket 1650 [...]\nRaised by Keir from ticket 1650.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 254691,
+   "product": "lakeside-mcp",
+   "kind": "capability",
+   "class": "idea",
+   "lane": "next",
+   "assigned_to": null,
+   "created_at": "2026-10-22T20:22:29.136Z",
+   "updated_at": "2026-10-23T05:38:51.461Z",
+   "last_progress_at": "2026-10-23T05:38:51.461Z",
+   "github_repo": null,
+   "title": "Card 254691",
+   "detail": "Raised by Keir from ticket 1656.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255428,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": null,
+   "lane": "now",
+   "assigned_to": "codex",
+   "created_at": "2026-11-17T21:04:45.647Z",
+   "updated_at": "2026-11-21T05:39:10.541Z",
+   "last_progress_at": "2026-11-21T05:39:10.541Z",
+   "github_repo": null,
+   "title": "Card 255428 [...] (ticket 1852)",
+   "detail": "Raised by Keir from ticket 1852.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255588,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "now",
+   "assigned_to": "codex",
+   "created_at": "2026-11-21T01:43:55.357Z",
+   "updated_at": "2026-11-21T05:00:45.969Z",
+   "last_progress_at": "2026-11-21T05:00:45.969Z",
+   "github_repo": null,
+   "title": "Card 255588",
+   "detail": "Ticket #1860 [...]",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255520,
+   "product": "a-house-divided",
+   "kind": "monitor",
+   "class": null,
+   "lane": "now",
+   "assigned_to": "codex",
+   "created_at": "2026-11-19T06:49:37.852Z",
+   "updated_at": "2026-11-21T04:08:48.987Z",
+   "last_progress_at": "2026-11-21T04:08:48.987Z",
+   "github_repo": null,
+   "title": "Card 255520 Ticket 1860 [...]",
+   "detail": "[...]",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "left alone"
+   }
+  },
+  {
+   "id": 255519,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "now",
+   "assigned_to": "codex",
+   "created_at": "2026-11-19T06:41:57.892Z",
+   "updated_at": "2026-11-19T13:44:30.991Z",
+   "last_progress_at": "2026-11-19T13:44:30.991Z",
+   "github_repo": "lakesidegamedev/AHDGame",
+   "title": "Card 255519",
+   "detail": "Raised by Keir from ticket 1860.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "5 lane and owner"
+   }
+  },
+  {
+   "id": 255496,
+   "product": "a-house-divided",
+   "kind": "bug",
+   "class": null,
+   "lane": "now",
+   "assigned_to": "deepseek",
+   "created_at": "2026-11-18T21:21:55.054Z",
+   "updated_at": "2026-11-18T21:25:46.289Z",
+   "last_progress_at": "2026-11-18T21:25:46.289Z",
+   "github_repo": null,
+   "title": "Card 255496",
+   "detail": "Ticket #1857. [...]",
+   "sweep": {
+    "outcome": "closed",
+    "rule": "1 done"
+   }
+  },
+  {
+   "id": 254316,
+   "product": "a-house-divided",
+   "kind": "task",
+   "class": "idea",
+   "lane": "backlog",
+   "assigned_to": null,
+   "created_at": "2026-10-14T15:09:27.629Z",
+   "updated_at": "2026-10-17T13:38:09.578Z",
+   "last_progress_at": "2026-10-14T15:16:57.041Z",
+   "github_repo": null,
+   "title": "Card 254316 [...] (ticket 1550)",
+   "detail": "Ticket 1550 [...]\nRaised by Keir from ticket 1550.",
+   "sweep": {
+    "outcome": "kept",
+    "rule": "4 follow-up"
+   }
+  }
+ ],
+ "tickets": [
+  {
+   "number": 1391,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-07T03:10:43.506Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-07T03:10:43.506Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-07T03:12:25.414Z"
+    }
+   ]
+  },
+  {
+   "number": 1550,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-14T16:13:40.907Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-14T16:13:40.907Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-14T16:16:23.288Z"
+    }
+   ]
+  },
+  {
+   "number": 1599,
+   "status": "closed",
+   "mergedInto": 1600,
+   "closedAt": "2026-10-17T02:18:39.546Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-10-17T02:18:39.546Z"
+    }
+   ]
+  },
+  {
+   "number": 1600,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-20T00:28:24.665Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-20T00:28:24.665Z"
+    }
+   ]
+  },
+  {
+   "number": 1623,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-19T05:18:26.468Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-19T05:18:26.468Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-19T05:19:24.450Z"
+    }
+   ]
+  },
+  {
+   "number": 1625,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-19T22:06:28.136Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-19T22:06:28.136Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-19T22:07:25.142Z"
+    }
+   ]
+  },
+  {
+   "number": 1636,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-20T11:53:38.570Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-20T11:53:38.570Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-20T11:55:29.313Z"
+    }
+   ]
+  },
+  {
+   "number": 1649,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-23T14:06:10.995Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-23T14:06:10.995Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T14:07:33.045Z"
+    }
+   ]
+  },
+  {
+   "number": 1650,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-23T15:24:19.971Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-22T00:56:26.443Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-22T04:43:32.291Z"
+    },
+    {
+     "status": "in_progress",
+     "at": "2026-10-23T04:57:35.603Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T15:24:19.971Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T15:25:33.479Z"
+    }
+   ]
+  },
+  {
+   "number": 1651,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-23T14:03:50.249Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-22T05:31:09.229Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-22T15:19:31.521Z"
+    },
+    {
+     "status": "in_progress",
+     "at": "2026-10-23T04:57:42.770Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T14:03:50.249Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T14:04:33.313Z"
+    }
+   ]
+  },
+  {
+   "number": 1654,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-27T22:07:28.416Z",
+   "statusHistory": [
+    {
+     "status": "blocked",
+     "at": "2026-10-23T05:03:10.841Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-27T22:07:28.416Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-27T22:09:32.959Z"
+    }
+   ]
+  },
+  {
+   "number": 1656,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-23T20:19:47.577Z",
+   "statusHistory": [
+    {
+     "status": "blocked",
+     "at": "2026-10-22T21:22:42.921Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T20:19:47.577Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T20:22:33.038Z"
+    }
+   ]
+  },
+  {
+   "number": 1658,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-10-27T00:30:31.604Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-22T20:50:10.988Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-22T20:52:33.485Z"
+    },
+    {
+     "status": "in_progress",
+     "at": "2026-10-23T04:57:29.628Z"
+    },
+    {
+     "status": "blocked",
+     "at": "2026-10-23T14:44:56.594Z"
+    },
+    {
+     "status": "in_progress",
+     "at": "2026-10-25T10:48:21.093Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-10-27T00:30:31.604Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-10-27T00:30:32.711Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-10-27T00:30:34.000Z"
+    }
+   ]
+  },
+  {
+   "number": 1663,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-23T14:08:06.767Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-23T14:08:06.767Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-23T14:10:32.602Z"
+    }
+   ]
+  },
+  {
+   "number": 1669,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-10-24T15:04:22.594Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-10-24T15:04:22.594Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-10-24T15:04:23.311Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-10-24T15:04:24.409Z"
+    }
+   ]
+  },
+  {
+   "number": 1680,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-10-26T11:20:13.219Z",
+   "statusHistory": [
+    {
+     "status": "parked",
+     "at": "2026-10-26T00:17:03.888Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-26T11:20:13.219Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-10-26T11:21:54.691Z"
+    }
+   ]
+  },
+  {
+   "number": 1730,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-01T13:48:11.234Z",
+   "resolvedAt": "2026-10-30T23:47:54.921Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-10-30T23:47:54.921Z"
+    },
+    {
+     "status": "in_progress",
+     "at": "2026-10-30T23:50:23.997Z"
+    },
+    {
+     "status": "in_progress",
+     "at": "2026-10-30T23:51:03.367Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-01T13:48:11.234Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-01T13:50:34.297Z"
+    }
+   ]
+  },
+  {
+   "number": 1741,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-01T22:42:08.239Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-01T22:42:08.239Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-01T22:44:44.686Z"
+    }
+   ]
+  },
+  {
+   "number": 1756,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-02T20:05:51.831Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-02T20:05:51.831Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-02T20:05:52.329Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-02T20:05:53.657Z"
+    }
+   ]
+  },
+  {
+   "number": 1777,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-06T04:00:41.560Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-06T04:00:41.560Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-06T04:00:42.085Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-06T04:00:44.267Z"
+    }
+   ]
+  },
+  {
+   "number": 1791,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-07T19:40:44.505Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-07T19:40:44.505Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-07T19:43:59.975Z"
+    }
+   ]
+  },
+  {
+   "number": 1792,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-07T21:31:34.436Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-07T21:31:34.436Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-07T21:31:34.815Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-07T21:31:35.785Z"
+    }
+   ]
+  },
+  {
+   "number": 1794,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-12T05:29:19.609Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:29:19.609Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:32:02.060Z"
+    }
+   ]
+  },
+  {
+   "number": 1798,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-10T00:22:26.058Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:26.058Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:29.176Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:30.901Z"
+    }
+   ]
+  },
+  {
+   "number": 1799,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-12T05:29:27.138Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:29:27.138Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:32:05.916Z"
+    }
+   ]
+  },
+  {
+   "number": 1800,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-09T16:34:10.029Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-09T16:34:10.029Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-09T16:34:10.377Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-09T16:34:11.827Z"
+    }
+   ]
+  },
+  {
+   "number": 1801,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-09T12:25:37.393Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-09T12:25:37.393Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-09T12:29:00.638Z"
+    }
+   ]
+  },
+  {
+   "number": 1802,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-10T23:43:56.413Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-10T23:43:56.413Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-10T23:47:02.297Z"
+    }
+   ]
+  },
+  {
+   "number": 1803,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-10T00:22:43.312Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:43.312Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:43.701Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:44.873Z"
+    }
+   ]
+  },
+  {
+   "number": 1806,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-10T00:22:04.820Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:04.820Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:05.355Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-10T00:22:07.313Z"
+    }
+   ]
+  },
+  {
+   "number": 1808,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-11T00:19:06.755Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-11T00:19:06.755Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-11T00:20:02.589Z"
+    }
+   ]
+  },
+  {
+   "number": 1812,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-12T05:29:44.845Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:29:44.845Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:32:14.147Z"
+    }
+   ]
+  },
+  {
+   "number": 1813,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-12T05:29:52.481Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:29:52.481Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:32:20.536Z"
+    }
+   ]
+  },
+  {
+   "number": 1815,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-12T05:29:59.862Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:29:59.862Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-12T05:32:24.583Z"
+    }
+   ]
+  },
+  {
+   "number": 1818,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-11T03:41:08.109Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-11T03:41:08.109Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-11T03:41:08.813Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-11T03:41:09.831Z"
+    }
+   ]
+  },
+  {
+   "number": 1819,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-11T23:31:05.413Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-11T23:31:05.413Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-11T23:31:06.197Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-11T23:31:07.569Z"
+    }
+   ]
+  },
+  {
+   "number": 1829,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-14T14:10:24.328Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-14T14:10:24.328Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-14T14:11:02.211Z"
+    }
+   ]
+  },
+  {
+   "number": 1832,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-16T12:02:39.381Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-16T12:02:39.381Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-16T12:02:39.922Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-16T12:02:41.415Z"
+    }
+   ]
+  },
+  {
+   "number": 1837,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-17T07:38:11.545Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-17T07:38:11.545Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-17T07:41:12.557Z"
+    }
+   ]
+  },
+  {
+   "number": 1842,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-17T15:20:12.173Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-17T15:20:12.173Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-17T15:23:11.236Z"
+    }
+   ]
+  },
+  {
+   "number": 1845,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-19T00:12:29.490Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "in_progress",
+     "at": "2026-11-17T23:13:21.528Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-19T00:12:29.490Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-19T00:12:56.431Z"
+    }
+   ]
+  },
+  {
+   "number": 1852,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-18T04:01:51.961Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-18T04:01:51.961Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-18T04:05:24.820Z"
+    }
+   ]
+  },
+  {
+   "number": 1853,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-18T16:24:38.754Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-18T16:24:38.754Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-18T16:27:08.281Z"
+    }
+   ]
+  },
+  {
+   "number": 1855,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-18T13:43:10.339Z",
+   "resolvedAt": null,
+   "statusHistory": [
+    {
+     "status": "closed",
+     "at": "2026-11-18T13:43:10.339Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-18T13:43:10.704Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-18T13:43:15.362Z"
+    }
+   ]
+  },
+  {
+   "number": 1856,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-18T12:50:23.418Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-18T12:50:23.418Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-18T12:53:30.083Z"
+    }
+   ]
+  },
+  {
+   "number": 1857,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-19T14:05:55.256Z",
+   "resolvedAt": "2026-11-19T14:03:51.836Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-19T05:15:45.298Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-19T05:19:07.547Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-19T14:03:51.836Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-19T14:05:55.256Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-19T14:06:55.646Z"
+    }
+   ]
+  },
+  {
+   "number": 1859,
+   "status": "closed",
+   "mergedInto": null,
+   "closedAt": "2026-11-19T14:05:55.424Z",
+   "resolvedAt": "2026-11-19T14:03:51.736Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-19T14:03:51.736Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-19T14:05:55.424Z"
+    },
+    {
+     "status": "closed",
+     "at": "2026-11-19T14:06:59.769Z"
+    }
+   ]
+  },
+  {
+   "number": 1860,
+   "status": "open",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": null,
+   "statusHistory": []
+  },
+  {
+   "number": 1862,
+   "status": "resolved",
+   "mergedInto": null,
+   "closedAt": null,
+   "resolvedAt": "2026-11-20T03:25:21.049Z",
+   "statusHistory": [
+    {
+     "status": "resolved",
+     "at": "2026-11-20T03:25:21.049Z"
+    },
+    {
+     "status": "resolved",
+     "at": "2026-11-20T03:28:05.761Z"
+    }
+   ]
+  }
+ ]
+}

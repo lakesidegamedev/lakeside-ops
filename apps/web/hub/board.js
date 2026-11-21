@@ -81,7 +81,7 @@ function buildBoard(store) {
       evidence: it.evidence_url || null, by: ownerName(created.get(it.id)), source: it.source,
       area: it.area || "", cls: it.class || "", parent: it.parent_id || null,
       kids: kids.has(it.id) ? { open: kids.get(it.id).open, done: kids.get(it.id).done } : null,
-      tickets: it.tickets || [], ticketRole: it.ticket_role || null,
+      tickets: it.tickets || [], ticketRole: it.ticket_role || null, closesWithTicket: Boolean(it.closes_with_ticket),
       // The assignee of a Now card has reported nothing for a day.
       noActivity: it.activity === "no recent activity", activityNote: it.activity ? it.stale_reason : null,
       lastProgressAt: ms(it.last_activity_at) || null, lastProgressRaw: it.last_progress_at || null,
@@ -342,7 +342,7 @@ async function addTicketStatus(board, reader) {
   const groups = ["monitors", "progress", "next", "inbox", "blocked", "backlog", "done"];
   const cards = groups.flatMap((g) => board[g] || []).filter((c) => c.tickets && c.tickets.length);
   if (!cards.length) return board;
-  const decorated = await decorateItems(cards.map((c) => ({ id: c.id, lane: c.lane, tickets: c.tickets, ticket_role: c.ticketRole,
+  const decorated = await decorateItems(cards.map((c) => ({ id: c.id, lane: c.lane, tickets: c.tickets, ticket_role: c.ticketRole, closes_with_ticket: c.closesWithTicket,
     github: c.github ? { repo: c.github.repo } : null, assigned_to: c.rawOwner, last_progress_at: c.lastProgressRaw, activity: c.noActivity ? "no recent activity" : null, stale_reason: c.activityNote })), reader);
   const byId = new Map(decorated.map((d) => [d.id, d]));
   for (const c of cards) {

@@ -77,6 +77,29 @@ function ticketNumbersFromDetail(detail) {
   return out;
 }
 
+// Card forms that are purely a ticket's own status or question, and nothing
+// else, so the card ends when the ticket closes. Derived from the 2026-11-21
+// hand sweep of 612 cards: of the ticket cards it closed as finished, only
+// Keir's "Ticket N: no confirmed answer for the player" closed because the
+// ticket closed (2 of 2; the card "only tracked that the player had no answer
+// yet"). Every other closed ticket card closed because a fix shipped, and the
+// same title shapes ("(ticket N)", "Raised by Keir from ticket N") also held
+// the six cards the sweep kept as real follow-up work. So nothing else is
+// listed: anything not here, and not explicitly filed as the ticket's own
+// work by its caller, is a follow-up that outlives the ticket.
+const OWN_FORMS = [
+  /^ticket\s+#?(\d{1,6}):\s+no confirmed answer for the player\.?$/i,
+];
+// The ticket number when the title is one of those forms, else null.
+function ticketOwnForm(title) {
+  const t = String(title || "").trim();
+  for (const re of OWN_FORMS) {
+    const m = t.match(re);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
 // Accepts 1852, "1852", "#1852", [1852, 1853], or [{ number: 1852 }].
 // Throws on anything that is not a positive whole number.
 function normalizeTicketInput(input) {
@@ -96,4 +119,4 @@ function normalizeTicketInput(input) {
   return out;
 }
 
-module.exports = { ticketRefsFromText, ticketNumbersFromText, ticketNumbersFromDetail, normalizeTicketInput };
+module.exports = { ticketRefsFromText, ticketNumbersFromText, ticketNumbersFromDetail, ticketOwnForm, normalizeTicketInput };

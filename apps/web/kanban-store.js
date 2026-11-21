@@ -32,7 +32,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
-const { ticketNumbersFromText, ticketNumbersFromDetail, normalizeTicketInput } = require("./ticket-refs");
+const { ticketNumbersFromText, ticketNumbersFromDetail, ticketOwnForm, normalizeTicketInput } = require("./ticket-refs");
 const sources = require("./kanban-sources");
 const { counterFromAdd, counterFromReport, createCounters } = require("./kanban-counters");
 
@@ -144,15 +144,31 @@ const FOLLOW_UP_RE = /^\s*follow[- ]?up\b|\bfollow[- ]?up from (?:a )?closed (?:
 function followUpTitle(title) {
   return FOLLOW_UP_RE.test(String(title || ""));
 }
-// A capability request, an idea or a project outlives the ticket that
-// prompted it, so a link read from its words makes it a follow-up.
-function outlivesTicket(kind, cls) {
-  return kind === "capability" || cls === "idea" || cls === "project";
+// A card ends with its ticket only when it is the ticket's own status or
+// question and nothing else: its caller said so (ticket_role own, recorded as
+// ticket_role_by "caller"), or it is one of the enumerated forms in
+// ticket-refs.js OWN_FORMS naming that same ticket (ticket_role_by "form").
+// Everything else that names a ticket is a follow-up: a developer handoff
+// ("Raised by Keir from ticket N") is filed precisely because work outlives
+// the player's ticket, so a link read from a card's words never closes it.
+function ownFormFor(title, refs) {
+  const n = ticketOwnForm(title);
+  return n !== null && refs.length === 1 && refs[0] === n && !followUpTitle(title);
 }
-function inferTicketLink(title, detail, { kind = null, cls = null } = {}) {
+function closesWithTicket(row) {
+  const refs = parseTicketRefs(row && row.ticket_refs);
+  if (!refs.length || row.ticket_role !== "own") return false;
+  if (row.ticket_role_by === "caller") return true;
+  return row.ticket_role_by === "form" && ownFormFor(row.title, refs);
+}
+// Kind and class no longer matter: every inferred link is a follow-up unless
+// the title is an own form.
+function inferTicketLink(title, detail) {
   const refs = [...ticketNumbersFromText(title)];
   for (const n of ticketNumbersFromDetail(detail)) if (!refs.includes(n)) refs.push(n);
-  return { refs, role: refs.length ? (followUpTitle(title) || outlivesTicket(kind, cls) ? "follow_up" : "own") : null };
+  if (!refs.length) return { refs, role: null, by: null };
+  const own = ownFormFor(title, refs);
+  return { refs, role: own ? "own" : "follow_up", by: own ? "form" : null };
 }
 function parseTicketRefs(value) {
   try {
@@ -173,13 +189,13 @@ function ticketRoleFor(value) {
 // conservatively from their title and detail. Runs on every open; only rows
 // never scanned are touched, so it is cheap after the first run.
 function backfillTicketRefs(db) {
-  const rows = db.prepare("SELECT id, title, detail, kind, class FROM kanban_items WHERE ticket_refs IS NULL").all();
+  const rows = db.prepare("SELECT id, title, detail FROM kanban_items WHERE ticket_refs IS NULL").all();
   if (!rows.length) return 0;
-  const set = db.prepare("UPDATE kanban_items SET ticket_refs = ?, ticket_role = ?, ticket_link = ? WHERE id = ?");
+  const set = db.prepare("UPDATE kanban_items SET ticket_refs = ?, ticket_role = ?, ticket_role_by = ?, ticket_link = ? WHERE id = ?");
   db.transaction(() => {
     for (const row of rows) {
-      const { refs, role } = inferTicketLink(row.title, row.detail, { kind: row.kind, cls: row.class });
-      set.run(JSON.stringify(refs), role, refs.length ? "inferred" : null, row.id);
+      const { refs, role, by } = inferTicketLink(row.title, row.detail);
+      set.run(JSON.stringify(refs), role, by, refs.length ? "inferred" : null, row.id);
     }
   })();
   return rows.length;
@@ -471,6 +487,22 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   if (!cols.has("ticket_refs")) db.exec("ALTER TABLE kanban_items ADD COLUMN ticket_refs TEXT");
   if (!cols.has("ticket_role")) db.exec("ALTER TABLE kanban_items ADD COLUMN ticket_role TEXT");
   if (!cols.has("ticket_link")) db.exec("ALTER TABLE kanban_items ADD COLUMN ticket_link TEXT");
+  // Who made a card the ticket's own work: "caller" (ticket_role own sent
+  // explicitly) or "form" (an OWN_FORMS title). Rows linked before this
+  // column existed had "own" inferred from their words; they are re-read
+  // once, so only an own form keeps "own".
+  if (!cols.has("ticket_role_by")) {
+    db.exec("ALTER TABLE kanban_items ADD COLUMN ticket_role_by TEXT");
+    const set = db.prepare("UPDATE kanban_items SET ticket_role = ?, ticket_role_by = ? WHERE id = ?");
+    db.transaction(() => {
+      for (const row of db.prepare("SELECT id, title, ticket_refs FROM kanban_items WHERE ticket_refs IS NOT NULL AND ticket_refs != '[]'").all()) {
+        const refs = parseTicketRefs(row.ticket_refs);
+        if (!refs.length) continue;
+        const own = ownFormFor(row.title, refs);
+        set.run(own ? "own" : "follow_up", own ? "form" : null, row.id);
+      }
+    })();
+  }
   // Pull request and alert sources (same pattern: '[]' once scanned).
   for (const col of ["pr_refs", "pr_link", "owed_after_merge", "alert_key", "alert_check", "alert_link", "alert_last_at"]) {
     if (!cols.has(col)) db.exec(`ALTER TABLE kanban_items ADD COLUMN ${col} TEXT`);
@@ -548,14 +580,15 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       last_progress_at: row.last_progress_at || null,
       last_activity_at: active == null ? null : new Date(active).toISOString(),
       tickets,
-      ticket_role: tickets.length ? (row.ticket_role || "own") : null,
+      ticket_role: tickets.length ? (row.ticket_role || "follow_up") : null,
       ticket_link: tickets.length ? (row.ticket_link || "inferred") : null,
+      ...(tickets.length ? { closes_with_ticket: closesWithTicket(row) } : {}),
       pull_requests: prs.map((r) => `${r.repo}#${r.number}`),
       ...(prs.length ? { pull_request_link: row.pr_link || "inferred" } : {}),
       ...(row.owed_after_merge ? { still_owed: row.owed_after_merge } : {}),
       alert: row.alert_key ? { key: row.alert_key, check: row.alert_check || null, link: row.alert_link || "inferred", last_reported_at: row.alert_last_at || null } : null,
       sources: [
-        ...tickets.map((n) => ({ kind: "ticket", ref: String(n), role: row.ticket_role || "own" })),
+        ...tickets.map((n) => ({ kind: "ticket", ref: String(n), role: row.ticket_role || "follow_up" })),
         ...prs.map((r) => ({ kind: "pull_request", ref: `${r.repo}#${r.number}` })),
         ...(row.alert_key ? [{ kind: "alert", ref: row.alert_key }] : []),
       ],
@@ -661,29 +694,29 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
   }
 
   // The ticket link a write asks for. An explicit ticket (or tickets) wins;
-  // otherwise the link is read from the card's own words. ticket_role alone
-  // re-labels whatever link the card already has.
+  // otherwise the link is read from the card's own words. The role is "own"
+  // only when the caller says so (ticket_role own) or the title is an own
+  // form; a role the caller set earlier survives later edits. Everything
+  // else is a follow-up. ticket_role alone re-labels the card's current link.
   function ticketLinkFor(input, title, detail, row = null) {
     const given = input.tickets !== undefined ? input.tickets : input.ticket;
     const role = ticketRoleFor(input.ticket_role);
-    if (given !== undefined) {
-      const refs = normalizeTicketInput(given);
-      return { refs, role: refs.length ? (role || (followUpTitle(title) ? "follow_up" : "own")) : null, source: refs.length ? "explicit" : null };
-    }
-    if (row && row.ticket_link === "explicit") {
-      const refs = parseTicketRefs(row.ticket_refs);
-      return { refs, role: role || row.ticket_role || "own", source: "explicit" };
-    }
-    const inferred = inferTicketLink(title, detail, { kind: normalizeKind(input.kind ?? (row ? row.kind : null)), cls: input.class ?? (row ? row.class : null) });
-    const keepRole = row && parseTicketRefs(row.ticket_refs).length ? row.ticket_role : null;
-    // A title that now says "Follow-up from closed ticket N" (the hand sweep
-    // relabels cards that way) makes the card a follow-up.
-    const titleRole = followUpTitle(title) ? "follow_up" : null;
-    return { refs: inferred.refs, role: inferred.refs.length ? (role || titleRole || keepRole || inferred.role) : null, source: inferred.refs.length ? "inferred" : null };
+    const kept = row && parseTicketRefs(row.ticket_refs).length && row.ticket_role_by === "caller" ? row.ticket_role : null;
+    const settle = (refs, source) => {
+      if (!refs.length) return { refs, role: null, by: null, source: null };
+      if (role) return { refs, role, by: "caller", source };
+      if (followUpTitle(title)) return { refs, role: "follow_up", by: kept ? "caller" : null, source };
+      if (kept) return { refs, role: kept, by: "caller", source };
+      if (ownFormFor(title, refs)) return { refs, role: "own", by: "form", source };
+      return { refs, role: "follow_up", by: null, source };
+    };
+    if (given !== undefined) return settle(normalizeTicketInput(given), "explicit");
+    if (row && row.ticket_link === "explicit") return settle(parseTicketRefs(row.ticket_refs), "explicit");
+    return settle(inferTicketLink(title, detail).refs, "inferred");
   }
   function describeLink(link) {
     const names = link.refs.map((n) => `ticket ${n}`).join(", ");
-    return link.role === "follow_up" ? `follow-up from ${names}` : `the ${link.refs.length > 1 ? "tickets'" : "ticket's"} own work (${names})`;
+    return link.role === "follow_up" ? `follow-up from ${names}` : `the ${link.refs.length > 1 ? "tickets'" : "ticket's"} own work (${names}), closes with ${link.refs.length > 1 ? "them" : "it"}`;
   }
 
   // The same alert again: an open card for it records the repeat; one that
@@ -774,13 +807,13 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       const parent = input.parent_id ? resolveId(input.parent_id) : null;
       const info = db.prepare(`INSERT INTO kanban_items (product, title, detail, lane, impact, kind, needs_owner, assigned_to, evidence_url,
           github_repo, github_number, github_url, github_state, created_at, updated_at, area, class, parent_id, ticket_refs, ticket_role, ticket_link, last_progress_at,
-          pr_refs, pr_link, owed_after_merge, alert_key, alert_check, alert_link, alert_last_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          pr_refs, pr_link, owed_after_merge, alert_key, alert_check, alert_link, alert_last_at, ticket_role_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(product, title, detailText, lane, impact, normalizeKind(input.kind), input.needs_owner ? 1 : 0,
           assigned, checkUrl(input.evidence_url, "evidence_url"), github?.repo || null, github?.number || null, github?.url || null,
           github ? "open" : null, stamp, stamp, areaFor(product, input.area), classFor(input.class), parent,
           JSON.stringify(link.refs), link.role, link.source, start ? stamp : null,
-          JSON.stringify(prs), prs.length ? "explicit" : null, owed, alert ? alert.key : null, alert ? alert.check : null, alert ? alert.link : null, alert ? stamp : null);
+          JSON.stringify(prs), prs.length ? "explicit" : null, owed, alert ? alert.key : null, alert ? alert.check : null, alert ? alert.link : null, alert ? stamp : null, link.by);
       const newId = Number(info.lastInsertRowid);
       const sourceNote = [link.refs.length ? describeLink(link) : "", prs.length ? `work of ${prLabel(prs)}` : "", alert ? `raised by alert ${alert.key}` : ""].filter(Boolean).join("; ");
       logEvent({ item_id: newId, product, event_type: "created", actor, summary: `Added to ${lane}${laneNote}${sourceNote ? `; ${sourceNote}` : ""}`, created_at: stamp });
@@ -828,8 +861,8 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     if (patch.ticket !== undefined || patch.tickets !== undefined || patch.ticket_role !== undefined || changes.title !== undefined || changes.detail !== undefined) {
       const link = ticketLinkFor(patch, changes.title ?? row.title, changes.detail ?? row.detail, row);
       const refs = JSON.stringify(link.refs);
-      if (refs !== (row.ticket_refs || "[]") || link.role !== row.ticket_role || link.source !== row.ticket_link) {
-        changes.ticket_refs = refs; changes.ticket_role = link.role; changes.ticket_link = link.source;
+      if (refs !== (row.ticket_refs || "[]") || link.role !== row.ticket_role || link.source !== row.ticket_link || (link.by || null) !== (row.ticket_role_by || null)) {
+        changes.ticket_refs = refs; changes.ticket_role = link.role; changes.ticket_link = link.source; changes.ticket_role_by = link.by;
       }
     }
     if (patch.pull_request !== undefined) {
@@ -865,7 +898,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     const stamp = iso();
     changes.updated_at = stamp;
     const described = Object.keys(changes).filter((k) => !["updated_at", "closed_at", "stale_flagged_at", "last_progress_at", "github_number", "github_url", "github_state"].includes(k))
-      .filter((k) => !["ticket_role", "ticket_link", "pr_link", "alert_check", "alert_link", "alert_last_at"].includes(k))
+      .filter((k) => !["ticket_role", "ticket_role_by", "ticket_link", "pr_link", "alert_check", "alert_link", "alert_last_at"].includes(k))
       .map((k) => (k === "lane" ? `lane ${row.lane} -> ${changes.lane}` : k === "needs_owner" ? `needs_owner ${changes.needs_owner ? "on" : "off"}` : k === "github_repo" ? "github link"
         : k === "ticket_refs" ? (changes.ticket_refs === "[]" ? "ticket link removed" : `ticket link: ${describeLink({ refs: parseTicketRefs(changes.ticket_refs), role: changes.ticket_role })}`)
         : k === "pr_refs" ? (changes.pr_refs === "[]" ? "pull request link removed" : `work of ${prLabel(sources.parsePrRefs(changes.pr_refs))}`)
@@ -939,7 +972,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     let linkNote = "";
     if (ticket !== undefined || tickets !== undefined || ticket_role !== undefined) {
       const link = ticketLinkFor({ ticket, tickets, ticket_role }, row.title, row.detail, row);
-      set.ticket_refs = JSON.stringify(link.refs); set.ticket_role = link.role; set.ticket_link = link.source;
+      set.ticket_refs = JSON.stringify(link.refs); set.ticket_role = link.role; set.ticket_link = link.source; set.ticket_role_by = link.by;
       if (link.refs.length) linkNote = ` [${describeLink(link)}]`;
     }
     if (pull_request !== undefined) {
@@ -993,7 +1026,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     const pick = (opts) => list({ ...opts, product: slug || undefined, include_monitors: false, limit }).items.map(line);
     const line = (it) => ({ id: it.id, title: it.title, product: it.product, lane: it.lane, owner: it.assigned_to, impact: it.impact,
       age_days: it.age_days, stale: it.stale, ...(it.activity ? { activity: it.stale_reason } : {}), progress: looksLikeJson(it.progress_summary) ? "" : String(it.progress_summary || "").slice(0, 160), github: it.github ? `${it.github.repo}#${it.github.number}` : null,
-      ...(it.tickets.length ? { tickets: it.tickets, ticket_role: it.ticket_role, last_progress_at: it.last_progress_at } : {}) });
+      ...(it.tickets.length ? { tickets: it.tickets, ticket_role: it.ticket_role, closes_with_ticket: it.closes_with_ticket, last_progress_at: it.last_progress_at } : {}) });
     const count = (where, ...params) => db.prepare(`SELECT COUNT(*) AS n FROM kanban_items WHERE ${where} AND kind != 'monitor' ${slug ? "AND product = ?" : ""}`).get(...params, ...(slug ? [slug] : [])).n;
     const since3 = new Date(now().getTime() - 3 * DAY_MS).toISOString();
     const stamp = iso();
@@ -1002,7 +1035,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return {
       scope: slug || "all products",
       generated_at: stamp,
-      rules: `Add with start:true before you write code (start needs your actor: Now means someone is on it). Name the source a card comes from and it closes with it: ticket (ticket_role own or follow_up), pull_request (set still_owed if work remains after the merge), alert_key for monitors. Automatic counts are not cards: see mcp_capability_requests. A Now card with no progress for ${ACTIVITY_HOURS} hours goes back to Next, unassigned. Send actor as your name (claude, codex, keir, muse, deepseek), with :session if several run at once. Cap: ${WIP_CAP} cards in progress per actor. Cards quiet ${RELEASE_DAYS} days go back to Next automatically. completed needs evidence_url or no_evidence_reason. Ask the owner in chat, never in a card.`,
+      rules: `Add with start:true before you write code (start needs your actor: Now means someone is on it). Name the source a card comes from: ticket (a card stays open as a follow-up when its ticket closes; send ticket_role own only for a card that is purely the ticket's status or question, which then closes with it), pull_request (set still_owed if work remains after the merge), alert_key for monitors. Automatic counts are not cards: see mcp_capability_requests. A Now card with no progress for ${ACTIVITY_HOURS} hours goes back to Next, unassigned. Send actor as your name (claude, codex, keir, muse, deepseek), with :session if several run at once. Cap: ${WIP_CAP} cards in progress per actor. Cards quiet ${RELEASE_DAYS} days go back to Next automatically. completed needs evidence_url or no_evidence_reason. Ask the owner in chat, never in a card.`,
       lanes: laneHealth(slug),
       counts: {
         now: count("lane = 'now'"), next: count("lane = 'next'"), blocked: count("lane = 'blocked'"),
@@ -1176,7 +1209,10 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
         // Work reported on the card after its ticket closed is leftover work:
         // the card is kept as a follow-up rather than closed.
         const workedAfter = lastClosed > 0 && Date.parse(row.last_progress_at || "") > lastClosed;
-        const role = row.github_repo || filedAfter || workedAfter || followUpTitle(row.title) ? "follow_up" : (row.ticket_role || "own");
+        // Only a card that is the ticket's own status or question (caller said
+        // so, or an own form) ends with the ticket; anything else, and any card
+        // worked on or filed after the close, is follow-up work.
+        const role = !closesWithTicket(row) || row.github_repo || filedAfter || workedAfter || followUpTitle(row.title) ? "follow_up" : "own";
         const closedLine = closed.map(([n, st]) => ticketClosedSentence(n, st, at)).join(" ");
         if (role === "own") {
           if (closed.length !== refs.length) continue; // waits for its other tickets
@@ -1580,6 +1616,7 @@ module.exports = {
   ticketClosedSentence,
   shortDay,
   inferTicketLink,
+  closesWithTicket,
   TICKET_ROLES,
   ACTIVITY_HOURS,
   sharedKanban,

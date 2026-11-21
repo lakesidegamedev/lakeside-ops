@@ -317,7 +317,7 @@ describe("one pass for every source", () => {
   it("tickets, pull requests and alerts reconcile together, and twice changes nothing", async () => {
     const tickets = { records: [{ ticketNumber: 1852, status: "resolved", resolvedAt: "2026-11-21T11:00:00Z", statusHistory: [{ status: "resolved", at: "2026-11-21T11:00:00Z" }], resolution: { message: "Fixed." } }] };
     const reader = createTicketStatusReader({ getDb: async () => ({ collection: () => ({ find: (q) => ({ toArray: async () => tickets.records.filter((r) => q.ticketNumber.$in.includes(r.ticketNumber)) }) }) }), now: () => clock.getTime() });
-    const a = k.add({ product: "ahd", title: "Tech prices unreachable (ticket 1852)", lane: "next", assigned_to: "keir" }, { actor: "keir" });
+    const a = k.add({ product: "ahd", title: "Tech prices unreachable (ticket 1852)", ticket_role: "own", lane: "next", assigned_to: "keir" }, { actor: "keir" });
     const b = k.add({ product: "ahd", title: "Ratio refresh", lane: "backlog", pull_request: "lakesidegamedev/AHDGame#1" }, { actor: "codex" });
     const c = k.add({ product: "ahd", title: "Backup unit FAILED: ahd-us-prod-backup", kind: "ops" }, { actor: "backup-alert" });
     gh.prs.set("lakesidegamedev/AHDGame#1", merged("2026-11-21T11:00:00Z"));

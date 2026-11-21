@@ -15,7 +15,7 @@ const PRODUCT_HELP = 'Product slug or alias, e.g. "a-house-divided" (aliases: ah
 const TICKET = z.union([z.number().int().positive(), z.array(z.number().int().positive()).max(20)]).optional()
   .describe("The support ticket number (or numbers) this card comes from. Its live status is shown on the card, and the card follows the ticket: see ticket_role.");
 const TICKET_ROLE = z.enum(["own", "follow_up"]).optional()
-  .describe("own (default while the ticket is open): the ticket's own work or question, closed automatically when the ticket closes. follow_up: work that outlives the ticket; stays open, labelled 'Follow-up from closed ticket N'.");
+  .describe("follow_up (the default): work that outlives the ticket, such as a bug, rule change or tool the ticket revealed; when the ticket closes the card stays open, labelled 'Follow-up from closed ticket N'. own: send it only for a card that is purely the ticket's own status or question; it is completed automatically when the ticket closes. Without ticket_role a card never closes with its ticket.");
 
 const PULL_REQUEST = z.union([z.string().max(300), z.array(z.string().max(300)).max(20)]).optional()
   .describe("The pull request this card is the work of: owner/repo#N or its URL (or a list). When it merges the card completes, unless still_owed says what remains; closed without merging, the card goes back to the inbox. Send it when you open the PR.");

@@ -144,9 +144,9 @@ function ticketWarning(item, statusMap, at = Date.now()) {
   const still = closed.length === item.tickets.length ? "" : ` Ticket ${item.tickets.filter((n) => !closed.some((st) => st.number === n)).join(", ")} is still open or unknown.`;
   const lastClosed = closed.map((st) => Date.parse(st.closed_at) || 0).reduce((a, b) => Math.max(a, b), 0);
   const workedAfter = lastClosed > 0 && Date.parse(item.last_progress_at || "") > lastClosed;
-  const what = item.ticket_role === "follow_up" || (item.github && item.github.repo) || workedAfter
+  const what = !item.closes_with_ticket || item.ticket_role === "follow_up" || (item.github && item.github.repo) || workedAfter
     ? "This card is leftover follow-up work, not the ticket."
-    : "This card was raised as the ticket's own work and is not done; it is not evidence that the ticket is being worked. The ticket reconcile pass will close it.";
+    : "This card was filed as the ticket's own status or question and is not done; it is not evidence that the ticket is being worked. The reconcile pass will close it.";
   const stale = item.activity === "no recent activity" ? ` Its assignee ${item.assigned_to} has reported nothing recently.` : "";
   return `${sentence}${still} ${what}${stale}`;
 }
