@@ -278,12 +278,13 @@ struct ActivityView: View {
     @ViewBuilder private var ownerSections: some View {
         if !visibleOwner.isEmpty {
             Section {
+                queueHeader(AttentionCenter.label, count: visibleOwner.count, identifier: "inbox-attention-count")
                 ForEach(visibleOwner) { item in
                     ownerCard(item)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .inboxRow(card: true)
                 }
-            } header: { queueHeader(AttentionCenter.label, count: visibleOwner.count, identifier: "inbox-attention-count") }
+            }
         }
     }
 
@@ -311,15 +312,17 @@ struct ActivityView: View {
             let rows = visibleQueue.filter { WorkQueuePresentation.bucket($0.item) == key }
             if key == "failing" && !visibleFailures.isEmpty {
                 Section {
+                    queueHeader("Failing checks", count: visibleFailures.count)
                     ForEach(visibleFailures, id: \.["number"].string) { pr in
                         if let url = URL(string: pr["url"].string.nonempty ?? pr["html_url"].string), url.scheme == "https" {
                             Link(destination: url) { failingLabel(pr) }.inboxRow(card: true)
                         } else { failingLabel(pr).inboxRow(card: true) }
                     }
-                } header: { queueHeader("Failing checks", count: visibleFailures.count) }
+                }
             }
             if !rows.isEmpty {
                 Section {
+                    queueHeader(title, count: rows.count)
                     ForEach(rows) { row in
                         Button { route = row.ticket ? .ticket(row.key) : .task(row.key) } label: {
                             if key == "unanswered" { UnansweredRow(ticket: row.item) }
@@ -329,7 +332,7 @@ struct ActivityView: View {
                         .inboxRow(card: true)
                         .accessibilityIdentifier("work-row-\(row.key)")
                     }
-                } header: { queueHeader(title, count: rows.count) }
+                }
             }
         }
     }
@@ -340,10 +343,14 @@ struct ActivityView: View {
     }
 
     private func queueHeader(_ title: String, count: Int, identifier: String? = nil) -> some View {
+        // A plain row, not a pinned section header, so it scrolls away with
+        // its cards instead of sliding over them.
         SectionLabel(text: title, count: count, identifier: identifier)
-            .padding(.top, 10).padding(.bottom, 4)
+            .padding(.top, 14).padding(.bottom, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background { OpsTheme.background.padding(.horizontal, -40) }
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
     }
 
     @ViewBuilder private func destination(_ route: InboxRoute) -> some View {
@@ -475,10 +482,10 @@ private struct UnansweredRow: View {
                         ageColor: urgent ? OpsTheme.danger : OpsTheme.muted)
             Text(KeirTicketFollowUp.title(ticket)).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(2)
             if let waited {
-                Label(urgent ? "Player waiting \(OpsFormat.span(max(60, waited))) with no recorded reply" : "No reply recorded for \(OpsFormat.span(max(60, waited)))",
-                      systemImage: urgent ? "exclamationmark.bubble.fill" : "bubble.left")
-                    .font(.caption.weight(urgent ? .semibold : .regular))
-                    .foregroundStyle(urgent ? OpsTheme.danger : OpsTheme.muted)
+                OpsIconLine(text: urgent ? "Player waiting \(OpsFormat.span(max(60, waited))) with no recorded reply" : "No reply recorded for \(OpsFormat.span(max(60, waited)))",
+                            icon: urgent ? "exclamationmark.bubble.fill" : "bubble.left",
+                            color: urgent ? OpsTheme.danger : OpsTheme.muted,
+                            font: .caption.weight(urgent ? .semibold : .regular))
             }
         }
         .contentShape(Rectangle())

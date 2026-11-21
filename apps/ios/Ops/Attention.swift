@@ -352,7 +352,7 @@ struct AttentionRow: View {
             // A stand-alone card says where its action lives, so an item that
             // cannot be answered from the list does not look finished.
             if card {
-                Label(action, systemImage: icon).font(.opsCaption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+                OpsIconLine(text: action, icon: icon, color: OpsTheme.accent, font: .opsCaption.weight(.semibold))
             }
         }
     }

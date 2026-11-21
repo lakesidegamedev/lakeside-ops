@@ -791,10 +791,8 @@ struct DecisionCard: View {
                         let caption = [ticketLine, detail.nonempty].compactMap { $0 }.joined(separator: " · ")
                         if !caption.isEmpty { Text(caption).font(.opsCaption).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true) }
                         if !checksLine.isEmpty {
-                            Label(checksLine, systemImage: staleChecks ? "exclamationmark.triangle.fill" : "checkmark.seal")
-                                .font(.opsCaption.weight(.medium))
-                                .foregroundStyle(staleChecks ? OpsTheme.warning : OpsTheme.muted)
-                                .fixedSize(horizontal: false, vertical: true)
+                            OpsIconLine(text: checksLine, icon: staleChecks ? "exclamationmark.triangle.fill" : "checkmark.seal",
+                                        color: staleChecks ? OpsTheme.warning : OpsTheme.muted, font: .opsCaption.weight(.medium))
                         }
                     }
                     Spacer(minLength: 4)

@@ -176,6 +176,26 @@ extension View {
     func opsStripeCard(_ color: Color) -> some View { modifier(OpsStripeCard(color: color)) }
 }
 
+/// An icon and a line of text with a tight, fixed gap. A `Label` inside a
+/// List row takes the row's wide icon column, which pushes short captions
+/// far from their icon; this keeps them together everywhere.
+struct OpsIconLine: View {
+    let text: String
+    let icon: String
+    var color: Color = OpsTheme.muted
+    var font: Font = .opsCaption
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: icon).accessibilityHidden(true)
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        }
+        .font(font)
+        .foregroundStyle(color)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// An inset divider inside an `OpsGroup`, starting where row text starts.
 struct OpsGroupDivider: View {
     var inset: CGFloat = 42

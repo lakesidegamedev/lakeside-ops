@@ -137,8 +137,8 @@ struct OpsSettings: View {
                         // The problem and its fix in one row: the button is the
                         // only accent-filled control on this screen.
                         VStack(alignment: .leading, spacing: 10) {
-                            Label("Notifications are off on this iPhone", systemImage: "bell.slash.fill")
-                                .font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.warning)
+                            OpsIconLine(text: "Notifications are off on this iPhone", icon: "bell.slash.fill",
+                                        color: OpsTheme.warning, font: .callout.weight(.semibold))
                             Text("You will not hear about decisions or incidents until they are on.")
                                 .font(.caption).foregroundStyle(OpsTheme.muted)
                             Button {
