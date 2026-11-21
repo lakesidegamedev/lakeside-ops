@@ -183,9 +183,20 @@ function recoveryMessage({ turn, at, clean, downMs, folded }) {
   return finish(`Turn ${turn} finished at ${clock(at)} and the game is advancing again. It was stuck for ${duration(downMs)}.${folded ? foldedRepeats(folded.count, folded.turn) : ""} ${clean ? "This incident stays open until the next turns run cleanly." : "Some of the turn's work was skipped on the way, so follow-up on that is still in progress."}`);
 }
 
-// An open incident about a turn failure, whoever opened it.
-const TURN_WORDS = /\bturns?\b/i, FAILURE_WORDS = /\b(?:fail|failed|failing|failure|stuck|frozen|froze|not (?:advancing|running|processing|moving|finishing)|stopp\w*|stall\w*|down|halt\w*|dead)\b/i;
-const isTurnIncident = (t) => TURN_WORDS.test(`${t?.title || ""}`) && FAILURE_WORDS.test(`${t?.title || ""}`);
+// An open incident is the turn failure incident only on strong evidence (release review M2): Keir opened it for a turn
+// failure, or its title is in the established form, a turn as the subject of the failure ("Turn 108 failed", "Turns
+// are not processing"). Either way it must also be recent, or name the very turn that is failing: an old incident left
+// open for follow-up does not swallow a new outage. Any title that merely mentions a turn and a failure word does not.
+const TURN_TITLE = /^\s*(?:turn\s+(\d+)|turns)\b[^.\n]{0,60}?\b(?:fail(?:s|ed|ing|ure)?|stuck|frozen|froze|not (?:advancing|running|processing|finishing)|stall(?:s|ed|ing)?|halt(?:s|ed)?|did not (?:finish|run|process))\b/i;
+const ABSORB_MS = 24 * HOUR;
+function isTurnIncident(t, { turn = null, at = Date.now(), keir = null } = {}) {
+  const m = TURN_TITLE.exec(String(t?.title || ""));
+  const keirTurn = keir && (keir.turnIncident || /^turn:\d+:/.test(keir.fingerprint || "")) ? Number(/t(\d+)$/.exec(keir.turnIncident || "")?.[1] ?? /^turn:(\d+):/.exec(keir.fingerprint || "")?.[1]) : null;
+  if (!m && keirTurn === null) return false;
+  if (turn !== null && (Number(m?.[1]) === turn || keirTurn === turn)) return true;
+  const born = time(t?.createdAt) ?? (Number.isFinite(keir?.at) ? keir.at : null);
+  return born !== null && at - born <= ABSORB_MS;
+}
 
 // --- the pass ----------------------------------------------------------------------------------------------------
 
@@ -525,7 +536,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
       // awaits its own open): what happened is unknown, so it is reconciled, never simply repeated.
       if (rec.state === "opening") { rec.state = "uncertain"; rec.emptyReads = 0; ledger.audit("turn_incident_open_interrupted", { key, intentAt: rec.intentAt || null }); }
       if (rec.state === "uncertain") { const c = await reconcile(rec, list); ledger.save(); return { key, incident: c?.number || null, uncertain: !c }; }
-      const existing = list.find((t) => Number(t.number) !== notThis && isTurnIncident(t));
+      const existing = list.find((t) => Number(t.number) !== notThis && isTurnIncident(t, { turn: f.turn, at, keir: d.keirIncidents?.[t.number] }));
       if (existing) {
         if (!gate.act) { preview(d, "turn-incidents", "add to incident", `${key} -> #${existing.number}`, `incident #${existing.number} "${existing.title}" is already open`, {}, now()); ledger.save(); return { key, incident: Number(existing.number), preview: true }; }
         const c = adopt(Number(existing.number), existing.title, "existing", rec);

@@ -476,3 +476,27 @@ test("B1: a person closing the incident while its turn still fails is held, not 
   assert.equal(told.length, 1); assert.match(told[0].content, /Turn 108 is still failing but its incident #1880 was closed/);
   assert.equal(r.pass.incidentForTurn(108), null, "the staff proposal fallback is not suppressed");
 });
+
+test("M2: an unrelated or old open incident does not absorb a new outage; it gets its own incident", async () => {
+  const recent = "2026-11-21T10:00:00.000Z", old = "2026-11-18T09:00:00.000Z";
+  for (const [title, createdAt] of [["Bills stuck after the turn", recent], ["Turn report page down for mobile players", recent], ["Election results not processing after turn 95", recent], ["Turn 95 failed", old]]) {
+    const r = rig({ start: "11:32", world: { incidents: [{ number: 1800, title, category: "incident", status: "open", createdAt }] } });
+    const out = await r.sweep();
+    assert.equal(r.w.creates.length, 1, title);
+    assert.equal(out.incident, 1880, title);
+    assert.equal(r.w.updates.filter((u) => u.number === 1800).length, 0, `nothing posted into "${title}"`);
+  }
+});
+
+test("M2, the other way: a recent turn failure incident, Keir's own from the staff path, or an old one naming the failing turn is reused", async () => {
+  for (const [title, createdAt, keir] of [["Turns are not processing", "2026-11-21T11:20:00.000Z", null], ["Turn 108 failed", "2026-11-19T09:00:00.000Z", null],
+    ["Game frozen", "2026-11-21T11:00:00.000Z", { fingerprint: "turn:107:failed", at: at("11:00") }]]) {
+    const r = rig({ start: "11:32", world: { incidents: [{ number: 1800, title, category: "incident", status: "open", createdAt }] } });
+    if (keir) (r.d.keirIncidents ||= {})[1800] = keir;
+    const out = await r.sweep();
+    assert.equal(r.w.creates.length, 0, title);
+    assert.equal(out.incident, 1800, title);
+  }
+  assert.equal(ti.isTurnIncident({ title: "Turn 108 failed: the game is not advancing", createdAt: "2026-11-21T11:32:00.000Z" }, { at: at("12:00") }), true);
+  assert.equal(ti.isTurnIncident({ title: "Turn 108 failed", createdAt: "2026-11-21T13:04:53.329Z" }, { turn: 109, at: at("14:00") }), true);
+});
