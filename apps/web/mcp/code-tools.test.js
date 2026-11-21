@@ -13,14 +13,17 @@ const Database = require("better-sqlite3");
 const ci = require("./code-index");
 const { registerCodeTools } = require("./code-tools");
 
-function index(file, files, { revision = "rev1", visibility, repoVisibility } = {}) {
+function index(file, files, { revision = "rev1", visibility, repoVisibility, vectors = null } = {}) {
   const db = new Database(file);
   db.exec(`CREATE TABLE chunks(id INTEGER PRIMARY KEY, source_kind TEXT NOT NULL, repository TEXT NOT NULL, revision TEXT NOT NULL,
       path TEXT NOT NULL, ord INTEGER NOT NULL, hash TEXT NOT NULL, text TEXT NOT NULL, vec BLOB NOT NULL, dims INTEGER NOT NULL, indexed_at TEXT NOT NULL);
     CREATE TABLE source_revisions(kind TEXT PRIMARY KEY, repository TEXT NOT NULL, revision TEXT NOT NULL, indexed_at TEXT NOT NULL, files INTEGER NOT NULL, chunks INTEGER NOT NULL);
     CREATE TABLE meta(k TEXT PRIMARY KEY, v TEXT NOT NULL);`);
-  const ins = db.prepare("INSERT INTO chunks(source_kind,repository,revision,path,ord,hash,text,vec,dims,indexed_at) VALUES ('code','r',?,?,0,'h',?,x'00',1,'now')");
-  for (const [p, text] of Object.entries(files)) ins.run(revision, p, `[code] ${p} (part 1/1): x\n${text}`);
+  const ins = db.prepare("INSERT INTO chunks(source_kind,repository,revision,path,ord,hash,text,vec,dims,indexed_at) VALUES ('code','r',?,?,0,'h',?,?,?,'now')");
+  for (const [p, text] of Object.entries(files)) {
+    const v = vectors && vectors[p];
+    ins.run(revision, p, `[code] ${p} (part 1/1): x\n${text}`, v ? Buffer.from(Float32Array.from(v).buffer) : Buffer.from([0]), v ? v.length : 1);
+  }
   db.prepare("INSERT INTO source_revisions VALUES ('code','r',?,'now',1,1)").run(revision);
   db.prepare("INSERT INTO meta VALUES ('generation','g')").run();
   if (visibility) db.prepare("INSERT INTO meta VALUES ('visibility',?)").run(visibility);
@@ -123,8 +126,8 @@ test("with the grant an internal repo is searchable and every result names its r
   assert.strictEqual(exact.repo, "keir");
   assert.strictEqual(exact.revision, "keirrev");
   assert.deepStrictEqual(exact.files, ["apps/agent/lib/brief.js"]);
-  const both = (await handlers.code_search({ question: "q", repo: ["game", "keir"], topK: 2, maxChars: 30000 })).json;
-  assert.deepStrictEqual(both.hits.map((h) => h.repo), ["keir", "game"]);
+  const both = (await handlers.code_search({ question: "opener text", repo: ["game", "keir"], topK: 2, maxChars: 30000 })).json;
+  assert.deepStrictEqual(both.hits.map((h) => h.repo), ["game", "keir"], "one from each repository in turn, not by incomparable scores");
   assert.deepStrictEqual(both.repos.map((r) => [r.repo, r.revision]), [["game", "gamerev"], ["keir", "keirrev"]]);
   const notBuilt = (await handlers.code_exact({ question: "OPENER_TEXT", repo: ["keir", "client"], limit: 8, maxChars: 18000 })).json;
   assert.strictEqual(notBuilt.unavailable[0].repo, "client");
@@ -205,4 +208,53 @@ test("B3 opposite: private code is refused without the grant, and labelled priva
   assert.match(r3.privateNotice, /Never quote, paraphrase or describe them to players/);
   const r4 = (await granted.handlers.code_read({ path: "lakeside-auth/src/login.ts", repo: "accounts", maxChars: 40000 })).json;
   assert.match(r4.privateNotice, /players/);
+});
+
+// M4: several internal repositories, one query embedding, bounded waits.
+function m4Setup({ embedQuery, search }) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "code-tools-m4-"));
+  const internal = path.join(dir, "internal");
+  fs.mkdirSync(internal);
+  const game = path.join(dir, "index-dev.db");
+  index(game, { "src/lib/rules.ts": "export const GAME_RULE = 1; // voice rule\n" });
+  index(path.join(internal, "keir.db"), { "apps/ios/Voice.swift": "func speak() { deviceVoiceFallback() }\n", "apps/web/x.js": "const unrelated = 1;\n" },
+    { visibility: "internal", repoVisibility: "public", vectors: { "apps/ios/Voice.swift": [1, 0], "apps/web/x.js": [0, 1] } });
+  index(path.join(internal, "client.db"), { "src/voice.ts": "export function voiceSettings() {}\n", "src/other.ts": "export const other = 2;\n" },
+    { visibility: "internal", repoVisibility: "public", vectors: { "src/voice.ts": [0.9, 0.1], "src/other.ts": [0, 1] } });
+  const handlers = {};
+  registerCodeTools({ tool: (name, _d, _s, fn) => { handlers[name] = fn; } }, {
+    auth: { _id: "t", scopes: { collections: ["docs"] } },
+    env: { CODE_INDEX_INTERNAL_DIR: internal, CODE_INDEX_GAME_CHECKOUT_DEV: "off", CODE_SEARCH_EMBED_DEADLINE_MS: "150", CODE_SEARCH_DEADLINE_MS: "150" },
+    tokens: { canRead: (a, k) => a.scopes.collections.includes(k) },
+    jsonResult: (o) => ({ json: o }), errorResult: (m) => ({ error: m }),
+    askRetrieve: () => ({ embedQuery, search: search || (async () => null), searchMulti: async () => null }),
+    devFallback: () => ({ game: { id: "ahd-dev", ragDb: game }, source: "dev", fallback: false }),
+    gameIndexPath: () => game, pool: ci.createReaderPool(),
+  });
+  return handlers;
+}
+
+test("M4: a search over several repositories embeds the question once", async () => {
+  let calls = 0;
+  const handlers = m4Setup({ embedQuery: async () => { calls++; return [1, 0]; } });
+  const out = (await handlers.code_search({ question: "why does the voice fall back", repo: ["keir", "client"], topK: 2, maxChars: 30000 })).json;
+  assert.strictEqual(calls, 1);
+  assert.strictEqual(out.degraded, undefined);
+  assert.deepStrictEqual(out.hits.map((h) => [h.repo, h.path]), [["keir", "apps/ios/Voice.swift"], ["client", "src/voice.ts"]]);
+});
+
+test("M4 opposite: a slow embedder or a slow game search falls back to keyword matches within the deadline", async () => {
+  const never = () => new Promise(() => {});
+  const handlers = m4Setup({ embedQuery: never, search: never });
+  const t0 = Date.now();
+  const out = (await handlers.code_search({ question: "voice settings", repo: ["game", "keir", "client"], topK: 6, maxChars: 30000 })).json;
+  assert.ok(Date.now() - t0 < 1500, `answered in ${Date.now() - t0} ms`);
+  assert.match(out.degraded, /keyword matches only/);
+  assert.strictEqual(out.retryable, true);
+  assert.ok(out.files.includes("src/voice.ts"));
+  assert.ok(out.files.includes("src/lib/rules.ts"));
+  // A failing embedder (rejection) is the same: keyword matches, not an error.
+  const failing = m4Setup({ embedQuery: async () => { throw new Error("embed 402"); } });
+  const f = (await failing.code_search({ question: "voice settings", repo: "client", topK: 2, maxChars: 30000 })).json;
+  assert.match(f.degraded, /keyword/);
 });

@@ -157,8 +157,8 @@ function registerCodeTools(server, {
       if (chosen.error) return errorResult(chosen.error);
       let r;
       try { r = askRetrieve(); } catch (e) { return errorResult(`code search unavailable (retryable): ${e.message}`); }
-      const all = [], indexes = [], failures = [], refused = [], tiers = [];
-      let degraded = null, claim = null;
+      const indexes = [], failures = [], refused = [], tiers = [];
+      const opened = [];
       for (const name of chosen.repos) {
         const t = target(name, source);
         let gen = null;
@@ -167,30 +167,39 @@ function registerCodeTools(server, {
         if (!access.ok) { refused.push(name); continue; }
         tiers.push(access.tier);
         indexes.push(indexInfo(t, gen));
-        // Ask's retriever applies the budget itself; ask it for everything and
-        // apply the caller's budget here so the cut can be reported.
-        const opts = { topK, maxChars: 120000, game: t.game, ...(claimType ? { claimType } : {}), ...(fusion ? { fusion } : {}) };
-        let out = null;
-        try {
-          out = subQueries && subQueries.length ? await r.searchMulti(question, subQueries, opts) : await r.search(question, opts);
-        } catch { out = null; }
-        if (out && out.hits) {
-          claim = claim || out.claimType;
-          for (const h of out.hits) all.push({ ...h, repo: t.repo, visibility: access.tier });
-          continue;
-        }
-        // The retriever returns nothing when the query embedding fails or the
-        // index could not be opened at that instant. The index is readable
-        // (we hold a generation), so serve keyword matches and say so.
-        const kw = ci.keywordSearch(gen, [question, ...(subQueries || [])].join(" "), { topK, maxChars: 120000 });
-        degraded = "semantic search was unavailable for this request (embedding service error or index swap); these are keyword matches only. Retry for full results.";
-        for (const h of kw.hits) all.push({ ...h, repo: t.repo, visibility: access.tier, revision: h.revision || ci.revisionOf(gen) });
+        opened.push({ t, gen, access });
       }
       if (!indexes.length) return errorResult([refused.length ? refusal(refused) : "", failures.length ? unavailableMessage(failures) : ""].filter(Boolean).join(" "));
-      if (!all.length && failures.length) {
-        return errorResult(unavailableMessage(failures));
-      }
-      const ranked = chosen.repos.length > 1 ? [...all].sort((a, b) => b.score - a.score).slice(0, topK) : all.slice(0, topK);
+      let degraded = null, claim = null;
+      const keywordFallback = (o, why) => {
+        degraded = why;
+        return ci.keywordSearch(o.gen, [question, ...(subQueries || [])].join(" "), { topK, maxChars: 120000 }).hits
+          .map((h) => ({ ...h, revision: h.revision || ci.revisionOf(o.gen) }));
+      };
+      const SLOW = "semantic search was unavailable or too slow for this request (embedding service error, timeout or index swap); these are keyword matches only. Retry for full results.";
+      // The game goes through Ask's retriever, as before, but never longer than
+      // the deadline: past it the caller gets keyword matches now.
+      const game = opened.filter((o) => o.t.repo === ci.GAME);
+      const internal = opened.filter((o) => o.t.repo !== ci.GAME);
+      const gameLists = game.map(async (o) => {
+        const opts = { topK, maxChars: 120000, game: o.t.game, ...(claimType ? { claimType } : {}), ...(fusion ? { fusion } : {}) };
+        const out = await withDeadline(subQueries && subQueries.length ? r.searchMulti(question, subQueries, opts) : r.search(question, opts), Number(env.CODE_SEARCH_DEADLINE_MS || SEARCH_DEADLINE_MS));
+        if (out && out.hits) { claim = claim || out.claimType; return out.hits; }
+        return keywordFallback(o, SLOW);
+      });
+      // Every internal repository shares ONE query embedding, bounded the same way.
+      const internalLists = (async () => {
+        if (!internal.length) return [];
+        const qv = typeof r.embedQuery === "function" ? await withDeadline(r.embedQuery(question), Number(env.CODE_SEARCH_EMBED_DEADLINE_MS || EMBED_DEADLINE_MS)) : null;
+        return internal.map((o) => {
+          const out = qv ? ci.hybridSearch(o.gen, qv, [question, ...(subQueries || [])].join(" "), { topK }) : null;
+          return out ? out.hits : keywordFallback(o, SLOW);
+        });
+      })();
+      const lists = [...(await Promise.all(gameLists)), ...(await internalLists)];
+      const order = [...game, ...internal];
+      const tagged = lists.map((list, i) => list.map((h) => ({ ...h, repo: order[i].t.repo, visibility: order[i].access.tier })));
+      const ranked = tagged.length > 1 ? ci.interleave(tagged, topK) : (tagged[0] || []).slice(0, topK);
       const budgeted = ci.applyBudget(ranked, maxChars);
       return jsonResult({
         ...(chosen.repos.length === 1 ? indexes[0] || { repo: chosen.repos[0] } : { repos: indexes }),
@@ -296,10 +305,26 @@ function registerCodeTools(server, {
   );
 }
 
+// How long an agent waits for semantic search before it gets keyword matches.
+// Keir's client gives up at 30 s; its evidence pack allows 6 s.
+// Overridable per process with CODE_SEARCH_DEADLINE_MS / CODE_SEARCH_EMBED_DEADLINE_MS.
+const SEARCH_DEADLINE_MS = 8000;
+const EMBED_DEADLINE_MS = 5000;
+
+// Resolves to the promise's value, or null once `ms` pass (or on rejection).
+// The underlying work is not cancelled; the caller simply stops waiting.
+function withDeadline(promise, ms) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).catch(() => null),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 let _pool = null;
 function defaultPool() {
   if (!_pool) _pool = ci.createReaderPool({ log: (m) => console.error(m) });
   return _pool;
 }
 
-module.exports = { registerCodeTools, REPO_DESCRIPTION };
+module.exports = { registerCodeTools, REPO_DESCRIPTION, withDeadline };

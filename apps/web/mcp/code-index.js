@@ -762,6 +762,96 @@ function keywordSearch(gen, question, { topK = 8, maxChars = 30000 } = {}) {
   return applyBudget(hits, maxChars);
 }
 
+// ── semantic search over the internal indexes ─────────────────────────────
+//
+// The game is searched by Ask's retriever, unchanged. The internal indexes are
+// small (a few thousand chunks each), so they are searched here with one
+// query vector computed once per call for all of them: dense similarity plus
+// the same keyword boosts Ask uses, at most two chunks per file.
+
+function vectorMatrix(gen) {
+  if (gen._matrix !== undefined) return gen._matrix;
+  const shape = gen.db.prepare("SELECT dims, COUNT(*) n FROM chunks GROUP BY dims ORDER BY n DESC LIMIT 1").get();
+  if (!shape || !shape.n || shape.dims < 2) return (gen._matrix = null);
+  const { dims } = shape;
+  const data = new Float32Array(shape.n * dims);
+  const meta = [];
+  const projection = gen.sourceAware ? "path, ord, text, vec, source_kind source, revision" : "path, ord, text, vec, 'code' source, '' revision";
+  let n = 0;
+  for (const r of gen.db.prepare(`SELECT ${projection} FROM chunks WHERE dims=?`).iterate(dims)) {
+    const buf = Buffer.from(r.vec);
+    data.set(new Float32Array(buf.buffer, buf.byteOffset, dims), n * dims);
+    meta.push({ path: r.path, ord: r.ord, text: r.text, source: r.source, revision: r.revision });
+    n++;
+  }
+  return (gen._matrix = { data, dims, n, meta });
+}
+
+const KEYWORD_STOP = new Set([...STOP, "exact", "exactly", "number", "value", "work", "works", "game"]);
+function keywordBoosts(db, question) {
+  const q = String(question || "");
+  const ids = new Set();
+  for (const m of q.matchAll(/\b[A-Z][A-Z0-9]{2,}(?:_[A-Z0-9]+)*\b/g)) ids.add(m[0]);
+  for (const m of q.matchAll(/\b[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]{2,}\b/g)) ids.add(m[0]);
+  const words = [...new Set((q.toLowerCase().match(/\b[a-z][a-z-]{4,}\b/g) || []).filter(w => !KEYWORD_STOP.has(w)))].slice(0, 6);
+  const out = [];
+  const run = (expr, boost, limit) => {
+    try {
+      for (const r of db.prepare("SELECT c.path, c.ord, c.text, c.source_kind source, c.revision FROM chunks_fts f JOIN chunks c ON c.id=f.rowid WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT ?").all(expr, limit)) out.push({ ...r, boost });
+    } catch { /* keyword search is an enhancement */ }
+  };
+  for (const id of [...ids].slice(0, 4)) run(`"${id}"`, 1.5, 5);
+  if (words.length) run(words.map(w => `"${w}"`).join(" OR "), 0.92, 8);
+  return out;
+}
+
+/** Dense + keyword retrieval with a precomputed, normalised query vector. */
+function hybridSearch(gen, queryVector, question, { topK = 8 } = {}) {
+  const M = vectorMatrix(gen);
+  if (!M || !queryVector || M.dims !== queryVector.length) return null;
+  const norm = Math.hypot(...queryVector) || 1;
+  const qv = Float32Array.from(queryVector, x => x / norm);
+  const scores = new Float32Array(M.n);
+  for (let i = 0; i < M.n; i++) {
+    let dot = 0;
+    const off = i * M.dims;
+    for (let j = 0; j < M.dims; j++) dot += qv[j] * M.data[off + j];
+    scores[i] = dot;
+  }
+  const keep = Math.min(M.n, 200);
+  const cutoff = Float32Array.prototype.slice.call(scores).sort()[Math.max(0, M.n - keep)];
+  const top = new Map();
+  for (let i = 0; i < M.n; i++) if (scores[i] >= cutoff) top.set(`${M.meta[i].path}#${M.meta[i].ord}`, { ...M.meta[i], score: scores[i] });
+  for (const k of keywordBoosts(gen.db, question)) {
+    const key = `${k.path}#${k.ord}`;
+    if (top.has(key)) top.get(key).score += 0.35;
+    else top.set(key, { path: k.path, ord: k.ord, text: k.text, source: k.source, revision: k.revision, score: k.boost });
+  }
+  const perFile = new Map(), hits = [];
+  for (const h of [...top.values()].sort((a, b) => b.score - a.score)) {
+    const n = perFile.get(h.path) || 0;
+    if (n >= 2) continue;
+    perFile.set(h.path, n + 1);
+    hits.push(h);
+    if (hits.length >= topK) break;
+  }
+  return { hits };
+}
+
+/**
+ * Merge ranked lists from several repositories by taking each list's best
+ * remaining hit in turn. Scores from different indexes (and from keyword
+ * fallback, which is not on the cosine scale) are not comparable.
+ */
+function interleave(lists, topK) {
+  const out = [];
+  const queues = lists.map(l => [...l]);
+  while (out.length < topK && queues.some(q => q.length)) {
+    for (const q of queues) { if (q.length && out.length < topK) out.push(q.shift()); }
+  }
+  return out;
+}
+
 // Applies the caller's character budget in rank order and reports what it cut,
 // so a short answer is never mistaken for "only one match exists".
 function applyBudget(hits, maxChars) {
@@ -891,6 +981,8 @@ module.exports = {
   readFile,
   pageText,
   keywordSearch,
+  hybridSearch,
+  interleave,
   applyBudget,
   resolveRepos,
   repoTier,
