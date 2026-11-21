@@ -266,3 +266,50 @@ test("keywordSearch serves keyword matches from a readable index", () => {
   const out = ci.keywordSearch(gen, "which config holds the national chamber", { topK: 3 });
   assert.ok(out.files.includes("src/lib/countries/us/elections/billLifecycle.ts"));
 });
+
+// B1: on-screen text is quoted as one line, but Prettier wraps it, people
+// type two spaces, and the chunker can split it between two chunks.
+const WRAPPED_FILES = {
+  "src/app/about/page.tsx": { text: "<p>\n  Every character starts with a party affiliation,\n  home state and a starting fund.\n</p>\n" },
+  "src/components/GranularPollPanel.tsx": { text: "line one\n<p>The share below splits\nbetween you and\nend\n", parts: 2 },
+  "src/components/Legend.tsx": { text: "<span>Ranks candidates by{\" \"}\n  these same factors.</span>\n" },
+  "src/components/Scrambled.tsx": { text: "// home affiliation party a with\n" },
+};
+
+test("B1: a phrase wrapped across lines, split between chunks or re-spaced is found", () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "index.db");
+  buildIndex(file, WRAPPED_FILES);
+  const gen = ci.createGenerationReader(file).get();
+  const cases = {
+    "with a party affiliation, home": ["src/app/about/page.tsx", 2],
+    "below splits between you and": ["src/components/GranularPollPanel.tsx", 2],
+    "candidates by these same factors.": ["src/components/Legend.tsx", 1],
+    '"party  affiliation"': ["src/app/about/page.tsx", 2],
+  };
+  for (const [q, want] of Object.entries(cases)) {
+    const r = ci.exactLookup(gen, q).results[0];
+    if (!want) continue;
+    assert.strictEqual(r.found, true, q);
+    assert.strictEqual(r.files[0].path, want[0], q);
+    assert.strictEqual(r.files[0].lines[0].line, want[1], `${q}: reported at the line it starts on`);
+  }
+  // The chunk split really is between "splits" and "between".
+  const parts = gen.db.prepare("SELECT text FROM chunks WHERE path='src/components/GranularPollPanel.tsx' ORDER BY ord").all().map(r => ci.chunkBody(r.text));
+  assert.deepStrictEqual(parts, ["line one\n<p>The share below splits\n", "between you and\nend\n"]);
+  // A phrase that starts or ends mid-word is still found.
+  assert.strictEqual(ci.exactLookup(gen, '"arty affiliation, ho"').results[0].found, true);
+});
+
+test("B1 opposite: the same words in another order or apart are not a match", () => {
+  const dir = tmpDir();
+  const file = path.join(dir, "index.db");
+  buildIndex(file, WRAPPED_FILES);
+  const gen = ci.createGenerationReader(file).get();
+  const r = ci.exactLookup(gen, "with a party home affiliation").results[0];
+  assert.strictEqual(r.found, false);
+  const s = ci.exactLookup(gen, "you between splits").results[0];
+  assert.strictEqual(s.found, false);
+  // Words in the model-written header never count.
+  assert.strictEqual(ci.exactLookup(gen, "summary mentions FakeHeaderSymbol").results[0].found, false);
+});

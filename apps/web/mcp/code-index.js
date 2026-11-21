@@ -244,8 +244,13 @@ function parseExactQuery(question) {
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// What separates two words of a phrase as a person quotes it: any run of
+// whitespace (a wrapped line, indentation, two spaces), or the {" "} that
+// Prettier writes into JSX text at a line break.
+const PHRASE_GAP = String.raw`(?:\s|\{\s*["'\x60]\s*["'\x60]\s*\})+`;
+
 function occurrenceRegex(term, kind, { caseInsensitive = false } = {}) {
-  const body = kind === "phrase" ? escapeRe(term).replace(/\s+/g, "\\s+") : escapeRe(term);
+  const body = kind === "phrase" ? term.trim().split(/\s+/).map(escapeRe).join(PHRASE_GAP) : escapeRe(term);
   // Symbols match whole identifiers only: ownSitesFirst must not match ownSitesFirstPolicy.
   const pattern = kind === "symbol" ? `(?<![\\w$])${body}(?![\\w$])` : body;
   return new RegExp(pattern, caseInsensitive ? "gi" : "g");
@@ -269,14 +274,21 @@ const SOURCE_RANK = { code: 0, wiki: 1, docs: 2 };
 /**
  * Literal lookup of each term in one index generation.
  *
- * Every chunk is scanned with instr() (case-sensitive, exact bytes), then
- * confirmed on the header-stripped text, so the totals are complete for the
- * indexed revision. Up to maxFiles matching files are reassembled for line
- * numbers; beyond that the totals stay exact and the response says the
- * listing is truncated.
+ * Symbols: candidate chunks come from the full-text index (or an exact
+ * instr() scan), then each is confirmed with a whole-identifier match on the
+ * header-stripped text. A symbol cannot span lines, so chunk-level
+ * confirmation is exact.
+ *
+ * Phrases: a phrase can be wrapped across lines or split between two chunks,
+ * so candidates are whole files (every file holding the phrase holds each of
+ * its words), and each candidate file is reassembled and matched with a
+ * whitespace-flexible pattern. Exact case first, then case-insensitive.
+ *
+ * Up to maxFiles matching files are reassembled for line numbers; beyond
+ * that the response says the listing is truncated.
  */
 function exactLookup(gen, question, { limit = 8, maxChars = 18000, maxFiles = 300, maxLinesPerFile = 6, kinds = null } = {}) {
-  const { db, sourceAware } = gen;
+  const { sourceAware } = gen;
   const parsed = parseExactQuery(question);
   const kindFilter = sourceAware && kinds && kinds.length ? ` AND source_kind IN (${kinds.map(() => "?").join(",")})` : "";
   const kindArgs = sourceAware && kinds && kinds.length ? kinds : [];
@@ -285,77 +297,166 @@ function exactLookup(gen, question, { limit = 8, maxChars = 18000, maxFiles = 30
 
   for (const { term, kind } of parsed.terms) {
     if (kind === "path") { results.push(pathLookup(gen, term, { maxChars, kinds })); continue; }
-    let caseInsensitive = false;
-    let rows = candidateRows(gen, term, kind, { projection, kindFilter, kindArgs });
-    let re = occurrenceRegex(term, kind);
-    let confirmed = rows.filter(r => { re.lastIndex = 0; return re.test(chunkBody(r.text)); });
-    if (!confirmed.length && kind === "phrase") {
-      // Player-typed strings rarely match case exactly; retry case-insensitively.
-      caseInsensitive = true;
-      rows = db.prepare(`SELECT ${projection} FROM chunks WHERE instr(lower(text), lower(?)) > 0${kindFilter}`).all(term, ...kindArgs);
-      re = occurrenceRegex(term, kind, { caseInsensitive: true });
-      confirmed = rows.filter(r => { re.lastIndex = 0; return re.test(chunkBody(r.text)); });
-    }
-    const byFile = new Map();
-    for (const r of confirmed) {
-      const key = `${r.source}\u0000${r.path}`;
-      if (!byFile.has(key)) byFile.set(key, { path: r.path, source: r.source, revision: r.revision, repository: r.repository });
-    }
-    const files = [...byFile.values()];
-    let totalOccurrences = 0;
-    const scanned = [];
-    // Reassemble in a stable order so truncation is deterministic.
-    files.sort((a, b) => (SOURCE_RANK[a.source] ?? 3) - (SOURCE_RANK[b.source] ?? 3) || isTestPath(a.path) - isTestPath(b.path) || a.path.localeCompare(b.path));
-    for (const f of files) {
-      if (scanned.length >= maxFiles) break;
-      const text = fileText(db, f.path, sourceAware ? { sourceKind: f.source } : {}) || "";
-      const lines = text.split("\n");
-      const hits = [];
-      for (let i = 0; i < lines.length; i++) {
-        re.lastIndex = 0;
-        const line = lines[i];
-        let count = 0;
-        while (re.exec(line)) count++;
-        if (!count) continue;
-        totalOccurrences += count;
-        hits.push({ line: i + 1, text: line.trim().slice(0, 240), definition: kind === "symbol" ? definitionKind(line, term) : null });
-      }
-      // Phrases may span lines; count the file even when no single line holds it.
-      if (!hits.length && kind === "phrase") { totalOccurrences += 1; hits.push({ line: null, text: "(spans several lines)", definition: null }); }
-      scanned.push({ ...f, hits, test: isTestPath(f.path) });
-    }
-    const definitions = [];
-    for (const f of scanned) for (const h of f.hits) if (h.definition) definitions.push({ path: f.path, line: h.line, kind: h.definition, text: h.text, source: f.source });
-    // Rank files: definition sites (non-test) first, then code uses by count, then tests and docs.
-    const score = f => (f.hits.some(h => h.definition) && !f.test ? 1000 : 0) + (f.test ? -500 : 0) - (SOURCE_RANK[f.source] ?? 3) * 100 + Math.min(f.hits.length, 50);
-    const ranked = [...scanned].sort((a, b) => score(b) - score(a) || a.path.localeCompare(b.path));
-    const listed = ranked.slice(0, Math.max(1, limit));
-    const complete = scanned.length === files.length && listed.length === files.length;
-    results.push({
-      term, kind, found: files.length > 0,
-      caseInsensitive: caseInsensitive || undefined,
-      totalFiles: files.length,
-      totalOccurrences: scanned.length === files.length ? totalOccurrences : undefined,
-      complete,
-      ...(complete ? {} : { truncated: `${files.length} files contain this; ${listed.length} are listed. Raise limit to see more, or narrow the term.` }),
-      definitions: definitions.filter(d => listed.some(f => f.path === d.path)).slice(0, 20),
-      files: listed.map(f => ({
-        path: f.path, source: f.source, test: f.test || undefined,
-        occurrences: f.hits.length,
-        lines: f.hits.slice(0, maxLinesPerFile),
-      })),
-    });
+    const found = kind === "phrase"
+      ? phraseFiles(gen, term, { kindFilter, kindArgs, maxFiles })
+      : symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles });
+    results.push(describeTerm(term, kind, found, { limit, maxLinesPerFile }));
   }
   return finishExact(gen, parsed, results, { maxChars });
 }
 
-// Candidate chunks for one literal. Symbols use the FTS index as a prefilter:
-// unicode61 splits identifiers on the same characters that bound them (any
+const fileKey = (r) => `${r.source}\u0000${r.path}`;
+const fileOrder = (a, b) => (SOURCE_RANK[a.source] ?? 3) - (SOURCE_RANK[b.source] ?? 3) || isTestPath(a.path) - isTestPath(b.path) || a.path.localeCompare(b.path);
+
+// Line-level hits of `re` in a whole file text. A phrase match that crosses
+// a line break is reported at the line it starts on.
+function hitsIn(text, re, term, kind) {
+  const hits = [];
+  let occurrences = 0;
+  re.lastIndex = 0;
+  const starts = [0];
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) starts.push(i + 1);
+  const lineAt = (index) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= index) lo = mid; else hi = mid - 1; } return lo; };
+  let m;
+  while ((m = re.exec(text))) {
+    if (m[0] === "") { re.lastIndex++; continue; }
+    occurrences++;
+    const ln = lineAt(m.index);
+    const last = hits[hits.length - 1];
+    if (last && last.line === ln + 1) continue;
+    const lineText = text.slice(starts[ln], (starts[ln + 1] ?? text.length + 1) - 1);
+    hits.push({
+      line: ln + 1, text: lineText.trim().slice(0, 240),
+      definition: kind === "symbol" ? definitionKind(lineText, term) : null,
+      ...(m[0].includes("\n") ? { spansLines: true } : {}),
+    });
+  }
+  return { hits, occurrences };
+}
+
+// Confirms candidate files with exact case first, then case-insensitively.
+function confirmFiles(gen, term, kind, candidates, { maxFiles }) {
+  const ordered = [...candidates].sort(fileOrder);
+  const scanned = ordered.slice(0, maxFiles);
+  const texts = scanned.map(f => fileText(gen.db, f.path, gen.sourceAware ? { sourceKind: f.source } : {}) || "");
+  for (const caseInsensitive of [false, true]) {
+    const re = occurrenceRegex(term, kind, { caseInsensitive });
+    const files = [];
+    let occurrences = 0;
+    scanned.forEach((f, i) => {
+      const { hits, occurrences: n } = hitsIn(texts[i], re, term, kind);
+      if (!hits.length) return;
+      occurrences += n;
+      files.push({ ...f, hits, test: isTestPath(f.path) });
+    });
+    if (files.length || caseInsensitive) {
+      return { files, occurrences, caseInsensitive: caseInsensitive && files.length > 0, candidates: ordered.length, scanned: scanned.length };
+    }
+  }
+}
+
+function symbolFiles(gen, term, { projection, kindFilter, kindArgs, maxFiles }) {
+  const rows = candidateRows(gen, term, "symbol", { projection, kindFilter, kindArgs });
+  // Chunk-level confirmation (a symbol never spans lines).
+  for (const caseInsensitive of [false]) {
+    const re = occurrenceRegex(term, "symbol", { caseInsensitive });
+    const byFile = new Map();
+    for (const r of rows) {
+      re.lastIndex = 0;
+      if (re.test(chunkBody(r.text)) && !byFile.has(fileKey(r))) byFile.set(fileKey(r), { path: r.path, source: r.source, revision: r.revision, repository: r.repository });
+    }
+    {
+      const out = confirmFiles(gen, term, "symbol", [...byFile.values()], { maxFiles });
+      return { ...out, totalFiles: byFile.size, caseInsensitive: caseInsensitive && byFile.size > 0 };
+    }
+  }
+}
+
+// Every file that holds the phrase holds each of its words somewhere, so the
+// intersection of the files holding its rarest words is a superset of the
+// answer. Words at the very start of the phrase may be the tail of a longer
+// word in the source, so they are not used; the last word is matched as a
+// prefix for the same reason. FTS (unicode61) ignores case, whitespace and
+// line breaks, so the same candidates serve the case-insensitive retry.
+const WORD_RE = /[\p{L}\p{N}]+/gu;
+function phraseWordQueries(term) {
+  const out = [];
+  for (const m of term.matchAll(WORD_RE)) {
+    const boundedLeft = m.index > 0;
+    const boundedRight = m.index + m[0].length < term.length;
+    if (boundedLeft && boundedRight) out.push(`"${m[0]}"`);
+    else if (boundedLeft) out.push(`"${m[0]}"*`);
+  }
+  return [...new Set(out)];
+}
+
+function phraseFiles(gen, term, { kindFilter, kindArgs, maxFiles }) {
+  const { db, sourceAware } = gen;
+  const queries = hasFts(gen) && process.env.RAG_EXACT_SCAN !== "1" ? phraseWordQueries(term) : [];
+  const src = sourceAware ? "c.source_kind" : "'code'";
+  const cols = sourceAware ? "c.revision, c.repository" : "'' revision, '' repository";
+  let candidates = null;
+  if (queries.length) {
+    try {
+      const counted = queries.map(q => ({ q, n: db.prepare("SELECT COUNT(*) n FROM chunks_fts WHERE chunks_fts MATCH ?").get(q).n }))
+        .sort((x, y) => x.n - y.n).slice(0, 3);
+      for (const { q } of counted) {
+        const rows = db.prepare(`SELECT DISTINCT c.path, ${src} source, ${cols} FROM chunks_fts f JOIN chunks c ON c.id=f.rowid WHERE chunks_fts MATCH ?${kindFilter.replace(/source_kind/g, "c.source_kind")}`).all(q, ...kindArgs);
+        const here = new Map(rows.map(r => [fileKey(r), r]));
+        candidates = candidates ? new Map([...candidates].filter(([k]) => here.has(k))) : here;
+        if (!candidates.size) break;
+      }
+    } catch { candidates = null; }
+  }
+  if (!candidates) {
+    // No usable word (one partial word, or no FTS table): a literal scan, which
+    // is exact for text that does not contain whitespace.
+    const needle = term.trim().split(/\s+/)[0];
+    const rows = db.prepare(`SELECT DISTINCT path, ${sourceAware ? "source_kind source, revision, repository" : "'code' source, '' revision, '' repository"} FROM chunks WHERE instr(lower(text), lower(?)) > 0${kindFilter}`).all(needle, ...kindArgs);
+    candidates = new Map(rows.map(r => [fileKey(r), r]));
+  }
+  const out = confirmFiles(gen, term, "phrase", [...candidates.values()], { maxFiles });
+  return { ...out, totalFiles: out.scanned < out.candidates ? null : out.files.length };
+}
+
+// Builds the per-term result: ranked listing, definitions, completeness.
+function describeTerm(term, kind, found, { limit, maxLinesPerFile }) {
+  const { files: scanned, occurrences, caseInsensitive, candidates, scanned: scannedCount } = found;
+  const totalFiles = found.totalFiles;
+  const definitions = [];
+  for (const f of scanned) for (const h of f.hits) if (h.definition) definitions.push({ path: f.path, line: h.line, kind: h.definition, text: h.text, source: f.source });
+  // Rank files: definition sites (non-test) first, then code uses by count, then tests and docs.
+  const score = f => (f.hits.some(h => h.definition) && !f.test ? 1000 : 0) + (f.test ? -500 : 0) - (SOURCE_RANK[f.source] ?? 3) * 100 + Math.min(f.hits.length, 50);
+  const ranked = [...scanned].sort((a, b) => score(b) - score(a) || a.path.localeCompare(b.path));
+  const listed = ranked.slice(0, Math.max(1, limit));
+  const allScanned = scannedCount === candidates;
+  const knownTotal = totalFiles != null ? totalFiles : scanned.length;
+  const complete = allScanned && totalFiles != null && listed.length === totalFiles;
+  let truncated;
+  if (!allScanned) truncated = `${candidates} candidate files; only the first ${scannedCount} were checked, ${scanned.length} contain it, ${listed.length} are listed. Narrow the term.`;
+  else if (!complete) truncated = `${knownTotal} files contain this; ${listed.length} are listed. Raise limit to see more, or narrow the term.`;
+  return {
+    term, kind, found: knownTotal > 0,
+    caseInsensitive: caseInsensitive || undefined,
+    totalFiles: totalFiles != null ? totalFiles : undefined,
+    totalOccurrences: allScanned && totalFiles === scanned.length ? occurrences : undefined,
+    complete,
+    ...(truncated ? { truncated } : {}),
+    definitions: definitions.filter(d => listed.some(f => f.path === d.path)).slice(0, 20),
+    files: listed.map(f => ({
+      path: f.path, source: f.source, test: f.test || undefined,
+      occurrences: f.hits.length,
+      lines: f.hits.slice(0, maxLinesPerFile),
+    })),
+  };
+}
+
+// Candidate chunks for one symbol. The FTS index is a prefilter: unicode61
+// splits identifiers on the same characters that bound them (any
 // non-alphanumeric, including "_" and "$"), so every chunk holding the whole
 // identifier also holds its token sequence, and the phrase query returns a
-// superset that the exact regex then confirms. Phrases are scanned directly
-// with instr(), which is exact for any substring. RAG_EXACT_SCAN=1 forces the
-// scan for both (the test suite checks the two agree).
+// superset (in any case) that the exact regex then confirms. RAG_EXACT_SCAN=1
+// forces a case-insensitive instr() scan (the test suite checks the two agree).
 function candidateRows(gen, term, kind, { projection, kindFilter, kindArgs }) {
   const { db } = gen;
   if (kind === "symbol" && /^[\w$]+$/.test(term) && /[A-Za-z0-9]/.test(term) && process.env.RAG_EXACT_SCAN !== "1" && hasFts(gen)) {
@@ -365,7 +466,7 @@ function candidateRows(gen, term, kind, { projection, kindFilter, kindArgs }) {
         .all(`"${term.replace(/"/g, '""')}"`, ...kindArgs);
     } catch { /* fall through to the scan */ }
   }
-  return db.prepare(`SELECT ${projection} FROM chunks WHERE instr(text, ?) > 0${kindFilter}`).all(term, ...kindArgs);
+  return db.prepare(`SELECT ${projection} FROM chunks WHERE instr(lower(text), lower(?)) > 0${kindFilter}`).all(term, ...kindArgs);
 }
 
 function hasFts(gen) {
