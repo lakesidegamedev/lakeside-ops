@@ -202,7 +202,7 @@ test("the refusal never blocks finishing", async () => {
   const f = setup();
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: RULE }), /code_search/);
   assert.ok(!f.job.replyRefusedPending);
-  await assert.doesNotReject(async () => { try { await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Reading the game code for the rule." }); } catch (e) { assert.doesNotMatch(e.message, /was refused and nothing has been posted/); } });
+  await assert.doesNotReject(async () => { try { await f.broker.tool(f.job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", summary: "Reading the game code for the rule." }); } catch (e) { assert.doesNotMatch(e.message, /was refused and nothing has been posted/); } });
 });
 
 test("KEIR_RULE_LOOKUP=0 switches the check off", async () => {
