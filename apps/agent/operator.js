@@ -416,6 +416,12 @@ const ownerWait = createOwnerWait({ ledger, api: ciApi, log, drain: () => drain(
 tickers.every("ownerwait", 5 * 60000, async () => {
   try { await ownerWait.tick(); } catch (e) { log(`ownerwait: ${e.message}`); }
 });
+// Keir 11.2: a decision's kanban card closes with the decision; at start and every six hours, open questions on closed
+// tickets are withdrawn so their cards and DMs close too (lib/operator/decisioncards.js).
+const decisionCards = require("./lib/operator/decisioncards").createDecisionCards({ ledger, mcp, config, log,
+  readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(15000)) });
+tickers.every("decisioncards", 60000, () => decisionCards.tick(), { immediateMs: 3 * 60000, maxMs: 2 * 60000 });
+tickers.every("decisioncardsweep", 6 * 3600000, () => decisionCards.sweepClosedTickets(), { immediateMs: 2 * 60000, maxMs: 5 * 60000 });
 // Keir 11.2: every open Keir PR gets one ask, a repair, a plain blocked line, or a close with a note (lib/operator/keirprs.js).
 // Writes go out as keir-bot when its token is set. KEIR_STALE_PR_DAYS (default 5) sets when an orphaned PR is closed as stale.
 const ghKeir = (args) => new Promise((resolve, reject) => require("node:child_process").execFile("/usr/bin/gh", ["api", ...args], { timeout: 60000,

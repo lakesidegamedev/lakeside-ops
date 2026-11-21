@@ -464,6 +464,7 @@ function outcomeNote(x, d, config) {
   const reason = String(x.withdrawnReason || "");
   const why = x.answeredBy ? `${who(x.answeredBy)} ${answer}.`
     : x.state === "expired" ? "It expired without an answer."
+    : /ticket was closed/.test(reason) ? "The ticket was closed."
     : /merged on GitHub/.test(reason) ? "The change was merged on GitHub."
     : /closed on GitHub/.test(reason) ? "The pull request was closed on GitHub."
     : /new commits/.test(reason) ? "The pull request changed after this was asked."
