@@ -77,7 +77,7 @@ function finiteIssues(value, prefix = "", out = [], depth = 0) {
 }
 
 const LOCAL_BROWSER = /browserType\.launch|Executable doesn't exist|Cannot find module|Failed to launch|Host system is missing dependencies/i;
-function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry = null, viewPage = null, propose = null, log = () => {} }) {
+function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry = null, viewPage = null, propose = null, turnIncident = null, log = () => {} }) {
   const d = ledger.data;
   function state() {
     const w = (d.watch ||= {});
@@ -233,6 +233,9 @@ function createWatch({ ledger, mcp, config = {}, now = () => Date.now(), sentry 
     let planned;
     for (const f of Object.values(state().findings)) {
       if (!f.severe || f.proposed || f.state !== "raised") continue;
+      // Keir 11.3: a failed turn's incident is opened in code (turnincidents.js); no staff proposal waits beside it.
+      const covered = /^turn:/.test(f.fp) && turnIncident ? turnIncident(Number.isFinite(f.lastTurnSeen) ? f.lastTurnSeen : Number(/^turn:(\d+):/.exec(f.fp)?.[1])) : null;
+      if (covered) { f.proposed = now(); f.incident = covered; ledger.audit("watch_proposal_covered", { fp: f.fp, incident: covered }); continue; }
       if (/^turn:/.test(f.fp)) {
         if (planned === undefined) { try { planned = await plannedWork(); } catch { planned = null; } }
         if (planned) { if (!f.heldFor) { f.heldFor = planned; ledger.audit("watch_proposal_held", { fp: f.fp, reason: planned }); } continue; }
