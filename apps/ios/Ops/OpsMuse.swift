@@ -312,7 +312,7 @@ struct UpcomingRow: View {
     private var when: String {
         guard let date = OpsFormat.date(item["at"]) else { return item["kind"].string == "turn" ? "After the turn" : "Soon" }
         if date.timeIntervalSinceNow < 60 { return "Now" }
-        return date.formatted(.relative(presentation: .named)) + " · " + date.formatted(date: .omitted, time: .shortened)
+        return date.formatted(.relative(presentation: .named)) + " · " + OpsFormat.clock(date)
     }
 }
 
@@ -326,12 +326,24 @@ struct KeirIdentitySection: View {
             Picker("Keir's tone", selection: Binding(get: { identity["tone"].string.nonempty ?? "concise" }, set: { save(["tone": .string($0)]) })) {
                 Text("Concise").tag("concise"); Text("Warm").tag("warm"); Text("Thorough").tag("thorough")
             }
-            Toggle("Narrate progress while working", isOn: Binding(get: { identity["showUpdates"] == .null ? true : identity["showUpdates"].bool }, set: { save(["showUpdates": .bool($0)]) }))
-            Toggle("Morning brief", isOn: Binding(get: { identity["briefOn"] == .null ? true : identity["briefOn"].bool }, set: { save(["briefOn": .bool($0)]) }))
-            Picker("Brief at", selection: Binding(get: { Int(identity["briefHour"].number ?? 8) }, set: { save(["briefHour": .number(Double($0))]) })) {
-                ForEach(5..<12) { h in Text("\(h):00 AM ET").tag(h) }
+            Toggle(isOn: Binding(get: { identity["showUpdates"] == .null ? true : identity["showUpdates"].bool }, set: { save(["showUpdates": .bool($0)]) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Narrate progress while working")
+                    Text("Keir posts short updates in the chat as it works.").font(.caption).foregroundStyle(.secondary)
+                }
             }
-        } header: { Text("Keir") }
+            let briefOn = identity["briefOn"] == .null ? true : identity["briefOn"].bool
+            Toggle("Morning brief", isOn: Binding(get: { briefOn }, set: { save(["briefOn": .bool($0)]) }))
+            if briefOn {
+                // The brief hour is Eastern Time. Say so only when this iPhone is somewhere else.
+                let eastern = TimeZone(identifier: "America/New_York")
+                let differs = eastern.map { $0.secondsFromGMT() != TimeZone.current.secondsFromGMT() } ?? false
+                Picker("Brief at", selection: Binding(get: { Int(identity["briefHour"].number ?? 8) }, set: { save(["briefHour": .number(Double($0))]) })) {
+                    ForEach(5..<12) { h in Text("\(h):00 AM" + (differs ? " ET" : "")).tag(h) }
+                }
+            }
+        } header: { SectionLabel(text: "Keir") }
+        .listRowBackground(OpsTheme.surface)
         .task { if let r = try? await session.get("/api/keir/app/identity") { identity = r } }
     }
     private func save(_ body: [String: JSONValue]) {
@@ -367,7 +379,7 @@ struct FeedActivityChart: View {
                 }.frame(height: 110).chartXSelection(value: $selected).chartXAxis { AxisMarks(values: .stride(by: .hour, count: 6)) { _ in AxisValueLabel(format: .dateTime.hour()) } }
                     .accessibilityIdentifier("feed-activity-chart")
                 if let row = inspected {
-                    Text("\(Date(timeIntervalSince1970: (row["at"].number ?? 0) / 1000).formatted(date: .omitted, time: .shortened)): \(Int(count(row))) activations\(row["failed"].number.map { ", \(Int($0)) unsuccessful" } ?? "")")
+                    Text("\(OpsFormat.clock(Date(timeIntervalSince1970: (row["at"].number ?? 0) / 1000))): \(Int(count(row))) runs\(row["failed"].number.map { ", \(Int($0)) unsuccessful" } ?? "")")
                         .font(.caption).foregroundStyle(OpsTheme.muted)
                 }
                 Text(duration ? "Average completed model duration, not message response time. Tap or drag to inspect." : "Completed model activations. Tap or drag to inspect.")

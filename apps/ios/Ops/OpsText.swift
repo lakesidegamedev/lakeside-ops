@@ -6,10 +6,26 @@ import LakesideCore
 /// always built from structured fields so an empty template or a pasted user
 /// question can never become a status line.
 enum OpsText {
+    /// Scrubbed text by its raw input. Rows call `scrub` from `body` on every
+    /// render, and each call runs about a dozen regular expressions, so the
+    /// result is remembered. NSCache is thread safe and evicts under pressure.
+    private static let scrubbed: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>(); cache.countLimit = 2000; return cache
+    }()
+
     /// Collapses whitespace and removes known empty-template artifacts.
     static func scrub(_ raw: String) -> String {
         guard !raw.isEmpty else { return "" }
+        if let hit = scrubbed.object(forKey: raw as NSString) { return hit as String }
+        let result = scrubUncached(raw)
+        scrubbed.setObject(result as NSString, forKey: raw as NSString)
+        return result
+    }
+
+    private static func scrubUncached(_ raw: String) -> String {
         var text = raw
+            .replacingOccurrences(of: "Task ran out of time twice; owner needs to choose the next move.",
+                                  with: "Keir ran out of time twice. The work needs to resume from the last saved step.")
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
         text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
@@ -140,6 +156,22 @@ enum OpsText {
         return decision["signoff"].bool ? "Sign-off needed" : "Decision needed"
     }
 
+    static func decisionBody(_ question: String, title: String) -> String {
+        func normalized(_ value: String) -> String {
+            value.lowercased()
+                .replacingOccurrences(of: "pr #", with: "#")
+                .replacingOccurrences(of: " into ", with: " to ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "?! ."))
+        }
+
+        if normalized(question) == normalized(title) { return "" }
+        guard let separator = question.firstIndex(of: "?"),
+              normalized(String(question[..<separator])) == normalized(title) else { return question }
+        let next = question.index(after: separator)
+        let remaining = String(question[next...]).trimmingCharacters(in: .whitespaces)
+        return remaining.lowercased() == "checks are green." ? "Checks green" : remaining
+    }
+
     /// A question panel's title, never raw option text.
     static func questionTitle(_ panel: JSONValue) -> String {
         if let title = panel["title"].string.nonempty { return scrub(title) }
@@ -161,7 +193,8 @@ enum OpsText {
         switch raw.lowercased().replacingOccurrences(of: "_", with: "-") {
         case "needs-you", "needs-owner", "needsowner", "attention": return "Needs you"
         case "working", "running", "executing", "active", "processing": return "Running"
-        case "blocked", "stuck", "stalled": return "Blocked"
+        case "blocked", "stuck": return "Blocked"
+        case "stalled": return "Stalled"
         case "failed", "red", "error": return "Failed"
         case "done", "finished", "merged", "closed", "complete": return "Done"
         case "queued", "waiting", "held", "paused", "open", "next": return "Queued"

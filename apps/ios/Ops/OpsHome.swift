@@ -1,30 +1,36 @@
 import SwiftUI
 import LakesideCore
 
-/// The single Ops surface. It answers the three questions in order: what needs
-/// you, what Keir is doing, and whether anything is broken. Every other studio
-/// surface is a drill-down from here, and each destination appears once.
+/// The single Ops surface. It answers, in order: what is failing or blocked,
+/// what needs you, and what Keir's queues hold. Every count on this screen
+/// opens the exact list it counts, and every other studio surface is a
+/// drill-down from here, each destination appearing once.
 struct OpsHub: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
     @ObservedObject private var attention = AttentionCenter.shared
+    @Environment(\.dynamicTypeSize) private var textSize
 
-    private var broken: Int { ops.servicesDown.count + ops.redPRs }
-    private var openTickets: Int { Int(ops.kpis["openTickets"].number ?? 0) }
-    private var running: Int { Int(ops.kpis["running"].number ?? 0) }
-    private var queued: Int { Int(ops.kpis["queued"].number ?? 0) }
-    private var blockedWork: Int { max(Int(ops.kanban["counts"]["blocked"].number ?? 0), ops.blocked.count) }
+    private var broken: Int { issues.filter { ops.serviceState($0) == "Failing" }.count + ops.redPRs }
+    private var degraded: Int { issues.filter { ops.serviceState($0) == "Degraded" }.count }
+    private var issues: [JSONValue] { ops.servicesDown }
+    private var openTickets: Int { ops.openTickets.count }
+    private var activity: [JSONValue] { ops.tasks + ops.openTickets }
+    private var running: Bool { ops.queue.contains { $0.bucket == "working" } }
+    private var queued: Bool { ops.queue.contains { $0.bucket == "waiting" } }
+    private var blockedWork: Int { ops.blockedQueueCount }
+    private var nowWork: Int { ops.kanban["now"].array.count }
+    private var nextWork: Int { ops.kanban["next"].array.count }
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                briefing
-                StarmerWidget()
-                needsYou
+            LazyVStack(alignment: .leading, spacing: 14) {
+                header
+                summary
+                if !issues.isEmpty || ops.redPRs > 0 { failing }
                 queues
                 systems
-                keir
             }
             .padding(16)
         }
@@ -35,145 +41,259 @@ struct OpsHub: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    // MARK: Briefing
+    // MARK: Header
 
-    private var briefing: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(headline).font(.opsHero).foregroundStyle(OpsTheme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-            Text(subline).font(.callout).foregroundStyle(OpsTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            if let error = ops.error {
-                Text(error).font(.caption).foregroundStyle(OpsTheme.warn)
-            }
-            if attention.count > 0 {
-                OpsPrimaryButton(title: "Review \(attention.count) waiting", icon: "hand.raised.fill") {
-                    router.activityFilter = "all"; router.tab = .activity
+    private var header: some View {
+        // Re-read every 30 seconds so "Updated 1m ago" and a stall are honest
+        // even when no refresh lands.
+        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+            // The health card answers "is anything broken"; Keir's own state
+            // is a neutral line under it, so a healthy signal never sits
+            // inside an alarm.
+            VStack(alignment: .leading, spacing: 10) {
+                OpsCard(padding: 14, spacing: 0) {
+                    Button {
+                        if ops.redPRs > 0 { router.activityFilter = "failing"; router.tab = .activity }
+                    } label: {
+                        HStack(spacing: 12) {
+                            OpsGlyph(icon: overviewIcon, tone: overviewTone, size: 38)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(headline).font(.system(.title3, design: .rounded).weight(.bold))
+                                    .foregroundStyle(OpsTheme.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityAddTraits(.isHeader)
+                                // Name what is wrong, most severe first, so the
+                                // headline is never a count with nothing behind it.
+                                if !overviewDetail.isEmpty {
+                                    Text(overviewDetail).font(.caption).foregroundStyle(OpsTheme.muted)
+                                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                            if ops.redPRs > 0 {
+                                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+                            }
+                        }.contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .allowsHitTesting(ops.redPRs > 0)
                 }
-                .accessibilityIdentifier("ops-review-attention")
-            } else {
-                OpsPrimaryButton(title: "Open the conversation", icon: "bubble.left.and.text.bubble.right") {
-                    router.tab = .keir
-                }
-                .accessibilityIdentifier("ops-open-keir")
+                .opsLeadingStripe(overviewTone)
+                OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
+                    .padding(.horizontal, 4)
+                    .accessibilityIdentifier("ops-heartbeat")
             }
-            OpsHealthLine(status: workingStatus, headline: workingHeadline, detail: workingDetail)
         }
+    }
+
+    /// Every issue the Issues list shows, counted the same way, so the
+    /// headline and the list can never disagree.
+    private var issueCount: Int { ops.failingPRs.count + issues.count }
+
+    private var overviewDetail: String {
+        let prNames: [String] = ops.failingPRs.map { (pr: JSONValue) -> String in
+            pr["title"].string.nonempty ?? "Change #" + pr["number"].string
+        }
+        let failingServices: [String] = issues
+            .filter { (service: JSONValue) -> Bool in ops.serviceState(service) == "Failing" }
+            .map { (service: JSONValue) -> String in service["name"].string.nonempty ?? "A service" }
+        let degradedServices: [String] = issues
+            .filter { (service: JSONValue) -> Bool in ops.serviceState(service) == "Degraded" }
+            .map { (service: JSONValue) -> String in service["name"].string.nonempty ?? "A service" }
+        let staleServices: [String] = issues
+            .filter { (service: JSONValue) -> Bool in ops.serviceState(service) == "Stale" }
+            .map { (service: JSONValue) -> String in service["name"].string.nonempty ?? "A service" }
+        func list(_ names: [String]) -> String {
+            names.prefix(2).joined(separator: ", ") + (names.count > 2 ? " and \(names.count - 2) more" : "")
+        }
+        var parts: [String] = []
+        let failing = prNames + failingServices
+        if !failing.isEmpty { parts.append("Failing: " + list(failing)) }
+        if !degradedServices.isEmpty { parts.append("Slow or partly down: " + list(degradedServices)) }
+        if !staleServices.isEmpty { parts.append("Not checked in over a day: " + list(staleServices)) }
+        return parts.joined(separator: ". ")
+    }
+
+    private var overviewTone: Color {
+        if broken > 0 { return OpsWorkState.failing.color }
+        return degraded > 0 || issueCount > 0 ? OpsTheme.caution : OpsTheme.mint
+    }
+
+    private var overviewIcon: String {
+        if broken > 0 { return OpsWorkState.failing.glyph }
+        if degraded > 0 || issueCount > 0 { return "exclamationmark.triangle.fill" }
+        return "checkmark.circle.fill"
+    }
+
+    private var summary: some View {
+        // The same buckets, labels and order as the Inbox filter chips, so a
+        // number here always matches the chip it opens.
+        let columns = textSize.isAccessibilitySize ? 1 : 3
+        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
+            tile(.needsYou, count: attention.count).accessibilityIdentifier("ops-review-attention")
+            tile(.unanswered, count: ops.queueCount("unanswered"))
+            tile(.stalled, count: ops.queueCount("stalled"))
+            tile(.blocked, count: blockedWork)
+            tile(.failing, count: ops.redPRs)
+            tile(.running, count: ops.queueCount("working"))
+        }.buttonStyle(.plain)
     }
 
     private var headline: String {
-        if ops.updated == nil && ops.error != nil { return "Ops is unreachable" }
-        if broken > 0 { return broken == 1 ? "One thing is broken" : "\(broken) things are broken" }
-        if blockedWork > 0 { return blockedWork == 1 ? "One queue is blocked" : "\(blockedWork) items are blocked" }
-        return "Everything is healthy"
+        if case .unreachable = ops.heartbeat() { return "Ops is unreachable" }
+        // The same number as the Issues list below, with the worst part named.
+        guard issueCount > 0 else { return "Nothing is failing" }
+        let count = issueCount == 1 ? "1 issue" : "\(issueCount) issues"
+        if broken > 0 { return count + ", \(broken) failing" }
+        if degraded > 0 { return count + ", \(degraded) slow" }
+        return count
     }
 
-    private var subline: String {
-        if ops.updated == nil && ops.error != nil { return "Keir keeps working. Pull to reconnect." }
-        var parts: [String] = []
-        parts.append(attention.summary)
-        if broken == 0 { parts.append("no failures") } else { parts.append("\(broken) failing") }
-        if let updated = ops.updated { parts.append("checked \(OpsFormat.ago(updated))") }
-        return parts.joined(separator: " · ")
+    private func tile(_ state: OpsWorkState, count: Int) -> some View {
+        Button { router.activityFilter = state.filter; router.tab = .activity } label: {
+            OpsSummaryTile(state: state, count: count)
+        }
     }
 
-    private var workingStatus: OpsStatus {
-        if running > 0 { return .running }
-        if blockedWork > 0 { return .blocked }
-        return .done
+    /// Keir's state, only claimed as running while the activity read is fresh.
+    private func keirStatus(_ now: Date) -> OpsStatus {
+        switch ops.heartbeat(now: now) {
+        case .stalled, .unreachable: return .blocked
+        case .connecting: return .idle
+        case .fresh:
+            if running { return .running }
+            return activity.contains { WorkQueuePresentation.state($0) == "stalled" } ? .failed : .idle
+        }
     }
 
-    private var workingHeadline: String {
-        if running > 0 { return "Keir is working on \(running) task\(running == 1 ? "" : "s")" }
-        return "Keir is idle"
+    private func keirHeadline(_ now: Date) -> String {
+        switch ops.heartbeat(now: now) {
+        case .connecting: return "Checking on Keir"
+        case .unreachable: return "Keir's state is unknown"
+        case .stalled:
+            return "Keir’s activity is out of date"
+        case .fresh:
+            guard ops.activityUpdated != nil else { return "Keir's activity has not loaded" }
+            if running { return "Keir is working" }
+            if activity.contains(where: { WorkQueuePresentation.state($0) == "stalled" }) {
+                return "Keir has stalled work"
+            }
+            return queued ? "Keir is idle with work queued" : "Keir is idle"
+        }
     }
 
-    private var workingDetail: String {
-        var parts: [String] = []
-        if queued > 0 { parts.append("\(queued) queued") }
-        if blockedWork > 0 { parts.append("\(blockedWork) blocked") }
-        if !ops.servicesDown.isEmpty { parts.append("\(ops.servicesDown.count) degraded") }
-        return parts.isEmpty ? "No queue and no failures." : parts.joined(separator: " · ")
-    }
+    // MARK: Failing and blocked
 
-    // MARK: Needs you
-
-    private var needsYou: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                SectionLabel(text: AttentionCenter.label, count: attention.count, identifier: "ops-attention-count")
-                if attention.count > 0 {
-                    Button("See all") { router.activityFilter = "all"; router.tab = .activity }
-                        .font(.caption.weight(.semibold))
-                        .accessibilityIdentifier("ops-attention-all")
+    private var failing: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionLabel(text: "Issues", count: ops.failingPRs.count + issues.count, identifier: "ops-failing-count")
+            OpsGroup {
+                ForEach(Array(ops.failingPRs.enumerated()), id: \.element["number"].string) { index, pr in
+                    if index > 0 { OpsGroupDivider() }
+                    Button { router.activityFilter = "failing"; router.tab = .activity } label: {
+                        OpsQueueRow(title: pr["title"].string.nonempty ?? "Change #\(pr["number"].string)", detail: "Tests failing on fix #\(pr["number"].string), so it cannot ship yet", status: .failed, icon: OpsWorkState.failing.glyph)
+                    }
+                }
+                ForEach(Array(issues.enumerated()), id: \.element["id"].string) { index, service in
+                    if index > 0 || !ops.failingPRs.isEmpty { OpsGroupDivider() }
+                    let state = ops.serviceState(service)
+                    let status: OpsStatus = state == "Failing" ? .failed : state == "Degraded" ? .blocked : .idle
+                    NavigationLink { HealthView() } label: {
+                        let checked = OpsFormat.date(service["lastChecked"]).map(OpsFormat.contextual)
+                        OpsQueueRow(title: service["name"].string.nonempty ?? "Service", detail: [state == "Stale" ? "No recent check" : state == "Degraded" ? "Slow or partly down" : state, checked.map { "last checked " + $0 }].compactMap { $0 }.joined(separator: ", "), status: status, icon: state == "Stale" ? "clock.badge.questionmark" : state == "Degraded" ? "exclamationmark.triangle.fill" : status.icon, tint: ["Stale", "Degraded"].contains(state) ? OpsTheme.caution : nil)
+                    }
+                }
+                if issues.contains(where: { ops.serviceState($0) == "Stale" }) {
+                    OpsGroupDivider()
+                    Button { Task { await ops.refresh(session) } } label: {
+                        HStack(spacing: 12) {
+                            OpsGlyph(icon: "arrow.clockwise", tone: OpsTheme.accent, size: 30)
+                            Text("Re-check services").font(.subheadline.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+                            Spacer(minLength: 0)
+                        }.padding(.vertical, 9).contentShape(Rectangle())
+                    }
                 }
             }
-            AttentionStack(limit: 3, showEmpty: true)
-            if attention.count == 0 {
-                Text("Keir will surface decisions, questions and owner work here.")
-                    .font(.caption).foregroundStyle(OpsTheme.muted)
-            }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Queues
 
     private var queues: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             SectionLabel(text: "Queues")
-            NavigationLink { DeskView() } label: {
-                OpsQueueRow(title: "Support desk", detail: openTickets == 1 ? "1 open ticket" : "\(openTickets) open tickets", status: openTickets > 0 ? .queued : .done, icon: "tray.full")
-            }
-            NavigationLink { WorkView(lane: .now) } label: {
-                OpsQueueRow(title: "Work in progress", detail: "\(Int(ops.kanban["counts"]["now"].number ?? 0)) moving", status: .running, icon: "rectangle.split.3x1")
-            }
-            NavigationLink { WorkView(lane: .blocked) } label: {
-                OpsQueueRow(title: "Blocked", detail: "\(blockedWork) needs unblocking", status: blockedWork > 0 ? .blocked : .done, icon: "exclamationmark.triangle")
-            }
-            NavigationLink { WorkView(lane: .next) } label: {
-                OpsQueueRow(title: "Next", detail: "\(Int(ops.kanban["counts"]["next"].number ?? 0)) queued", status: .queued, icon: "text.line.first.and.arrowtriangle.forward")
-            }
-            NavigationLink { HealthView() } label: {
-                OpsQueueRow(title: "Health detail", detail: broken == 0 ? "Host, activity and alerts" : "\(broken) failing right now", status: broken > 0 ? .failed : .done, icon: "waveform.path.ecg")
+            OpsGroup {
+                NavigationLink { WorkView(lane: .now) } label: {
+                    OpsQueueRow(title: "Studio work in progress", detail: "Studio board items being built now", status: nowWork > 0 ? .running : .idle, icon: "rectangle.split.3x1", value: "\(nowWork)")
+                }
+                OpsGroupDivider()
+                NavigationLink { WorkView(lane: .next) } label: {
+                    OpsQueueRow(title: "Up next", detail: "Studio board items waiting to start", status: nextWork > 0 ? .queued : .idle, icon: "text.line.first.and.arrowtriangle.forward", value: "\(nextWork)")
+                }
+                OpsGroupDivider()
+                NavigationLink { DeskView() } label: {
+                    OpsQueueRow(title: "Support desk", detail: "Open player tickets Keir is handling", status: openTickets > 0 ? .queued : .idle, icon: "tray.full", value: "\(openTickets)")
+                }
+                OpsGroupDivider()
+                NavigationLink { HealthView() } label: {
+                    OpsQueueRow(title: "Server health", detail: "Server load, Keir's activity and alerts", status: broken > 0 ? .failed : .idle, icon: "waveform.path.ecg", tint: broken > 0 ? nil : OpsTheme.mint)
+                }
             }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Studio systems
 
     private var systems: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             SectionLabel(text: "Studio systems")
-            NavigationLink { SchedulerView() } label: {
-                OpsQueueRow(title: "Scheduler", detail: schedulerDetail, status: schedulerStatus, icon: "calendar.badge.clock")
-            }
-            NavigationLink { SecurityView() } label: {
-                OpsQueueRow(title: "Security", detail: "Host posture and findings", status: .queued, icon: "lock.shield")
-            }
-            NavigationLink { PullRequestsView() } label: {
-                OpsQueueRow(title: "Pull requests", detail: "\(Int(ops.kpis["prsOpen"].number ?? 0)) open · \(ops.redPRs) failing checks", status: ops.redPRs > 0 ? .failed : .queued, icon: "arrow.triangle.pull")
-            }
-            NavigationLink { WorktreesView() } label: {
-                OpsQueueRow(title: "Worktrees and agents", detail: "Live sessions and checkouts", status: .queued, icon: "point.topleft.down.to.point.bottomright.curvepath")
-            }
-            NavigationLink { WorldSimsView() } label: {
-                OpsQueueRow(title: "World simulations", detail: simsDetail, status: simsStatus, icon: "globe.americas")
-            }
-            NavigationLink { BackupsView() } label: {
-                OpsQueueRow(title: "Backups and database", detail: "Recency, size and collections", status: .queued, icon: "externaldrive")
-            }
-            NavigationLink { EventsView() } label: {
-                OpsQueueRow(title: "Event recovery", detail: "Failed deliveries waiting for replay", status: .queued, icon: "arrow.clockwise.circle")
+            OpsGroup {
+                NavigationLink { SchedulerView() } label: {
+                    OpsQueueRow(title: "Scheduler", detail: schedulerDetail, status: schedulerStatus, icon: "calendar.badge.clock")
+                }
+                OpsGroupDivider()
+                NavigationLink { SecurityView() } label: {
+                    OpsQueueRow(title: "Security", detail: "Server security scans and what they found", status: .queued, icon: "lock.shield")
+                }
+                OpsGroupDivider()
+                NavigationLink { PullRequestsView() } label: {
+                    OpsQueueRow(title: "Code changes", detail: prDetail, status: ops.redPRs > 0 ? .failed : .queued, icon: "arrow.triangle.pull")
+                }
+                OpsGroupDivider()
+                NavigationLink { WorktreesView() } label: {
+                    OpsQueueRow(title: "Agent workspaces", detail: "Coding agents working on the server now", status: .queued, icon: "point.topleft.down.to.point.bottomright.curvepath", tint: OpsTheme.mint)
+                }
+                OpsGroupDivider()
+                NavigationLink { WorldSimsView() } label: {
+                    OpsQueueRow(title: "World simulations", detail: simsDetail, status: simsStatus, icon: "globe.americas")
+                }
+                OpsGroupDivider()
+                NavigationLink { BackupsView() } label: {
+                    OpsQueueRow(title: "Backups and database", detail: "When the game data was last saved, and its size", status: .queued, icon: "externaldrive", tint: OpsTheme.mint)
+                }
+                OpsGroupDivider()
+                NavigationLink { EventsView() } label: {
+                    OpsQueueRow(title: "Event recovery", detail: "Game events that failed to arrive and can be resent", status: .queued, icon: "arrow.clockwise.circle")
+                }
             }
         }
+        .buttonStyle(.plain)
     }
 
     private var schedulerDetail: String {
         let checks = ops.scheduler["checks"].array
         let runningChecks = checks.filter { $0["state"].string == "running" }.count
         let queuedChecks = checks.filter { $0["state"].string == "queued" }.count
-        return "\(runningChecks) checks running · \(queuedChecks) queued"
+        if runningChecks == 0 && queuedChecks == 0 { return "No test runs running or waiting" }
+        return "Test runs: \(runningChecks) running, \(queuedChecks) waiting their turn"
+    }
+    private var prDetail: String {
+        let open = Int(ops.kpis["prsOpen"].number ?? 0)
+        let red = ops.redPRs
+        let openText = open == 1 ? "1 waiting to ship" : "\(open) waiting to ship"
+        return red == 0 ? openText : openText + ", \(red) with failing tests"
     }
     private var schedulerStatus: OpsStatus {
         if ops.scheduler == .null { return .idle }
@@ -194,19 +314,29 @@ struct OpsHub: View {
         return live > 0 ? .running : .queued
     }
 
-    // MARK: Keir surfaces
+}
 
-    private var keir: some View {
+struct KeirMore: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView { destinations.padding(16) }
+                .opsScrollable().opsScreen().navigationTitle("More").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+
+    private var destinations: some View {
         VStack(alignment: .leading, spacing: 4) {
-            SectionLabel(text: "Keir")
-            NavigationLink(value: StudioRoute.feed) {
+            NavigationLink { FeedView() } label: {
                 OpsQueueRow(title: "Feed", detail: "Briefing, what Keir did, what is next", status: .idle, icon: "sparkles.rectangle.stack")
             }
-            NavigationLink(value: StudioRoute.goals) {
+            NavigationLink { GoalsView() } label: {
                 OpsQueueRow(title: "Goals", detail: "Milestones and blockers", status: .idle, icon: "flag")
             }
             NavigationLink { KeirMetricsView() } label: {
-                OpsQueueRow(title: "Dashboard", detail: "Execution metrics and monitoring", status: .idle, icon: "chart.bar.xaxis")
+                OpsQueueRow(title: "Execution metrics", detail: "Performance and monitoring", status: .idle, icon: "chart.bar.xaxis")
             }
             NavigationLink { IdeasView() } label: {
                 OpsQueueRow(title: "Ideas", detail: "Triage what Keir found", status: .queued, icon: "lightbulb")
@@ -227,27 +357,71 @@ struct OpsHub: View {
     }
 }
 
+/// One count from the status system. Problem states that are non-zero get a
+/// tinted, bordered tile; everything else (Running, or a zero) stays on the
+/// neutral surface with only its number coloured, so the eye lands on
+/// problems first.
+private struct OpsSummaryTile: View {
+    let state: OpsWorkState
+    let count: Int
+
+    private var live: Bool { count > 0 }
+    private var alarm: Bool { live && state.isProblem }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 7) {
+                Image(systemName: state.glyph).font(.subheadline.weight(.semibold))
+                    .foregroundStyle(live ? state.color : OpsTheme.muted.opacity(0.7)).accessibilityHidden(true)
+                Text(count.formatted()).font(.system(.title3, design: .rounded).weight(.bold).monospacedDigit())
+                    .foregroundStyle(live ? state.color : OpsTheme.muted)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+            }
+            Text(state.title).font(.caption.weight(.semibold)).foregroundStyle(live ? OpsTheme.ink : OpsTheme.muted)
+                .lineLimit(1).minimumScaleFactor(0.85)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(alarm ? state.color.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .opsSurface(radius: 14)
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(alarm ? state.color.opacity(0.4) : .clear))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(state.title), \(count)")
+    }
+}
+
 struct OpsQueueRow: View {
     let title: String
     let detail: String
     var status: OpsStatus = .idle
     let icon: String
+    /// A short figure shown before the chevron, such as a count.
+    var value: String? = nil
+    /// Overrides the status colour for the icon tile only.
+    var tint: Color? = nil
+    var verticalPadding: CGFloat = 7
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.callout)
-                .foregroundStyle(status.color)
-                .frame(width: 24)
-                .accessibilityHidden(true)
+            OpsGlyph(icon: icon, tone: tint ?? status.color, size: 30)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
-                Text(detail).font(.caption).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true)
+                Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(OpsTheme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !detail.isEmpty {
+                    Text(detail).font(.caption).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 8)
+            if let value {
+                Text(value).font(.subheadline.weight(.semibold)).monospacedDigit()
+                    .foregroundStyle(status == .idle || status == .done ? OpsTheme.muted : status.color)
+            }
             Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
         }
-        .padding(.vertical, 10)
+        .padding(.vertical, verticalPadding)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title). \(detail)")

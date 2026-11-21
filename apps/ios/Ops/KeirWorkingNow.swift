@@ -27,6 +27,7 @@ struct KeirWorkLink<Content: View>: View {
 struct KeirWorkingNow: View {
     @EnvironmentObject private var router: OpsRouter
     @ObservedObject private var keir = OpsServices.shared.keir
+    @ObservedObject private var attention = AttentionCenter.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let team: JSONValue
     @State private var expanded: Set<String> = []
@@ -38,7 +39,7 @@ struct KeirWorkingNow: View {
             ?? items.first { $0["state"].string == "working" }
             ?? items.first
     }
-    private var waiting: Int { count("needsYou") + count("stuck") }
+    private var waiting: Int { attention.count }
     private var queueDepth: Int { max(0, count("open") - (current == nil ? 0 : 1)) }
 
     var body: some View {
@@ -84,7 +85,7 @@ struct KeirWorkingNow: View {
         guard let current else { return "Nothing in the queue" }
         let elapsed = elapsed(for: current)
         var parts = [elapsed]
-        if waiting > 0 { parts.append("\(waiting) waiting on you") }
+        if waiting > 0 { parts.append("\(waiting) need you") }
         if queueDepth > 0 { parts.append("\(queueDepth) in queue") }
         return parts.joined(separator: " · ")
     }
@@ -93,8 +94,12 @@ struct KeirWorkingNow: View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Circle().fill(current.map { OpsStatus.from($0["state"].string).color } ?? OpsTheme.muted)
-                        .frame(width: 7, height: 7)
+                    if let current, OpsStatus.from(current["state"].string) == .running {
+                        OpsSpinner(size: 12)
+                    } else {
+                        Circle().fill(current.map { OpsStatus.from($0["state"].string).color } ?? OpsTheme.muted)
+                            .frame(width: 7, height: 7)
+                    }
                     Text(current.map { OpsText.workTitle($0) } ?? "Keir's queue")
                         .font(.callout.weight(.semibold))
                         .lineLimit(2)
@@ -125,6 +130,7 @@ struct KeirWorkingNow: View {
         let id = item["id"].string
         let open = expanded.contains(id)
         let status = OpsStatus.from(item["state"].string)
+        let reason = OpsText.scrub(item["reason"].string)
         return VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(reduceMotion ? nil : .snappy) {
@@ -135,7 +141,7 @@ struct KeirWorkingNow: View {
                     OpsStatusBadge(status: status, compact: true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(OpsText.workTitle(item)).font(.callout.weight(.medium)).lineLimit(2)
-                        Text("\(elapsed(for: item)) · \(OpsText.scrub(item["reason"].string))")
+                        Text(open || reason.isEmpty ? elapsed(for: item) : "\(elapsed(for: item)) · \(reason)")
                             .font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
                     }
                     Spacer(minLength: 0)
@@ -159,7 +165,7 @@ struct KeirWorkingNow: View {
                     }
                     KeirWorkLink(link: item["link"].string, ticket: item["ticket"], jobId: item["id"].string, title: item["title"].string.nonempty ?? (item["ticket"].number.map { "Ticket #\(Int($0))" } ?? "")) {
                         HStack(spacing: 6) {
-                            Text(item["link"].string == "ticket" ? "Open ticket" : "Open work")
+                            Text(item["link"].string == "ticket" ? "Open ticket" : "View details")
                             Image(systemName: "arrow.up.right")
                         }
                         .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.sky)
@@ -215,7 +221,8 @@ struct KeirUpdateMessage: View {
                     let state = status(item["kind"].string)
                     KeirWorkLink(link: item["link"].string, ticket: item["ticket"], jobId: item["jobId"].string, title: item["title"].string) {
                         HStack(alignment: .top, spacing: 10) {
-                            OpsStatusBadge(status: state.0, label: state.1, compact: true)
+                            // An update is history: "Started" never spins.
+                            OpsStatusBadge(status: state.0, label: state.1, compact: true, live: false)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(OpsText.updateTitle(item))
                                     .font(.callout.weight(.medium))

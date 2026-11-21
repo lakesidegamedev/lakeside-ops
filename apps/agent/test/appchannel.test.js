@@ -452,3 +452,24 @@ test("cancelling an already completed family fences an undelivered answer", () =
   assert.equal(app.view().messages.length, before);
   assert.equal(root.state, "done"); assert.equal(child.state, "done");
 });
+
+test("an app merge approval refuses stale or missing check evidence", async () => {
+  const { ledger, conversation } = setup();
+  const now = 1_800_000_000_000;
+  const calls = [];
+  const app = createAppChannel({ ledger, config, conversation, now: () => now, decisions: () => ({
+    applyAuthenticatedApp: async (decision, verdict) => { calls.push(verdict); decision.state = "approved"; },
+  }) });
+  ledger.data.jobs.j = { id: "j", state: "waiting", role: "owner" };
+  const action = { id: "a", kind: "github", jobId: "j", args: { action: "merge" }, state: "pending", expiresAt: now + 3_600_000 };
+  ledger.data.actions.a = action;
+  ledger.data.decisions = { d: { id: "d", actionId: "a", jobId: "j", state: "pending", review: { human: true } } };
+  assert.equal(app.pendingDecisions()[0].canApprove, false);
+  action.checksAt = now - 86_400_000;
+  await assert.rejects(app.answer("d", "approve", "", true), { status: 409 });
+  assert.deepEqual(calls, []);
+  action.checksAt += 1000;
+  assert.equal(app.pendingDecisions()[0].checksStatus, "Checks green");
+  assert.equal((await app.answer("d", "approve", "", true)).state, "approved");
+  assert.deepEqual(calls, ["approve"]);
+});

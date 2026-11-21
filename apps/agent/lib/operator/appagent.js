@@ -60,9 +60,12 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
         working: Object.values(d.jobs).some((j) => isAppJob(j) && (j.appThread || MAIN) === x.id && j.state === "running") };
     }).sort((a, b) => (b.id === MAIN) - (a.id === MAIN) || b.at - a.at);
   }
-  function createThread(title) {
+  function createThread(title, creationKey) {
     const t = agentState(d);
-    const thread = { id: id(), title: clip(title || "New thread", 60), at: now() };
+    if (creationKey !== undefined && !/^sup:j_[a-f0-9]{16}:[a-f0-9]{16}$/.test(creationKey)) throw err(400, "invalid side chat request key");
+    const previous = creationKey && Object.values(t.threads).find((thread) => thread.creationKey === creationKey);
+    if (previous) return previous;
+    const thread = { id: id(), title: clip(title || "New thread", 60), at: now(), ...(creationKey ? { creationKey } : {}) };
     t.threads[thread.id] = thread; ledger.save(); return thread;
   }
   function updateThread(threadId, { title, archived }) {
@@ -144,6 +147,35 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
     j.state = "queued"; j.wakeAt = 0; j.deadline = now() + config.taskLifetimeMs; delete j.waitingFor;
     ledger.audit("app_retry", { job: j.id }); ledger.save(); drain();
     return { state: j.state };
+  }
+  function retryTicket(number, taskId) {
+    const job = require("./apptickets").stalledTicketJob(d, number);
+    if (!job || job.id !== taskId) throw err(409, "This ticket no longer has the same stalled attempt. Refresh the ticket.");
+    const channel = d.channels?.[job.channelId];
+    const status = d.ticketRecords?.[number]?.status;
+    const deadline = now() + config.taskLifetimeMs;
+    const hold = require("./admission").hold({ ...job, deadline }, { now: now(), supportDeferred: config.supportDeferred, claimedBy: () => channel?.claimedBy });
+    if (d.paused || job.appPaused || require("./ticketpause").pauseFor(d, job) ||
+        require("./supporttakeover").held(d, job) || hold || job.channelClosed || job.resolved ||
+        ["closed", "resolved", "merged"].includes(status) || ["incident", "moderation", "investigation"].includes(channel?.category)) {
+      throw err(409, "This ticket is held. Review its current owner and state before retrying.");
+    }
+    const family = Object.values(d.jobs).filter(candidate => require("./workrecord").rootJob(candidate, d.jobs).id === job.id);
+    const ids = new Set(family.map(member => member.id));
+    const pendingApproval = Object.values(d.actions || {}).some(action => ids.has(action.jobId) && ["pending", "executing", "uncertain"].includes(action.state)) ||
+      Object.values(d.decisions || {}).some(decision => ids.has(decision.jobId) && decision.state === "pending");
+    if (pendingApproval || family.some(member => member.state === "running" ||
+      Object.values(member.effects || {}).some(effect => ["started", "executing", "uncertain"].includes(effect.state)))) {
+      throw err(409, "Review the active attempt, pending decision or action outcome before retrying.");
+    }
+    (job.inbox ||= []).push({ role: "owner", authorId: config.ownerId, at: new Date(now()).toISOString(),
+      content: "The owner asked to retry this stalled ticket. Continue from its last verified checkpoint and check current facts before acting." });
+    (job.history ||= []).push({ at: new Date(now()).toISOString(), kind: "retry", summary: "Owner queued another attempt." });
+    job.state = "queued"; job.wakeAt = 0; job.queuedAt = now(); job.updatedAt = now(); job.deadline = deadline;
+    job.summary = "Another attempt is queued.";
+    delete job.deadlineBlockedAt; delete job.waitingFor; delete job.deadlineExtensions;
+    ledger.audit("app_ticket_retry", { ticket: number, job: job.id, actor: config.ownerId }); ledger.save(); drain();
+    return { state: job.state, taskId: job.id };
   }
   function pause(taskId, resume = false) {
     const j = d.jobs[String(taskId || "")];
@@ -265,11 +297,17 @@ function createAppAgent({ ledger, config, app, notebook = null, muse = null, mcp
   async function route(path, method, body, query) {
     if (muse) { const out = await muse.route(path, method, body, query); if (out !== undefined) return out; }
     if (path === "/threads" && method === "GET") return { threads: threads() };
-    if (path === "/threads" && method === "POST") return createThread(body.title);
+    if (path === "/threads" && method === "POST") return createThread(body.title, body.creationKey);
     let m = /^\/threads\/([a-z0-9]{6,12})$/.exec(path);
     if (m && method === "POST") return updateThread(m[1], body);
     const ticketMatch = /^\/tickets\/(\d{1,7})$/.exec(path);
-    if (ticketMatch && method === "GET") return require("./apptickets").ticketDetail(d, Number(ticketMatch[1]), now(), config);
+    if (ticketMatch && method === "GET") {
+      const number = Number(ticketMatch[1]);
+      const support = await mcp?.call("support", "support_get", { kind: "ticket", number }, false, AbortSignal.timeout(3000)).catch(() => null);
+      return require("./apptickets").ticketDetail(d, number, now(), config, support);
+    }
+    const ticketRetry = /^\/tickets\/(\d{1,7})\/retry$/.exec(path);
+    if (ticketRetry && method === "POST") return retryTicket(Number(ticketRetry[1]), body.taskId);
     // Connected games: fixed read-only catalogue (appgames.js). Owner-only, never writes.
     const games = await require("./appgames").createGames({ mcp }).route(path, method);
     if (games !== undefined) return games;

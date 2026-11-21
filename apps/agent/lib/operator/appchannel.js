@@ -370,14 +370,23 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     const x = d.decisions?.[String(id || "")];
     if (!x) throw Object.assign(new Error("unknown decision"), { status: 404 });
     if (x.state !== "pending") throw Object.assign(new Error(`already ${x.state}`), { status: 409 });
+    const { requiresFreshMergeChecks, mergeChecksFresh } = require("./appdecision");
+    const action = d.actions?.[x.actionId];
+    if (authenticated && verdict === "approve" && requiresFreshMergeChecks(action) && !mergeChecksFresh(action, now())) {
+      throw Object.assign(new Error("These checks need a fresh run before you can approve."), { status: 409 });
+    }
     if (verdict === "refresh") {
-      const job = d.jobs[x.jobId], origin = musePolicy.origin(d, job), action = d.actions[x.actionId];
+      const job = d.jobs[x.jobId], origin = musePolicy.origin(d, job);
       if (!authenticated) throw Object.assign(new Error("Authenticated owner refresh required"), { status: 403 });
       if (!job || CLOSED.includes(job.state) || d.paused || job.appPaused || origin.scoped && !origin.valid) throw Object.assign(new Error("Start a fresh authenticated conversation to replace this saved proposal."), { status: 409 });
       if (Object.values(job.effects || {}).some(e => ["started", "executing"].includes(e.state)) || Object.values(d.actions).some(a => a.jobId === job.id && a.state === "executing")) throw Object.assign(new Error("Inspect the earlier action outcome before requesting another proposal."), { status: 409 });
       for (const entry of Object.values(d.outbox || {})) if (entry.decision === x.id && !entry.deliveredAt) { entry.deliveredAt = now(); entry.skipped = "owner refreshed proposal"; }
       x.state = "superseded"; x.answeredVia = "app-refresh"; x.answeredBy = config.ownerId; x.answeredAt = now();
       if (action && ["pending", "approved"].includes(action.state)) action.state = "superseded";
+      if (requiresFreshMergeChecks(action)) job.mergeCheckRefresh = {
+        repository: action.args.repository,
+        heads: action.args.prs?.map(pr => pr.head) || [action.args.head]
+      };
       (job.inbox ||= []).push({ role: "owner", authorId: config.ownerId, at: new Date(now()).toISOString(), content: "The owner requested a fresh review of decision " + x.id + ". Re-read current targets and present a new exact proposal if needed. This request is not approval; do not repeat verified or uncertain actions." });
       delete job.ownerDecisionPending;
       if (job.ownerMuseBlocker) musePolicy.clearBlocker(ledger, job, job.ownerMuseBlocker.capability);

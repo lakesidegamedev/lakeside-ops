@@ -88,8 +88,8 @@ private struct KeirConversationActionRow: View {
     private var title: String {
         switch intent {
         case .take(let n, _): return "Take over ticket #\(n)"
-        case .handback(let n, _): return "Hand ticket #\(n) back to Support Keir"
-        case .message(let n, _): return "Message the worker on ticket #\(n)"
+        case .handback(let n, _): return "Hand ticket #\(n) back to the support desk"
+        case .message(let n, _): return "Message Keir on ticket #\(n)"
         case .approvals: return "Review approvals"
         case .proposal: return "Review this proposal"
         }
@@ -201,7 +201,7 @@ private struct KeirTicketActionSheet: View {
             }
             .opsScreen()
             .navigationTitle("Ticket #\(ticket)").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .refreshable { await reload() }
             .task { await reload() }
         }
@@ -214,8 +214,8 @@ private struct KeirTicketActionSheet: View {
             if supervision["worker"] != .null {
                 let worker = supervision["worker"]
                 VStack(alignment: .leading, spacing: 4) {
-                    SectionLabel(text: "Worker")
-                    Text(worker["identity"].string.nonempty ?? "keir-worker:" + worker["id"].string).font(.callout.monospaced()).textSelection(.enabled)
+                    SectionLabel(text: "Takeover session")
+                    Text("Session " + worker["id"].string).font(.callout.monospaced()).textSelection(.enabled)
                     Text("Takeover \(worker["generation"].string) · \(OpsState.word(worker["state"].string)) · updated \(OpsFormat.ago(worker["updatedAt"]))").font(.caption).foregroundStyle(OpsTheme.muted)
                     if let status = worker["status"].string.nonempty { Text(OpsText.scrub(status)).font(.callout) }
                 }
@@ -223,10 +223,10 @@ private struct KeirTicketActionSheet: View {
             let directions = Array(supervision["directions"].array.suffix(3))
             if !directions.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    SectionLabel(text: "Your recent messages to the worker")
+                    SectionLabel(text: "Your recent messages to Keir")
                     ForEach(directions, id: \.["requestId"].string) { direction in
                         Text(direction["text"].string).font(.callout).lineLimit(3)
-                        Text(direction["readAt"].number != nil ? "Read by the worker \(OpsFormat.ago(direction["readAt"]))" : direction["deliveredAt"].number != nil ? "Delivered \(OpsFormat.ago(direction["deliveredAt"])), not read yet" : "Not delivered yet").font(.caption).foregroundStyle(OpsTheme.muted)
+                        Text(direction["readAt"].number != nil ? "Read by Keir \(OpsFormat.ago(direction["readAt"]))" : direction["deliveredAt"].number != nil ? "Delivered \(OpsFormat.ago(direction["deliveredAt"])), not read yet" : "Not delivered yet").font(.caption).foregroundStyle(OpsTheme.muted)
                     }
                 }
             }
@@ -269,23 +269,23 @@ private struct KeirTicketActionSheet: View {
 
     private var explanation: String {
         switch op {
-        case .take: return "Support Keir stops working this ticket and its waiting public replies are held back. A separate worker takes it over and replies to the player only through the normal ticket checks."
-        case .handback: return "The worker stops at once and cannot post or act afterwards. The ticket returns to Support Keir with the worker's next step and evidence. Nothing is sent to the player."
-        case .message: return "This goes to the worker's inbox only. It is not shown to the player, and it does not approve anything."
+        case .take: return "The support desk pauses and its queued replies are withdrawn. Keir handles the ticket under your direction."
+        case .handback: return "This takeover ends immediately. The support desk resumes with the next step and evidence."
+        case .message: return "Your direction goes only to Keir for this ticket. Approve changes separately."
         }
     }
     private var placeholder: String {
         switch op {
-        case .take: return "First direction for the worker (optional)"
-        case .handback: return "Note for Support Keir (optional)"
-        case .message: return "Message for the worker"
+        case .take: return "First direction for Keir (optional)"
+        case .handback: return "Note for the support desk (optional)"
+        case .message: return "Message Keir"
         }
     }
     private var confirmTitle: String {
         switch op {
         case .take: return "Take over ticket #\(ticket)"
         case .handback: return "Hand ticket #\(ticket) back"
-        case .message: return "Send to the worker"
+        case .message: return "Send to Keir"
         }
     }
 
@@ -413,7 +413,7 @@ private struct KeirApprovalsSheet: View {
             }
             .opsScreen()
             .navigationTitle("Approvals").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .refreshable { await load() }
             .task { await load() }
         }

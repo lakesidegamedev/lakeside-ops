@@ -25,16 +25,17 @@ function playerQuestion(jobs) {
 function classify(data, members, card, now) {
   const ids = new Set(members.map((j) => j.id));
   const live = members.filter((j) => !TERMINAL.includes(j.state));
-  const decisions = Object.values(data.decisions || {}).some((x) => ids.has(x.jobId) && x.state === "pending");
-  const approvals = Object.values(data.actions || {}).some((x) => ids.has(x.jobId) && x.state === "pending");
+  const decisions = Object.values(data.decisions || {}).some((x) => ids.has(x.jobId) && x.state === "pending" && require("./appdecision").decisionView(data, x, now).canAnswer);
   const waitKind = (live.find((j) => j.state === "waiting" && j.waitingFor)?.waitingFor?.kind) || "";
   const prs = live.some((j) => (j.pullRequests || []).length || Object.keys(j.ciWatch || {}).length || j.codingParent);
   const investigating = live.some((j) => (j.investigations || []).some((id) => data.jobs[id] && !WORKING.includes(data.jobs[id].state)));
   const stages = (card?.items || []).map((i) => i.stage);
-  if (decisions || approvals) return { state: "waiting on the owner", next: "Owner decision or approval needed", owner: "owner" };
+  if (decisions) return { state: "waiting on the owner", next: "Owner decision or approval needed", owner: "owner" };
   if (stages.length && stages.every((s) => s === "confirmed")) return { state: "fix live and checked", next: "Keir confirms with the player and closes", owner: "Keir" };
-  if (live.some((j) => j.state === "blocked") || waitKind === "developer_reply" || live.some((j) => j.state === "deferred" || j.staffActiveUntil > now))
+  if (live.some((j) => j.state === "blocked" && j.deadlineBlockedAt)) return { state: "stalled", next: "Keir recovers from the last saved step", owner: "Keir" };
+  if (waitKind === "developer_reply" || live.some((j) => j.state === "deferred" || j.staffActiveUntil > now))
     return { state: "waiting on a developer", next: "A developer or staff member acts next", owner: "developer" };
+  if (live.some((j) => j.state === "blocked")) return { state: "blocked", next: "Keir identifies what prevents progress", owner: "Keir" };
   if (prs || stages.some((s) => ["written", "tested", "sandbox", "main"].includes(s)))
     return { state: "fix being built", next: stages.includes("main") ? "Check the live fix in game" : "Finish tests and release the fix", owner: "Keir" };
   if (["player_reply", "player"].includes(waitKind)) return { state: "waiting on the player", next: "Player replies", owner: "player" };

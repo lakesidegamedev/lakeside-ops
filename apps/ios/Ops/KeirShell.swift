@@ -14,8 +14,8 @@ import LakesideCore
 enum KeirChatTheme {
     static let canvas = OpsTheme.background
     static let keirBubble = Brand.adaptive(0x1c1c1e, 0xeceef2)
-    static let ownerBubble = Brand.adaptive(0x15395e, 0xd7e8fd)
-    static let ownerInk = Brand.adaptive(0xf2f6fa, 0x0c1d33)
+    static let ownerBubble = OpsTheme.accent.opacity(0.28)
+    static let ownerInk = OpsTheme.ink
     static let pill = Brand.adaptive(0x161618, 0xffffff)
     static let chrome = Brand.adaptive(0x1c1c1e, 0xffffff)
     static let object = Brand.adaptive(0x111113, 0xffffff)
@@ -30,25 +30,9 @@ extension View {
     func keirObjectCard(padding: CGFloat = 14) -> some View {
         self.padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(KeirChatTheme.stroke))
-            .shadow(color: KeirChatTheme.shadow, radius: 10, y: 3)
-    }
-}
-
-/// A round chrome button: the menu at the top left, voice at the top right.
-struct KeirCircleIcon: View {
-    let system: String
-    var body: some View {
-        Image(systemName: system)
-            .font(.body.weight(.medium))
-            .foregroundStyle(OpsTheme.ink)
-            .frame(width: 40, height: 40)
-            .background(KeirChatTheme.chrome, in: Circle())
-            .overlay(Circle().strokeBorder(KeirChatTheme.stroke))
-            .shadow(color: KeirChatTheme.shadow, radius: 8, y: 2)
-            .frame(width: 44, height: 44)
-            .contentShape(Circle())
+            .background(KeirChatTheme.object, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).strokeBorder(KeirChatTheme.stroke))
+            .shadow(color: OpsTheme.shadow, radius: 8, y: 2)
     }
 }
 
@@ -56,7 +40,7 @@ struct KeirCircleIcon: View {
 
 /// The animated Keir sprite in a round frame. A named state (listening,
 /// talking, thinking, working, sleeping) shows what Keir is doing; with none,
-/// he greets once and then idles with blinks and small quirks.
+/// the portrait greets once and idles with occasional blinks.
 struct KeirAvatar: View {
     let sprite: String?
     var body: some View {
@@ -80,17 +64,21 @@ struct KeirStatusPill<Leading: View>: View {
     let text: String
     var tone: Color = OpsTheme.muted
     var shimmer = false
+    /// A pill that opens somewhere shows a chevron and a tinted fill.
+    var opens = false
     @ViewBuilder var leading: () -> Leading
     var body: some View {
         HStack(spacing: 5) {
             leading()
             if shimmer { LoadingShimmer(text: text) } else { Text(text).foregroundStyle(tone) }
+            if opens { Image(systemName: "chevron.right").font(.caption2.weight(.bold)).foregroundStyle(tone).accessibilityHidden(true) }
         }
-        .font(.caption.weight(.medium))
+        .font(.caption.weight(opens ? .semibold : .medium))
         .lineLimit(1)
         .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(opens ? tone.opacity(0.12) : KeirChatTheme.chrome, in: Capsule())
         .background(KeirChatTheme.chrome, in: Capsule())
-        .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
+        .overlay(Capsule().strokeBorder(opens ? tone.opacity(0.35) : KeirChatTheme.stroke))
     }
 }
 
@@ -100,9 +88,8 @@ extension KeirStatusPill where Leading == EmptyView {
     }
 }
 
-/// The top of the chat. Left: Keir's menu. Centre: Keir, the conversation
-/// name (tap for conversations) and at most a few status capsules. Right:
-/// voice. Nothing else lives here.
+/// The pinned conversation header. The centered name opens conversations
+/// and the trailing menu holds conversation controls.
 struct KeirHeader<Tools: View>: View {
     let title: String
     let presence: KeirPresence.State
@@ -112,50 +99,59 @@ struct KeirHeader<Tools: View>: View {
     let workCount: Int
     let yolo: Bool
     let disabled: Bool
+    let showNavigation: Bool
     let openThreads: () -> Void
     let openInbox: () -> Void
-    let startVoice: () -> Void
+    let openAllInbox: () -> Void
+    let openOps: (() -> Void)?
     let reviewAutonomy: () -> Void
     @ViewBuilder let tools: () -> Tools
 
     var body: some View {
         VStack(spacing: 6) {
-            ZStack(alignment: .top) {
-                HStack(alignment: .top) {
-                    Menu { tools() } label: { KeirCircleIcon(system: "line.3.horizontal") }
-                        .accessibilityLabel("Keir tools").accessibilityIdentifier("keir-tools").disabled(disabled)
-                    Spacer(minLength: 0)
-                    Button(action: startVoice) { KeirCircleIcon(system: "waveform") }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Start voice conversation").accessibilityIdentifier("keir-microphone")
-                }
+            ZStack {
                 Button(action: openThreads) {
-                    VStack(spacing: 4) {
-                        KeirAvatar(sprite: sprite).frame(width: 56, height: 56)
-                        HStack(spacing: 3) {
-                            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(OpsTheme.ink).lineLimit(1)
-                            Image(systemName: "chevron.down").font(.caption2.weight(.bold)).foregroundStyle(OpsTheme.muted)
-                        }
-                    }.contentShape(Rectangle())
+                    HStack(spacing: 8) {
+                        KeirAvatar(sprite: sprite).frame(width: 32, height: 32)
+                        Text(title).font(.opsHeadline).foregroundStyle(OpsTheme.ink).lineLimit(1)
+                        Image(systemName: "chevron.down").font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                    }
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .padding(.horizontal, 52)
+                .padding(.leading, showNavigation ? 92 : 52).padding(.trailing, showNavigation ? 92 : 52)
                 .accessibilityLabel("Conversations, " + title)
                 .accessibilityIdentifier("keir-threads")
                 .disabled(disabled)
+
+                HStack(spacing: 0) {
+                    if showNavigation {
+                        Button(action: openAllInbox) {
+                            Image(systemName: "tray").font(.opsHeadline).frame(width: 44, height: 44)
+                        }.accessibilityLabel("Inbox").accessibilityIdentifier("keir-open-inbox")
+                        if let openOps {
+                            Button(action: openOps) {
+                                Image(systemName: "square.grid.2x2").font(.opsHeadline).frame(width: 44, height: 44)
+                            }.accessibilityLabel("Ops").accessibilityIdentifier("keir-open-ops")
+                        }
+                    }
+                    Spacer()
+                    Menu { tools() } label: {
+                        Image(systemName: "ellipsis").font(.opsHeadline).frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Keir tools").accessibilityIdentifier("keir-tools").disabled(disabled)
+                }
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) { pills }
                 VStack(spacing: 6) { pills }
             }
         }
-        .padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 10)
+        .padding(.horizontal, 12).padding(.bottom, 4)
         .frame(maxWidth: .infinity)
-        .background {
-            LinearGradient(stops: [.init(color: KeirChatTheme.canvas, location: 0), .init(color: KeirChatTheme.canvas, location: 0.75), .init(color: KeirChatTheme.canvas.opacity(0), location: 1)],
-                           startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea(edges: .top)
-        }
+        .background(KeirChatTheme.canvas.ignoresSafeArea(edges: .top))
+        .overlay(alignment: .bottom) { Rectangle().fill(OpsTheme.hairline).frame(height: 0.5) }
         .dynamicTypeSize(...DynamicTypeSize.accessibility2)
     }
 
@@ -183,7 +179,7 @@ struct KeirHeader<Tools: View>: View {
         if workCount > 0 {
             Button(action: openInbox) {
                 KeirStatusPill(text: workCount == 1 ? "Working" : "\(workCount) tasks", shimmer: true) {
-                    Circle().fill(OpsTheme.mint).frame(width: 6, height: 6)
+                    OpsSpinner(size: 12)
                 }
             }
             .buttonStyle(.plain)
@@ -193,7 +189,7 @@ struct KeirHeader<Tools: View>: View {
         if attention > 0 {
             let text = attention == 1 ? "1 needs you" : "\(attention) need you"
             Button(action: openInbox) {
-                KeirStatusPill(text: text, tone: OpsTheme.warn) { Image(systemName: "hand.raised.fill").foregroundStyle(OpsTheme.warn) }
+                KeirStatusPill(text: text, tone: OpsTheme.warn, opens: true) { Image(systemName: "hand.raised.fill").foregroundStyle(OpsTheme.warn) }
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(text). Open inbox")
@@ -223,9 +219,9 @@ struct KeirTimeMark: View {
     }
     private var label: String {
         let calendar = Calendar.current
-        if calendar.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
-        if calendar.isDateInYesterday(date) { return "Yesterday " + date.formatted(date: .omitted, time: .shortened) }
-        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+        if calendar.isDateInToday(date) { return OpsFormat.clock(date) }
+        if calendar.isDateInYesterday(date) { return "Yesterday " + OpsFormat.clock(date) }
+        return date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()) + " " + OpsFormat.clock(date)
     }
 
     /// Milliseconds since 1970 on the message, or nil when the server sent none.
@@ -243,20 +239,26 @@ struct KeirTimeMark: View {
     }
 }
 
-/// Live work Keir is doing in this conversation, as an inline object.
+/// Live work Keir is doing in this conversation, as an inline object: the
+/// spinner in the icon tile and what Keir is doing this moment, shimmering.
 struct KeirLiveWorkCard: View {
     let task: JSONValue
+    /// The step running now, when the task reports one ("Reading the payroll code").
+    private var activity: String {
+        if task["steering"].bool { return "Updating direction" }
+        let running = task["live"].array.last { $0["state"].string == "running" }
+        return running?["title"].string.nonempty ?? "Working"
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                Image(systemName: "gearshape.2")
-                    .font(.callout).foregroundStyle(OpsTheme.mint)
+                OpsSpinner(size: 18)
                     .frame(width: 34, height: 34)
                     .background(OpsTheme.mint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(task["title"].string.nonempty ?? "Keir's work").font(.callout.weight(.semibold)).lineLimit(2)
-                    LoadingShimmer(text: task["steering"].bool ? "Updating direction" : "Working").font(.caption)
+                    OpsShimmerText(text: activity).font(.caption).lineLimit(1)
+                        .accessibilityLabel("Keir is working: \(activity)")
                 }
                 Spacer(minLength: 0)
             }

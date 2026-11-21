@@ -140,11 +140,15 @@ struct KeirSupervisorJobCard: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "gearshape.2")
-                .font(.callout).foregroundStyle(OpsTheme.mint)
+            // Running spins; a queued job has not started, so it shows a still clock.
+            Group {
+                if queued {
+                    Image(systemName: OpsWorkState.queued.glyph).font(.callout).foregroundStyle(OpsWorkState.queued.color)
+                        .accessibilityHidden(true)
+                } else { OpsSpinner(size: 18) }
+            }
                 .frame(width: 34, height: 34)
-                .background(OpsTheme.mint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .accessibilityHidden(true)
+                .background((queued ? OpsWorkState.queued.color : OpsTheme.mint).opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(job["title"].string.nonempty ?? "Working on your request").font(.callout.weight(.semibold)).lineLimit(2)
                 if queued { Text("Waiting to start").font(.caption).foregroundStyle(OpsTheme.muted) }
@@ -166,7 +170,7 @@ struct KeirSupervisorJobCard: View {
 }
 
 /// The server has no usable supervisor for this account. A state, not an
-/// outage: the server is reachable and Support Keir is one tap away.
+/// outage: the server is reachable and the support desk is one tap away.
 struct KeirSupervisorNotice: View {
     let setup: KeirSupervisor.Setup
     let openSupport: () -> Void
@@ -174,10 +178,10 @@ struct KeirSupervisorNotice: View {
         VStack(spacing: 12) {
             Text(setup.message).font(.title3.weight(.semibold)).multilineTextAlignment(.center)
                 .accessibilityIdentifier("supervisor-setup-state")
-            Text("Nothing you type here is sent anywhere. You can still talk to Support Keir.")
+            Text("Nothing you type here is sent anywhere. You can still talk to the support desk.")
                 .font(.callout).foregroundStyle(OpsTheme.muted).multilineTextAlignment(.center)
             Button(action: openSupport) {
-                Text("Open Support Keir").font(.callout.weight(.semibold)).padding(.horizontal, 18).frame(minHeight: 44)
+                Text("Open support desk").font(.callout.weight(.semibold)).padding(.horizontal, 18).frame(minHeight: 44)
                     .background(KeirChatTheme.chrome, in: Capsule())
                     .overlay(Capsule().strokeBorder(KeirChatTheme.stroke))
             }
@@ -191,7 +195,7 @@ struct KeirSupervisorNotice: View {
 /// The composer's "+" in the private conversation. The support menu offers
 /// attachments, ticket drafts, routing and a model picker, none of which the
 /// supervisor accepts. What is relevant here is stopping the running job and
-/// getting to Support Keir on purpose.
+/// getting to the support desk on purpose.
 struct KeirSupervisorPlusMenu: View {
     @ObservedObject var keir: KeirStore
     let stop: () -> Void
@@ -205,11 +209,11 @@ struct KeirSupervisorPlusMenu: View {
                 }
             }
             Section {
-                Button { keir.select("main") } label: { Label("Open Support Keir", systemImage: "lifepreserver") }
+                Button { keir.select("main") } label: { Label("Open support desk", systemImage: "lifepreserver") }
             }
         } label: { KeirComposerIcon(system: "plus") }
             .accessibilityLabel("More for your private conversation")
-            .accessibilityHint("Stop the running job or open Support Keir")
+            .accessibilityHint("Stop the running job or open the support desk")
             .accessibilityIdentifier("supervisor-plus")
     }
 }

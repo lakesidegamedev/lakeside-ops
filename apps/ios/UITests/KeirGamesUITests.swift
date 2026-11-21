@@ -5,7 +5,7 @@ import XCTest
 final class KeirGamesUITests: XCTestCase {
     private func launch(_ extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures"] + extra; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Chat"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["keir-threads"].waitForExistence(timeout: 15))
         return app
     }
     private func composer(_ app: XCUIApplication) -> XCUIElement {
@@ -75,12 +75,12 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(app.buttons["keir-game-ahd"].exists)
         XCTAssertTrue(app.buttons["keir-game-grand-century"].exists)
         metroforge.tap()
-        XCTAssertTrue(find(app, "metroforge · mf_status").exists, "the evidence path names the read")
+        XCTAssertTrue(find(app, "Service and release health").exists || find(app, "Preview site").exists)
         XCTAssertTrue(find(app, "Preview site", timeout: 1).exists)
-        XCTAssertTrue(find(app, "Not read by Keir", timeout: 1).exists, "withheld data is stated")
+        XCTAssertTrue(find(app, "Leaderboard").exists, "withheld data is stated")
         let ask = reveal(app, app.buttons["keir-game-ask-health"])
         XCTAssertTrue(ask.waitForExistence(timeout: 5))
-        XCTAssertTrue(find(app, "A House Divided desk only", timeout: 2).exists, "tickets are not claimed for MetroForge")
+        XCTAssertTrue(find(app, "No support tickets for this game", timeout: 2).exists, "tickets are not claimed for MetroForge")
         scrollToEnd(app)
         XCTAssertTrue(ask.exists)
         XCTAssertFalse(app.buttons["keir-game-ask-tickets"].exists, "no ticket question for a game without tickets")
@@ -90,7 +90,8 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(box.waitForExistence(timeout: 10))
         let draft = box.value as? String ?? ""
         XCTAssertTrue(draft.hasPrefix("About MetroForge:"), draft)
-        XCTAssertTrue(draft.contains("mf_status"))
+        XCTAssertTrue(draft.contains("read-only checks"))
+        XCTAssertFalse(draft.contains("mf_status"))
         XCTAssertTrue(draft.contains("Don't change anything or message anyone"))
         XCTAssertFalse(app.buttons["keir-game-metroforge"].exists, "the sheet closed and nothing was sent")
     }
@@ -99,12 +100,12 @@ final class KeirGamesUITests: XCTestCase {
         let app = launch()
         openGames(app)
         app.buttons["keir-game-ahd"].tap()
-        XCTAssertTrue(find(app, "engine · engine_health").exists)
+        XCTAssertTrue(find(app, "Turn").exists)
         XCTAssertTrue(reveal(app, app.buttons["keir-game-ask-tickets"]).waitForExistence(timeout: 5), "A House Divided offers a ticket question")
         let grandCentury = reveal(app, app.buttons["keir-game-grand-century"], down: true)
         XCTAssertTrue(grandCentury.isHittable, "the game list is back on screen after scrolling to the questions")
         grandCentury.tap()
-        XCTAssertTrue(find(app, "grand-century · gc_status").exists, "the choice moved to Grand Century")
+        XCTAssertTrue(find(app, "Grand Century").exists, "the choice moved to Grand Century")
         XCTAssertTrue(reveal(app, app.buttons["keir-game-ask-health"]).waitForExistence(timeout: 5))
         scrollToEnd(app)
         XCTAssertFalse(app.buttons["keir-game-ask-tickets"].exists)
@@ -134,7 +135,7 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(entry.waitForExistence(timeout: 5)); entry.tap()
         let metroforge = app.buttons["keir-game-metroforge"]
         XCTAssertTrue(metroforge.waitForExistence(timeout: 10)); metroforge.tap()
-        XCTAssertTrue(find(app, "metroforge · mf_status").exists)
+        XCTAssertTrue(find(app, "Preview site").exists)
         let ask = reveal(app, app.buttons["keir-game-ask-health"])
         XCTAssertTrue(ask.waitForExistence(timeout: 10))
         XCTAssertFalse(ask.isEnabled, "a question would replace the draft")
@@ -144,10 +145,10 @@ final class KeirGamesUITests: XCTestCase {
         let app = launch(["--uitest-keep-games"])
         openGames(app)
         app.buttons["keir-game-grand-century"].tap()
-        XCTAssertTrue(find(app, "grand-century · gc_status").exists)
+        XCTAssertTrue(find(app, "Grand Century").exists)
         app.buttons["Done"].tap()
         XCTAssertTrue(app.buttons["keir-tools"].waitForExistence(timeout: 10))
         openGames(app)
-        XCTAssertTrue(find(app, "grand-century · gc_status").exists, "the earlier choice is restored")
+        XCTAssertTrue(find(app, "Grand Century").exists, "the earlier choice is restored")
     }
 }

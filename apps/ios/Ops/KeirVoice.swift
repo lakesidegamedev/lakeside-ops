@@ -1,14 +1,17 @@
 import SwiftUI
 import Speech
 import AVFoundation
+import LakesideCore
 
 /// Audio belongs to the visible conversation. Starting the microphone interrupts
 /// speech playback; leaving the screen releases the microphone and audio session.
-@MainActor final class KeirVoice: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
+@MainActor final class KeirVoice: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published private(set) var listening = false
     @Published private(set) var speaking = false
     @Published private(set) var preparingSpeech = false
     @Published private(set) var usingDeviceFallback = false
+    /// The online voice spoke the start of this reply and the device voice the rest.
+    @Published private(set) var fallbackPartial = false
     @Published private(set) var requesting = false
     @Published private(set) var level = 0.0
     @Published private(set) var completedTurn = 0
@@ -16,9 +19,14 @@ import AVFoundation
     @Published var error: String?
     private let engine = AVAudioEngine()
     private let speaker = AVSpeechSynthesizer()
-    private var player: AVAudioPlayer?
-    private var playback: Task<Void, Never>?
-    private var speechDeadline: Task<Void, Never>?
+    /// Loudness of Keir's own voice, observed only by the speaking portrait so
+    /// the rest of the screen does not redraw with every sample.
+    let meter: KeirVoiceMeter
+    private let output: KeirSpeechOutput
+    private var pipeline: SpeechPipeline?
+    private var meterTask: Task<Void, Never>?
+    private var wordPulse = 0.0
+    private var meterID = UUID()
     private var playbackID = UUID()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var recognition: SFSpeechRecognitionTask?
@@ -28,7 +36,10 @@ import AVFoundation
     private var lastSpeech = Date()
     private var automaticTurn = false
 
-    override init() { super.init(); speaker.delegate = self }
+    init(output: KeirSpeechOutput? = nil) {
+        self.output = output ?? KeirAudioQueue(); self.meter = KeirVoiceMeter()
+        super.init(); speaker.delegate = self
+    }
 
     func start(automatic: Bool = false) async {
         stop(); error = nil
@@ -109,19 +120,25 @@ import AVFoundation
         listening = false; level = 0
         if !speaking { releaseAudio() }
     }
+    /// The device voice, for the Apple setting. Replaces anything playing.
     func speak(_ text: String) {
         stop()
+        speakDevice(text)
+    }
+    /// Speaks with the device voice without stopping first, so a hand-over from
+    /// the online voice keeps `speaking` true and listening does not restart.
+    private func speakDevice(_ text: String) {
         guard !text.isEmpty else { return }
         do {
             let audio = AVAudioSession.sharedInstance()
             try audio.setCategory(.playback, mode: .spokenAudio)
             try audio.setActive(true)
             let cleaned = Self.spokenText(text)
-            guard !cleaned.isEmpty else { releaseAudio(); return }
+            guard !cleaned.isEmpty else { speaking = false; if !listening { releaseAudio() }; return }
             let identifier = UserDefaults.standard.string(forKey: "keir-voice-id") ?? "auto"
             let speed = UserDefaults.standard.object(forKey: "keir-voice-rate") as? Double ?? 0.92
             let selected = identifier == "auto" ? Self.bestVoice : AVSpeechSynthesisVoice(identifier: identifier) ?? Self.bestVoice
-            speaking = true
+            speaking = true; runMeter()
             // Paragraphs keep natural pauses and let playback begin immediately.
             for paragraph in cleaned.components(separatedBy: "\n\n").filter({ !$0.isEmpty }) {
                 let utterance = AVSpeechUtterance(string: paragraph)
@@ -130,55 +147,71 @@ import AVFoundation
                 utterance.postUtteranceDelay = 0.15
                 speaker.speak(utterance)
             }
-        } catch { self.error = "Spoken reply could not start."; releaseAudio() }
+        } catch { speaking = false; self.error = "Spoken reply could not start."; releaseAudio() }
     }
     func speakReply(_ text: String, session: AppSession) {
-        usingDeviceFallback = false
+        usingDeviceFallback = false; fallbackPartial = false
         if UserDefaults.standard.string(forKey: "keir-speech-provider") == "apple" { speak(text) }
         else { speakMicrosoft(text, session: session) }
     }
-    func speakMicrosoft(_ text: String, session: AppSession, deadline: Duration = .seconds(20), deviceSpeech: ((String) -> Void)? = nil) {
+    /// The online voice, piece by piece (see `SpeechPipeline`). The first piece
+    /// has `deadline`; when it fails or is late the whole reply goes to the device
+    /// voice. When a later piece fails, the pieces before it finish and the rest
+    /// goes to the device voice. `deviceSpeech` replaces the device voice in tests.
+    func speakMicrosoft(_ text: String, session: AppSession, deadline: Duration = .seconds(8), deviceSpeech: ((String) -> Void)? = nil) {
         stop()
         let cleaned = Self.spokenText(text)
         guard !cleaned.isEmpty else { return }
         let token = UUID(); playbackID = token; preparingSpeech = true; error = nil
-        let useDevice: () -> Void = { [weak self] in
+        usingDeviceFallback = false; fallbackPartial = false
+        let pieces = VoiceSegments.segments(cleaned)
+        let useDevice: (Int) -> Void = { [weak self] from in
             guard let self, self.playbackID == token else { return }
-            self.playbackID = UUID(); self.player?.stop(); self.player = nil; self.speaking = false
-            self.speechDeadline?.cancel(); self.speechDeadline = nil
-            self.playback?.cancel(); self.playback = nil
-            self.preparingSpeech = false; self.usingDeviceFallback = true
-            if let deviceSpeech { deviceSpeech(cleaned) }
-            else { self.speak(cleaned) }
+            self.pipeline = nil
+            let rest = from == 0 ? cleaned : pieces[from...].joined(separator: " ")
+            self.preparingSpeech = false; self.usingDeviceFallback = true; self.fallbackPartial = from > 0
+            if let deviceSpeech { self.speaking = false; deviceSpeech(rest) }
+            else { self.speakDevice(rest) }
         }
-        speechDeadline = Task { @MainActor in
-            do { try await Task.sleep(for: deadline) } catch { return }
-            useDevice()
+        do { try output.begin() } catch { useDevice(0); return }
+        // The pipeline lives only as long as this reply, so holding the session
+        // here keeps no extra state alive.
+        let pipeline = SpeechPipeline(segments: pieces, sink: output, firstDeadline: deadline, stallDeadline: Self.stallDeadline) { piece in
+            try await session.speechAudio(piece)
         }
-        playback = Task { @MainActor [weak self] in
-            do {
-                let data = try await session.speechAudio(cleaned)
-                guard let self, !Task.isCancelled, self.playbackID == token else { return }
-                let audio = AVAudioSession.sharedInstance()
-                try audio.setCategory(.playback, mode: .spokenAudio)
-                try audio.setActive(true)
-                let player = try AVAudioPlayer(data: data)
-                player.delegate = self; self.player = player
-                player.enableRate = true; player.rate = Float(UserDefaults.standard.object(forKey: "keir-voice-rate") as? Double ?? 1.0)
-                self.speechDeadline?.cancel(); self.speechDeadline = nil
-                self.preparingSpeech = false; self.speaking = true
-                guard player.play() else { throw URLError(.cannotDecodeContentData) }
-            } catch {
-                guard let self, !Task.isCancelled, self.playbackID == token else { return }
-                useDevice()
+        pipeline.onEvent = { [weak self] event in
+            guard let self, self.playbackID == token else { return }
+            switch event {
+            case .started:
+                self.preparingSpeech = false; self.speaking = true; self.runMeter()
+            case .finished:
+                self.pipeline = nil; self.preparingSpeech = false; self.speaking = false
+                if !self.listening { self.releaseAudio() }
+            case .fallback(let from):
+                useDevice(from)
             }
         }
+        self.pipeline = pipeline
+        pipeline.start()
     }
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor [weak self] in
-            guard let self, self.player === player else { return }
-            self.player = nil; self.speaking = false; self.releaseAudio()
-            if !flag { self.error = "Voice playback was interrupted. Tap to try again." }
+    /// How long playback may sit silent waiting for a later piece before the
+    /// rest of the reply goes to the device voice.
+    static let stallDeadline: Duration = .seconds(8)
+    /// Samples the loudness of what is playing about twelve times a second while
+    /// Keir speaks, for the speaking portrait. Stops by itself when speech ends.
+    private func runMeter() {
+        guard meterTask == nil else { return }
+        let id = UUID(); meterID = id
+        meterTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.speaking else { break }
+                let online = self.usingDeviceFallback ? 0 : self.output.level
+                self.meter.update(max(online, self.wordPulse))
+                self.wordPulse *= 0.55
+                try? await Task.sleep(for: .milliseconds(83))
+            }
+            guard let self, self.meterID == id else { return }
+            self.meter.update(0); self.meterTask = nil
         }
     }
     static var availableVoices: [AVSpeechSynthesisVoice] {
@@ -205,9 +238,19 @@ import AVFoundation
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
     func stopSpeaking() {
-        preparingSpeech = false; playbackID = UUID(); speechDeadline?.cancel(); speechDeadline = nil; playback?.cancel(); playback = nil; player?.stop(); player = nil; speaker.stopSpeaking(at: .immediate); speaking = false; if !listening { releaseAudio() } }
+        preparingSpeech = false; playbackID = UUID()
+        pipeline?.cancel(); pipeline = nil; output.stop()
+        speaker.stopSpeaking(at: .immediate); speaking = false
+        meterTask?.cancel(); meterTask = nil; meterID = UUID(); wordPulse = 0; meter.update(0)
+        if !listening { releaseAudio() }
+    }
     func stop() { stopListening(); stopSpeaking() }
     private func releaseAudio() { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+    /// Each word the device voice starts gives the portrait's mouth a beat, since
+    /// the synthesizer offers no loudness reading.
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, willSpeakRangeOfSpeechString characterRange: NSRange, utterance: AVSpeechUtterance) {
+        Task { @MainActor [weak self] in self?.wordPulse = 0.8 }
+    }
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Task { @MainActor [weak self] in
             guard let self, !self.speaker.isSpeaking else { return }

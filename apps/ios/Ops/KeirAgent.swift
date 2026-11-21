@@ -65,36 +65,40 @@ struct KeirThreads: View {
     @State private var naming = false
     @State private var title = ""
     @State private var renaming: JSONValue = .null
+    @State private var removing: String?
+    @State private var removalError: String?
     var body: some View {
         NavigationStack {
             List {
-                ForEach(keir.conversationRows, id: \.["id"].string) { thread in
-                    Button { keir.select(thread["id"].string); dismiss() } label: {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(thread["title"].string).font(.callout.weight(.semibold))
-                                    if thread["working"].bool { OpsStatusBadge(status: .running, compact: true) }
-                                }
-                                Text(thread["preview"].string.nonempty ?? (thread["system"].bool ? "Results from your watches" : "No messages yet"))
-                                    .font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
-                            }
-                            Spacer()
-                            if thread["id"].string == keir.thread { Image(systemName: "checkmark").font(.caption) }
-                        }.padding(.vertical, 4).contentShape(Rectangle())
-                    }.buttonStyle(.plain)
-                    .swipeActions {
-                        if !thread["system"].bool && thread["id"].string != "main" {
-                            Button("Archive") { Task { _ = try? await session.post("/api/keir/app/threads/\(thread["id"].string)", ["archived": .bool(true)]); await keir.loadThreads(session); if keir.thread == thread["id"].string { keir.select("main") } } }.tint(OpsTheme.warn)
-                            Button("Rename") { renaming = thread; title = thread["title"].string }.tint(OpsTheme.sky)
-                        }
+                Section {
+                    chatRow(keir.mainThread, title: "Main", preview: "Persistent conversation with Keir")
+                }
+                Section {
+                    if keir.sideChats.isEmpty {
+                        Text("No side chats yet.").font(.opsCaption).foregroundStyle(OpsTheme.muted)
                     }
-                }.listRowBackground(Color.clear)
+                    ForEach(keir.sideChats, id: \.["id"].string) { thread in
+                        let id = thread["id"].string
+                        chatRow(id, title: thread["title"].string, preview: thread["preview"].string, running: thread["working"].bool)
+                            .swipeActions(allowsFullSwipe: false) {
+                                Button("Delete", role: .destructive) { removing = id }
+                                Button("Rename") { renaming = thread; title = thread["title"].string }.tint(OpsTheme.accent)
+                            }
+                    }
+                } header: { SectionLabel(text: "Side chats") }
+                if !keir.systemChats.isEmpty {
+                    Section {
+                        ForEach(keir.systemChats, id: \.["id"].string) { thread in
+                            chatRow(thread["id"].string, title: thread["title"].string, preview: thread["preview"].string)
+                        }
+                    } header: { SectionLabel(text: "Updates") }
+                }
+                if let removalError { Text(removalError).font(.opsCaption).foregroundStyle(OpsTheme.warn) }
             }
             .listStyle(.plain).opsScreen().navigationTitle("Conversations").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-                ToolbarItem(placement: .primaryAction) { Button { title = ""; naming = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("New conversation") }
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .topBarLeading) { Button { title = ""; naming = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("New conversation") }
             }
             .alert("New thread", isPresented: $naming) {
                 TextField("What is it about?", text: $title)
@@ -106,9 +110,34 @@ struct KeirThreads: View {
                 Button("Save") { let id = renaming["id"].string, t = title; Task { _ = try? await session.post("/api/keir/app/threads/\(id)", ["title": .string(t)]); await keir.loadThreads(session) } }
                 Button("Cancel", role: .cancel) {}
             }
+            .alert("Delete this side chat?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+                Button("Delete", role: .destructive) {
+                    guard let id = removing else { return }
+                    Task {
+                        do { try await keir.removeSideChat(id, session); removalError = nil }
+                        catch { removalError = error.displayMessage }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
             .task { await keir.loadThreads(session) }
         }
     }
+
+    private func chatRow(_ id: String, title: String, preview: String, running: Bool = false) -> some View {
+        Button { keir.select(id); dismiss() } label: {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.opsHeadline)
+                    if !preview.isEmpty { Text(preview).font(.opsCaption).foregroundStyle(OpsTheme.muted).lineLimit(2) }
+                }
+                Spacer()
+                if running { OpsStatusBadge(status: .running, compact: true) }
+                if keir.thread == id { Image(systemName: "checkmark").foregroundStyle(OpsTheme.accent) }
+            }.padding(.vertical, 4).contentShape(Rectangle())
+        }.buttonStyle(.plain).listRowBackground(Color.clear)
+    }
+
 }
 
 // MARK: Activity
@@ -117,143 +146,415 @@ struct ActivityView: View {
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
     @EnvironmentObject private var session: AppSession
-    @State private var tasks: [JSONValue] = []
-    @State private var approvals: [JSONValue] = []
-    @State private var work: JSONValue = .null
     @State private var error: String?
     @State private var search = ""
-    @State private var scope = "tickets"
     @State private var filter = "all"
+    @State private var route: InboxRoute?
     @ObservedObject private var attention = AttentionCenter.shared
-    /// Decisions render below with their own approve and reject controls; the
-    /// rest of "Needs you" (open questions, work the owner must unblock) lives here.
-    private var otherAttention: [AttentionItem] { attention.items.filter { $0.kind != .decision } }
-    private var tickets: [JSONValue] { work["tickets"].array }
-    private var awaitingFirstReply: [JSONValue] {
-        guard session.profile["mode"].string != "standalone", scope == "tickets", filter == "all" else { return [] }
-        return KeirTicketFollowUp.waiting(in: ops.hub).filter {
-            search.isEmpty || $0["title"].string.localizedCaseInsensitiveContains(search) || $0["number"].string == search.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
-        }
+
+    /// The queue and the badge read the same ticket list from the shared store.
+    private var work: JSONValue { ops.work }
+    private var tickets: [JSONValue] { ops.openTickets }
+    private var trimmedSearch: String { search.trimmingCharacters(in: .whitespaces) }
+    // Ordered by harm: what waits on the owner, then a player with no reply,
+    // then work that has stopped. Sections follow the same order as the chips.
+    private let filters = [("all", "All"), ("needs-you", "Needs you"), ("unanswered", "Unanswered"), ("stalled", "Stalled"),
+                           ("stuck", "Blocked"), ("failing", "Failing checks"),
+                           ("working", "Running"), ("waiting", "Queued"), ("held", "Waiting"), ("finished", "Done")]
+
+    // MARK: Rows per filter
+
+    private typealias Entry = OpsStore.QueueEntry
+    /// Buckets and ranks are worked out once per refresh in the store, so a
+    /// chip tap only filters a short array instead of re-deriving every
+    /// ticket's state for each of the ten chips and nine sections.
+    private func queueRows(_ key: String, search: String) -> [Entry] {
+        ops.queue.filter { (key == "all" || $0.bucket == key) && (search.isEmpty || WorkQueuePresentation.matches($0.item, filter: "all", search: search)) }
     }
-    private var showTickets: Bool { scope == "tickets" && work["source"]["enabled"].bool }
-    private var entries: [JSONValue] { showTickets ? tickets : tasks }
-    private var visible: [JSONValue] { entries.filter { WorkQueuePresentation.matches($0, filter: filter, search: search, ticket: showTickets) }.sorted { WorkQueuePresentation.rank($0) < WorkQueuePresentation.rank($1) } }
-    private let filters = [("all", "All"), ("working", "Running"), ("waiting", "Queued"), ("stuck", "Blocked"), ("needs-you", "Decisions")]
-    /// The default Inbox leads with owner pings. Any filter, search or the
-    /// Tasks scope leads with the matching queue rows instead, so the result is
-    /// on screen without scrolling the list.
-    private var leadsWithOwnerItems: Bool { WorkQueuePresentation.leadsWithOwnerItems(scope: scope, filter: filter, search: search) }
-    private var showsOwnerItems: Bool { WorkQueuePresentation.showsOwnerItems(scope: scope, filter: filter, search: search) }
+    private func failingRows(_ search: String) -> [JSONValue] {
+        ops.failingPRs.filter { search.isEmpty || [$0["title"].string, $0["number"].string].contains { $0.localizedCaseInsensitiveContains(search) } }
+    }
+    private func ownerRows(_ key: String, search: String) -> [AttentionItem] {
+        guard WorkQueuePresentation.showsOwnerItems(filter: key) else { return [] }
+        return attention.items.filter { $0.matches(search) }
+    }
+    private func count(_ key: String) -> Int {
+        queueRows(key, search: "").count + ownerRows(key, search: "").count + (["all", "failing"].contains(key) ? failingRows("").count : 0)
+    }
+
+    private var visibleQueue: [Entry] { queueRows(filter, search: trimmedSearch) }
+    private var visibleOwner: [AttentionItem] { ownerRows(filter, search: trimmedSearch) }
+    private var visibleFailures: [JSONValue] { ["all", "failing"].contains(filter) ? failingRows(trimmedSearch) : [] }
+
     var body: some View {
         List {
-            DecisionAnswerReceipt().listRowBackground(Color.clear)
-            if leadsWithOwnerItems { ownerSections }
+            DecisionAnswerReceipt().listRowBackground(Color.clear).listRowSeparator(.hidden)
+            ownerSections
             queueSection
-            if !leadsWithOwnerItems { ownerSections }
+            if visibleQueue.isEmpty && visibleOwner.isEmpty && visibleFailures.isEmpty {
+                Text(emptyText).font(.callout).foregroundStyle(OpsTheme.muted)
+                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                    .accessibilityIdentifier("inbox-empty")
+            }
         }
         .listStyle(.plain)
+        // Header rows are one short line; the default 44 pt minimum row
+        // height left a tall gap above every group.
+        .environment(\.defaultMinListRowHeight, 1)
+        .opsScrollable()
         // The scope and filter controls sit outside the List so tapping one
         // never rebuilds or scrolls the row the tap came from.
         .safeAreaInset(edge: .top, spacing: 0) { queueControls }
         .frame(maxWidth: 820).frame(maxWidth: .infinity)
         .opsScreen().navigationTitle("Inbox").navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Ticket number or task")
-        .onChange(of: router.activityFilter) { _, next in filter = next }
+        .navigationDestination(item: $route) { destination($0) }
+        .onChange(of: router.activityFilter) { _, next in route = nil; filter = next }
         .onAppear { filter = router.activityFilter }
         .refreshable { await load() }
         .task { while !Task.isCancelled { await load(); try? await Task.sleep(for: .seconds(15)) } }
     }
+
+    /// One sentence for an empty view, never one per section.
+    private var emptyText: String {
+        if !trimmedSearch.isEmpty { return "Nothing matches \u{201C}\(trimmedSearch)\u{201D}." }
+        switch filter {
+        case "needs-you": return "Nothing needs you."
+        case "stuck": return "Nothing is blocked."
+        case "working": return "Nothing is running."
+        case "waiting": return "Nothing is queued."
+        default: return "Nothing in this view."
+        }
+    }
+
     @ViewBuilder private var queueControls: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if work["source"]["enabled"].bool {
-                Picker("Work type", selection: $scope) {
-                    Text(work["source"]["at"] == .null ? "Tickets" : "Tickets \(tickets.count)").tag("tickets")
-                    Text("Tasks \(tasks.count)").tag("tasks")
-                }.pickerStyle(.segmented).accessibilityIdentifier("work-queue-scope")
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(filters, id: \.0) { key, title in
-                        Button { filter = key } label: {
-                            Text("\(title) \(entries.filter { WorkQueuePresentation.matches($0, filter: key, search: "", ticket: showTickets) }.count)")
-                                .font(.caption.weight(.semibold)).padding(.horizontal, 12).padding(.vertical, 8)
-                                .background(filter == key ? OpsTheme.sky.opacity(0.18) : OpsTheme.muted.opacity(0.08), in: Capsule())
-                        }.buttonStyle(.plain).accessibilityIdentifier("work-filter-\(key)")
+            // Edge to edge: chips scroll under the screen edges, starting at
+            // the same inset as the rows below. The selected chip is always
+            // scrolled into view, and the trailing edge fades so the row reads
+            // as scrollable.
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(filters, id: \.0) { key, title in
+                            chip(key, title).id(key)
+                        }
                     }
                 }
+                .contentMargins(.horizontal, 16, for: .scrollContent)
+                .mask {
+                    HStack(spacing: 0) {
+                        LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: 10)
+                        Rectangle()
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing).frame(width: 36)
+                    }
+                }
+                .onAppear { reveal(filter, proxy, animated: false) }
+                .onChange(of: filter) { _, next in reveal(next, proxy, animated: true) }
             }
-            if let error { Label(error, systemImage: "wifi.exclamationmark").font(.caption).foregroundStyle(OpsTheme.warn) }
-            if !work["source"]["error"].string.isEmpty { Text(work["source"]["error"].string).font(.caption).foregroundStyle(OpsTheme.warn) }
-            if work["source"]["limited"].bool { Text("The ticket source is capped at 60 results. This is not a complete list.").font(.caption).foregroundStyle(OpsTheme.warn) }
-            if work["source"]["at"] != .null && showTickets {
-                Text("Ticket source checked \(OpsFormat.ago(work["source"]["at"]))").font(.caption2).foregroundStyle(OpsTheme.muted)
+            VStack(alignment: .leading, spacing: 4) {
+                if let error { Label(error, systemImage: "wifi.exclamationmark").font(.caption).foregroundStyle(OpsTheme.warn) }
+                if !work["source"]["error"].string.isEmpty { Text(work["source"]["error"].string).font(.caption).foregroundStyle(OpsTheme.warn) }
+                if work["source"]["limited"].bool { Text("The ticket source is capped at 60 results. This is not a complete list.").font(.caption).foregroundStyle(OpsTheme.warn) }
+                if let checked = OpsFormat.date(work["source"]["at"]), Date().timeIntervalSince(checked) > OpsStore.staleAfter {
+                    Text("Ticket list last updated \(OpsFormat.ago(checked)). It may be out of date.").font(.caption).foregroundStyle(OpsTheme.warn)
+                }
             }
+            .padding(.horizontal, 16)
         }
-        .padding(.horizontal, 16).padding(.vertical, 8)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(OpsTheme.background)
     }
-    /// No recorded reply, Needs you and Your decisions. Above the queue on the
-    /// default view, below it when the owner is looking for specific work.
+
+    private func reveal(_ key: String, _ proxy: ScrollViewProxy, animated: Bool) {
+        // The first chips are already in view; only scroll for the rest.
+        let anchor: UnitPoint = ["all", "needs-you"].contains(key) ? .leading : .center
+        // One run loop later, so the chips have been laid out.
+        DispatchQueue.main.async {
+            if animated { withAnimation(.snappy) { proxy.scrollTo(key, anchor: anchor) } }
+            else { proxy.scrollTo(key, anchor: anchor) }
+        }
+    }
+
+    private func chip(_ key: String, _ title: String) -> some View {
+        let value = count(key)
+        let selected = filter == key
+        let state = OpsWorkState.from(filter: key)
+        // A chip with work in a problem state carries that state's hue on its
+        // glyph and count; the selected chip is filled so it reads at a glance.
+        let live = value > 0 && (state?.isProblem ?? false)
+        return Button { filter = key } label: {
+            HStack(spacing: 4) {
+                if let state {
+                    Image(systemName: state.glyph).font(.caption2.weight(.semibold))
+                        .foregroundStyle(selected ? OpsTheme.onAccent : value == 0 ? OpsTheme.muted.opacity(0.7) : state.color)
+                        .accessibilityHidden(true)
+                }
+                Text(title)
+                Text("\(value)").monospacedDigit()
+                    .foregroundStyle(selected ? OpsTheme.onAccent.opacity(0.85) : live ? state?.color ?? OpsTheme.muted : OpsTheme.muted)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(selected ? OpsTheme.onAccent : value == 0 ? OpsTheme.muted : OpsTheme.ink)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(selected ? OpsTheme.sky : live ? (state?.color ?? OpsTheme.muted).opacity(0.1) : OpsTheme.muted.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(value)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("work-filter-\(key)")
+    }
+
     @ViewBuilder private var ownerSections: some View {
-        if !awaitingFirstReply.isEmpty {
-            Section {
-                ForEach(awaitingFirstReply, id: \.["number"].string) { item in
-                    NavigationLink { TicketDetail(ticket: item) } label: {
-                        WorkRow(title: item["title"].string, meta: "#\(item["number"].string) · Opened \(OpsFormat.ago(item["createdAt"]))", bar: OpsTheme.warn)
-                    }
+        if !visibleOwner.isEmpty {
+            Group {
+                queueHeader(AttentionCenter.label, state: .needsYou, count: visibleOwner.count, identifier: "inbox-attention-count")
+                ForEach(visibleOwner) { item in
+                    ownerCard(item)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .opsLeadingStripe(OpsWorkState.needsYou.color)
+                        .inboxRow(card: true)
                 }
-            } header: { SectionLabel(text: "No recorded reply", count: awaitingFirstReply.count) }
-            .listRowBackground(Color.clear)
-        }
-        if !otherAttention.isEmpty && showsOwnerItems {
-            Section {
-                ForEach(otherAttention) { item in
-                    if item.kind == .ownerWork {
-                        NavigationLink { WorkItemDetail(item: item.work) } label: { AttentionRow(item: item, action: "Open work") }.buttonStyle(.plain)
-                    } else {
-                        Button { router.tab = .keir } label: { AttentionRow(item: item, action: "Answer in the conversation", icon: "bubble.left") }.buttonStyle(.plain)
-                    }
-                }
-            } header: { SectionLabel(text: AttentionCenter.label, count: otherAttention.count, identifier: "inbox-attention-count") }
-            .listRowBackground(Color.clear).listRowSeparator(.hidden)
-        }
-        if !approvals.isEmpty && showsOwnerItems {
-            Section {
-                ForEach(approvals, id: \.["id"].string) { a in DecisionCard(decision: a) { await load() } }
-            } header: { SectionLabel(text: "Your decisions", count: approvals.count) }
-            .listRowBackground(Color.clear).listRowSeparator(.hidden)
+            }
         }
     }
+
+    @ViewBuilder private func ownerCard(_ item: AttentionItem) -> some View {
+        switch item.kind {
+        case .decision:
+            if item.decision["type"].string == "choice", let number = item.ticketNumber {
+                InboxTicketDecision(item: item, knownChoice: item.decision, open: { route = .ticket(String(number)) }) { await load() }
+            } else {
+                DecisionCard(decision: item.decision) { await load() }
+            }
+        case .question:
+            Button { router.tab = .keir } label: { AttentionRow(item: item, action: "Answer in the conversation", icon: "bubble.left") }.buttonStyle(.plain)
+        case .ownerWork:
+            Button { route = .attention(item.id) } label: { AttentionRow(item: item, action: "View details") }.buttonStyle(.plain)
+        case .task:
+            Button { route = .task(item.work["id"].string) } label: { AttentionRow(item: item, action: "Open task") }.buttonStyle(.plain)
+        case .ticket:
+            InboxTicketDecision(item: item, open: { route = .attention(item.id) }) { await load() }
+        }
+    }
+
+    /// Plain groups, not List sections: a section adds its own tall gap
+    /// above each header, which cost a row per section.
+    /// Lists of like items are dense rows on one shared surface per section,
+    /// all with the same anatomy. Only Needs-you items, which ask the owner
+    /// for a decision, get standalone cards.
     @ViewBuilder private var queueSection: some View {
-        Section {
-            if visible.isEmpty { Text(showTickets && work["source"]["at"] == .null ? "Ticket list unavailable. Pull to retry." : search.isEmpty ? "No work in this view." : "No matching work.").foregroundStyle(OpsTheme.muted).listRowBackground(Color.clear) }
-            ForEach(visible, id: \.[showTickets ? "number" : "id"].string) { item in
-                NavigationLink {
-                    if showTickets { TicketDetail(ticket: item) }
-                    else { TaskDetail(id: item["id"].string) }
-                } label: {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            StateWord(text: WorkQueuePresentation.label(item), color: WorkQueuePresentation.color(item))
-                            Spacer()
-                            if showTickets { Text("#\(item["number"].string)").font(.caption.monospaced()).foregroundStyle(OpsTheme.muted) }
+        ForEach(filters.dropFirst(), id: \.0) { key, title in
+            let rows = visibleQueue.filter { $0.bucket == key }
+            let state = OpsWorkState.from(filter: key)
+            if key == "failing" && !visibleFailures.isEmpty {
+                Group {
+                    queueHeader("Failing checks", state: .failing, count: visibleFailures.count)
+                    OpsGroup {
+                        ForEach(Array(visibleFailures.enumerated()), id: \.element["number"].string) { index, pr in
+                            if index > 0 { OpsGroupDivider(inset: 28) }
+                            if let url = URL(string: pr["url"].string.nonempty ?? pr["html_url"].string), url.scheme == "https" {
+                                Link(destination: url) { failingLabel(pr) }.buttonStyle(.plain)
+                            } else { failingLabel(pr) }
                         }
-                        Text(item["title"].string).font(.callout.weight(.semibold)).lineLimit(2)
-                        if item["timing"] != .null { WorkTimingView(value: item["timing"], compact: true) }
-                        else { Text(item["summary"].string.nonempty ?? OpsState.word(item["state"].string)).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2) }
-                    }.padding(.vertical, 8)
-                }.accessibilityIdentifier("work-row-\(item[showTickets ? "number" : "id"].string)")
-            }.listRowBackground(Color.clear)
-        } header: { SectionLabel(text: showTickets ? "Ticket queue" : "Task queue", count: visible.count) }
+                    }
+                    .inboxRow(card: true)
+                }
+            }
+            if !rows.isEmpty {
+                Group {
+                    queueHeader(title, state: state, count: rows.count)
+                    OpsGroup {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                            if index > 0 { OpsGroupDivider(inset: 28) }
+                            Button { route = row.ticket ? .ticket(row.key) : .task(row.key) } label: {
+                                if key == "unanswered" { UnansweredRow(ticket: row.item) }
+                                else { QueueRow(item: row.item, ticket: row.ticket) }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("work-row-\(row.key)")
+                        }
+                    }
+                    .inboxRow(card: true)
+                }
+            }
+        }
+        if filter != "all" && (!visibleQueue.isEmpty || !visibleOwner.isEmpty || !visibleFailures.isEmpty) {
+            filterFooter
+        }
     }
+
+    /// Under a filtered list: says the view is filtered and offers the way
+    /// back, so a short list is never read as the whole Inbox.
+    private var filterFooter: some View {
+        let title = filters.first { $0.0 == filter }?.1 ?? "this filter"
+        let needsYou = count("needs-you")
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("Showing \(title) only.").font(.caption).foregroundStyle(OpsTheme.muted)
+            HStack(spacing: 14) {
+                Button { filter = "all" } label: {
+                    Label("Show all \(count("all"))", systemImage: "line.3.horizontal.decrease.circle")
+                }
+                if filter != "needs-you" && needsYou > 0 {
+                    Button { filter = "needs-you" } label: {
+                        Label("\(needsYou) need you", systemImage: OpsWorkState.needsYou.glyph)
+                    }.foregroundStyle(OpsWorkState.needsYou.color)
+                }
+            }
+            .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+            .buttonStyle(.plain)
+        }
+        .padding(.top, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .accessibilityIdentifier("inbox-filter-footer")
+    }
+
+    private func failingLabel(_ pr: JSONValue) -> some View {
+        OpsWorkRow(state: .failing, title: pr["title"].string.nonempty ?? "Change #\(pr["number"].string)",
+                   subtitle: "Tests failing on fix #\(pr["number"].string). Keir cannot ship it yet.",
+                   age: OpsFormat.date(pr["updatedAt"]).map { OpsAge(date: $0) }, stateWord: "Failing")
+    }
+
+    private func queueHeader(_ title: String, state: OpsWorkState? = nil, count: Int, identifier: String? = nil) -> some View {
+        // A plain row, not a pinned section header, so it scrolls away with
+        // its rows instead of sliding over them. Small, and in the state's
+        // hue and glyph, so it costs one line.
+        OpsMiniHeader(text: title, state: state, count: count, identifier: identifier)
+            .padding(.top, 10).padding(.bottom, 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+    }
+
+    @ViewBuilder private func destination(_ route: InboxRoute) -> some View {
+        switch route {
+        case .task(let id): TaskDetail(id: id)
+        case .ticket(let number):
+            TicketDetail(ticket: (tickets + ops.hub["tickets"].array).first { $0["number"].string == number } ?? .object(["number": .string(number)]))
+        case .attention(let id):
+            if let item = attention.items.first(where: { $0.id == id }) {
+                if item.kind == .ticket { TicketDetail(ticket: item.work) } else { WorkItemDetail(item: item.work) }
+            } else {
+                Text("This item is no longer waiting on you.").foregroundStyle(OpsTheme.muted).padding()
+            }
+        }
+    }
+
     private func load() async {
-        do { tasks = try await session.get("/api/keir/app/tasks")["tasks"].array; error = nil }
-        catch { self.error = error.displayMessage }
-        do { approvals = try await session.get("/api/keir/app/decisions")["decisions"].array }
-        catch { self.error = "Decisions could not refresh. Pull to retry." }
-        do { work = try await session.get("/api/keir/app/work") }
-        catch { self.error = "Work queue could not refresh. Saved tasks remain visible." }
+        error = await ops.refreshInbox(session)
+    }
+}
+
+private struct InboxTicketDecision: View {
+    @EnvironmentObject private var session: AppSession
+    let item: AttentionItem
+    var knownChoice: JSONValue?
+    let open: () -> Void
+    let changed: () async -> Void
+    @State private var choices: [JSONValue] = []
+
+    var body: some View {
+        OpsCard {
+            Button(action: open) { AttentionRow(item: item, action: "View ticket", card: false) }.buttonStyle(.plain)
+            ForEach(knownChoice.map { [$0] } ?? choices, id: \.["id"].string) { choice in
+                TicketDecisionInline(decision: choice, showQuestion: false, changed: changed)
+            }
+        }
+        .task(id: item.id) {
+            guard knownChoice == nil, let number = item.ticketNumber,
+                  let detail = try? await session.get("/api/keir/app/tickets/\(number)") else { return }
+            choices = detail["decisions"].array.filter { $0["type"].string == "choice" && $0["state"].string == "pending" }
+        }
+    }
+}
+
+enum InboxRoute: Hashable, Identifiable {
+    case task(String), ticket(String), attention(String)
+    var id: String {
+        switch self {
+        case .task(let id): return "task:\(id)"
+        case .ticket(let number): return "ticket:\(number)"
+        case .attention(let id): return "attention:\(id)"
+        }
+    }
+}
+
+private extension View {
+    /// Same insets for every Inbox row, so cards share one width and list
+    /// dividers start where the text starts.
+    func inboxRow(card: Bool = false) -> some View {
+        self
+            .listRowInsets(EdgeInsets(top: card ? 5 : 0, leading: 16, bottom: card ? 5 : 0, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(card ? .hidden : .visible)
+            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
+            .alignmentGuide(.listRowSeparatorTrailing) { $0.width }
+    }
+}
+
+/// A queue item in the shared row anatomy. The subtitle carries the ticket
+/// number and what happens next, addressed to the owner where there is a
+/// step for them, so a Blocked row always says what unblocks it.
+private struct QueueRow: View {
+    let item: JSONValue
+    let ticket: Bool
+
+    private var since: OpsAge? {
+        let value = item["timing"]["since"] != .null ? item["timing"]["since"] : item["updatedAt"]
+        // Finished work never escalates; its age is history, not a warning.
+        let limit = state == .done ? TimeInterval.infinity : OpsAge.ownerLimit
+        return OpsFormat.date(value).map { OpsAge(date: $0, limit: limit) }
+    }
+    private var state: OpsWorkState { WorkQueuePresentation.workState(item) }
+
+    private var reason: String {
+        let raw = item["timing"]["reason"].string
+        if raw.localizedCaseInsensitiveContains("activation aborted") { return "Keir’s last attempt stopped before it could finish" }
+        return OpsText.scrub(raw.nonempty ?? item["summary"].string)
+    }
+    private var next: String {
+        let raw = OpsText.scrub(item["timing"]["next"].string)
+        if !raw.isEmpty && raw != "Keir will record the next result." { return "Next: " + raw }
+        switch state {
+        case .blocked: return "Open to see what Keir needs to continue"
+        case .stalled: return "Open the ticket to retry"
+        default: return ""
+        }
+    }
+
+    /// When Keir looks again, if a check is scheduled.
+    private var check: String {
+        guard let at = OpsFormat.date(item["timing"]["nextCheckAt"]) else { return "" }
+        return at <= Date() ? "Check due" : "Check \(OpsFormat.ago(at))"
+    }
+
+    var body: some View {
+        let number = ticket ? "#" + item["number"].string : ""
+        let subtitle = [number, reason].filter { !$0.isEmpty }.joined(separator: " · ")
+        let note = [next, check].filter { !$0.isEmpty }.joined(separator: " · ")
+        // A running row is happening now, so its glyph is the live spinner.
+        OpsWorkRow(state: state, title: item["title"].string, subtitle: subtitle, note: note, age: since,
+                   stateWord: WorkQueuePresentation.label(item), live: state == .running)
+    }
+}
+
+/// A ticket with no recorded reply. The wait is the point of the row; its age
+/// escalates like every other age, after two hours for a player.
+private struct UnansweredRow: View {
+    let ticket: JSONValue
+
+    private var opened: Date? { OpsFormat.date(ticket["createdAt"]) }
+
+    var body: some View {
+        let age = opened.map { OpsAge(date: $0, limit: OpsAge.playerLimit) }
+        OpsWorkRow(state: .unanswered, title: KeirTicketFollowUp.title(ticket),
+                   subtitle: "#\(ticket["number"].string) · " + (age.map { "No reply recorded for \($0.text.replacingOccurrences(of: " ago", with: ""))" } ?? "No reply recorded"),
+                   age: age)
     }
 }
 
@@ -358,7 +659,7 @@ struct TaskDetail: View {
                                 }
                             }
                         }
-                        if !task["blocker"]["message"].string.isEmpty { Text(task["blocker"]["message"].string).font(.caption.monospaced()).textSelection(.enabled) }
+                        if !task["blocker"]["message"].string.isEmpty { Text(task["blocker"]["message"].string).font(.caption).textSelection(.enabled) }
                         }.font(.callout)
                     }
                     if !task["receipts"].array.isEmpty {
@@ -688,7 +989,10 @@ struct KeirToolCalls: View {
                         }.font(.caption2).foregroundStyle(OpsTheme.muted)
                     }
                     Spacer(minLength: 4)
-                    if call["state"].string == "running" { ProgressView().controlSize(.mini).accessibilityLabel("Running") }
+                    if call["state"].string == "running" {
+                        ZStack { OpsSpinner(tint: OpsTheme.sky, size: 12) }
+                            .accessibilityElement(children: .ignore).accessibilityLabel("Running")
+                    }
                     else if call["state"].string == "failed" || call["ok"] == .bool(false) { Image(systemName: "exclamationmark.circle").foregroundStyle(OpsTheme.warn).accessibilityLabel("Failed") }
                     else { Image(systemName: "checkmark").foregroundStyle(OpsTheme.mint).accessibilityLabel("Completed") }
                 }.font(.caption)

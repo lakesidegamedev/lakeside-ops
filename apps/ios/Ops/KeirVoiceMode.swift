@@ -20,7 +20,11 @@ struct KeirVoiceMode: View {
         guard !id.isEmpty else { return nil }
         return "\(id)@\(Int(message["editedAt"].number ?? 0))#\(Int(message["rev"].number ?? 0))"
     }
-    @State private var requestedRoute = ""
+    /// The model the server reported for the reply being spoken.
+    @State private var replyModel = ""
+    /// Sentences already spoken in this turn, so a provisional answer revised in
+    /// place is not read out twice.
+    @State private var spoken: Set<String> = []
     @State private var since = Date()
     @State private var error: String?
     @State private var active = false
@@ -37,7 +41,25 @@ struct KeirVoiceMode: View {
         false
 #endif
     }
+    /// UI tests pin the screen to one state so every capture is stable.
+    private var preview: String? {
+#if DEBUG
+        let args = ProcessInfo.processInfo.arguments
+        guard fixture, let index = args.firstIndex(of: "--uitest-voice-state"), index + 1 < args.count else { return nil }
+        return args[index + 1]
+#else
+        return nil
+#endif
+    }
+    private var preparing: Bool { preview.map { $0 == "preparing" } ?? voice.preparingSpeech }
     private var state: KeirPresence.State {
+        switch preview ?? "" {
+        case "listening": return .listening
+        case "thinking", "preparing": return .thinking
+        case "speaking", "fallback": return .speaking
+        case "stopped": return .stopped
+        default: break
+        }
         if keir.stopped { return .stopped }
         if !keir.connected { return .offline }
         if voice.listening { return .listening }
@@ -45,8 +67,8 @@ struct KeirVoiceMode: View {
         return waiting || voice.preparingSpeech ? .thinking : .ready
     }
     private var status: String {
-        if paused { return "Microphone paused" }
-        if voice.preparingSpeech { return "Preparing voice" }
+        if paused && preview == nil { return "Microphone paused" }
+        if preparing { return "Preparing voice" }
         switch state {
         case .listening: return "I'm listening"
         case .speaking: return "Keir is speaking"
@@ -56,25 +78,44 @@ struct KeirVoiceMode: View {
         default: return "Ready to talk"
         }
     }
+    /// Which model is answering, only as the server reports it: the reply being
+    /// produced or spoken, else the owner's choice, else the server's default.
     private var routeLabel: String {
-        if let current = keir.tasks.first(where: { $0["id"].string == expectedJob && $0["state"].string == "running" }), !current["provider"]["model"].string.isEmpty {
-            return "Requested: " + current["provider"]["model"].string
+        let options = keir.controls["options"]["voice"].array
+        let name = { (id: String) in KeirProviderName.label(id, options: options) }
+        let busy = state == .speaking || preparing || waiting
+        if busy, let expectedJob,
+           let task = keir.tasks.first(where: { $0["id"].string == expectedJob && $0["state"].string == "running" }),
+           !task["provider"]["model"].string.isEmpty {
+            return "This reply · " + name(task["provider"]["model"].string)
         }
-        if !requestedRoute.isEmpty { return "Requested: " + requestedRoute }
+        if busy, !replyModel.isEmpty { return "This reply · " + name(replyModel) }
         let selected = keir.controls["routes"]["voice"].string
-        if !selected.isEmpty && selected != "auto" { return "Selected: " + selected }
-        return "Auto · Gemini / DeepSeek alternating"
+        if !selected.isEmpty && selected != "auto" { return name(selected) }
+        let fallback = keir.controls["defaults"]["voice"].string
+        return fallback.isEmpty ? "Auto" : "Auto · " + name(fallback)
+    }
+    /// Which voice is really speaking. After a mid-reply hand-over the rest of
+    /// the answer is in the device voice, and the line says so.
+    private var voiceLine: String {
+        if preview == "fallback" || (voice.usingDeviceFallback && voice.fallbackPartial) { return "Apple · fallback voice for the rest" }
+        if voice.usingDeviceFallback { return "Apple · fallback voice" }
+        return UserDefaults.standard.string(forKey: "keir-speech-provider") == "apple" ? "Apple · device voice" : "Microsoft Ava · online voice"
+    }
+    private var automaticLabel: String {
+        let fallback = keir.controls["defaults"]["voice"].string
+        return fallback.isEmpty ? "Automatic" : "Automatic · " + KeirProviderName.label(fallback, options: keir.controls["options"]["voice"].array)
     }
     private var screen: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Keir voice").font(.headline)
-                    Text(voice.usingDeviceFallback ? "Apple · fallback voice" : UserDefaults.standard.string(forKey: "keir-speech-provider") == "apple" ? "Apple · device voice" : "Microsoft Ava · online voice").font(.caption).foregroundStyle(OpsTheme.muted)
+                    Text(voiceLine).font(.caption).foregroundStyle(OpsTheme.muted)
                     Menu {
                         ForEach(keir.controls["options"]["voice"].array, id: \.["id"].string) { model in
-                            Button { Task { requestedRoute = ""; await keir.control(["action": .string("configure"), "routes": .object(["voice": .string(model["id"].string)])], session) } } label: {
-                                Text(model["id"].string == "auto" ? "Automatic · \(KeirProviderName.label(keir.controls["defaults"]["voice"].string, options: keir.controls["options"]["voice"].array))" : "\(model["label"].string) · \(model["provider"].string)")
+                            Button { Task { await keir.control(["action": .string("configure"), "routes": .object(["voice": .string(model["id"].string)])], session) } } label: {
+                                Text(model["id"].string == "auto" ? automaticLabel : "\(model["label"].string) · \(model["provider"].string)")
                             }.disabled(model["available"] == .bool(false))
                         }
                     } label: { Label(routeLabel, systemImage: "cpu").font(.caption) }
@@ -84,15 +125,26 @@ struct KeirVoiceMode: View {
                 Button { dismiss() } label: { Image(systemName: "xmark").frame(width: 44, height: 44).background(OpsTheme.surface, in: Circle()) }.accessibilityLabel("End voice conversation")
             }
             Spacer(minLength: 12)
-            KeirVoiceOrb(state: state, level: voice.level).frame(width: 190, height: 190).accessibilityHidden(true)
-            if state == .thinking { LoadingShimmer(text: status).font(.largeTitle.weight(.semibold)) }
-            else { Text(status).font(.largeTitle.weight(.semibold)).contentTransition(.opacity) }
+            KeirVoicePortrait(state: state, micLevel: voice.level, meter: voice.meter,
+                              previewLevel: preview == nil ? nil : ((state == .speaking || state == .listening) ? 0.6 : 0.0))
+                .accessibilityHidden(true)
+            if state == .thinking {
+                HStack(spacing: 12) {
+                    OpsSpinner(size: 26)
+                    OpsShimmerText(text: status)
+                }
+                .font(.largeTitle.weight(.semibold))
+                .accessibilityElement(children: .ignore).accessibilityLabel(status)
+            } else { Text(status).font(.largeTitle.weight(.semibold)).contentTransition(.opacity) }
             ScrollView {
                 VStack(spacing: 18) {
                     if !voice.transcript.isEmpty { Text(voice.transcript).font(.title3).foregroundStyle(OpsTheme.muted) }
                     if !reply.isEmpty { Text(reply).font(.title3).textSelection(.enabled) }
                 }.frame(maxWidth: .infinity)
-            }.frame(maxHeight: 200)
+            }
+            // The answer keeps room for a few lines; the spacers give way first.
+            .frame(minHeight: 132, maxHeight: 200)
+            .layoutPriority(1)
             if let message = error ?? voice.error ?? (!keir.connected ? keir.error : nil) {
                 Text(message).font(.callout).foregroundStyle(OpsTheme.warn)
                 Button("Try voice again") { waiting = false; waitTask?.cancel(); paused = false; error = nil; if !keir.connected { connectionAttempt += 1 }; listen() }
@@ -124,6 +176,15 @@ struct KeirVoiceMode: View {
             .task {
                 active = true; since = Date(); if !fixture { listen() }
 #if DEBUG
+                if let preview {
+                    if preview != "stopped" { voice.transcript = "How did the payroll fix go on turn 81?" }
+                    if ["preparing", "speaking", "fallback"].contains(preview) {
+                        reply = "The payroll fix held on turn 81. Every province paid its workers in full, and the budget screen now matches the treasury. I will keep an eye on turn 82."
+                    }
+                    if ["preparing", "speaking", "fallback"].contains(preview) { replyModel = "codex:fixture" }
+                    if preview == "thinking" { waiting = true }
+                    return
+                }
                 if fixture && ProcessInfo.processInfo.arguments.contains("--uitest-late-voice") {
                     expectedJob = "fixture-late-voice"; waiting = false
                     error = "The voice reply has not arrived. Open the task to check progress, or try another turn."
@@ -160,7 +221,7 @@ struct KeirVoiceMode: View {
     private func submit() {
         let text = voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard active, !text.isEmpty, !waiting, !paused, phase == .active else { return }
-        waiting = true; expectedJob = nil; error = nil; reply = ""
+        waiting = true; expectedJob = nil; error = nil; reply = ""; replyModel = ""; spoken = []
         sendTask = Task {
             let sent = await keir.send(text, session, voice: true)
             guard !Task.isCancelled else { return }
@@ -190,8 +251,8 @@ struct KeirVoiceMode: View {
             }
             return
         }
-        // A provisional answer is spoken now; the revised findings, which edit the
-        // same message, are spoken again when the stamp changes.
+        // A provisional answer is spoken now; when the revised findings edit the
+        // same message (a new stamp), only their new sentences are spoken.
         lastReply = stamp; reply = message["text"].string
         waiting = message["voiceProgress"].bool || message["provisional"].bool; error = nil
         waitTask?.cancel()
@@ -203,28 +264,97 @@ struct KeirVoiceMode: View {
                 waiting = false; error = "The answer is taking longer than expected. It will appear in the chat when it is ready."
             }
         }
-        requestedRoute = message["provider"]["model"].string
+        replyModel = message["provider"]["model"].string
         guard !paused, phase == .active, !fixture else { return }
-        voice.speakReply(reply, session: session)
+        // Replies arrive whole, per revision. When a provisional answer is
+        // revised, only the sentences not yet spoken are read.
+        let fresh = VoiceSegments.unspoken(KeirVoice.spokenText(reply), spoken: spoken)
+        guard !fresh.isEmpty else { if !waiting { listen() }; return }
+        spoken.formUnion(VoiceSegments.keys(fresh))
+        voice.speakReply(fresh, session: session)
     }
 }
 
-private struct KeirVoiceOrb: View {
+/// Keir himself on the voice screen, one character for every state. Speaking
+/// uses the pack's talking frames chosen by the loudness of what is playing, so
+/// his mouth moves with the sound and rests in the gaps; a ring and a one-pixel
+/// bob follow the same level. Listening rings follow the microphone. The 80
+/// pixel art is drawn at 2 points per pixel, whole device pixels on every
+/// iPhone, with no smoothing. Reduce Motion and UI tests get one still frame
+/// per state.
+struct KeirVoicePortrait: View {
     let state: KeirPresence.State
-    let level: Double
+    let micLevel: Double
+    @ObservedObject var meter: KeirVoiceMeter
+    var previewLevel: Double?
     @Environment(\.accessibilityReduceMotion) private var reduced
+
+    static let side: CGFloat = 160
+    static let stage: CGFloat = 212
+
+    private var still: Bool { reduced || OpsMotion.frozen || previewLevel != nil }
+    private var spriteState: String {
+        switch state {
+        case .speaking: return "talking"
+        case .listening: return "listening"
+        case .thinking, .working: return "thinking"
+        case .stopped: return "sleeping"
+        case .offline: return "concerned"
+        default: return "idle"
+        }
+    }
+    private var level: Double {
+        if let previewLevel { return previewLevel }
+        if state == .speaking { return meter.level }
+        if state == .listening { return min(1, max(0, micLevel)) }
+        return 0
+    }
+    /// Frames 5 and 2 of the talking row have the mouth closed, 0 and 3 half
+    /// open, 1 and 4 wide open.
+    private var mouthFrame: Int {
+        let alternate = (meter.tick / 2) % 2 == 0
+        if level < 0.12 { return 5 }
+        if level < 0.45 { return alternate ? 0 : 3 }
+        return alternate ? 1 : 4
+    }
+    private var stillFrame: Int {
+        switch spriteState {
+        case "talking": return reduced ? 0 : 1
+        case "thinking": return 3
+        case "sleeping": return 3
+        case "concerned": return 1
+        default: return 0
+        }
+    }
+
     var body: some View {
+        let live = state == .speaking || state == .listening
         ZStack {
-            Circle().fill(RadialGradient(colors: [OpsTheme.sky.opacity(0.14), .clear], center: .center, startRadius: 15, endRadius: 95))
-            if state == .listening {
-                KeirAudioWaveform(level: level).scaleEffect(3)
-            } else if state == .speaking {
-                Image(systemName: "speaker.wave.2").font(.system(size: 68, weight: .light)).foregroundStyle(OpsTheme.sky)
-                    .symbolEffect(.variableColor.iterative, options: .repeating, isActive: !reduced)
-            } else {
-                Image(systemName: state == .stopped ? "stop.circle" : "bubble.left.and.bubble.right")
-                    .font(.system(size: 60, weight: .ultraLight)).foregroundStyle(OpsTheme.sky.opacity(0.7))
+            Circle()
+                .fill(RadialGradient(colors: [OpsTheme.sky.opacity(0.14 + 0.12 * level), .clear], center: .center, startRadius: 24, endRadius: Self.stage / 2))
+            if live && !reduced {
+                Circle().stroke(OpsTheme.sky.opacity(0.10 + 0.35 * level), lineWidth: 2)
+                    .frame(width: Self.side + 18, height: Self.side + 18)
+                    .scaleEffect(1 + 0.12 * level)
+                Circle().stroke(OpsTheme.sky.opacity(0.22 * level), lineWidth: 1.5)
+                    .frame(width: Self.side + 18, height: Self.side + 18)
+                    .scaleEffect(1 + 0.2 * level)
             }
-        }.animation(reduced ? nil : .smooth(duration: 0.2), value: state)
+            sprite
+                .frame(width: Self.side, height: Self.side)
+                .offset(y: state == .speaking && !reduced && level >= 0.45 ? -2 : 0)
+        }
+        .frame(width: Self.stage, height: Self.stage)
+        .animation(still ? nil : .linear(duration: 0.08), value: level)
+    }
+
+    @ViewBuilder private var sprite: some View {
+        if still {
+            KeirSpriteStill(state: spriteState, size: .large, index: stillFrame)
+        } else if state == .speaking {
+            KeirSpriteStill(state: "talking", size: .large, index: mouthFrame)
+        } else {
+            KeirSprite(state: spriteState, size: .large)
+        }
     }
 }

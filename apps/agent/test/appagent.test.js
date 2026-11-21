@@ -36,6 +36,18 @@ test("threads keep their own live task and messages", () => {
   assert.ok(!agent.threads().some((t) => t.id === side.id));
 });
 
+test("retrying a model-created side chat preserves the same chat and its deletion", async () => {
+  const { agent } = setup();
+  const creationKey = "sup:j_1234567890abcdef:1234567890abcdef";
+  const first = await agent.route("/threads", "POST", { title: "Payroll review", creationKey });
+  const retry = await agent.route("/threads", "POST", { title: "Payroll review", creationKey });
+  assert.equal(first.id, retry.id);
+  assert.equal(agent.threads().filter((thread) => thread.id === first.id).length, 1);
+  agent.updateThread(first.id, { archived: true });
+  assert.equal((await agent.route("/threads", "POST", { title: "Payroll review", creationKey })).archived, true);
+  assert.ok(!agent.threads().some((thread) => thread.id === first.id));
+});
+
 test("activity shows owner tasks with receipts, and retry and stop work", () => {
   const { ledger, app, agent } = setup();
   const { jobId } = app.authenticatedPost("Merge the green dev PR for the bond fix");
@@ -128,4 +140,52 @@ test("all decision surfaces expose the same exact action scope", () => {
   assert.equal(chat.args.number, 42); assert.equal(chat.digest, "sealed");
   ledger.data.actions.action1.expiresAt = clock.t - 1;
   assert.equal(app.pendingDecisions()[0].canApprove, false);
+});
+
+test("ticket retry queues the same stalled coordinator once and preserves receipts", async () => {
+  const { ledger, agent } = setup();
+  const job = ledger.createJob("ticket:1868", { ticket: 1868, channelId: "ticket-channel", kind: "ticket", role: "support" });
+  job.state = "blocked";
+  job.summary = "activation aborted: no result";
+  const receipt = { state: "done", result: { messageId: "already-delivered" } };
+  job.effects = { "reply:one": receipt };
+  ledger.data.channels["ticket-channel"] = { claimedBy: "staff" };
+  const post = id => agent.route("/tickets/1868/retry", "POST", { taskId: id });
+  await assert.rejects(post(job.id), { status: 409 });
+  delete ledger.data.channels["ticket-channel"].claimedBy;
+  job.effects["heal:unknown"] = { state: "started" };
+  await assert.rejects(post(job.id), { status: 409 });
+  delete job.effects["heal:unknown"];
+  await assert.rejects(post("different-attempt"), { status: 409 });
+  assert.deepEqual(await post(job.id), { state: "queued", taskId: job.id });
+  await assert.rejects(post(job.id), { status: 409 });
+  assert.equal(job.effects["reply:one"], receipt);
+  assert.equal(job.inbox.length, 1);
+});
+
+test("the ticket excerpt and Discord URL come from the same verified message receipt", () => {
+  const { verifiedPlayerReply } = require("../lib/operator/apptickets");
+  const guild = "123456789012345678";
+  const channel = "234567890123456789";
+  const good = "323456789012345678";
+  const old = "423456789012345678";
+  const intake = "523456789012345678";
+  const update = (message, id, at, fields = {}) => ({
+    message, deliveryMode: "reply", delivery: { status: "posted", channelId: channel, postedAt: at, messageId: id, ...fields },
+  });
+  const support = {
+    kind: "ticket", number: 1868, createdAt: "2026-11-19T02:00:00Z",
+    conversation: { channelId: channel, reopenedAt: "2026-11-20T02:00:00Z" }, intake: { cardMessageId: intake },
+    publicUpdates: [
+      update("Older conversation", old, "2026-11-19T19:00:00Z"),
+      update("Confirmed reply", good, "2026-11-20T02:15:00Z"),
+      update("Intake edit", intake, "2026-11-20T03:00:00Z"),
+      update("Undelivered reply", old, "2026-11-20T04:00:00Z", { status: "pending" }),
+      update("Other channel", old, "2026-11-20T05:00:00Z", { channelId: guild }),
+    ],
+  };
+  const reply = verifiedPlayerReply(support, 1868, guild);
+  assert.equal(reply.text, "Confirmed reply");
+  assert.equal(reply.url, `https://discord.com/channels/${guild}/${channel}/${good}`);
+  assert.equal(verifiedPlayerReply(support, 1001, guild), null);
 });

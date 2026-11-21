@@ -18,6 +18,7 @@ struct OpsRoot: View {
     @EnvironmentObject private var session: AppSession
     @EnvironmentObject private var ops: OpsStore
     @EnvironmentObject private var router: OpsRouter
+    @ObservedObject private var attention = AttentionCenter.shared
     @Environment(\.scenePhase) private var scenePhase
 
     private var standalone: Bool { session.profile["mode"].string == "standalone" }
@@ -32,9 +33,11 @@ struct OpsRoot: View {
         TabView(selection: $router.tab) {
             NavigationStack { KeirView(keir: OpsServices.shared.keir) }
                 .tabItem { Label("Chat", systemImage: "bubble.left") }.tag(OpsTab.keir)
-            NavigationStack { ActivityView().toolbar { settingsButton } }
+            NavigationStack {
+                ActivityView().toolbar { if standalone { settingsButton } }
+            }
                 .tabItem { Label("Inbox", systemImage: "tray") }.tag(OpsTab.activity)
-                .badge(ops.attention)
+                .badge(attention.count)
             if !standalone {
                 NavigationStack(path: $router.studioPath) {
                     OpsHub().toolbar { settingsButton }
@@ -56,7 +59,7 @@ struct OpsRoot: View {
 
     var body: some View {
         adaptiveTabs
-        .tint(OpsTheme.sky)
+        .tint(OpsTheme.accent)
         .onOpenURL { url in
             guard url.scheme == "lakesideops", url.host == "keir" else { return }
             let view = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value
@@ -112,60 +115,114 @@ struct OpsSettings: View {
     @State private var deliveryMessage: String?
     @State private var testingDelivery = false
     @State private var quiet = QuietHours.load()
+    @State private var confirmSignOut = false
+
+    private var pushAvailable: Bool {
+        (status == .authorized || status == .provisional || status == .ephemeral)
+            && push.lastRegistered != nil
+    }
+
+    private func refreshNotificationRegistration() {
+        Task {
+            await OpsPushRegistration.request()
+            status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+        }
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    toggle("replies", "Keir replies", "When Keir answers you in the app.")
-                    toggle("decisions", "Decisions", "Time-sensitive. Approve or reject from the notification.")
-                    toggle("feed", "Morning brief and goal progress", "The daily brief, and milestones Keir finishes.")
-                    toggle("incidents", "Watchkeeper incidents", "Quiet delivery. Turn failures and stalled work.")
-                    LabeledContent("Delivery", value: push.message)
-                    if let registered = push.lastRegistered { Text("Last registered \(registered.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(OpsTheme.muted) }
-                    if let error = push.error { Text(error).font(.caption).foregroundStyle(OpsTheme.warn) }
-                    Button("Check notification registration") { Task { await OpsPushRegistration.request(); status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus } }
-                    if delivery != .null {
-                        LabeledContent("Push service", value: delivery["configured"].bool ? "Configured" : "Unavailable")
-                        LabeledContent("Registered devices", value: delivery["registeredDevices"].string)
-                    }
-                    Button("Send a test notification") {
-                        testingDelivery = true
-                        Task {
-                            do {
-                                _ = try await session.post("/api/keir/app/notifications/test", [:])
-                                deliveryMessage = "Apple accepted the test. Check Notification Center for delivery."
-                            } catch { deliveryMessage = error.displayMessage }
-                            testingDelivery = false
+                    if !pushAvailable {
+                        // The problem and its fix in one row: the button is the
+                        // only accent-filled control on this screen.
+                        VStack(alignment: .leading, spacing: 10) {
+                            OpsIconLine(text: "Notifications are off on this iPhone", icon: "bell.slash.fill",
+                                        color: OpsTheme.warning, font: .callout.weight(.semibold))
+                            Text("You will not hear about decisions or incidents until they are on.")
+                                .font(.caption).foregroundStyle(OpsTheme.muted)
+                            Button {
+                                if status == .denied {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                                } else { refreshNotificationRegistration() }
+                            } label: {
+                                Label(status == .denied ? "Open iPhone Settings" : "Turn on notifications", systemImage: "bell.badge.fill")
+                                    .font(.callout.weight(.semibold))
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                                    .foregroundStyle(OpsTheme.onAccent)
+                                    .background(OpsTheme.sky, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
-                    }.disabled(testingDelivery)
-                    if let deliveryMessage { Text(deliveryMessage).font(.caption).foregroundStyle(OpsTheme.muted) }
-                    if status == .denied {
-                        Button("Turn on notifications in Settings") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
+                        .padding(.vertical, 4)
+                        // The separator under the banner starts where every
+                        // other separator in this block starts.
+                        .alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] }
                     }
-                } header: { Text("Notifications") }
-                quietSection
+                    toggle("replies", "Keir replies", "When Keir answers you in the app.")
+                    toggle("decisions", "Decisions", "Time-sensitive approvals and decisions.")
+                    toggle("incidents", "Incident alerts", "Turn failures and stalled work.")
+                } header: { SectionLabel(text: "Notifications") }
+                .listRowBackground(OpsTheme.surface)
+                quietSection.listRowBackground(OpsTheme.surface)
                 if session.profile["mode"].string != "standalone" { KeirIdentitySection() }
                 Section {
                     Picker("Theme", selection: $appearance) {
                         ForEach(KeirAppearance.allCases) { Text($0.title).tag($0.rawValue) }
                     }.accessibilityIdentifier("settings-theme")
-                } header: { Text("Appearance") } footer: {
-                    Text("System follows your iPhone's appearance setting. The black theme turns background pixels off on OLED screens.")
+                } header: { SectionLabel(text: "Appearance") } footer: {
+                    Text("System follows your iPhone. OLED black uses a pure black background.")
+                        .font(.caption).foregroundStyle(OpsTheme.muted)
                 }
-                Section("About") {
+                .listRowBackground(OpsTheme.surface)
+                Section {
                     LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
+                } header: { SectionLabel(text: "About") } footer: {
                     Text("Keir portrait art derived from an official Prime Minister's Office photograph, licensed under the Open Government Licence v3.0.")
                         .font(.caption).foregroundStyle(OpsTheme.muted)
                 }
+                .listRowBackground(OpsTheme.surface)
+                Section {
+                    DisclosureGroup("Notification test") {
+                        LabeledContent("Delivery", value: push.message)
+                        if let registered = push.lastRegistered {
+                            LabeledContent("Registered", value: OpsFormat.contextual(registered))
+                        }
+                        if delivery != .null {
+                            LabeledContent("Push service", value: delivery["configured"].bool ? "Configured" : "Unavailable")
+                        }
+                        Button("Check notification registration", action: refreshNotificationRegistration)
+                        Button("Send a test notification") {
+                            testingDelivery = true
+                            Task {
+                                do {
+                                    _ = try await session.post("/api/keir/app/notifications/test", [:])
+                                    deliveryMessage = "Test sent. Check Notification Center."
+                                } catch { deliveryMessage = "Could not send the test notification." }
+                                testingDelivery = false
+                            }
+                        }.disabled(testingDelivery || !pushAvailable)
+                        if let deliveryMessage { Text(deliveryMessage).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                    }
+                } header: { SectionLabel(text: "Troubleshooting") }
+                .listRowBackground(OpsTheme.surface)
                 Section {
                     LabeledContent("Signed in as", value: session.profile["email"].string.hasPrefix("discord_") ? "Owner" : session.profile["email"].string)
-                    Button("Sign out", role: .destructive) { Task { await session.signOut(); dismiss() } }
-                }
+                    Button(role: .destructive) { confirmSignOut = true } label: {
+                        Text("Sign out").foregroundStyle(OpsTheme.danger)
+                    }
+                } header: { SectionLabel(text: "Account") }
+                .listRowBackground(OpsTheme.surface)
             }
             .scrollContentBackground(.hidden).background(OpsTheme.background)
+            .toolbarBackground(OpsTheme.background, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .navigationTitle("Settings").navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("Done") { dismiss() } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .alert("Sign out of Keir on this iPhone?", isPresented: $confirmSignOut) {
+                Button("Sign out", role: .destructive) { Task { await session.signOut(); dismiss() } }
+                Button("Cancel", role: .cancel) {}
+            }
             .task {
                 status = await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
                 do { delivery = try await session.get("/api/keir/app/notifications") }
@@ -184,8 +241,10 @@ struct OpsSettings: View {
                     ForEach(Array(Set(TimeZone.knownTimeZoneIdentifiers + [quiet.timeZone])).sorted(), id: \.self) { Text($0).tag($0) }
                 }
             }
-            Text(quiet.summary).font(.caption).foregroundStyle(OpsTheme.muted)
-        } header: { Text("Quiet hours") } footer: { Text("Applies to this iPhone only. Your other devices are not affected.") }
+            if quiet.enabled { Text(quiet.summary).font(.caption).foregroundStyle(OpsTheme.muted) }
+        } header: { SectionLabel(text: "Quiet hours") } footer: {
+            Text("Silences notifications on this iPhone only.").font(.caption).foregroundStyle(OpsTheme.muted)
+        }
     }
 
     private func timeBinding(_ field: WritableKeyPath<QuietHours, Int>) -> Binding<Date> {
@@ -198,11 +257,21 @@ struct OpsSettings: View {
 
     private func saveQuiet() { quiet.save(); Task { await OpsPushRegistration.update() } }
 
-    private func toggle(_ key: String, _ title: String, _ detail: String) -> some View {
-        Toggle(isOn: Binding(get: { prefs[key] ?? true }, set: { on in
-            prefs[key] = on; OpsPushPrefs.set(key, on); Task { await OpsPushRegistration.update() }
-        })) {
-            VStack(alignment: .leading, spacing: 2) { Text(title); Text(detail).font(.caption).foregroundStyle(OpsTheme.muted) }
+    /// While notifications are off, a switch would look on and do nothing, so
+    /// the row says in words what will happen once they are allowed.
+    @ViewBuilder private func toggle(_ key: String, _ title: String, _ detail: String) -> some View {
+        let label = VStack(alignment: .leading, spacing: 2) { Text(title); Text(detail).font(.caption).foregroundStyle(OpsTheme.muted) }
+        if pushAvailable {
+            Toggle(isOn: Binding(get: { prefs[key] ?? true }, set: { on in
+                prefs[key] = on; OpsPushPrefs.set(key, on); Task { await OpsPushRegistration.update() }
+            })) { label }
+        } else {
+            HStack(alignment: .firstTextBaseline) {
+                label
+                Spacer(minLength: 8)
+                Text((prefs[key] ?? true) ? "On when allowed" : "Off").font(.caption.weight(.medium)).foregroundStyle(OpsTheme.muted)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 }

@@ -5,6 +5,16 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.2.1 (2026-11-21)
+
+### For users
+
+- The iPhone app's Inbox and Ops now read one shared set of queue counts and states from Keir, with stalled, blocked and unanswered work reported separately and a structured support queue snapshot in chat.
+- A player-facing reply excerpt in the app is shown only with its verified Discord delivery receipt.
+- When merge checks are stale, the app's approval is held and the owner can request fresh checks; existing approval flows are unchanged.
+- An eligible stalled ticket can be retried from the app, and Keir can open a private side conversation through the signed-in owner session.
+- Approvals surface from both the main conversation and the Inbox, and work that timed out is told apart from work waiting on an owner decision.
+
 ## 11.2.0 (2026-11-20)
 
 ### For users

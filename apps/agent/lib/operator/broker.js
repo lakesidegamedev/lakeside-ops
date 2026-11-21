@@ -3507,15 +3507,53 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           return {needsExplanation:true,approvalRequired:false,reviewedHead:copy.headOf(args),destination:args.to||"development",evidence,
             instruction:"Nothing was sent for approval. Read these source changes, then call the same github action with explanation: reviewedHead exactly as returned, change (the problem and fix in ordinary language), impact (who notices and how), risk (verified risk or uncertainty). Cover every change in this version. No file paths, formulas, PR numbers, staging/development or developer jargon. Continue preparing now; do not wait for the owner or invent a recommendation."};
         }
+        let checksAt, checksGreen;
+        if (["merge", "merge-set"].includes(args.action)) {
+          const targets = args.prs || [args];
+          const verified = [];
+          checksGreen = true;
+          for (const target of targets) {
+            const pr = await api([`repos/${repo}/pulls/${target.number}`]).catch(() => null);
+            if (pr?.head?.sha && (pr.head.sha !== target.head || pr.state === "closed")) {
+              return { approvalRequired: false, checksReady: false, nextMove: "Review the current open pull request and its exact head." };
+            }
+            const inspected = pr?.head?.sha ? await inspectChecks(pr).catch(() => null) : null;
+            const runs = inspected?.runs || [];
+            const times = runs.map(run => run.status === "completed" ? Date.parse(run.completed_at) : NaN);
+            const at = times.length && times.every(Number.isFinite) ? Math.min(...times) : null;
+            const fresh = require("./appdecision").mergeChecksFresh({ checksAt: at }, now());
+            const refresh = job.mergeCheckRefresh;
+            if (!fresh && refresh?.repository === repo && refresh.heads.includes(target.head)) {
+              refresh.rerun ||= [];
+              const workflowRuns = new Set(runs.map(run => /\/actions\/runs\/(\d+)/.exec(run.details_url || "")?.[1]).filter(Boolean));
+              for (const id of workflowRuns) {
+                if (refresh.rerun.includes(id)) continue;
+                const run = await api([`repos/${repo}/actions/runs/${id}`]).catch(() => null);
+                if (run?.head_sha !== target.head || run.status !== "completed") continue;
+                await api(["-X", "POST", `repos/${repo}/actions/runs/${id}/rerun`]);
+                refresh.rerun.push(id); ledger.save();
+              }
+              return { approvalRequired: false, checksReady: false,
+                nextMove: "Wait for the new checks on this exact head, then ask for approval again." };
+            }
+            if (at) verified.push(at);
+            checksGreen &&= Boolean(inspected?.result.ready && !inspected?.result.pending.length);
+          }
+          if (verified.length === targets.length) checksAt = Math.min(...verified);
+        }
         const human=copy.explanation(value,args);
         if(existing?.state==="pending" && (!existing.explanation || !liveQuestion)) {
           for(const old of Object.values(d.decisions||{})) if(old.actionId===existing.id && old.state==="pending") {old.state="withdrawn";old.withdrawnReason="Needs a plain-language explanation";}
           existing.explanation=human;
+          if (checksAt) { existing.checksAt = checksAt; existing.checksGreen = checksGreen; }
           const decision=openDecision(ledger,config,{jobId:job.id,actionId:existing.id,question:"Review this change",signoff:true});
           if(existing.ownerMuse) existing.ownerMuseDecision=decision.id;
           ledger.save();return {action:existing.id,decision:decision.id,state:"pending"};
         }
-        return request(job,"github",args,reason,human);
+        const proposal = await request(job,"github",args,reason,human);
+        const action = d.actions[proposal.action];
+        if (action && checksAt) { action.checksAt = checksAt; action.checksGreen = checksGreen; ledger.save(); }
+        return proposal;
       }
       const scopedOwner = musePolicy.origin(d, job).scoped;
       let scopedConsent = null;
@@ -3530,8 +3568,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (pr && pr.base?.ref !== to) throw new Error("This PR targets an unexpected branch");
         const args = { repository: repo, action: input.action, head, base, to, ...(pr ? {number:Number(input.number)} : {from}) };
         const asked = await requestGithubApproval(args, "Exact owner GitHub operation");
-        if (asked.needsExplanation) return asked;
-        if (asked.state !== "approved") return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
+        if (asked.needsExplanation || asked.checksReady === false) return asked;
+        if (asked.state !== "approved") return asked.needsExplanation || asked.checksReady === false ? asked : { approvalRequired: true, ...asked };
         scopedConsent = d.actions[asked.action];
         musePolicy.validate(d, config, job, scopedConsent, now(), true);
       }
@@ -3649,7 +3687,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               }
               if (prs.length > 1) {
                 const asked = await requestGithubApproval({ repository:repo, action: "merge-set", ticket: job.ticket, prs, summary: `Ticket ${job.ticket}: ${prs.length} related economy PRs (${prs.map((p) => "#" + p.number).join(", ")}) change the turn engine or economy, including ${list}.` }, "economy feature merge");
-                return asked.needsExplanation ? asked : { approvalRequired: true, ...asked };
+                return asked.needsExplanation || asked.checksReady === false ? asked : { approvalRequired: true, ...asked };
               }
             }
             // Keir 5.1 chain consent (owner, 2026-10-15): a promotion that carries
@@ -3706,7 +3744,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
               const unverified = !sensitive;
               const summary = askForAuthority && Array.isArray(sensitive) && !sensitive.length ? `${what.replace(/ changes$| carries changes to$/, "")}: Keir found and fixed this itself and every check passed, but Keir has no standing permission to merge it without your yes.${carries} Head ${head.slice(0, 10)}` : shipSignoff ? `${shipWhat}${carries}` : unverified ? `${what.replace(/ changes$| carries changes to$/, "")}: GitHub did not list its changed files, so Keir cannot confirm it stays out of the economy and turn engine.${carries} Head ${head.slice(0, 10)}` : `${what} high-impact code: ${list}.${carries} Head ${head.slice(0, 10)}`;
               const asked = await requestGithubApproval({ ...args, summary }, askForAuthority && Array.isArray(sensitive) && !sensitive.length ? "merge of a green PR Keir opened without standing authority" : shipSignoff ? "ship to the live server" : unverified ? "merge or promotion with an unverified file list" : "economy merge or promotion");
-              return asked.needsExplanation ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
+              return asked.needsExplanation || asked.checksReady === false ? asked : { approvalRequired: true, ...(unverified ? { reason: "file_list_unavailable", instruction: "The changed files could not be listed, so this needs the owner's yes. Tell the owner that; do not say it touches the economy." } : {}), ...asked };
             }
             if (consent.approvedBy === config.ownerId && !consent.approvedOnBehalfBy && consent.args?.action === "merge") ownerConsent = consent;
             if (askForAuthority && input.action === "merge") findingMergeApproval = consent;
@@ -3949,7 +3987,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         }
         return out;
       }
-      async function gate(pr) {
+      async function gate(pr) { return (await inspectChecks(pr)).result; }
+      async function inspectChecks(pr) {
         const runs = (await api([`repos/${repo}/commits/${pr.head.sha}/check-runs?per_page=100`])).check_runs || [];
         const pending = runs.filter((r) => r.status !== "completed").map((r) => r.name);
         const failed = require("./github").redChecks(runs).map((r) => `${r.name}: ${r.conclusion}`);
@@ -3959,9 +3998,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           for (const check of required.failed) if (!failed.some((f) => f.startsWith(`${check}:`))) failed.push(`${check}: ${required.detail[check]}`);
         }
         const qualification = failed.length ? { qualified: false } : await require("./qualification").promotionQualification({ api, pr, runs, repository: repo });
-        return { checks: runs.length, pending, failed, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
+        return { runs, result: { checks: runs.length, pending, failed, mergeable: pr.mergeable, mergeableState: pr.mergeable_state,
           ...(qualification.qualified ? { qualification } : {}),
-          ready: runs.length > 0 && (!pending.length || qualification.qualified) && !failed.length && pr.mergeable === true };
+          ready: runs.length > 0 && (!pending.length || qualification.qualified) && !failed.length && pr.mergeable === true } };
       }
       // Keir 11.2 (audit P1-1, H5): a merge Keir was asked to carry out and GitHub refuses (red check, conflict, missing
       // section) used to end as a silent "probe" dismissal. The owner now gets one plain line per PR, head and reason. When

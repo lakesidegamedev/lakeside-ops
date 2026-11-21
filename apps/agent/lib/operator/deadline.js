@@ -5,6 +5,7 @@
 // settlement investigation reached the app as "Needs you" when the only
 // sensible move was to keep going).
 const MAX_EXTENSIONS = 1;
+const TIMEOUT_SUMMARY = "Task ran out of time twice. Keir needs to recover from the last saved step.";
 
 function expireDeadline(job, now, { lifetimeMs }) {
   if (!(job.deadline < now) || ["done", "dismissed", "cancelled", "blocked"].includes(job.state)) return null;
@@ -15,7 +16,7 @@ function expireDeadline(job, now, { lifetimeMs }) {
     return "extended";
   }
   job.state = "blocked";
-  job.summary = "Task ran out of time twice; owner needs to choose the next move.";
+  job.summary = TIMEOUT_SUMMARY;
   // Keir 10.0.1 (2026-11-15): three finding tasks were put back to waiting on every tick and re-blocked here, so the owner
   // alert fired about once a second (1,867 times in 30 minutes). Alert once per task; later re-blocks are silent.
   if (job.deadlineBlockedAt) return "reblocked";
@@ -23,4 +24,4 @@ function expireDeadline(job, now, { lifetimeMs }) {
   return "blocked";
 }
 
-module.exports = { expireDeadline, MAX_EXTENSIONS };
+module.exports = { expireDeadline, MAX_EXTENSIONS, TIMEOUT_SUMMARY };

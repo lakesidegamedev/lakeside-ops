@@ -4,7 +4,8 @@ import LakesideCore
 /// One model decides what "Needs you" means. Every badge, headline, stack and
 /// queue asks this object for the count, so the number cannot drift between
 /// screens. Decisions come first, then open questions, then work the owner
-/// flagged; work already represented by a decision is not counted twice.
+/// flagged, then tickets held on a decision that has no loaded decision row.
+/// A ticket or decision already represented is never counted twice.
 @MainActor
 final class AttentionCenter: ObservableObject {
     static let shared = AttentionCenter()
@@ -13,15 +14,21 @@ final class AttentionCenter: ObservableObject {
     @Published private var decisions: [JSONValue] = []
     @Published private var questions: [JSONValue] = []
     @Published private var ownerWork: [JSONValue] = []
+    @Published private var heldTickets: [JSONValue] = []
+    @Published private var heldTasks: [JSONValue] = []
     /// Rebuilt only when an input changes. Views read this instead of
     /// re-scrubbing every ticket on each body evaluation.
     @Published private(set) var items: [AttentionItem] = []
 
     private init() {}
 
-    func setWork(decisions: [JSONValue], ownerWork: [JSONValue]) {
+    /// `tickets` is every ticket the app knows about (hub and work queue). Only
+    /// the ones waiting on an owner decision are kept.
+    func setWork(decisions: [JSONValue], ownerWork: [JSONValue], tickets: [JSONValue] = [], tasks: [JSONValue] = []) {
         self.decisions = decisions
         self.ownerWork = ownerWork
+        self.heldTickets = tickets.filter { Self.waitsOnDecision($0) }
+        self.heldTasks = tasks.filter { WorkQueuePresentation.state($0) == "needs-you" }
         rebuild()
     }
 
@@ -31,7 +38,19 @@ final class AttentionCenter: ObservableObject {
     }
 
     func reset() {
-        decisions = []; questions = []; ownerWork = []; items = []
+        decisions = []; questions = []; ownerWork = []; heldTickets = []; heldTasks = []; items = []
+    }
+
+    /// A ticket held on the owner: the server says a decision is pending, or
+    /// its timing state is needs-you. Finished tickets never count.
+    static func waitsOnDecision(_ ticket: JSONValue) -> Bool {
+        guard KeirTicketFollowUp.isOpen(ticket) else { return false }
+        return WorkQueuePresentation.state(ticket) == "needs-you"
+    }
+
+    private static func ticketNumber(_ value: JSONValue) -> Int? {
+        if let number = value.number { return Int(number) }
+        return Int(value.string)
     }
 
     private func rebuild() {
@@ -46,13 +65,13 @@ final class AttentionCenter: ObservableObject {
         for (index, decision) in decisions.enumerated() {
             let id = "decision:" + (decision["id"].string.nonempty ?? "index-\(index)")
             guard seen.insert(id).inserted else { continue }
-            if let number = decision["ticket"].number { tickets.insert(Int(number)) }
+            if let number = Self.ticketNumber(decision["ticket"]) { tickets.insert(number) }
             rows.append(AttentionItem(
                 id: id,
                 kind: .decision,
                 title: OpsText.decisionTitle(decision),
                 detail: OpsText.scrub(decision["reason"].string.nonempty ?? decision["question"].string),
-                meta: [decision["ticket"].number.map { "Ticket #\(Int($0))" } ?? "", OpsFormat.ago(decision["at"])]
+                meta: [Self.ticketNumber(decision["ticket"]).map { "Ticket #\($0)" } ?? "", OpsFormat.ago(decision["at"])]
                     .filter { !$0.isEmpty }.joined(separator: " · "),
                 ticket: decision["ticket"],
                 decision: decision,
@@ -95,8 +114,46 @@ final class AttentionCenter: ObservableObject {
             ))
         }
 
+        for ticket in heldTickets {
+            guard let number = Self.ticketNumber(ticket["number"]), tickets.insert(number).inserted else { continue }
+            let id = "ticket:\(number)"
+            guard seen.insert(id).inserted else { continue }
+            let reason = ticket["timing"]["reason"].string
+            rows.append(AttentionItem(
+                id: id,
+                kind: .ticket,
+                title: OpsText.scrub(ticket["title"].string.nonempty ?? "Ticket #\(number)"),
+                detail: OpsText.firstSentence(reason.isEmpty ? "Keir is waiting on your decision." : reason),
+                meta: ["Ticket #\(number)", OpsFormat.ago(ticket["timing"]["since"])].filter { !$0.isEmpty }.joined(separator: " · "),
+                ticket: .number(Double(number)),
+                decision: .null,
+                work: ticket
+            ))
+        }
+
+        let representedTasks = Set((decisions + questions).compactMap { $0["jobId"].string.nonempty })
+        for task in heldTasks {
+            let number = Self.ticketNumber(task["ticket"])
+            let taskID = task["id"].string
+            guard !taskID.isEmpty, !representedTasks.contains(taskID),
+                  !(number.map { tickets.contains($0) } ?? false),
+                  seen.insert("task:" + taskID).inserted else { continue }
+            if let number { tickets.insert(number) }
+            rows.append(AttentionItem(
+                id: "task:" + taskID, kind: .task,
+                title: OpsText.scrub(task["title"].string.nonempty ?? "Task needs a decision"),
+                detail: OpsText.scrub(task["timing"]["reason"].string),
+                meta: OpsFormat.ago(task["updatedAt"]),
+                ticket: task["ticket"], decision: .null, work: task
+            ))
+        }
+
         return rows
     }
+
+    /// Decisions are counted once each, plus tickets held on a decision that
+    /// has no decision row of its own.
+    var decisionCount: Int { items.filter { [.decision, .ticket, .task].contains($0.kind) }.count }
 
     var count: Int { items.count }
 
@@ -122,26 +179,57 @@ struct AttentionItem: Identifiable {
     let ticket: JSONValue
     let decision: JSONValue
     let work: JSONValue
+
+    /// The ticket this item stands for, if any. Used to keep one row per ticket.
+    var ticketNumber: Int? {
+        if let number = ticket.number { return Int(number) }
+        return Int(ticket.string)
+    }
+
+    func matches(_ search: String) -> Bool {
+        let needle = search.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "#")))
+        guard !needle.isEmpty else { return true }
+        if let number = ticketNumber, String(number) == needle { return true }
+        return [title, detail, meta].contains { $0.localizedCaseInsensitiveContains(needle) }
+    }
+
+    var openedAt: Date? {
+        [decision["at"], work["createdAt"], work["at"], work["updated_at"], work["updatedAt"], work["timing"]["since"]]
+            .compactMap(OpsFormat.date).first
+    }
+
+    /// The short word on the card, so a decision never reads like a question.
+    var kindLabel: String {
+        switch kind {
+        case .decision: return decision["type"].string == "choice" || decision["type"].string == "question" ? "Decision" : "Approval"
+        case .ticket, .task, .question, .ownerWork: return "Decision"
+        }
+    }
 }
 
 enum AttentionKind: Equatable {
-    case decision, question, ownerWork
+    case decision, question, ownerWork, ticket, task
 }
 
-/// The one stack rendered by Feed and the Keir briefing. Decisions keep their
-/// full inline approve / reject / reply controls; questions and owner work get
-/// a single tap to the place where the action lives.
+/// The one stack rendered by Ops, Feed, the Inbox and the Keir briefing.
+/// Decisions keep their full inline approve / reject / reply controls;
+/// questions, owner work and held tickets get a single tap to the place where
+/// the action lives.
 struct AttentionStack: View {
     @EnvironmentObject private var router: OpsRouter
     @EnvironmentObject private var ops: OpsStore
+    @ObservedObject private var center = AttentionCenter.shared
     var limit: Int? = nil
     var showEmpty = false
+    /// Only rows matching this text. Empty shows every row.
+    var search = ""
     /// Question panels currently loaded in chat, so a question can be answered
     /// inline instead of only opening a destination.
     var panels: [JSONValue] = []
+    var changed: () async -> Void = {}
 
     private var rows: [AttentionItem] {
-        let all = AttentionCenter.shared.items
+        let all = center.items.filter { $0.matches(search) }
         guard let limit else { return all }
         return Array(all.prefix(limit))
     }
@@ -149,35 +237,54 @@ struct AttentionStack: View {
     var body: some View {
         if rows.isEmpty {
             if showEmpty {
-                OpsCard {
-                    OpsHealthLine(status: .done, headline: "Nothing needs you", detail: "Keir is working through the queue.")
-                }
+                OpsHealthLine(status: .idle, headline: "Nothing needs you", detail: "")
             }
         } else {
             ForEach(rows) { item in
-                switch item.kind {
-                case .decision:
-                    DecisionCard(decision: item.decision)
-                case .question:
-                    if let panel = panels.first(where: { $0["id"].string == item.id.replacingOccurrences(of: "question:", with: "") }) {
-                        KeirQuestions(panel: panel)
-                    } else {
-                        AttentionLinkCard(
-                            item: item,
-                            status: .waiting,
-                            action: "Answer in Keir",
-                            icon: "hand.raised.fill"
-                        ) { router.tab = .keir }
-                    }
-                case .ownerWork:
-                    NavigationLink {
-                        WorkItemDetail(item: item.work)
-                    } label: {
-                        AttentionRow(item: item, status: .waiting, action: "Open work")
-                    }
-                    .buttonStyle(.plain)
-                }
+                AttentionCard(item: item, panels: panels, changed: changed)
             }
+        }
+    }
+}
+
+/// One Needs you row, chosen by kind. Every card fills the same width and
+/// offers one action.
+struct AttentionCard: View {
+    @EnvironmentObject private var router: OpsRouter
+    let item: AttentionItem
+    var panels: [JSONValue] = []
+    var changed: () async -> Void = {}
+
+    var body: some View {
+        switch item.kind {
+        case .decision:
+            DecisionCard(decision: item.decision, changed: changed)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .question:
+            if let panel = panels.first(where: { $0["id"].string == item.id.replacingOccurrences(of: "question:", with: "") }) {
+                KeirQuestions(panel: panel)
+            } else {
+                AttentionLinkCard(item: item, status: .waiting, action: "Answer in Keir", icon: "bubble.left") { router.tab = .keir }
+            }
+        case .ownerWork:
+            NavigationLink {
+                WorkItemDetail(item: item.work)
+            } label: {
+                AttentionRow(item: item, status: .waiting, action: "View details")
+            }
+            .buttonStyle(.plain)
+        case .task:
+            NavigationLink { TaskDetail(id: item.work["id"].string) } label: {
+                AttentionRow(item: item, action: "Open task")
+            }
+            .buttonStyle(.plain)
+        case .ticket:
+            NavigationLink {
+                TicketDetail(ticket: item.work)
+            } label: {
+                AttentionRow(item: item, status: .waiting, action: "Open ticket")
+            }
+            .buttonStyle(.plain)
         }
     }
 }
@@ -203,31 +310,48 @@ struct AttentionRow: View {
     let action: String
     var icon: String = "arrow.right"
 
+    var card = true
+
     var body: some View {
-        OpsCard {
-            HStack(alignment: .firstTextBaseline) {
-                OpsStatusBadge(status: status)
-                Spacer(minLength: 8)
-                Text(item.meta).font(.caption2).foregroundStyle(OpsTheme.muted).monospacedDigit()
-            }
-            Text(item.title)
-                .font(.opsCardTitle)
-                .foregroundStyle(OpsTheme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            if !item.detail.isEmpty, item.detail != item.title {
-                Text(item.detail)
-                    .font(.caption)
-                    .foregroundStyle(OpsTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            HStack(spacing: 6) {
-                Image(systemName: icon).font(.caption.weight(.semibold))
-                Text(action).font(.caption.weight(.semibold))
-            }
-            .foregroundStyle(OpsTheme.sky)
+        Group {
+            if card { OpsCard { content } }
+            else { content }
         }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(item.title). \(item.detail). \(action)")
+        .accessibilityLabel("\(item.kindLabel). \(item.title). \(item.detail). \(action)")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                OpsStatusBadge(status: status, label: item.kindLabel)
+                Spacer(minLength: 8)
+                if let date = item.openedAt {
+                    let age = OpsAge(date: date)
+                    Text(age.text).font(.opsCaption.weight(age.weight)).monospacedDigit().foregroundStyle(age.color)
+                }
+            }
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(item.title).font(.opsCardTitle).foregroundStyle(OpsTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    let ticketLine = item.ticketNumber.map { "Ticket #\(String($0))" }
+                    let detailLine = !item.detail.isEmpty && item.detail != item.title ? item.detail : nil
+                    let caption = [ticketLine, detailLine].compactMap { $0 }.joined(separator: " · ")
+                    if !caption.isEmpty {
+                        Text(caption).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                    .foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+            }
+            // The chevron is the one affordance; a second "View details" link
+            // to the same place only cost a line.
+        }
     }
 }
 

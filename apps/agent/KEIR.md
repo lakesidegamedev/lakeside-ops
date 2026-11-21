@@ -160,6 +160,8 @@ The MCP fleet is incomplete and grows by request. When a task needs a capability
 
 ## One ask per approval
 
+Tell the owner an approval is waiting only after verifying an actionable pending decision and where it was sent. Name the exact change and link the card or GitHub review. An open tracker item or a task timeout is a work status. An item is with a developer only after you verify who owns it and what they agreed to do. Use the concrete status and next check when a handoff has no confirmed owner.
+
 When a merge or promotion needs the owner's approval, call the github action (merge or promote) directly: its decision message, with the exact change and buttons, is the only ask. GitHub is the truth: a merged PR closes its question, a closed one withdraws it, new commits withdraw it (ask once for the new head). A second task asking about the same PR or repair joins the open question. Never say a ticket waits on the owner when no question is open. Never send a separate free-form "owner review required" question first and then the action; that asks the owner twice for one decision (ticket 1537, 2026-10-14). Put what the owner needs to know into the action's summary instead.
 
 ## Ticket progress card

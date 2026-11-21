@@ -11,16 +11,36 @@ enum OpsTheme {
     static let ink = Brand.ink
     // 6.7:1 on true black and 5.4:1 on the light canvas.
     static let muted = Brand.adaptive(0x8e8e93, 0x5b6470)
-    static let sky = Brand.sky
-    static let mint = Brand.mint
+    static let accent = Brand.sky
+    static let success = Brand.mint
+    static let sky = accent
+    static let mint = success
     static let warn = Brand.adaptive(0xe3ba88, 0xb26a12)
     static let danger = Brand.adaptive(0xf08a8a, 0xc0392b)
+    /// Blocked by something other than the owner: a dependency, a missing
+    /// receipt. Kept apart from amber, which means "waiting on you".
+    static let blocked = Brand.adaptive(0xb7a2ff, 0x6d4fd8)
+    /// Machinery that stopped or is out of date: stalled work, a stale or
+    /// degraded service, an overdue estimate. Orange, never amber, so amber
+    /// keeps meaning "your move".
+    static let caution = Brand.adaptive(0xff9a5c, 0xc94a0c)
+    /// A player waiting with no recorded reply.
+    static let unanswered = Brand.adaptive(0xf783ac, 0xc2255c)
     static let onAccent = Brand.onAccent
+    static let neutral = muted
+    /// Soft depth under raised surfaces in Light; nothing on OLED black.
+    static let shadow = Brand.lightOnly(0x1b2a3c, alpha: 0.07)
+    static let warning = warn
 }
 
 extension View {
     func opsScreen() -> some View {
-        scrollContentBackground(.hidden).background(OpsTheme.background)
+        scrollContentBackground(.hidden)
+            .background(OpsTheme.background)
+            .safeAreaPadding(.bottom, 16)
+            .clipped()
+            .toolbarBackground(OpsTheme.background, for: .tabBar)
+            .toolbarBackground(.visible, for: .tabBar)
             .toolbarBackground(OpsTheme.background, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
     }
@@ -96,9 +116,7 @@ enum OpsFormat {
     static func ago(_ value: JSONValue) -> String {
         if let ms = value.number, ms > 1_000_000_000_000 { return ago(Date(timeIntervalSince1970: ms / 1000)) }
         if let ms = value.number, ms > 1_000_000_000 { return ago(Date(timeIntervalSince1970: ms)) }
-        let text = value.string
-        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: text) ?? ISO8601DateFormatter().date(from: text) { return ago(d) }
+        if let d = date(value) { return ago(d) }
         return ""
     }
     static func ago(_ date: Date) -> String {
@@ -107,15 +125,56 @@ enum OpsFormat {
         if s < 45 { return "now" }
         return span(s) + " ago"
     }
+    /// How long something has waited. Ages are neutral grey; past the
+    /// threshold they escalate one way everywhere: red and semibold. Amber is
+    /// never used for an age.
+    static func waiting(_ date: Date, now: Date = Date(), escalateAfter: TimeInterval = OpsAge.ownerLimit) -> (text: String, color: Color) {
+        let age = OpsAge(date: date, now: now, limit: escalateAfter)
+        return (age.text, age.color)
+    }
     static func span(_ s: Double) -> String {
         if s < 3600 { return "\(max(1, Int(s / 60)))m" }
         if s < 86400 { return "\(Int(s / 3600))h" }
         return "\(Int(s / 86400))d"
     }
+    static func clock(_ date: Date, timeZone: TimeZone = .current) -> String {
+        clockFormatter(timeZone).string(from: date)
+    }
+    /// Building a DateFormatter costs far more than using one, and rows format
+    /// times inside `body`. One formatter per time zone, reused.
+    private static let clockLock = NSLock()
+    private static var clockFormatters: [String: DateFormatter] = [:]
+    private static func clockFormatter(_ timeZone: TimeZone) -> DateFormatter {
+        clockLock.lock(); defer { clockLock.unlock() }
+        if let cached = clockFormatters[timeZone.identifier] { return cached }
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.timeZone = timeZone
+        formatter.setLocalizedDateFormatFromTemplate("hma")
+        clockFormatters[timeZone.identifier] = formatter
+        return formatter
+    }
+    /// ISO 8601 parsers, built once. Parsing with an existing
+    /// ISO8601DateFormatter is thread safe; building one per call (as every
+    /// row, sort comparison and chip count used to) was the main cost of
+    /// redrawing the Inbox.
+    private static let isoFractional: ISO8601DateFormatter = {
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return iso
+    }()
+    private static let isoPlain = ISO8601DateFormatter()
+    static func contextual(_ date: Date) -> String {
+        let calendar = Calendar.autoupdatingCurrent
+        if calendar.isDateInToday(date) { return clock(date) }
+        if calendar.isDateInYesterday(date) { return "Yesterday " + clock(date) }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
     static func date(_ value: JSONValue) -> Date? {
-        if let ms = value.number, ms > 1_000_000_000_000 { return Date(timeIntervalSince1970: ms / 1000) }
-        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return iso.date(from: value.string) ?? ISO8601DateFormatter().date(from: value.string)
+        if let timestamp = value.number, timestamp > 1_000_000_000 {
+            return Date(timeIntervalSince1970: timestamp > 1_000_000_000_000 ? timestamp / 1000 : timestamp)
+        }
+        let text = value.string
+        guard !text.isEmpty else { return nil }
+        return isoFractional.date(from: text) ?? isoPlain.date(from: text)
     }
     static func percent(_ value: Double?) -> String { value.map { "\(Int(($0 * 100).rounded()))%" } ?? "-" }
     /// A percentage that already arrives as 0 to 100 (service uptime), not a

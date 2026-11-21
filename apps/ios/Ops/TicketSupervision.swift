@@ -1,7 +1,7 @@
 import SwiftUI
 import LakesideCore
 
-/// Owner ticket supervision: take a ticket from Support Keir for your personal
+/// Owner ticket supervision: take a ticket from the support desk for your personal
 /// Keir worker, watch and direct that worker, and hand the ticket back.
 /// Talks only to `/api/keir/app/tickets/:n/supervision`. Every write carries a
 /// request id that is reused when the same action is retried, so a dropped
@@ -10,124 +10,69 @@ import LakesideCore
 /// A direction belongs to the worker it was written for: it names that worker,
 /// and an unsent draft is discarded when that worker's session ends, so a
 /// half-typed note can never reach a later worker the owner has not seen.
-struct TicketSupervisionPanel: View {
-    @EnvironmentObject private var session: AppSession
-    @Environment(\.scenePhase) private var scenePhase
+@MainActor
+final class TicketSupervisionModel: ObservableObject {
     let number: String
-    @State private var state: JSONValue = .null
-    @State private var error: String?
-    @State private var busy = false
-    @State private var draft = ""
-    @State private var confirming: SupervisionAction?
+    @Published var state: JSONValue = .null
+    @Published var error: String?
+    @Published var busy = false
+    @Published var draft = ""
+    @Published var confirming: SupervisionAction?
+    /// The write the owner just confirmed, from the tap until the server
+    /// answers, so the screen says "Taking over" at once.
+    @Published private(set) var sendingAction: SupervisionAction?
     /// Request ids for writes that have not been confirmed yet, keyed by action
     /// and content, so a retry replays rather than repeats.
-    @State private var requestIds: [String: String] = [:]
+    private var requestIds: [String: String] = [:]
 
-    private var worker: JSONValue { state["worker"] }
-    private var supervised: Bool { state["state"].string == "supervised" }
+    init(number: String) { self.number = number }
+
+    var worker: JSONValue { state["worker"] }
+    var supervised: Bool { state["state"].string == "supervised" }
     /// The worker a direction typed now would reach, or empty when none can.
-    private var directionTarget: String { state["canMessage"].bool ? worker["id"].string : "" }
+    var directionTarget: String { state["canMessage"].bool ? worker["id"].string : "" }
     /// Directions for the current worker only; earlier sessions' notes are history.
-    private var directions: [JSONValue] { state["directions"].array.filter { $0["workerId"] == worker["id"] } }
+    var directions: [JSONValue] { state["directions"].array.filter { $0["workerId"] == worker["id"] } }
+    var canSend: Bool { !busy && sendingAction == nil && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                SectionLabel(text: "Ticket owner")
-                if state != .null { OpsStatusBadge(status: supervised ? .running : state["state"].string == "held" ? .blocked : .done, label: ownerWord, compact: true) }
-            }
-            if state == .null && error == nil {
-                Text("Checking who owns this ticket").font(.callout).foregroundStyle(OpsTheme.muted)
-            } else if state != .null {
-                Text(state["label"].string).font(.callout.weight(.semibold))
-                if !state["takeBlockers"].array.isEmpty && !supervised {
-                    ForEach(Array(state["takeBlockers"].array.enumerated()), id: \.offset) { _, blocker in
-                        Label(blocker["text"].string, systemImage: "hand.raised").font(.caption).foregroundStyle(OpsTheme.warn)
-                    }
-                }
-                if worker != .null { WorkerSummary(worker: worker, active: supervised) }
-                if !directions.isEmpty && supervised {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Your directions").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
-                        ForEach(Array(directions.prefix(3).enumerated()), id: \.offset) { _, direction in
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: direction["readAt"] == .null ? "envelope" : "envelope.open").foregroundStyle(OpsTheme.muted)
-                                Text(direction["text"].string).font(.caption).lineLimit(3)
-                            }
-                        }
-                    }.accessibilityElement(children: .combine).accessibilityIdentifier("supervision-directions")
-                }
-                if state["canMessage"].bool {
-                    HStack(alignment: .bottom, spacing: 8) {
-                        TextField("Direct your Keir on this ticket", text: $draft, axis: .vertical).lineLimit(1...5).textFieldStyle(.roundedBorder)
-                            .accessibilityIdentifier("supervision-direction")
-                        Button { Task { await send(.message, text: draft) } } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
-                            .disabled(busy || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .accessibilityLabel("Send direction")
-                    }
-                    Text("Directions guide the worker. They never approve an action; approvals still come to you as cards.").font(.caption2).foregroundStyle(OpsTheme.muted)
-                }
-                HStack(spacing: 12) {
-                    if state["canTake"].bool {
-                        Button { confirming = .take } label: { Label("Take over", systemImage: "person.badge.key") }
-                            .buttonStyle(.borderedProminent).disabled(busy).accessibilityIdentifier("supervision-take")
-                    }
-                    if state["canHandback"].bool {
-                        Button { confirming = .handback } label: { Label("Hand back", systemImage: "arrow.uturn.backward") }
-                            .buttonStyle(.bordered).disabled(busy).accessibilityIdentifier("supervision-handback")
-                    }
-                }
-            }
-            if let error {
-                Text(error).font(.caption).foregroundStyle(OpsTheme.warn)
-                Button("Refresh") { Task { await load() } }.font(.caption)
-            }
-        }
-        // A container identifier on a plain stack is copied onto every child
-        // and replaces their own, which hid "supervision-take" and the other
-        // controls. Make the panel a container so each control keeps its id.
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("ticket-supervision")
-        .confirmationDialog(confirming?.title ?? "", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }), titleVisibility: .visible) {
-            if let action = confirming {
-                // Take and hand back never carry the direction draft: it is
-                // not on screen when they are offered.
-                Button(action.title) { Task { await send(action, text: "") } }
-                Button("Cancel", role: .cancel) { confirming = nil }
-            }
-        } message: { Text(confirming?.detail ?? "") }
-        // The session a draft was written for ended (hand back, staff, ticket
-        // closed) or a different worker took over: the draft and any unconfirmed
-        // direction request go with it.
-        .onChange(of: directionTarget) { _, _ in
-            draft = ""
-            requestIds = requestIds.filter { !$0.key.hasPrefix("\(SupervisionAction.message.rawValue)|") }
-        }
-        .task(id: scenePhase == .active) {
-            while scenePhase == .active && !Task.isCancelled {
-                await load()
-                do { try await Task.sleep(for: .seconds(supervised ? 8 : 20)) } catch { return }
-            }
-        }
-    }
-
-    private var ownerWord: String {
+    /// Compact owner name: Keir, or the worker the owner supervises.
+    var ownerWord: String {
         switch state["state"].string {
-        case "supervised": return "Your Keir"
+        case "supervised": return "Keir"
         case "held": return "Held"
         case "ended": return "Ended"
-        default: return "Support Keir"
+        default: return "Keir"
         }
     }
 
     private var path: String { "/api/keir/app/tickets/\(number)/supervision" }
 
-    private func load() async {
+    func load(_ session: AppSession) async {
         do { state = try await session.get(path); error = nil }
         catch { if !Task.isCancelled { self.error = error.displayMessage } }
     }
 
-    private func send(_ action: SupervisionAction, text: String) async {
+    /// A direction belongs to the worker it was written for. When that worker
+    /// changes or ends, the draft and any unconfirmed direction request go too.
+    func targetChanged() {
+        draft = ""
+        requestIds = requestIds.filter { !$0.key.hasPrefix("\(SupervisionAction.message.rawValue)|") }
+    }
+
+    /// Called in the same frame as the tap: haptic and the in-progress state,
+    /// before the request starts. A second tap while one is in flight is ignored.
+    func begin(_ action: SupervisionAction) -> Bool {
+        guard !busy, sendingAction == nil else { return false }
+        OpsTap.commit()
+        sendingAction = action
+        return true
+    }
+
+    func send(_ action: SupervisionAction, text: String, _ session: AppSession) async {
+        guard !busy else { return }
+        if sendingAction == nil { sendingAction = action }
+        // Every way out of here, including the early ones, clears the in-progress state.
+        defer { sendingAction = nil }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         // A direction names the worker it was written for; with no worker to
         // name there is nobody to send it to.
@@ -140,19 +85,135 @@ struct TicketSupervisionPanel: View {
         if !trimmed.isEmpty { body["text"] = .string(trimmed) }
         if action != .message { body["revision"] = state["revision"] }
         if action == .message { body["workerId"] = .string(target) }
-        busy = true; defer { busy = false; confirming = nil }
+        busy = true; defer { busy = false; confirming = nil; sendingAction = nil }
         do {
             let result = try await session.post(path, body)
             requestIds[key] = nil
             // Sent, or its session just started or ended: nothing typed carries over.
             draft = ""
-            if result["supervision"] != .null { state = result["supervision"] } else { await load() }
+            if result["supervision"] != .null { state = result["supervision"] } else { await load(session) }
             error = nil
         } catch {
             self.error = error.displayMessage
             // A refusal is final for this request: the next attempt is a new one.
-            if let failure = error as? AppFailure, let code = failure.statusCode, (400..<500).contains(code) { requestIds[key] = nil; await load() }
+            if let failure = error as? AppFailure, let code = failure.statusCode, (400..<500).contains(code) { requestIds[key] = nil; await load(session) }
         }
+    }
+}
+
+/// Polls ownership state while the screen is foregrounded.
+struct TicketSupervisionPolling: ViewModifier {
+    @EnvironmentObject private var session: AppSession
+    @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject var model: TicketSupervisionModel
+    func body(content: Content) -> some View {
+        content
+            // Take and hand back never carry the direction draft: it is not on
+            // screen when they are offered.
+            .confirmationDialog(model.confirming?.title ?? "", isPresented: Binding(get: { model.confirming != nil }, set: { if !$0 { model.confirming = nil } }), titleVisibility: .visible) {
+                if let action = model.confirming {
+                    Button(action.title) {
+                        guard model.begin(action) else { return }
+                        Task { await model.send(action, text: "", session) }
+                    }
+                    Button("Cancel", role: .cancel) { model.confirming = nil }
+                }
+            } message: { Text(model.confirming?.detail ?? "") }
+            .onChange(of: model.directionTarget) { _, _ in model.targetChanged() }
+            .task(id: scenePhase == .active) {
+                while scenePhase == .active && !Task.isCancelled {
+                    await model.load(session)
+                    do { try await Task.sleep(for: .seconds(model.supervised ? 8 : 20)) } catch { return }
+                }
+            }
+    }
+}
+
+/// Take over and hand back. Take over is secondary: it never outranks the
+/// ticket's own status and decision.
+struct TicketOwnershipActions: View {
+    @ObservedObject var model: TicketSupervisionModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if !model.state["takeBlockers"].array.isEmpty && !model.supervised {
+                ForEach(Array(model.state["takeBlockers"].array.enumerated()), id: \.offset) { _, blocker in
+                    Label(blocker["text"].string, systemImage: "hand.raised").font(.caption).foregroundStyle(OpsTheme.warn)
+                }
+            }
+            if let action = model.sendingAction, action != .message {
+                // The confirmed write is on its way; the buttons come back if it fails.
+                OpsWorkingLabel(text: action == .take ? "Taking over" : "Handing back", tint: OpsTheme.accent)
+                    .font(.callout.weight(.semibold)).padding(.vertical, 4)
+                    .accessibilityIdentifier("supervision-in-flight")
+            } else {
+            HStack(spacing: 12) {
+                if model.state["canTake"].bool {
+                    Button { model.confirming = .take } label: { Label("Take over", systemImage: "person.badge.key") }
+                        .buttonStyle(.plain).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.accent).padding(.vertical, 4)
+                        .disabled(model.busy).accessibilityIdentifier("supervision-take")
+                }
+                if model.state["canHandback"].bool {
+                    Button { model.confirming = .handback } label: { Label("Hand back", systemImage: "arrow.uturn.backward") }
+                        .buttonStyle(.plain).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.accent).padding(.vertical, 4)
+                        .disabled(model.busy).accessibilityIdentifier("supervision-handback")
+                }
+            }
+            }
+            if let error = model.error {
+                Text(error).font(.caption).foregroundStyle(OpsTheme.warn)
+            }
+        }
+        // A container identifier on a plain stack is copied onto every child
+        // and replaces their own. Make this a container so each control keeps its id.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ticket-supervision")
+    }
+}
+
+/// Directions already sent to the current worker.
+struct TicketDirectionsList: View {
+    @ObservedObject var model: TicketSupervisionModel
+    var body: some View {
+        if !model.directions.isEmpty && model.supervised {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Your directions").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
+                ForEach(Array(model.directions.prefix(3).enumerated()), id: \.offset) { _, direction in
+                    Label(direction["text"].string, systemImage: direction["readAt"] == .null ? "paperplane" : "checkmark")
+                        .font(.caption).lineLimit(3)
+                }
+            }.accessibilityElement(children: .combine).accessibilityIdentifier("supervision-directions")
+        }
+    }
+}
+
+/// Ticket directions use the same pill as chat and stay above the keyboard.
+struct TicketDirectionComposer: View {
+    @EnvironmentObject private var session: AppSession
+    @ObservedObject var model: TicketSupervisionModel
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            KeirComposerPill { EmptyView() } field: {
+                TextField("Message Keir", text: $model.draft, axis: .vertical).lineLimit(1...5)
+                    .padding(.leading, 14)
+                    .accessibilityIdentifier("supervision-direction")
+            } trailing: {
+                Button {
+                    guard model.begin(.message) else { return }
+                    Task { await model.send(.message, text: model.draft, session) }
+                } label: {
+                    if model.sendingAction == .message {
+                        OpsSpinner(tint: OpsTheme.sky, size: 18).frame(width: 44, height: 44)
+                    } else {
+                        KeirComposerIcon(system: "arrow.up", filled: model.canSend)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.canSend)
+                .accessibilityLabel("Send direction")
+            }.padding(.horizontal, 12)
+        }
+        .padding(.top, 6).padding(.bottom, 8)
+        .background(.bar)
     }
 }
 
@@ -161,34 +222,28 @@ enum SupervisionAction: String, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .take: return "Take this ticket from Support Keir"
-        case .handback: return "Hand this ticket back to Support Keir"
+        case .take: return "Take this ticket from the support desk"
+        case .handback: return "Hand this ticket back to the support desk"
         case .message: return "Send direction"
         }
     }
     var detail: String {
         switch self {
-        case .take: return "Support Keir stops and its queued replies are withdrawn. Your personal Keir becomes the only voice on this ticket until you hand it back. Staff claims still win."
-        case .handback: return "Your Keir stops at once and anything it had queued is withdrawn. Support Keir gets its notes and next step."
+        case .take: return "The support desk stops and its queued replies are withdrawn. Keir handles this ticket under your direction until you hand it back. Staff can still claim it."
+        case .handback: return "The takeover session stops and its queued replies are withdrawn. The support desk gets its notes and next step."
         case .message: return ""
         }
     }
 }
 
-/// What the worker is doing, its next step, and its receipts, compactly.
-private struct WorkerSummary: View {
+/// Technical worker detail, shown only under Details: its receipts, withdrawn
+/// replies and last update. Its status and errors are on the main screen.
+struct SupervisedWorkerSummary: View {
     let worker: JSONValue
     let active: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(active ? "Your Keir's worker" : "Last worker").font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
-                OpsStatusBadge(status: OpsStatus.from(worker["state"].string), compact: true)
-            }
-            if !worker["status"].string.isEmpty { Text(OpsText.scrub(worker["status"].string)).font(.callout).textSelection(.enabled) }
-            if !worker["nextAction"].string.isEmpty && worker["nextAction"] != worker["status"] {
-                Text("Next: \(OpsText.scrub(worker["nextAction"].string))").font(.caption).textSelection(.enabled)
-            }
+            SectionLabel(text: active ? "Takeover session" : "Previous takeover")
             ForEach(Array(worker["receipts"].array.prefix(4).enumerated()), id: \.offset) { _, receipt in
                 Label("\(receipt["label"].string) · \(OpsFormat.ago(receipt["at"]))", systemImage: receipt["state"].string == "done" ? "checkmark.circle" : "clock")
                     .font(.caption).foregroundStyle(receipt["state"].string == "done" ? OpsTheme.mint : OpsTheme.warn)
