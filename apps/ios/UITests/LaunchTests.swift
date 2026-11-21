@@ -322,10 +322,10 @@ final class LaunchTests: XCTestCase {
     func testActivityApprovalsPlanAndLiveWork() {
         let app = launch()
         go(app, "Activity")
-        XCTAssertTrue(find(app, "Merge #201").waitForExistence(timeout: 10))
+        XCTAssertTrue(find(app, "Ship fix #201").waitForExistence(timeout: 10))
         capture(app, "Activity with approvals")
         goToFilter(app, "work-filter-working")
-        let task = find(app, "Promote development to production")
+        let task = find(app, "Ship tested changes to the live game")
         XCTAssertTrue(task.waitForExistence(timeout: 10))
         app.swipeUp()
         app.buttons["work-row-abcdef012345"].tap()
@@ -340,9 +340,9 @@ final class LaunchTests: XCTestCase {
         let app = launch()
         go(app, "Ops")
         XCTAssertTrue(find(app, "Voice turns: fast first answer").waitForExistence(timeout: 10))
-        XCTAssertFalse(find(app, "Merge #201 to development", timeout: 1).exists)
+        XCTAssertFalse(find(app, "Ship fix #201 to the test server", timeout: 1).exists)
         capture(app, "Ops briefing")
-        openRow(app, "Health detail")
+        openRow(app, "Server health")
         XCTAssertTrue(app.navigationBars["Health"].waitForExistence(timeout: 10))
         capture(app, "Health detail")
         app.navigationBars.buttons.firstMatch.tap()
@@ -368,7 +368,9 @@ final class LaunchTests: XCTestCase {
     func testOpsShowsHealthAndKeirActivitySeparately() {
         let app = launch()
         go(app, "Ops")
-        XCTAssertTrue(find(app, "One thing is failing").waitForExistence(timeout: 10))
+        // The headline is the Issues count with the worst part named.
+        let headline = app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "^[0-9]+ issues?(, .*)?$")).firstMatch
+        XCTAssertTrue(headline.waitForExistence(timeout: 10))
         XCTAssertTrue(app.otherElements["ops-heartbeat"].exists || find(app, "Keir is working").exists)
         XCTAssertFalse(app.staticTexts["ops-starmer-line"].exists)
     }
@@ -394,8 +396,8 @@ final class LaunchTests: XCTestCase {
         for (row, title, evidence) in [
             ("Scheduler", "Scheduler", "ios-simulator"),
             ("Security", "Security", "fail2ban recidive jail"),
-            ("Pull requests", "Pull requests", "Keir mobile briefing redesign"),
-            ("Worktrees and agents", "Worktrees", "Keir mobile briefing"),
+            ("Code changes", "Pull requests", "Keir mobile briefing redesign"),
+            ("Agent workspaces", "Worktrees", "Keir mobile briefing"),
             ("World simulations", "World sims", "seed-1991"),
             ("Backups and database", "Backups", "2026-10-15"),
             ("Event recovery", "Event recovery", "Receipt store timed out")
@@ -643,7 +645,7 @@ final class LaunchTests: XCTestCase {
         go(app, "Ops"); openRow(app, "Support desk")
         let ticket = find(app, "Budget screen shows zero funding")
         XCTAssertTrue(ticket.waitForExistence(timeout: 10)); ticket.tap()
-        XCTAssertTrue(find(app, "Choose payroll behavior").waitForExistence(timeout: 10))
+        XCTAssertTrue(find(app, "Choose how payroll counts jobs").waitForExistence(timeout: 10))
         XCTAssertTrue(find(app, "Waiting for the owner decision").exists)
         XCTAssertTrue(find(app, "Filed issue #99").exists)
         capture(app, "Ticket blockers and Keir work")
@@ -837,7 +839,7 @@ final class LaunchTests: XCTestCase {
         app.swipeDown()
         capture(app, "OLED Chat top")
         for _ in 0..<3 { app.swipeUp() }
-        XCTAssertTrue(app.otherElements["keir-chat-support-queue"].exists || find(app, "Tickets", timeout: 6).exists)
+        XCTAssertTrue(app.otherElements["keir-chat-support-queue"].exists || find(app, "in this answer", timeout: 6).exists)
         capture(app, "OLED Chat bottom")
 
         go(app, "Ops")
@@ -921,7 +923,12 @@ final class LaunchTests: XCTestCase {
         let approve = app.buttons["decision-approve"]
         XCTAssertTrue(approve.exists)
         XCTAssertFalse(approve.isEnabled)
-        capturePage("Inbox all")
+        // Top, middle (Unanswered, Stalled, the long queued title) and bottom.
+        capture(app, "\(theme) Inbox all top")
+        for _ in 0..<2 { app.swipeUp() }
+        capture(app, "\(theme) Inbox all middle")
+        for _ in 0..<4 { app.swipeUp() }
+        capture(app, "\(theme) Inbox all bottom")
         let search = app.searchFields.firstMatch
         for _ in 0..<6 where !search.isHittable { app.swipeDown() }
         XCTAssertTrue(search.isHittable)
@@ -935,6 +942,14 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(blocked.waitForExistence(timeout: 10))
         blocked.tap()
         capturePage("Inbox blocked", scrolls: 3)
+        // Neighbouring chips stay in view because the selected one is
+        // scrolled to the middle: Stalled, then Unanswered, then back.
+        goToFilter(app, "work-filter-stalled")
+        for _ in 0..<3 { app.swipeDown() }
+        capture(app, "\(theme) Inbox stalled top")
+        goToFilter(app, "work-filter-unanswered")
+        for _ in 0..<3 { app.swipeDown() }
+        capture(app, "\(theme) Inbox unanswered top")
         goToFilter(app, "work-filter-stalled")
         openRow(app, "Massive drop in revenue turn 77-78", swipes: 6)
         XCTAssertTrue(find(app, "Massive drop in revenue turn").waitForExistence(timeout: 10))
@@ -952,12 +967,15 @@ final class LaunchTests: XCTestCase {
         openRow(app, "Support desk")
         openRow(app, "Budget screen shows zero funding")
         XCTAssertTrue(find(app, "Budget screen shows zero funding").waitForExistence(timeout: 10))
-        XCTAssertTrue(find(app, "Choose payroll behavior").exists)
+        XCTAssertTrue(find(app, "Should payroll pay for funded positions").waitForExistence(timeout: 10))
         capture(app, "\(theme) Ticket 1001 top")
-        let capacity = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "ticket-decision-1", "Capacity")).firstMatch
-        XCTAssertTrue(reveal(app, capacity, swipes: 3), "The capacity choice is available inside the ticket")
-        let filled = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label == %@", "ticket-decision-2", "Filled jobs")).firstMatch
-        XCTAssertTrue(filled.exists, "The filled-jobs choice appears next to capacity")
+        let funded = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label BEGINSWITH %@", "ticket-decision-1", "Pay funded positions")).firstMatch
+        XCTAssertTrue(reveal(app, funded, swipes: 3), "The funded-positions choice is available inside the ticket")
+        let filled = app.buttons.matching(NSPredicate(format: "identifier == %@ OR label BEGINSWITH %@", "ticket-decision-2", "Pay filled jobs only")).firstMatch
+        XCTAssertTrue(filled.exists, "The filled-jobs choice appears next to funded positions")
+        if !filled.isHittable { app.swipeUp() }
+        XCTAssertTrue(find(app, "matching what the treasury actually pays", timeout: 3).exists, "Each option states its effect")
+        capture(app, "\(theme) Ticket 1001 decision")
         for _ in 0..<6 { app.swipeUp() }
         capture(app, "\(theme) Ticket 1001 bottom")
         let take = app.buttons["supervision-take"]

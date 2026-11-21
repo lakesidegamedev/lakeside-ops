@@ -25,7 +25,7 @@ struct OpsHub: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 20) {
+            LazyVStack(alignment: .leading, spacing: 14) {
                 header
                 summary
                 if !issues.isEmpty || ops.redPRs > 0 { failing }
@@ -47,75 +47,82 @@ struct OpsHub: View {
         // Re-read every 30 seconds so "Updated 1m ago" and a stall are honest
         // even when no refresh lands.
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
-            // System health and Keir's own state share one card: the answer to
-            // "is anything broken, and is Keir on it" in a single glance.
-            OpsCard(spacing: 12) {
-                Button {
-                    if ops.redPRs > 0 { router.activityFilter = "failing"; router.tab = .activity }
-                } label: {
-                    HStack(spacing: 12) {
-                        OpsGlyph(icon: overviewIcon, tone: overviewTone, size: 40)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(headline).font(.system(.title3, design: .rounded).weight(.bold))
-                                .foregroundStyle(OpsTheme.ink)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .accessibilityAddTraits(.isHeader)
-                            // Name what is wrong, so the headline is never a
-                            // count with nothing behind it.
-                            if !overviewDetail.isEmpty {
-                                Text(overviewDetail).font(.caption).foregroundStyle(OpsTheme.muted)
-                                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            // The health card answers "is anything broken"; Keir's own state
+            // is a neutral line under it, so a healthy signal never sits
+            // inside an alarm.
+            VStack(alignment: .leading, spacing: 10) {
+                OpsCard(padding: 14, spacing: 0) {
+                    Button {
+                        if ops.redPRs > 0 { router.activityFilter = "failing"; router.tab = .activity }
+                    } label: {
+                        HStack(spacing: 12) {
+                            OpsGlyph(icon: overviewIcon, tone: overviewTone, size: 38)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(headline).font(.system(.title3, design: .rounded).weight(.bold))
+                                    .foregroundStyle(OpsTheme.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .accessibilityAddTraits(.isHeader)
+                                // Name what is wrong, most severe first, so the
+                                // headline is never a count with nothing behind it.
+                                if !overviewDetail.isEmpty {
+                                    Text(overviewDetail).font(.caption).foregroundStyle(OpsTheme.muted)
+                                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                                }
                             }
-                        }
-                        Spacer(minLength: 0)
-                        if ops.redPRs > 0 {
-                            Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
-                        }
-                    }.contentShape(Rectangle())
+                            Spacer(minLength: 0)
+                            if ops.redPRs > 0 {
+                                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
+                            }
+                        }.contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .allowsHitTesting(ops.redPRs > 0)
                 }
-                .buttonStyle(.plain)
-                .allowsHitTesting(ops.redPRs > 0)
-                Rectangle().fill(OpsTheme.hairline).frame(height: 1)
+                .opsLeadingStripe(overviewTone)
                 OpsHealthLine(status: keirStatus(timeline.date), headline: keirHeadline(timeline.date), detail: ops.heartbeatSentence(now: timeline.date))
+                    .padding(.horizontal, 4)
                     .accessibilityIdentifier("ops-heartbeat")
-            }
-            .overlay {
-                // A status stripe on the card edge carries the overall colour.
-                HStack(spacing: 0) {
-                    Rectangle().fill(overviewTone).frame(width: 4)
-                    Spacer(minLength: 0)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
             }
         }
     }
 
+    /// Every issue the Issues list shows, counted the same way, so the
+    /// headline and the list can never disagree.
+    private var issueCount: Int { ops.failingPRs.count + issues.count }
+
     private var overviewDetail: String {
         let prNames: [String] = ops.failingPRs.map { (pr: JSONValue) -> String in
-            pr["title"].string.nonempty ?? "Pull request #" + pr["number"].string
+            pr["title"].string.nonempty ?? "Change #" + pr["number"].string
         }
-        let serviceNames: [String] = issues
-            .filter { (service: JSONValue) -> Bool in ["Failing", "Degraded"].contains(ops.serviceState(service)) }
+        let failingServices: [String] = issues
+            .filter { (service: JSONValue) -> Bool in ops.serviceState(service) == "Failing" }
             .map { (service: JSONValue) -> String in service["name"].string.nonempty ?? "A service" }
-        let failingNames = prNames + serviceNames
+        let degradedServices: [String] = issues
+            .filter { (service: JSONValue) -> Bool in ops.serviceState(service) == "Degraded" }
+            .map { (service: JSONValue) -> String in service["name"].string.nonempty ?? "A service" }
+        let staleServices: [String] = issues
+            .filter { (service: JSONValue) -> Bool in ops.serviceState(service) == "Stale" }
+            .map { (service: JSONValue) -> String in service["name"].string.nonempty ?? "A service" }
+        func list(_ names: [String]) -> String {
+            names.prefix(2).joined(separator: ", ") + (names.count > 2 ? " and \(names.count - 2) more" : "")
+        }
         var parts: [String] = []
-        if !failingNames.isEmpty { parts.append(failingNames.prefix(2).joined(separator: ", ") + (failingNames.count > 2 ? " and \(failingNames.count - 2) more" : "")) }
-        let stale = issues.filter { ops.serviceState($0) == "Stale" }.count
-        if stale > 0 { parts.append(stale == 1 ? "1 service has not been checked in over a day" : "\(stale) services have not been checked in over a day") }
+        let failing = prNames + failingServices
+        if !failing.isEmpty { parts.append("Failing: " + list(failing)) }
+        if !degradedServices.isEmpty { parts.append("Slow or partly down: " + list(degradedServices)) }
+        if !staleServices.isEmpty { parts.append("Not checked in over a day: " + list(staleServices)) }
         return parts.joined(separator: ". ")
     }
 
     private var overviewTone: Color {
-        if broken > 0 { return OpsTheme.danger }
-        return degraded > 0 ? OpsTheme.warning : OpsTheme.accent
+        if broken > 0 { return OpsWorkState.failing.color }
+        return degraded > 0 || issueCount > 0 ? OpsTheme.caution : OpsTheme.mint
     }
 
     private var overviewIcon: String {
-        if broken > 0 { return "xmark.circle.fill" }
-        if degraded > 0 { return "exclamationmark.triangle.fill" }
-        return "waveform.path.ecg"
+        if broken > 0 { return OpsWorkState.failing.glyph }
+        if degraded > 0 || issueCount > 0 { return "exclamationmark.triangle.fill" }
+        return "checkmark.circle.fill"
     }
 
     private var summary: some View {
@@ -123,33 +130,29 @@ struct OpsHub: View {
         // number here always matches the chip it opens.
         let columns = textSize.isAccessibilitySize ? 1 : 3
         return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
-            Button { router.activityFilter = "needs-you"; router.tab = .activity } label: {
-                OpsSummaryTile(title: "Needs you", count: attention.count, icon: "hand.raised.fill", tone: OpsTheme.warning)
-            }.accessibilityIdentifier("ops-review-attention")
-            Button { router.activityFilter = "unanswered"; router.tab = .activity } label: {
-                OpsSummaryTile(title: "Unanswered", count: ops.queueCount("unanswered"), icon: "bubble.left.and.exclamationmark.bubble.right.fill", tone: OpsTheme.warning)
-            }
-            Button { router.activityFilter = "stalled"; router.tab = .activity } label: {
-                OpsSummaryTile(title: "Stalled", count: ops.queueCount("stalled"), icon: "xmark.octagon.fill", tone: OpsTheme.danger)
-            }
-            Button { router.activityFilter = "stuck"; router.tab = .activity } label: {
-                OpsSummaryTile(title: "Blocked", count: blockedWork, icon: "lock.fill", tone: OpsTheme.blocked)
-            }
-            Button { router.activityFilter = "failing"; router.tab = .activity } label: {
-                OpsSummaryTile(title: "Failing checks", count: ops.redPRs, icon: "xmark.circle.fill", tone: OpsTheme.danger)
-            }
-            Button { router.activityFilter = "working"; router.tab = .activity } label: {
-                OpsSummaryTile(title: "Running", count: ops.queueCount("working"), icon: "gearshape.2.fill", tone: OpsTheme.mint)
-            }
+            tile(.needsYou, count: attention.count).accessibilityIdentifier("ops-review-attention")
+            tile(.unanswered, count: ops.queueCount("unanswered"))
+            tile(.stalled, count: ops.queueCount("stalled"))
+            tile(.blocked, count: blockedWork)
+            tile(.failing, count: ops.redPRs)
+            tile(.running, count: ops.queueCount("working"))
         }.buttonStyle(.plain)
     }
 
     private var headline: String {
         if case .unreachable = ops.heartbeat() { return "Ops is unreachable" }
-        if broken > 0 { return broken == 1 ? "One thing is failing" : "\(broken) things are failing" }
-        if degraded > 0 { return degraded == 1 ? "One service is degraded" : "\(degraded) services are degraded" }
-        if issues.contains(where: { ops.serviceState($0) == "Stale" }) { return "Some checks are out of date" }
-        return "Nothing is failing"
+        // The same number as the Issues list below, with the worst part named.
+        guard issueCount > 0 else { return "Nothing is failing" }
+        let count = issueCount == 1 ? "1 issue" : "\(issueCount) issues"
+        if broken > 0 { return count + ", \(broken) failing" }
+        if degraded > 0 { return count + ", \(degraded) slow" }
+        return count
+    }
+
+    private func tile(_ state: OpsWorkState, count: Int) -> some View {
+        Button { router.activityFilter = state.filter; router.tab = .activity } label: {
+            OpsSummaryTile(state: state, count: count)
+        }
     }
 
     /// Keir's state, only claimed as running while the activity read is fresh.
@@ -188,7 +191,7 @@ struct OpsHub: View {
                 ForEach(Array(ops.failingPRs.enumerated()), id: \.element["number"].string) { index, pr in
                     if index > 0 { OpsGroupDivider() }
                     Button { router.activityFilter = "failing"; router.tab = .activity } label: {
-                        OpsQueueRow(title: pr["title"].string.nonempty ?? "Pull request #\(pr["number"].string)", detail: "Checks failing on pull request #\(pr["number"].string)", status: .failed, icon: "xmark.circle.fill")
+                        OpsQueueRow(title: pr["title"].string.nonempty ?? "Change #\(pr["number"].string)", detail: "Tests failing on fix #\(pr["number"].string), so it cannot ship yet", status: .failed, icon: OpsWorkState.failing.glyph)
                     }
                 }
                 ForEach(Array(issues.enumerated()), id: \.element["id"].string) { index, service in
@@ -197,7 +200,7 @@ struct OpsHub: View {
                     let status: OpsStatus = state == "Failing" ? .failed : state == "Degraded" ? .blocked : .idle
                     NavigationLink { HealthView() } label: {
                         let checked = OpsFormat.date(service["lastChecked"]).map(OpsFormat.contextual)
-                        OpsQueueRow(title: service["name"].string.nonempty ?? "Service", detail: [state == "Stale" ? "No recent check" : state, checked.map { "last checked " + $0 }].compactMap { $0 }.joined(separator: ", "), status: status, icon: state == "Stale" ? "clock.badge.questionmark" : status.icon, tint: ["Stale", "Degraded"].contains(state) ? OpsTheme.warning : nil)
+                        OpsQueueRow(title: service["name"].string.nonempty ?? "Service", detail: [state == "Stale" ? "No recent check" : state == "Degraded" ? "Slow or partly down" : state, checked.map { "last checked " + $0 }].compactMap { $0 }.joined(separator: ", "), status: status, icon: state == "Stale" ? "clock.badge.questionmark" : state == "Degraded" ? "exclamationmark.triangle.fill" : status.icon, tint: ["Stale", "Degraded"].contains(state) ? OpsTheme.caution : nil)
                     }
                 }
                 if issues.contains(where: { ops.serviceState($0) == "Stale" }) {
@@ -222,19 +225,19 @@ struct OpsHub: View {
             SectionLabel(text: "Queues")
             OpsGroup {
                 NavigationLink { WorkView(lane: .now) } label: {
-                    OpsQueueRow(title: "Studio work in progress", detail: nowWork == 0 ? "Nothing in progress" : nowWork == 1 ? "1 item being worked on" : "\(nowWork) items being worked on", status: nowWork > 0 ? .running : .idle, icon: "rectangle.split.3x1", value: nowWork > 0 ? "\(nowWork)" : nil)
+                    OpsQueueRow(title: "Studio work in progress", detail: "Studio board items being built now", status: nowWork > 0 ? .running : .idle, icon: "rectangle.split.3x1", value: "\(nowWork)")
                 }
                 OpsGroupDivider()
                 NavigationLink { WorkView(lane: .next) } label: {
-                    OpsQueueRow(title: "Next", detail: nextWork == 0 ? "Nothing queued" : nextWork == 1 ? "1 item queued" : "\(nextWork) items queued", status: nextWork > 0 ? .queued : .idle, icon: "text.line.first.and.arrowtriangle.forward", value: nextWork > 0 ? "\(nextWork)" : nil)
+                    OpsQueueRow(title: "Up next", detail: "Studio board items waiting to start", status: nextWork > 0 ? .queued : .idle, icon: "text.line.first.and.arrowtriangle.forward", value: "\(nextWork)")
                 }
                 OpsGroupDivider()
                 NavigationLink { DeskView() } label: {
-                    OpsQueueRow(title: "Support desk", detail: openTickets == 1 ? "1 open ticket" : openTickets == 0 ? "No open tickets" : "\(openTickets) open tickets", status: openTickets > 0 ? .queued : .idle, icon: "tray.full", value: openTickets > 0 ? "\(openTickets)" : nil)
+                    OpsQueueRow(title: "Support desk", detail: "Open player tickets Keir is handling", status: openTickets > 0 ? .queued : .idle, icon: "tray.full", value: "\(openTickets)")
                 }
                 OpsGroupDivider()
                 NavigationLink { HealthView() } label: {
-                    OpsQueueRow(title: "Health detail", detail: "Host, activity and alerts", status: broken > 0 ? .failed : .idle, icon: "waveform.path.ecg", tint: broken > 0 ? nil : OpsTheme.mint)
+                    OpsQueueRow(title: "Server health", detail: "Server load, Keir's activity and alerts", status: broken > 0 ? .failed : .idle, icon: "waveform.path.ecg", tint: broken > 0 ? nil : OpsTheme.mint)
                 }
             }
         }
@@ -252,15 +255,15 @@ struct OpsHub: View {
                 }
                 OpsGroupDivider()
                 NavigationLink { SecurityView() } label: {
-                    OpsQueueRow(title: "Security", detail: "Host posture and findings", status: .queued, icon: "lock.shield")
+                    OpsQueueRow(title: "Security", detail: "Server security scans and what they found", status: .queued, icon: "lock.shield")
                 }
                 OpsGroupDivider()
                 NavigationLink { PullRequestsView() } label: {
-                    OpsQueueRow(title: "Pull requests", detail: prDetail, status: ops.redPRs > 0 ? .failed : .queued, icon: "arrow.triangle.pull")
+                    OpsQueueRow(title: "Code changes", detail: prDetail, status: ops.redPRs > 0 ? .failed : .queued, icon: "arrow.triangle.pull")
                 }
                 OpsGroupDivider()
                 NavigationLink { WorktreesView() } label: {
-                    OpsQueueRow(title: "Worktrees and agents", detail: "Live sessions and checkouts", status: .queued, icon: "point.topleft.down.to.point.bottomright.curvepath", tint: OpsTheme.mint)
+                    OpsQueueRow(title: "Agent workspaces", detail: "Coding agents working on the server now", status: .queued, icon: "point.topleft.down.to.point.bottomright.curvepath", tint: OpsTheme.mint)
                 }
                 OpsGroupDivider()
                 NavigationLink { WorldSimsView() } label: {
@@ -268,11 +271,11 @@ struct OpsHub: View {
                 }
                 OpsGroupDivider()
                 NavigationLink { BackupsView() } label: {
-                    OpsQueueRow(title: "Backups and database", detail: "Recency, size and collections", status: .queued, icon: "externaldrive", tint: OpsTheme.mint)
+                    OpsQueueRow(title: "Backups and database", detail: "When the game data was last saved, and its size", status: .queued, icon: "externaldrive", tint: OpsTheme.mint)
                 }
                 OpsGroupDivider()
                 NavigationLink { EventsView() } label: {
-                    OpsQueueRow(title: "Event recovery", detail: "Failed deliveries waiting for replay", status: .queued, icon: "arrow.clockwise.circle")
+                    OpsQueueRow(title: "Event recovery", detail: "Game events that failed to arrive and can be resent", status: .queued, icon: "arrow.clockwise.circle")
                 }
             }
         }
@@ -283,14 +286,14 @@ struct OpsHub: View {
         let checks = ops.scheduler["checks"].array
         let runningChecks = checks.filter { $0["state"].string == "running" }.count
         let queuedChecks = checks.filter { $0["state"].string == "queued" }.count
-        if runningChecks == 0 && queuedChecks == 0 { return "No checks running or queued" }
-        return "Checks: \(runningChecks) running, \(queuedChecks) queued"
+        if runningChecks == 0 && queuedChecks == 0 { return "No test runs running or waiting" }
+        return "Test runs: \(runningChecks) running, \(queuedChecks) waiting their turn"
     }
     private var prDetail: String {
         let open = Int(ops.kpis["prsOpen"].number ?? 0)
         let red = ops.redPRs
-        let openText = open == 1 ? "1 open" : "\(open) open"
-        return red == 0 ? openText : openText + ", \(red) with failing checks"
+        let openText = open == 1 ? "1 waiting to ship" : "\(open) waiting to ship"
+        return red == 0 ? openText : openText + ", \(red) with failing tests"
     }
     private var schedulerStatus: OpsStatus {
         if ops.scheduler == .null { return .idle }
@@ -354,35 +357,39 @@ struct KeirMore: View {
     }
 }
 
+/// One count from the status system. Problem states that are non-zero get a
+/// tinted, bordered tile; everything else (Running, or a zero) stays on the
+/// neutral surface with only its number coloured, so the eye lands on
+/// problems first.
 private struct OpsSummaryTile: View {
-    let title: String
+    let state: OpsWorkState
     let count: Int
-    let icon: String
-    let tone: Color
 
     private var live: Bool { count > 0 }
+    private var alarm: Bool { live && state.isProblem }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                OpsGlyph(icon: icon, tone: live ? tone : OpsTheme.neutral, size: 26)
-                Text(count.formatted()).font(.system(.title2, design: .rounded).weight(.bold).monospacedDigit())
-                    .foregroundStyle(live ? tone : OpsTheme.muted)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 7) {
+                Image(systemName: state.glyph).font(.subheadline.weight(.semibold))
+                    .foregroundStyle(live ? state.color : OpsTheme.muted.opacity(0.7)).accessibilityHidden(true)
+                Text(count.formatted()).font(.system(.title3, design: .rounded).weight(.bold).monospacedDigit())
+                    .foregroundStyle(live ? state.color : OpsTheme.muted)
                     .lineLimit(1).minimumScaleFactor(0.6)
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted).accessibilityHidden(true)
             }
-            Text(title).font(.opsCaption.weight(.semibold)).foregroundStyle(live ? OpsTheme.ink : OpsTheme.muted)
-                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Text(state.title).font(.caption.weight(.semibold)).foregroundStyle(live ? OpsTheme.ink : OpsTheme.muted)
+                .lineLimit(1).minimumScaleFactor(0.85)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
-        .background(live ? tone.opacity(0.07) : .clear, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .opsSurface(radius: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(live ? tone.opacity(0.35) : .clear))
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(alarm ? state.color.opacity(0.08) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .opsSurface(radius: 14)
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(alarm ? state.color.opacity(0.4) : .clear))
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(count)")
+        .accessibilityLabel("\(state.title), \(count)")
     }
 }
 
@@ -395,7 +402,7 @@ struct OpsQueueRow: View {
     var value: String? = nil
     /// Overrides the status colour for the icon tile only.
     var tint: Color? = nil
-    var verticalPadding: CGFloat = 9
+    var verticalPadding: CGFloat = 7
 
     var body: some View {
         HStack(spacing: 12) {

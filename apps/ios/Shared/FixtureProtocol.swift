@@ -110,7 +110,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             }
             return controlValue
         }
-        var decisions: [[String: Any]] = [["id": "abcdefabcdef", "jobId": "abcdef012345", "question": "Merge PR #201 into development? Checks are green.", "tldr": "Merge #201 to development", "at": 1792020000000, "ticket": NSNull(), "signoff": false]]
+        var decisions: [[String: Any]] = [["id": "abcdefabcdef", "jobId": "abcdef012345", "question": "Ship fix #201 to the test server? It makes voice turns answer faster. Checks are green.", "tldr": "Ship fix #201 to the test server", "at": 1792020000000, "ticket": NSNull(), "signoff": false]]
         func thread(after: Int) -> [String: Any] {
             lock.lock(); defer { lock.unlock() }
             var view: [String: Any] = ["cursor": messages.count, "version": "v\(messages.count)-\(choiceState)", "messages": messages.filter { ($0["seq"] as? Int ?? 0) > after }, "tasks": [] as [Any], "working": false]
@@ -124,7 +124,7 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
                 let now = Date().timeIntervalSince1970 * 1000
                 let ask: [String: Any] = ["seq": 3, "id": "review-ask", "role": "owner", "text": "What needs my attention?", "at": now]
                 let answer: [String: Any] = ["seq": 4, "id": "review-answer", "role": "keir", "at": now,
-                    "text": "I reviewed the open tickets. I need your payroll decision before I can finish the funding investigation.\n\n- **#1001** I confirmed the payroll calculation and saved the evidence with the ticket. The choice is whether to use funded positions or filled jobs.\n- **#1868** The revenue investigation stopped before it finished. I saved the last result so the investigation can resume without repeating the same checks.\n\nThe latest reply is in Discord. I’ll check the next settled turn for changes to the player’s result.",
+                    "text": "I reviewed the open tickets. I need your payroll decision before I can finish the funding investigation.\n\n- **#1001** I confirmed the payroll calculation and saved the evidence with the ticket. The choice is whether to **pay funded positions** or **pay filled jobs only**. I recommend paying filled jobs only, because that matches what the treasury actually pays.\n- **#1868** The revenue investigation stopped before it finished. I saved the last result so the investigation can resume without repeating the same checks.\n\nThe latest reply is in Discord. I’ll check the next settled turn for changes to the player’s result.",
                     "queueCard": ["checkedAt": now, "items": [
                         ["number": 1001, "title": "Budget screen shows zero funding", "ownerDecisionPending": true],
                         ["number": 1868, "title": "Massive drop in revenue turn 77-78", "work": "stalled"],
@@ -473,15 +473,16 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
             value = [
                 "current": ["id": "ticket-task", "state": "blocked", "summary": "Checked the payroll rules.", "status": "I checked the payroll allocation rules and found where the funding total is calculated."],
                 "decisions": [["id": "abcdef123456", "kind": "choice", "type": "choice", "state": "pending",
-                               "tldr": "Choose payroll behavior", "question": "Capacity or filled jobs?",
-                               "options": [["id": "1", "label": "Capacity"], ["id": "2", "label": "Filled jobs"]]]],
+                               "tldr": "Choose how payroll counts jobs", "question": "Should payroll pay for funded positions, or only for filled jobs?",
+                               "options": [["id": "1", "label": "Pay funded positions", "detail": "Budgets show full payroll for every position, even vacant ones."],
+                                           ["id": "2", "label": "Pay filled jobs only", "detail": "Budgets drop for vacant positions, matching what the treasury actually pays.", "recommended": true]]]],
                 "history": [
                     ["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code", "at": twoHoursAgo],
                     ["id": "reply-payroll", "kind": "Player reply", "text": "I checked how the budget screen totals spending. I’ll follow up once the payroll calculation is settled.",
                      "at": twoHoursAgo + 120000, "url": "https://discord.com/channels/100/200/301"],
                 ],
             ]
-        case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose payroll behavior", "detail": "Capacity or filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
+        case "/api/keir/app/tickets/1564", "/api/keir/app/tickets/1001", "/api/keir/app/tickets/1575", "/api/keir/app/tickets/1651": value = ["current": ["id": "ticket-task", "state": "blocked", "summary": "Payroll code read; no duplicate charge found", "status": "Ticket 1001: Ticket 1001 remains open. Waiting for the owner decision. Was: Ticket 1001 remains open."], "blockers": [["kind": "decision", "title": "Choose how payroll counts jobs", "detail": "Should payroll pay for funded positions, or only for filled jobs?"]], "history": [["id": "history-1", "kind": "checkpoint", "text": "Read the payroll allocation code"]], "receipts": [["key": "issue:1", "label": "Filed issue #99", "state": "done"]]]
         case "/api/keir/app/tickets/1868/supervision", "/api/keir/app/tickets/1564/supervision", "/api/keir/app/tickets/1001/supervision", "/api/keir/app/tickets/1575/supervision", "/api/keir/app/tickets/1651/supervision":
             (value, status) = Self.supervision.route(url.path, method: request.httpMethod ?? "GET", body: bodyObject() ?? [:])
         case "/api/keir/app/controls": value = Self.keir.controls(bodyObject())
@@ -683,7 +684,7 @@ enum MuseFixtures {
         case "/goals/g00000000001": return goal("g00000000001", "Median turn time under 60 seconds", progress: 0.5, working: true)
         case "/goals/g00000000002": return goal("g00000000002", "Every bug ticket answered within 2 hours", progress: 0, working: true)
         case "/approvals":
-            let a: [String: Any] = ["id": "abcdefabcdef", "question": "Merge PR #201 into development? Checks are green.", "tldr": "Merge #201 to development", "at": 1792020000000.0, "signoff": false,
+            let a: [String: Any] = ["id": "abcdefabcdef", "question": "Ship fix #201 to the test server? It makes voice turns answer faster. Checks are green.", "tldr": "Ship fix #201 to the test server", "at": 1792020000000.0, "signoff": false,
                 "taskTitle": "Promote development to production", "action": ["kind": "github", "summary": "merge #201"]]
             return ["approvals": [a]]
         case "/upcoming":
@@ -741,7 +742,7 @@ enum KeirAgentFixtures {
         case "/api/keir/app/work":
             let now = Date().timeIntervalSince1970 * 1000
             let timing: [String: Any] = ["state": "waiting", "reason": "Waiting for the staging checks.", "next": "Read the check result and promote the tested head.", "milestone": "Staging checks pass", "nextCheckAt": now + 120000, "reviewAt": now + 600000, "since": now - 300000, "overdue": false, "etaLabel": "Completion time not established"]
-            let stuck: [String: Any] = ["state": "stuck", "reason": "A completed action needs its receipt verified.", "next": "Inspect the saved result before retrying.", "since": now - 7200000, "reviewAt": now - 3600000, "overdue": true, "etaLabel": "Completion time not established"]
+            let stuck: [String: Any] = ["state": "stuck", "reason": "A release step finished but Keir has no proof it worked.", "next": "Check the saved result on the ticket, then ask Keir to retry.", "since": now - 7200000, "reviewAt": now - 3600000, "overdue": true, "etaLabel": "Completion time not established"]
             if ProcessInfo.processInfo.arguments.contains("--uitest-eight-screens") {
                 let abort: [String: Any] = ["state": "stuck", "reason": "activation aborted: no result before the 15-minute turn limit",
                                             "since": now - 3600000, "overdue": true]
@@ -756,17 +757,21 @@ enum KeirAgentFixtures {
                     guard ticket["number"] as? Int == 1001 else { return ticket }
                     var held = ticket
                     held["decisionPending"] = true
-                    held["timing"] = ["state": "needs-you", "reason": "Choose payroll behavior"]
+                    held["timing"] = ["state": "needs-you", "reason": "Choose how payroll counts jobs"]
                     return held
                 }
                 let blocked: [String: Any] = ["number": 1502, "title": "Verify an interrupted action", "status": "open", "timing": stuck,
                                               "createdAt": now - 36 * 86400000, "replyState": ["state": "no_receipt"]]
-                let held: [String: Any] = ["number": 1503, "title": "Verify the release gate", "status": "open", "timing": stuck]
-                return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue, blocked, held]]
+                let held: [String: Any] = ["number": 1503, "title": "Confirm the release reached players", "status": "open", "timing": stuck]
+                // A long title waiting its turn, to stress the dense rows.
+                let long: [String: Any] = ["number": 1504, "status": "open", "category": "bug", "createdAt": now - 3 * 86400000,
+                                           "title": "Election results page shows the wrong winner for three provinces after the recount in turn 81",
+                                           "timing": ["state": "queued", "reason": "Waiting for Keir to finish the tickets ahead of it.", "since": now - 3 * 86400000]]
+                return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": sample + [revenue, blocked, held, long]]
             }
             return ["at": now, "source": ["enabled": true, "at": now, "complete": true], "tickets": (OpsFixtures.hub()["tickets"] as? [[String: Any]] ?? []) + [["number": 1501, "title": "Bond coupon ledger", "status": "open", "category": "bug", "timing": timing], ["number": 1502, "title": "Verify an interrupted action", "status": "open", "category": "bug", "timing": stuck]]]
         case "/api/keir/app/tasks":
-            let running: [String: Any] = ["id": "abcdef012345", "kind": "command", "state": "running", "title": "Promote development to production", "surface": "app", "receipts": 2, "decisionPending": false, "updatedAt": Date().timeIntervalSince1970 * 1000, "at": 1792019000000.0]
+            let running: [String: Any] = ["id": "abcdef012345", "kind": "command", "state": "running", "title": "Ship tested changes to the live game", "surface": "app", "receipts": 2, "decisionPending": false, "updatedAt": Date().timeIntervalSince1970 * 1000, "at": 1792019000000.0]
             let done: [String: Any] = ["id": "fedcba543210", "kind": "conversation", "state": "done", "title": "How did the last turn go?", "surface": "app", "receipts": 0, "decisionPending": false, "updatedAt": 1792018000000.0, "at": 1792018000000.0]
             return ["tasks": [running, done]]
         case "/api/keir/app/tasks/abcdef012345":

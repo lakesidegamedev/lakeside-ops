@@ -22,7 +22,7 @@ enum KeirGameState: String, Equatable {
         case .partial: return "Partly live"
         case .unavailable: return "Unavailable"
         case .unsupported: return "Not supported"
-        case .available: return "Not read yet"
+        case .available: return "Tap to check"
         }
     }
     var icon: String {
@@ -37,7 +37,7 @@ enum KeirGameState: String, Equatable {
     var color: Color {
         switch self {
         case .live: return OpsTheme.mint
-        case .partial, .unavailable: return OpsTheme.warn
+        case .partial, .unavailable: return OpsTheme.caution
         case .unsupported, .available: return OpsTheme.muted
         }
     }
@@ -269,22 +269,22 @@ struct KeirGamesSheet: View {
                             OpsGlyph(icon: gameIcon(game), tone: game.state == .unsupported ? OpsTheme.neutral : OpsTheme.accent)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(game.name).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
-                                Text(gameSummary(game)).font(.opsCaption).foregroundStyle(OpsTheme.muted).lineLimit(1)
+                                Text(gameSummary(game)).font(.opsCaption).foregroundStyle(OpsTheme.muted).lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer(minLength: 8)
-                            // The state of each game at a glance; the one being
-                            // shown below is marked instead of a chevron, since a
-                            // tap switches the detail rather than opening a page.
-                            if model.selected == game.id {
-                                Text("Showing").font(.opsCaption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
-                                    .padding(.horizontal, 8).padding(.vertical, 4)
-                                    .background(OpsTheme.accent.opacity(0.12), in: Capsule())
-                            } else {
-                                HStack(spacing: 5) {
-                                    Circle().fill(game.state.color).frame(width: 7, height: 7)
-                                    Text(game.state.title).font(.opsCaption).foregroundStyle(OpsTheme.muted)
-                                }.accessibilityHidden(true)
-                            }
+                            // Every row shows its game's state, then a checkmark on
+                            // the game shown below or a chevron on the others, so
+                            // each row reads as something to tap.
+                            HStack(spacing: 5) {
+                                Circle().fill(game.state.color).frame(width: 7, height: 7)
+                                Text(game.state.title).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+                            }.accessibilityHidden(true)
+                            Image(systemName: model.selected == game.id ? "checkmark" : "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(model.selected == game.id ? OpsTheme.accent : OpsTheme.muted)
+                                .frame(width: 14)
+                                .accessibilityHidden(true)
                         }.contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -302,7 +302,7 @@ struct KeirGamesSheet: View {
         if game.state == .unsupported { return game.note }
         switch game.id {
         case "ahd": return "Turns and engine health"
-        case "metroforge": return "Services, releases and city bundles"
+        case "metroforge": return "Services, releases, cities"
         default: return "Services and releases"
         }
     }
@@ -328,9 +328,16 @@ struct KeirGamesSheet: View {
             }
         } header: { SectionLabel(text: game.name) } footer: {
             // What Keir does not read is a fact about the connection, not a
-            // state to act on, so it is one footnote instead of two panels.
-            let limits = scopeNote(game)
-            if !limits.isEmpty { Text(limits).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+            // state to act on: a short structured footnote, one line each.
+            VStack(alignment: .leading, spacing: 4) {
+                if let tickets = scopeTickets(game) { Text(tickets).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+                if !model.reading, !model.detailFailed, !game.withheld.isEmpty {
+                    Text("Not read by Keir").font(.opsCaption.weight(.semibold)).foregroundStyle(OpsTheme.muted)
+                    ForEach(game.withheld, id: \.self) { item in
+                        OpsIconLine(text: item, icon: "lock.fill", color: OpsTheme.muted, font: .opsCaption)
+                    }
+                }
+            }
         }
         .listRowBackground(OpsTheme.surface)
         let topics = KeirGameDraft.topics(for: game)
@@ -360,15 +367,9 @@ struct KeirGamesSheet: View {
         }
     }
 
-    private func scopeNote(_ game: KeirGame) -> String {
-        var parts: [String] = []
-        if let tickets = game.tickets {
-            parts.append(tickets.state == .available ? "Tickets arrive through the Inbox." : tickets.note)
-        }
-        if !model.reading, !model.detailFailed, !game.withheld.isEmpty {
-            parts.append("Keir does not read: " + game.withheld.joined(separator: "; ") + ".")
-        }
-        return parts.filter { !$0.isEmpty }.joined(separator: " ")
+    private func scopeTickets(_ game: KeirGame) -> String? {
+        guard let tickets = game.tickets else { return nil }
+        return tickets.state == .available ? "Tickets arrive through the Inbox." : "No support tickets for this game."
     }
 }
 
@@ -411,7 +412,6 @@ struct KeirGameReadRow: View {
                 LabeledContent {
                     HStack(spacing: 6) {
                         Text(fact.value).font(.callout).foregroundStyle(stale ? OpsTheme.muted : OpsTheme.ink)
-                        if !stale, fact.value == "Responding" { KeirGameStateDot(state: .live) }
                     }
                 } label: {
                     Text(fact.label).font(.callout).foregroundStyle(OpsTheme.muted)

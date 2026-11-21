@@ -666,6 +666,22 @@ private struct KeirQueueSnapshot: View {
 
     private var rows: [JSONValue] { value["items"].array }
 
+    /// The row's state in the shared status system, for its glyph and hue.
+    private func state(_ row: JSONValue) -> OpsWorkState {
+        if row["ownerDecisionPending"].bool { return .needsYou }
+        if row["implementationHeld"].bool { return .blocked }
+        if row["work"].string == "stalled" { return .stalled }
+        switch status(row) {
+        case .running: return .running
+        case .failed: return .failing
+        case .done: return .done
+        case .blocked: return .blocked
+        case .waiting: return .needsYou
+        case .queued: return .queued
+        case .idle: return .waiting
+        }
+    }
+
     private func status(_ row: JSONValue) -> OpsStatus {
         if row["ownerDecisionPending"].bool { return .waiting }
         if row["implementationHeld"].bool { return .blocked }
@@ -691,27 +707,18 @@ private struct KeirQueueSnapshot: View {
     }
 
     var body: some View {
-        OpsCard {
-            HStack(spacing: 10) {
-                OpsGlyph(icon: "tray.full.fill")
-                SectionLabel(text: "Tickets")
-            }
+        OpsCard(padding: 14, spacing: 8) {
+            // Scoped by its title: these are the tickets in Keir's answer, not
+            // the "need you" count in the pill above.
+            OpsMiniHeader(text: rows.count == 1 ? "1 ticket in this answer" : "\(rows.count) tickets in this answer")
             if rows.isEmpty { Text("No open tickets").font(.opsBody) }
             ForEach(rows, id: \.["number"].string) { ticket in
                 Hairline()
                 NavigationLink {
                     TicketDetail(ticket: ticket)
                 } label: {
-                    HStack(alignment: .center, spacing: 11) {
-                        OpsGlyph(icon: status(ticket).icon, tone: status(ticket).color, size: 30)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(ticket["title"].string).font(.opsHeadline)
-                            Text("#\(ticket["number"].string) · \(label(ticket))").font(.opsCaption).foregroundStyle(status(ticket).color)
-                        }
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(OpsTheme.muted)
-                            .accessibilityHidden(true)
-                    }.contentShape(Rectangle())
+                    OpsWorkRow(state: state(ticket), title: ticket["title"].string, subtitle: "#\(ticket["number"].string)",
+                               stateWord: label(ticket))
                 }.buttonStyle(.plain).foregroundStyle(OpsTheme.ink)
             }
             if value["possiblyMore"].bool { Text("More tickets may be open.").font(.opsCaption).foregroundStyle(OpsTheme.muted) }
@@ -779,8 +786,8 @@ struct DecisionCard: View {
                 OpsStatusBadge(status: .waiting, label: ["choice", "question"].contains(decision["type"].string) ? "Decision" : "Approval", symbol: decision["type"].string == "choice" ? "list.bullet.circle" : "checkmark.seal")
                 Spacer()
                 if let date = OpsFormat.date(decision["at"]) {
-                    let age = OpsFormat.waiting(date)
-                    Text(age.text).font(.opsCaption.weight(.medium)).monospacedDigit().foregroundStyle(age.color)
+                    let age = OpsAge(date: date)
+                    Text(age.text).font(.opsCaption.weight(age.weight)).monospacedDigit().foregroundStyle(age.color)
                 }
             }
             Button { router.openDecisionTask(decision) } label: {
@@ -791,8 +798,10 @@ struct DecisionCard: View {
                         let caption = [ticketLine, detail.nonempty].compactMap { $0 }.joined(separator: " · ")
                         if !caption.isEmpty { Text(caption).font(.opsCaption).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true) }
                         if !checksLine.isEmpty {
+                            // A system notice, not the owner's move: orange
+                            // caution with an icon, never amber.
                             OpsIconLine(text: checksLine, icon: staleChecks ? "exclamationmark.triangle.fill" : "checkmark.seal",
-                                        color: staleChecks ? OpsTheme.warning : OpsTheme.muted, font: .opsCaption.weight(.medium))
+                                        color: staleChecks ? OpsTheme.caution : OpsTheme.muted, font: .opsCaption.weight(.medium))
                         }
                     }
                     Spacer(minLength: 4)

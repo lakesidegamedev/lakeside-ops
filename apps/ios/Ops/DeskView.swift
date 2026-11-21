@@ -163,20 +163,19 @@ struct TicketDetail: View {
         return ""
     }
 
+    // Three containers: the ticket's facts, the owner's decision (the only
+    // standalone card with a stripe), and one grouped card holding Keir's
+    // work, the timeline, the reply, actions and details as dense sections.
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                OpsCard(spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                OpsCard(padding: 14, spacing: 8) {
                     header
                     statusSection
                 }
                 decisionSection
-                workSection
-                timelineSection
-                replySection
-                actionsSection
-                detailsSection
-            }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                workCard
+            }.padding(.horizontal, 16).padding(.vertical, 10).frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom) {
@@ -184,9 +183,15 @@ struct TicketDetail: View {
         }
         .opsScreen().navigationTitle(title).navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            // The title stays in the navigation bar, so it is still readable
+            // after scrolling; the number sits under it.
             ToolbarItem(placement: .principal) {
-                Text("Ticket #\(number)").font(.headline).lineLimit(1)
-                    .accessibilityLabel("Ticket \(number): \(title)")
+                VStack(spacing: 1) {
+                    Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text("Ticket #\(number)").font(.caption2).foregroundStyle(OpsTheme.muted)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Ticket \(number): \(title)")
             }
         }
         .modifier(TicketSupervisionPolling(model: supervision))
@@ -202,10 +207,11 @@ struct TicketDetail: View {
     // MARK: Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(.title3, design: .rounded).weight(.bold)).foregroundStyle(OpsTheme.ink)
+        VStack(alignment: .leading, spacing: 2) {
+            // The full title wraps here once; the bar above keeps it reachable.
+            Text(title).font(.system(.headline, design: .rounded).weight(.bold)).foregroundStyle(OpsTheme.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(["#\(number)", ticket["category"].string.capitalized, ticket["createdAt"] == .null ? "" : "Opened \(OpsFormat.ago(ticket["createdAt"]))"].filter { !$0.isEmpty }.joined(separator: " · "))
+            Text([ticket["category"].string.capitalized, ticket["createdAt"] == .null ? "" : "Opened \(OpsFormat.ago(ticket["createdAt"]))"].filter { !$0.isEmpty }.joined(separator: " · "))
                 .font(.caption).foregroundStyle(OpsTheme.muted)
         }.accessibilityElement(children: .combine)
     }
@@ -215,16 +221,23 @@ struct TicketDetail: View {
         let overdue = status.status != .done && (expected.map { $0 <= Date() } ?? false)
         let started = OpsFormat.ago(worker["startedAt"] == .null ? current["startedAt"] : worker["startedAt"])
         let since = OpsFormat.ago(timing["since"])
-        return VStack(alignment: .leading, spacing: 9) {
-            row("Status") { OpsStatusBadge(status: status.status, label: status.label, compact: true) }
-            row("Owner") { Text(supervision.state == .null ? "Checking" : supervision.ownerWord).font(.subheadline.weight(.medium)) }
+        return VStack(alignment: .leading, spacing: 6) {
+            // Status and owner share one line.
+            HStack(alignment: .center, spacing: 8) {
+                OpsStatusBadge(status: status.status, label: status.label, compact: true, state: OpsWorkState.from(label: status.label))
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    Text("Owner").font(.subheadline).foregroundStyle(OpsTheme.muted)
+                    Text(supervision.state == .null ? "Checking" : supervision.ownerWord).font(.subheadline.weight(.semibold))
+                }
+            }.accessibilityElement(children: .combine)
             if !started.isEmpty { row("Current attempt started") { Text(started).font(.subheadline.weight(.medium)) } }
-            else if !since.isEmpty { row("Status since") { Text(since).font(.subheadline.weight(.medium)) } }
+            else if !since.isEmpty { row("In this state since") { Text(since).font(.subheadline.weight(.medium)) } }
             if overdue || expected != nil {
-                row("Estimate") {
+                row("Keir expected to finish") {
                     if overdue {
                         Label(expected.map { "Overdue, was \(OpsFormat.contextual($0))" } ?? "Overdue", systemImage: "exclamationmark.triangle.fill")
-                            .font(.subheadline.weight(.medium)).foregroundStyle(OpsTheme.warning)
+                            .font(.subheadline.weight(.medium)).foregroundStyle(OpsTheme.caution)
                     } else if let expected {
                         Text(OpsFormat.contextual(expected)).font(.subheadline.weight(.medium))
                     }
@@ -246,64 +259,101 @@ struct TicketDetail: View {
 
     @ViewBuilder private var decisionSection: some View {
         if !decisions.isEmpty || !plainBlockers.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel(text: "Decision")
+            VStack(alignment: .leading, spacing: 8) {
+                OpsMiniHeader(text: "Your decision", state: .needsYou)
                 ForEach(Array(plainBlockers.enumerated()), id: \.offset) { _, blocker in
                     VStack(alignment: .leading, spacing: 4) {
-                        Label(OpsText.scrub(blocker["title"].string), systemImage: OpsStatus.blocked.icon).font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.warn)
-                        if !blocker["detail"].string.isEmpty && blocker["detail"] != blocker["title"] { Text(blocker["detail"].string).font(.callout).textSelection(.enabled) }
+                        Text(OpsText.scrub(blocker["title"].string)).font(.subheadline.weight(.semibold)).foregroundStyle(OpsTheme.ink)
+                        if !blocker["detail"].string.isEmpty && blocker["detail"] != blocker["title"] { Text(blocker["detail"].string).font(.subheadline).textSelection(.enabled) }
                     }
                 }
                 ForEach(decisions, id: \.["id"].string) { TicketDecisionInline(decision: $0) { await load() } }
             }
-            .opsStripeCard(OpsTheme.warning)
+            .opsStripeCard(OpsWorkState.needsYou.color)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("ticket-blockers")
         }
     }
 
-    @ViewBuilder private var workSection: some View {
+    private var progressLine: String {
         let line = TicketPresentation.clean(current["status"].string).nonempty ?? TicketPresentation.clean(worker["status"].string)
-        let progress = line != playerReply && line != TicketPresentation.clean(card["status"].string) && errorLine.isEmpty ? line : ""
-        if !errorLine.isEmpty || !progress.isEmpty || error != nil {
-            VStack(alignment: .leading, spacing: 8) {
-                SectionLabel(text: "Keir's work")
-                if !errorLine.isEmpty {
-                    Label {
-                        Text(errorLine).foregroundStyle(OpsTheme.ink).fixedSize(horizontal: false, vertical: true)
-                    } icon: {
-                        Image(systemName: OpsStatus.failed.icon).foregroundStyle(OpsTheme.danger)
-                    }.font(.subheadline)
+        return line != playerReply && line != TicketPresentation.clean(card["status"].string) && errorLine.isEmpty ? line : ""
+    }
+    private var hasWork: Bool { !errorLine.isEmpty || !progressLine.isEmpty || error != nil }
+    private var replyDelivery: String { verifiedReply == nil ? replyState["state"].string : "delivered" }
+    private var hasReply: Bool { !playerReply.isEmpty || ["delivered", "no_receipt"].contains(replyDelivery) }
+
+    /// Keir's work, what happened, what the player was told and what the
+    /// owner can do, as sections of one surface.
+    private var workCard: some View {
+        let items = timeline
+        return VStack(alignment: .leading, spacing: 0) {
+            if hasWork || !items.isEmpty {
+                block("Keir's work") {
+                    if hasWork { workSection }
+                    if !items.isEmpty { timelineRows(items) }
                 }
-                if status.label == "Stalled", let task = detail["retryTaskId"].string.nonempty {
-                    Button {
-                        retrying = true
-                        Task {
-                            defer { retrying = false }
-                            do {
-                                _ = try await session.post("/api/keir/app/tickets/\(number)/retry", ["taskId": .string(task)])
-                                retryNotice = "Another attempt is queued"
-                                await load()
-                            } catch { retryNotice = error.displayMessage }
-                        }
-                    } label: {
-                        Label("Retry", systemImage: "arrow.clockwise")
-                            .font(.callout.weight(.semibold))
-                            .padding(.horizontal, 18).frame(minHeight: 40)
-                            .foregroundStyle(OpsTheme.onAccent)
-                            .background(OpsTheme.sky, in: Capsule())
-                    }.buttonStyle(.plain).disabled(retrying)
-                }
-                if status.label == "Stalled", detail["retryTaskId"].string.nonempty != nil, retryNotice == nil {
-                    Text("Retry queues a new attempt on this ticket.").font(.opsCaption).foregroundStyle(OpsTheme.muted)
-                }
-                if let retryNotice { Text(retryNotice).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
-                if !progress.isEmpty { Text(progress).font(.subheadline).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
-                if let error { Text(error).font(.opsCaption).foregroundStyle(OpsTheme.warning) }
             }
-            .padding(16)
-            .opsSurface()
+            if hasReply {
+                if hasWork || !items.isEmpty { OpsGroupDivider(inset: 0) }
+                block("Reply to the player") { replySection }
+            }
+            if hasWork || !items.isEmpty || hasReply { OpsGroupDivider(inset: 0) }
+            block("Actions") { actionsSection }
+            OpsGroupDivider(inset: 0)
+            detailsSection
         }
+        .padding(.horizontal, 14)
+        .opsSurface()
+    }
+
+    private func block<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            OpsMiniHeader(text: title)
+            content()
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var workSection: some View {
+        let progress = progressLine
+        if !errorLine.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                OpsStateGlyph(state: .stalled)
+                Text(errorLine).font(.subheadline).foregroundStyle(OpsTheme.ink).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        if status.label == "Stalled", let task = detail["retryTaskId"].string.nonempty {
+            OpsPrimaryButton(title: "Retry", icon: "arrow.clockwise", busy: retrying) {
+                retrying = true
+                Task {
+                    defer { retrying = false }
+                    do {
+                        _ = try await session.post("/api/keir/app/tickets/\(number)/retry", ["taskId": .string(task)])
+                        retryNotice = "Another attempt is queued"
+                        await load()
+                    } catch { retryNotice = error.displayMessage }
+                }
+            }
+            if retryNotice == nil {
+                Text(lastAttemptLine).font(.opsCaption).foregroundStyle(OpsTheme.muted)
+            }
+        }
+        if let retryNotice { Text(retryNotice).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
+        if !progress.isEmpty { Text(progress).font(.subheadline).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
+        if let error { Text(error).font(.opsCaption).foregroundStyle(OpsTheme.danger) }
+    }
+
+    /// Something the owner cannot see elsewhere: when the stopped attempt
+    /// last ran, and that a retry starts from Keir's saved result.
+    private var lastAttemptLine: String {
+        let at = current["updatedAt"] == .null ? timing["since"] : current["updatedAt"]
+        let when = OpsFormat.date(at).map { date -> String in
+            let text = OpsFormat.contextual(date)
+            return "Last attempt " + (text.hasPrefix("Yesterday") ? "yesterday" + text.dropFirst("Yesterday".count) : text) + ". "
+        } ?? ""
+        return when + "Retry starts a new attempt from Keir’s saved result."
     }
 
     /// Receipts and history as one newest-first list.
@@ -311,7 +361,7 @@ struct TicketDetail: View {
         var items: [(Date, String, String, Color, String, JSONValue)] = []
         for (i, r) in detail["receipts"].array.enumerated() {
             let done = r["state"].string == "done"
-            items.append((OpsFormat.date(r["at"]) ?? .distantPast, "r\(i)", done ? "checkmark.circle" : "clock", done ? OpsTheme.mint : OpsTheme.warn, r["label"].string, r["at"]))
+            items.append((OpsFormat.date(r["at"]) ?? .distantPast, "r\(i)", done ? "checkmark.circle" : "clock", done ? OpsTheme.mint : OpsTheme.muted, r["label"].string, r["at"]))
         }
         for (i, h) in detail["history"].array.enumerated() {
             let text = TicketPresentation.clean(h["text"].string)
@@ -320,39 +370,25 @@ struct TicketDetail: View {
         }
         if status.label == "Stalled" {
             let at = current["updatedAt"] == .null ? timing["since"] : current["updatedAt"]
-            items.append((OpsFormat.date(at) ?? .distantPast, "stalled", "circle.fill", OpsTheme.danger, "Attempt stalled", at))
+            items.append((OpsFormat.date(at) ?? .distantPast, "stalled", "circle.fill", OpsWorkState.stalled.color, "Attempt stalled", at))
         }
         return items.sorted { $0.0 > $1.0 }.map { ($0.1, $0.2, $0.3, $0.4, $0.5) }
     }
 
-    @ViewBuilder private var timelineSection: some View {
-        let items = timeline
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                SectionLabel(text: "Timeline")
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        HStack(alignment: .top, spacing: 12) {
-                            Circle().fill(item.color).frame(width: 8, height: 8).padding(.top, 8).accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.text).font(.subheadline).textSelection(.enabled)
-                                Text(OpsFormat.date(item.at).map(OpsFormat.contextual) ?? "Time unavailable").font(.opsCaption).foregroundStyle(OpsTheme.muted)
-                            }.padding(.top, 4)
-                        }
-                        .padding(.bottom, index == items.count - 1 ? 0 : 12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(alignment: .leading) {
-                            if index < items.count - 1 {
-                                Rectangle().fill(OpsTheme.hairline).frame(width: 1)
-                                    .padding(.leading, 3.5).padding(.top, 18).accessibilityHidden(true)
-                            }
-                        }
-                    }
-                }
+    /// One dense line per event: dot, what happened, when.
+    private func timelineRows(_ items: [(id: String, icon: String, color: Color, text: String, at: JSONValue)]) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(items, id: \.id) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Circle().fill(item.color).frame(width: 7, height: 7).accessibilityHidden(true)
+                    Text(item.text).font(.subheadline).foregroundStyle(OpsTheme.ink).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    Text(OpsFormat.date(item.at).map(OpsFormat.contextual) ?? "").font(.caption).monospacedDigit()
+                        .foregroundStyle(OpsTheme.muted).lineLimit(1)
+                }.accessibilityElement(children: .combine)
             }
-            .padding(16)
-            .opsSurface()
-        }
+        }.padding(.top, 2)
     }
 
     private var verifiedReply: JSONValue? {
@@ -363,48 +399,49 @@ struct TicketDetail: View {
 
     @ViewBuilder private var replySection: some View {
         let reply = playerReply
-        let delivery = verifiedReply == nil ? replyState["state"].string : "delivered"
-        if !reply.isEmpty || ["delivered", "no_receipt"].contains(delivery) {
-            VStack(alignment: .leading, spacing: 8) {
-                SectionLabel(text: "Reply to the player")
-                if !reply.isEmpty {
-                    // A quote bar marks this as the player's own copy, not Keir's notes.
-                    NativeMarkdown(text: reply).font(.subheadline).textSelection(.enabled)
-                        .padding(.leading, 12)
-                        .overlay(alignment: .leading) { Capsule().fill(OpsTheme.accent.opacity(0.5)).frame(width: 3) }
-                }
-                if delivery == "delivered" {
-                    // The receipt itself: delivered, and when, before the link.
-                    let deliveredAt = OpsFormat.date(verifiedReply?["at"] ?? replyState["at"]).map { " · " + OpsFormat.contextual($0) } ?? ""
-                    Label("Delivered in Discord" + deliveredAt, systemImage: "checkmark.circle.fill")
-                        .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.mint)
-                    let address = verifiedReply?["url"].string.nonempty ?? replyState["url"].string
-                    if let url = URL(string: address), url.scheme == "https", url.host == "discord.com" {
-                        Link(destination: url) { Label("View in Discord", systemImage: "arrow.up.right.square") }.font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.accent)
-                    }
-                } else {
-                    Label("No Discord receipt", systemImage: "bubble.left").font(.callout).foregroundStyle(OpsTheme.warn)
+        if !reply.isEmpty {
+            // A quote bar marks this as the player's own copy, not Keir's notes.
+            NativeMarkdown(text: reply).font(.subheadline).textSelection(.enabled)
+                .padding(.leading, 12)
+                .overlay(alignment: .leading) { Capsule().fill(OpsTheme.accent.opacity(0.5)).frame(width: 3) }
+        }
+        if replyDelivery == "delivered" {
+            // The receipt itself: delivered, and when, with the link on the same line.
+            let deliveredAt = OpsFormat.date(verifiedReply?["at"] ?? replyState["at"]).map { " · " + OpsFormat.contextual($0) } ?? ""
+            let address = verifiedReply?["url"].string.nonempty ?? replyState["url"].string
+            HStack(spacing: 12) {
+                Label("Delivered in Discord" + deliveredAt, systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.mint)
+                Spacer(minLength: 0)
+                if let url = URL(string: address), url.scheme == "https", url.host == "discord.com" {
+                    Link(destination: url) { Label("View", systemImage: "arrow.up.right.square") }
+                        .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+                        .accessibilityLabel("View in Discord")
                 }
             }
-            .padding(16)
-            .opsSurface()
+        } else {
+            Label("No Discord receipt", systemImage: "bubble.left").font(.callout).foregroundStyle(OpsTheme.unanswered)
         }
     }
 
     private var actionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SectionLabel(text: "Actions")
+        VStack(alignment: .leading, spacing: 6) {
             TicketDirectionsList(model: supervision)
-            // The composer pinned above carries direction; without it the
-            // sheet is the only way to give Keir an instruction.
-            if !supervision.state["canMessage"].bool {
-                OwnerDirectionButton(title: "Message Keir", context: "Ticket #\(number)")
-                    .font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+            HStack(spacing: 18) {
+                // The composer pinned below carries direction; without it the
+                // sheet is the only way to give Keir an instruction.
+                if !supervision.state["canMessage"].bool {
+                    OwnerDirectionButton(title: "Message Keir", context: "Ticket #\(number)")
+                        .font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+                }
+                TicketOwnershipActions(model: supervision)
+                Spacer(minLength: 0)
             }
-            TicketOwnershipActions(model: supervision)
+            if supervision.state["canTake"].bool {
+                Text("Take over: you handle this ticket and Keir stops working on it until you hand it back.")
+                    .font(.caption).foregroundStyle(OpsTheme.muted).fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .padding(16)
-        .opsSurface()
     }
 
     @ViewBuilder private var detailsSection: some View {
@@ -422,18 +459,18 @@ struct TicketDetail: View {
                     VStack(alignment: .leading, spacing: 4) {
                         SectionLabel(text: "Fixes")
                         ForEach(Array(card["items"].array.enumerated()), id: \.offset) { _, item in
-                            WorkRow(title: item["name"].string, meta: item["note"].string, bar: item["blocked"].bool ? OpsTheme.warn : nil) { StageChip(stage: item["stage"].string) }
+                            WorkRow(title: item["name"].string, meta: item["note"].string, bar: item["blocked"].bool ? OpsWorkState.blocked.color : nil) { StageChip(stage: item["stage"].string) }
                             Hairline()
                         }
                     }
                 }
                 if !detail["pullRequests"].array.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        SectionLabel(text: "Pull requests")
+                        SectionLabel(text: "Code changes")
                         ForEach(detail["pullRequests"].array, id: \.string) { pr in
                             if let url = URL(string: pr.string) { Link(pr.string, destination: url).font(.callout).lineLimit(1) }
                         }
-                        Text("A merged PR is not proof that a fix is live. Release stages follow Keir's verified receipts.").font(.caption).foregroundStyle(OpsTheme.muted)
+                        Text("A change being accepted does not prove the fix is live. Release stages follow Keir's verified receipts.").font(.caption).foregroundStyle(OpsTheme.muted)
                     }
                 }
                 if !detail["handoffs"].array.isEmpty {
@@ -454,12 +491,11 @@ struct TicketDetail: View {
                 if worker != .null { SupervisedWorkerSummary(worker: worker, active: supervision.supervised) }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.top, 8)
         } label: {
-            Text("Details").font(.callout.weight(.semibold)).foregroundStyle(OpsTheme.ink)
+            Text("Details").font(.footnote.weight(.semibold)).foregroundStyle(OpsTheme.muted)
         }
         .font(.callout)
-        .tint(OpsTheme.ink)
-        .padding(16)
-        .opsSurface()
+        .tint(OpsTheme.muted)
+        .padding(.vertical, 10)
     }
 
     private func load() async {
@@ -491,15 +527,33 @@ struct TicketDecisionInline: View {
         } else if let outcome {
             Label(outcome, systemImage: "checkmark.circle").font(.callout).foregroundStyle(OpsTheme.muted)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                let headline = OpsText.decisionTitle(decision)
-                if showQuestion { Text(headline).font(.callout.weight(.semibold)).fixedSize(horizontal: false, vertical: true) }
+            VStack(alignment: .leading, spacing: 8) {
+                // One question line, never three stacked headings: the full
+                // question when there is one, the short title otherwise.
                 let question = OpsText.scrub(decision["question"].string)
-                if !question.isEmpty && question != headline { Text(question).font(.subheadline.weight(.medium)).foregroundStyle(OpsTheme.ink).fixedSize(horizontal: false, vertical: true) }
-                if let failure { Text(failure).font(.caption).foregroundStyle(OpsTheme.warn) }
-                let layout = options.count > 2 || textSize.isAccessibilitySize || explained
-                    ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-                layout { buttons }.disabled(busy)
+                let line = question.nonempty ?? OpsText.decisionTitle(decision)
+                if showQuestion || !question.isEmpty {
+                    Text(line).font(.subheadline.weight(.semibold)).foregroundStyle(OpsTheme.ink).fixedSize(horizontal: false, vertical: true)
+                }
+                if let pick = recommended {
+                    OpsIconLine(text: "Keir recommends: " + pick["label"].string, icon: "star.fill",
+                                color: OpsTheme.accent, font: .caption.weight(.semibold))
+                }
+                if let failure { Text(failure).font(.caption).foregroundStyle(OpsTheme.danger) }
+                if explained {
+                    VStack(spacing: 6) { buttons }.disabled(busy)
+                } else {
+                    let layout = options.count > 2 || textSize.isAccessibilitySize
+                        ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+                    layout { buttons }.disabled(busy)
+                    // The effect of each option is not in the data: say so
+                    // plainly and keep a way to ask, instead of a bare guess.
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Keir has not said what each option changes.").font(.caption).foregroundStyle(OpsTheme.muted)
+                        OwnerDirectionButton(title: "Ask", context: "Decision \(decision["id"].string): \(line)")
+                            .font(.caption.weight(.semibold)).foregroundStyle(OpsTheme.accent)
+                    }
+                }
             }
         }
     }
@@ -507,22 +561,47 @@ struct TicketDecisionInline: View {
     /// Options that carry a one-line effect are listed full width so the
     /// effect can sit under each label.
     private var explained: Bool { options.contains { !$0["detail"].string.isEmpty } }
+    private var recommended: JSONValue? { options.first { $0["recommended"].bool } }
 
     @ViewBuilder private var buttons: some View {
         ForEach(options, id: \.["id"].string) { option in
-            let recommended = option["recommended"].bool
-            let effect = option["detail"].string
+            let isPick = option["recommended"].bool
+            let effect = OpsText.scrub(option["detail"].string)
             Button { choose(option["id"].string) } label: {
-                VStack(spacing: 2) {
-                    Text(option["label"].string).fontWeight(.semibold).lineLimit(2)
-                    if recommended { Text("Keir recommends").font(.caption2.weight(.semibold)).opacity(0.85) }
-                    if !effect.isEmpty { Text(effect).font(.caption).opacity(0.85).fixedSize(horizontal: false, vertical: true) }
+                if explained {
+                    // Label, then the one-line effect for players, left aligned
+                    // so the two options read as a comparison.
+                    HStack(alignment: .center, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(option["label"].string).font(.subheadline.weight(.semibold)).lineLimit(2)
+                                if isPick {
+                                    Text("Recommended").font(.caption2.weight(.bold))
+                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                        .background(OpsTheme.onAccent.opacity(0.22), in: Capsule())
+                                }
+                            }
+                            Text(effect.nonempty ?? "No effect described").font(.caption).opacity(effect.isEmpty ? 0.6 : 0.9)
+                                .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right.circle.fill").font(.callout).opacity(0.8).accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .background(isPick ? OpsTheme.sky : OpsTheme.sky.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(isPick ? Color.clear : OpsTheme.sky.opacity(0.35)))
+                    .foregroundStyle(isPick ? OpsTheme.onAccent : OpsTheme.ink)
+                } else {
+                    Text(option["label"].string).font(.subheadline.weight(.semibold)).lineLimit(2).multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 10)
+                        .background(isPick ? OpsTheme.sky : OpsTheme.sky.opacity(0.85), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .foregroundStyle(OpsTheme.onAccent)
                 }
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, minHeight: 44).padding(.horizontal, 10).padding(.vertical, explained ? 8 : 0)
-                .background(recommended ? OpsTheme.sky : OpsTheme.sky.opacity(0.12), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .foregroundStyle(recommended ? OpsTheme.onAccent : OpsTheme.sky)
-            }.buttonStyle(.plain).accessibilityIdentifier("ticket-decision-\(option["id"].string)")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(option["label"].string + (isPick ? ", recommended" : "") + (effect.isEmpty ? "" : ". " + effect))
+            .accessibilityIdentifier("ticket-decision-\(option["id"].string)")
         }
     }
 

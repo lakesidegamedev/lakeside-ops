@@ -155,17 +155,14 @@ struct OpsSettings: View {
                             .buttonStyle(.plain)
                         }
                         .padding(.vertical, 4)
+                        // The separator under the banner starts where every
+                        // other separator in this block starts.
+                        .alignmentGuide(.listRowSeparatorLeading) { d in d[.leading] }
                     }
-                    Group {
-                        toggle("replies", "Keir replies", "When Keir answers you in the app.")
-                        toggle("decisions", "Decisions", "Time-sensitive approvals and decisions.")
-                        toggle("incidents", "Incident alerts", "Turn failures and stalled work.")
-                    }.disabled(!pushAvailable).opacity(pushAvailable ? 1 : 0.55)
-                } header: { SectionLabel(text: "Notifications") } footer: {
-                    if !pushAvailable {
-                        Text("These choices take effect once notifications are on.").font(.caption).foregroundStyle(OpsTheme.muted)
-                    }
-                }
+                    toggle("replies", "Keir replies", "When Keir answers you in the app.")
+                    toggle("decisions", "Decisions", "Time-sensitive approvals and decisions.")
+                    toggle("incidents", "Incident alerts", "Turn failures and stalled work.")
+                } header: { SectionLabel(text: "Notifications") }
                 .listRowBackground(OpsTheme.surface)
                 quietSection.listRowBackground(OpsTheme.surface)
                 if session.profile["mode"].string != "standalone" { KeirIdentitySection() }
@@ -174,7 +171,7 @@ struct OpsSettings: View {
                         ForEach(KeirAppearance.allCases) { Text($0.title).tag($0.rawValue) }
                     }.accessibilityIdentifier("settings-theme")
                 } header: { SectionLabel(text: "Appearance") } footer: {
-                    Text("System follows your iPhone. OLED black switches background pixels off.")
+                    Text("System follows your iPhone. OLED black uses a pure black background.")
                         .font(.caption).foregroundStyle(OpsTheme.muted)
                 }
                 .listRowBackground(OpsTheme.surface)
@@ -186,7 +183,7 @@ struct OpsSettings: View {
                 }
                 .listRowBackground(OpsTheme.surface)
                 Section {
-                    DisclosureGroup("Push diagnostics") {
+                    DisclosureGroup("Notification test") {
                         LabeledContent("Delivery", value: push.message)
                         if let registered = push.lastRegistered {
                             LabeledContent("Registered", value: OpsFormat.contextual(registered))
@@ -207,7 +204,7 @@ struct OpsSettings: View {
                         }.disabled(testingDelivery || !pushAvailable)
                         if let deliveryMessage { Text(deliveryMessage).font(.opsCaption).foregroundStyle(OpsTheme.muted) }
                     }
-                } header: { SectionLabel(text: "Developer") }
+                } header: { SectionLabel(text: "Troubleshooting") }
                 .listRowBackground(OpsTheme.surface)
                 Section {
                     LabeledContent("Signed in as", value: session.profile["email"].string.hasPrefix("discord_") ? "Owner" : session.profile["email"].string)
@@ -260,11 +257,21 @@ struct OpsSettings: View {
 
     private func saveQuiet() { quiet.save(); Task { await OpsPushRegistration.update() } }
 
-    private func toggle(_ key: String, _ title: String, _ detail: String) -> some View {
-        Toggle(isOn: Binding(get: { prefs[key] ?? true }, set: { on in
-            prefs[key] = on; OpsPushPrefs.set(key, on); Task { await OpsPushRegistration.update() }
-        })) {
-            VStack(alignment: .leading, spacing: 2) { Text(title); Text(detail).font(.caption).foregroundStyle(OpsTheme.muted) }
+    /// While notifications are off, a switch would look on and do nothing, so
+    /// the row says in words what will happen once they are allowed.
+    @ViewBuilder private func toggle(_ key: String, _ title: String, _ detail: String) -> some View {
+        let label = VStack(alignment: .leading, spacing: 2) { Text(title); Text(detail).font(.caption).foregroundStyle(OpsTheme.muted) }
+        if pushAvailable {
+            Toggle(isOn: Binding(get: { prefs[key] ?? true }, set: { on in
+                prefs[key] = on; OpsPushPrefs.set(key, on); Task { await OpsPushRegistration.update() }
+            })) { label }
+        } else {
+            HStack(alignment: .firstTextBaseline) {
+                label
+                Spacer(minLength: 8)
+                Text((prefs[key] ?? true) ? "On when allowed" : "Off").font(.caption.weight(.medium)).foregroundStyle(OpsTheme.muted)
+            }
+            .accessibilityElement(children: .combine)
         }
     }
 }

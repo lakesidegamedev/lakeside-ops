@@ -80,7 +80,7 @@ final class KeirGamesUITests: XCTestCase {
         XCTAssertTrue(find(app, "Leaderboard").exists, "withheld data is stated")
         let ask = reveal(app, app.buttons["keir-game-ask-health"])
         XCTAssertTrue(ask.waitForExistence(timeout: 5))
-        XCTAssertTrue(find(app, "A House Divided desk only", timeout: 2).exists, "tickets are not claimed for MetroForge")
+        XCTAssertTrue(find(app, "No support tickets for this game", timeout: 2).exists, "tickets are not claimed for MetroForge")
         scrollToEnd(app)
         XCTAssertTrue(ask.exists)
         XCTAssertFalse(app.buttons["keir-game-ask-tickets"].exists, "no ticket question for a game without tickets")
