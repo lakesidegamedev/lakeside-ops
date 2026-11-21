@@ -4,15 +4,19 @@ const fs = require("node:fs");
 
 // Names are reviewed individually because several servers mix reads with
 // production actions. Aliases use the same tools through their own registration.
+// Owner, 2026-11-21: the owner's supervisor reads every read-only tool the fleet offers, at least everything the
+// ticket desk can read, and without the desk's reporter-only scoping. Still closed: anything that writes, sends,
+// deploys, heals, runs a simulation or scan, or reads player contact lists (comm_audience, comm_preview).
 const allowed = {
-  support: "support_list support_search support_stats support_with_images",
+  support: "support_get support_list support_search support_stats support_with_images",
   engine: "engine_health recent_turns economy_pulse",
-  worldsim: "sim_list sim_run_status sim_election_status sim_balance_report sim_compare_runs sim_experiment_report sim_experiment_telemetry sim_election_report",
-  gamestate: "game_overview countries analytics_catalog analytics_query map_snapshot geo_aggregate fx_quote entity_search parties top_players player_wealth_statistics corporation_rankings country_fiscal country_fiscal_history character_balance_sheet legislation_catalog macro_history elections extraction_market commodity_market market_history reporter_operating_results reporter_action_points",
+  worldsim: "sim_list sim_run_status sim_election_status sim_balance_report sim_compare_runs sim_experiment_report sim_experiment_telemetry sim_election_report sim_economy_whatif sim_compare",
+  gamestate: "game_overview countries analytics_catalog analytics_query map_snapshot geo_aggregate fx_quote entity_search parties top_players player_wealth_statistics corporation_rankings country_fiscal country_fiscal_history character_balance_sheet character_holdings character_wealth_history legislation_catalog macro_history elections extraction_market commodity_market market_history reporter_operating_results reporter_action_points " +
+    "trace_character trace_account trace_corp trace_election trace_sector trace_ledger trace_bonds trace_actions trace_approval trace_race wars military_roster nomination_records alt_ring_audit alt_rank audit_query election_sim_results invariant_check",
   discord: "discord_channels discord_read",
-  "ops-knowledge": "worktree_fleet_status knowledge_query knowledge_get knowledge_list knowledge_history knowledge_related box_projects code_search code_exact code_read kanban_brief kanban_list kanban_get mcp_fleet_status support_evidence_lookup",
+  "ops-knowledge": "worktree_fleet_status knowledge_query knowledge_get knowledge_list knowledge_history knowledge_related knowledge_review_queue box_projects code_search code_exact code_read kanban_brief kanban_list kanban_get mcp_fleet_status mcp_capability_requests support_evidence_lookup cw_market_balance cw_snapshots",
   security: "security_audit_latest",
-  community: "community_search",
+  community: "community_search community_ask",
   turndiag: "turn_phase_timings phase_history phase_regressions turn_anomalies lock_status turn_failure_detail",
   metroforge: "mf_status mf_cities mf_leaderboard",
   "report-publish": "list_published_reports",
@@ -20,13 +24,41 @@ const allowed = {
   "seed-audit": "audit_state audit_country audit_era check_duplicates",
   tracker: "track_list track_get track_summary",
   "company-knowledge": "company_context company_search company_get company_list company_history",
-  paseo: "list_workspaces get_agent_status list_agents list_schedules inspect_schedule schedule_logs list_providers list_models list_profiles list_pending_permissions",
+  paseo: "list_workspaces get_agent_status get_agent_activity list_agents list_schedules inspect_schedule schedule_logs list_providers inspect_provider list_models list_profiles list_pending_permissions list_workspace_scripts list_terminals",
   "lean-lab": "lean_overview lean_state lean_whatif",
-  "heal-ops": "heal_list heal_status heal_history",
+  "heal-ops": "heal_list heal_status heal_history heal_detect heal_verify heal_query heal_count heal_collections",
   masscomm: "comm_status",
   lore: "lore_overview lore_countries lore_country lore_world_entities lore_world_entity lore_organizations lore_historical_events lore_wiki_search lore_wiki_page lore_glossary lore_parties",
-  sentry: "sentry_issues sentry_issue sentry_new_since",
+  sentry: "sentry_issues sentry_issue sentry_event_lookup sentry_player_errors sentry_new_since",
 };
+// Raw database reads (heal_query, heal_count) keep the ticket desk's guard: account, sign-in, contact and audit
+// collections stay closed, and credential or contact fields are refused in filters and stripped from results.
+const RAW_TOOLS = new Set(["heal_query", "heal_count"]);
+const RAW_COLLECTION_CLOSED = /^(users?|accounts?|sessions?|auth.*|.*tokens?|.*secrets?|.*keys?|.*credentials?|.*emails?|.*passwords?|payments?|purchases?|subscriptions?|access.*log.*|request.*log.*|ip.*|devices?|admin.*)$/i;
+const RAW_FIELD_CLOSED = /(email|password|passhash|hash$|token|secret|apikey|api_key|^ip$|ip_?addr|^lastip|session|phone|^address$|street|postal|mailing)/i;
+function rawKeys(value, out = [], depth = 0) {
+  if (depth > 12 || !value || typeof value !== "object") return out;
+  for (const [k, v] of Object.entries(value)) { out.push(k); rawKeys(v, out, depth + 1); }
+  return out;
+}
+function redact(value, hidden, depth = 0) {
+  if (depth > 12 || !value || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map((x) => redact(x, hidden, depth + 1));
+  return Object.fromEntries(Object.entries(value).filter(([k]) => !(RAW_FIELD_CLOSED.test(k) && hidden.add(k)))
+    .map(([k, x]) => [k, redact(x, hidden, depth + 1)]));
+}
+function rawGuard(tool, args) {
+  if (!RAW_TOOLS.has(tool)) return;
+  if (RAW_COLLECTION_CLOSED.test(String(args.collection || ""))) throw new Error("This collection holds account, sign-in, contact or payment data and stays closed to the private supervisor.");
+  const closed = rawKeys([args.filter, args.projection, args.sort]).find((k) => RAW_FIELD_CLOSED.test(k.replace(/^.*\./, "")));
+  if (closed) throw new Error(`The field ${closed} holds credentials or contact details and stays closed to the private supervisor.`);
+}
+function rawResult(payload) {
+  const hidden = new Set();
+  const parse = (item) => { try { return redact(JSON.parse(item), hidden); } catch { return item; } };
+  const out = Array.isArray(payload) ? payload.map(parse) : redact(payload, hidden);
+  return hidden.size ? { result: out, withheldFields: [...hidden].slice(0, 20), withheldNote: "These fields exist but are withheld as private data." } : out;
+}
 const policy = Object.fromEntries(Object.entries(allowed).map(([server, names]) => [server, new Set(names.split(" "))]));
 const combine = (...servers) => new Set(servers.flatMap((server) => [...policy[server]]));
 policy.game = combine("gamestate", "engine", "lore", "turndiag", "seed-audit", "lean-lab");
@@ -95,13 +127,15 @@ function createStudioMcp({ configPath, connect = request }) {
   async function read(server, tool, args = {}, signal) {
     if (!Object.hasOwn(policy, server) || !policy[server].has(tool)) throw new Error("This tool is outside the private supervisor's MCP read catalogue.");
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("arguments must be an object");
+    rawGuard(tool, args);
     const entry = registrations(configPath).get(server);
     if (!entry) return { server, tool, state: "unavailable" };
     try {
       return await connect(entry, async (client, options) => {
         const result = await client.callTool({ name: tool, arguments: args }, undefined, options);
         if (result.isError) return { server, tool, state: "unavailable", note: "The MCP rejected the read. Check the tool argument schema." };
-        const text = JSON.stringify(result.structuredContent ?? result.content.filter((item) => item.type === "text").map((item) => item.text));
+        const payload = result.structuredContent ?? result.content.filter((item) => item.type === "text").map((item) => item.text);
+        const text = JSON.stringify(RAW_TOOLS.has(tool) ? rawResult(payload) : payload);
         return { server, tool, state: "read", data: text.slice(0, 16000), truncated: text.length > 16000 };
       }, signal);
     } catch { return { server, tool, state: "unavailable", note: "The MCP did not complete the read." }; }

@@ -41,6 +41,65 @@ test("catalogue and call paths enforce the same policy and keep connection detai
   assert.deepEqual(calls, [{ name: "support_search", arguments: { query: "crisis" } }]);
 });
 
+test("owner supervisor can read share ownership through gamestate and the game alias", async (t) => {
+  const { configPath } = fixture(t, {
+    gamestate: { url: "http://localhost:4001/mcp" },
+    game: { url: "http://localhost:4002/mcp" },
+  });
+  const calls = [];
+  const mcp = createStudioMcp({ configPath, connect: async (entry, operation) => operation({
+    async listTools() { return { tools: [{ name: "character_holdings" }, { name: "admin_adjust_balance" }] }; },
+    async callTool(call) { calls.push(call); return { content: [{ type: "text", text: "ok" }] }; },
+  }) });
+  for (const server of ["gamestate", "game"]) {
+    assert.deepEqual((await mcp.tools(server)).tools.map((tool) => tool.name), ["character_holdings"]);
+    assert.equal((await mcp.read(server, "character_holdings", { character: "19" })).state, "read");
+    await assert.rejects(mcp.read(server, "admin_adjust_balance"), /outside/);
+  }
+  assert.deepEqual(calls.map((call) => call.name), ["character_holdings", "character_holdings"]);
+});
+
+test("owner supervisor reads at least every tool the ticket desk can read, and still no writes", async (t) => {
+  const desk = {
+    support: ["support_get", "support_search", "support_list"],
+    gamestate: ["trace_character", "trace_account", "trace_corp", "trace_ledger", "trace_bonds", "trace_actions", "character_wealth_history", "wars", "military_roster", "nomination_records", "trace_race", "trace_election", "trace_approval", "invariant_check"],
+    sentry: ["sentry_event_lookup", "sentry_player_errors"],
+    "heal-ops": ["heal_query", "heal_count", "heal_collections"],
+  };
+  const writes = { support: ["support_resolve", "support_merge", "support_public_update", "support_create_ticket"], gamestate: ["lean_patch"],
+    "heal-ops": ["heal_apply", "heal_plan", "heal_rollback"], worldsim: ["sim_snapshot", "sim_run_world"], masscomm: ["comm_send", "comm_audience"],
+    paseo: ["send_agent_prompt", "capture_terminal", "respond_to_permission"], "ops-knowledge": ["knowledge_save", "kanban_update", "restart_dashboard"] };
+  const servers = [...new Set([...Object.keys(desk), ...Object.keys(writes)])];
+  const { configPath } = fixture(t, Object.fromEntries(servers.map((s, i) => [s, { url: `http://localhost:${5000 + i}/mcp` }])));
+  const mcp = createStudioMcp({ configPath, connect: async (entry, operation) => operation({
+    async callTool() { return { content: [{ type: "text", text: "{}" }] }; },
+  }) });
+  for (const [server, tools] of Object.entries(desk)) for (const tool of tools)
+    assert.equal((await mcp.read(server, tool, { collection: "corporations" })).state, "read", `${server}/${tool}`);
+  for (const [server, tools] of Object.entries(writes)) for (const tool of tools)
+    await assert.rejects(mcp.read(server, tool), /outside/, `${server}/${tool}`);
+});
+
+test("raw database reads keep account collections and private fields closed", async (t) => {
+  const { configPath } = fixture(t, { "heal-ops": { url: "http://localhost:4003/mcp" } });
+  const calls = [];
+  const mcp = createStudioMcp({ configPath, connect: async (entry, operation) => operation({
+    async callTool(call) {
+      calls.push(call);
+      return { content: [{ type: "text", text: JSON.stringify({ count: 1, docs: [{ name: "Nutrien", cash: 5, owner: { email: "a@b.c", sessionToken: "x" } }] }) }] };
+    },
+  }) });
+  for (const collection of ["users", "sessions", "apiKeys", "payments"])
+    await assert.rejects(mcp.read("heal-ops", "heal_query", { env: "prod", collection }), /closed/);
+  await assert.rejects(mcp.read("heal-ops", "heal_count", { env: "prod", collection: "characters", filter: { "owner.email": "a@b.c" } }), /email/);
+  assert.deepEqual(calls, []);
+  const out = await mcp.read("heal-ops", "heal_query", { env: "prod", collection: "shareholdings", filter: { corporation: "Nutrien" } });
+  assert.equal(out.state, "read");
+  assert.doesNotMatch(out.data, /a@b\.c|sessionToken"\s*:\s*"x/);
+  assert.match(out.data, /Nutrien/);
+  assert.match(out.data, /withheldFields/);
+});
+
 test("queue distinguishes support reply receipts from a fresh coordinator wait", async (t) => {
   const { dir, configPath } = fixture(t, {});
   const now = 1795160000000;
