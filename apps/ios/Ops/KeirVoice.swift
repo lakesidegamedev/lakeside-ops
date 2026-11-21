@@ -174,9 +174,10 @@ import LakesideCore
             else { self.speakDevice(rest) }
         }
         do { try output.begin() } catch { useDevice(0); return }
-        let pipeline = SpeechPipeline(segments: pieces, sink: output, firstDeadline: deadline, stallDeadline: Self.stallDeadline) { [weak session] piece in
-            guard let session else { throw CancellationError() }
-            return try await session.speechAudio(piece)
+        // The pipeline lives only as long as this reply, so holding the session
+        // here keeps no extra state alive.
+        let pipeline = SpeechPipeline(segments: pieces, sink: output, firstDeadline: deadline, stallDeadline: Self.stallDeadline) { piece in
+            try await session.speechAudio(piece)
         }
         pipeline.onEvent = { [weak self] event in
             guard let self, self.playbackID == token else { return }
