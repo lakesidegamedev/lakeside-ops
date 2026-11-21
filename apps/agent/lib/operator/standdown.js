@@ -178,11 +178,15 @@ const norm = (t) => String(t || "").toLowerCase().replace(/[*_`~>]/g, " ").repla
 // numbers first"; "yes? why is it so large").
 const DEFER = /\?|\b(?:let me|let's see|first|later|hold on|hang on|wait|why|but|not sure|maybe|hmm|think|check|look)\b/i;
 // yes, no, or null. Only a standalone clause counts: "Do the refund, yes." is yes; "yeah automobiles was removed" is not.
+// Fourth pass (review N4): a yes word and a no word anywhere in the same message ("No, absolutely yes") answer nothing.
+const YES_WORD = /\b(?:yes|yeah|yep|yup|ok(?:ay)?|sure|approved?|go ahead|do it|ship it|go for it)\b/i;
+const NO_WORD = /\b(?:no|nope|nah|declined?|rejected?|don'?t|do not|hold off|not now)\b/i;
 function yesNo(text) {
   const t = String(text || "");
   const clauses = t.split(/[,.;!?\n]+/).map((c) => c.trim().replace(/\s+/g, " ")).filter(Boolean);
   const yes = clauses.some((c) => YES.test(c)), no = clauses.some((c) => NO.test(c));
   if (yes === no) return null;
+  if (YES_WORD.test(t) && NO_WORD.test(t)) return null;
   const rest = clauses.filter((c) => !YES.test(c) && !NO.test(c)).join(" ");
   if (DEFER.test(rest) || /\?/.test(t)) return null;
   return yes ? "yes" : "no";
@@ -196,8 +200,13 @@ function optionNumber(text) {
   const m = /^(?:option|choice|#)?\s*([1-6])\s*[.!)]?$/i.exec(t) || /\b(?:option|choice)\s*#?\s*([1-6])\b/i.exec(t) || /^(?:go with|pick|choose|take)\s+(?:option\s*)?#?([1-6])\b/i.exec(t);
   return m ? m[1] : null;
 }
+// Fourth pass (review N4): a label inside a negated, deferring or conditional sentence is not a choice ("we should not
+// refund the player until I check", "dont refund the player yet", "refund the player later maybe").
+const NEGATES = /\b(?:not|don'?t|dont|never|no|nope|won'?t|wont|shouldn'?t|can'?t|until|unless|instead|yet|later|maybe|perhaps|if|whether)\b|^\s*(?:should|shall|do|does|did|can|could|would|will|is|are|what|why|how|when|who)\b/i;
 // The option this message clearly names, or null. A single-choice question (no options) takes a yes or no.
-function namedOption(x, text, { alone }) {
+// Outside a Discord reply to the question only the whole message names an option; inside a reply a label may sit in a
+// longer sentence, but never one that negates, defers or asks.
+function namedOption(x, text, { alone, reply = false }) {
   const options = x.options || [];
   if (!options.length) { const yn = yesNo(text); return yn ? { free: yn } : null; }
   const n = alone ? optionNumber(text) : null;
@@ -209,7 +218,7 @@ function namedOption(x, text, { alone }) {
     const l = norm(o.label);
     if (l.length < 3) return false;
     if (whole === l.replace(/[.!']/g, "")) return true;
-    return l.split(" ").length >= 2 && !/\?/.test(String(text)) && msg.includes(` ${l} `);
+    return reply && l.split(" ").length >= 2 && !/\?/.test(String(text)) && !NEGATES.test(norm(text).replace(l, " ")) && !DEFER.test(norm(text).replace(l, " ")) && msg.includes(` ${l} `);
   });
   if (byLabel.length === 1) return byLabel[0];
   if (alone && options.length === 2) {
@@ -255,7 +264,7 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
   const replied = open.filter((x) => repliesTo(x, replyTo, botId));
   let picks = [];
   // A reply to the question counts only when it also gives an answer: "can you link the PR here?" sent as a reply is not one.
-  if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true }), reply: true })).filter((p) => p.option);
+  if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true, reply: true }), reply: true })).filter((p) => p.option);
   else {
     const named = open.map((x) => ({ x, option: namedOption(x, content, { alone: open.length === 1 }) })).filter((p) => p.option);
     // A message that could answer several questions answers none of them.
@@ -269,11 +278,18 @@ function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId
     answered.push(x.id);
   }
   // Not an answer: kept on each open question as context, and the question stays open.
+  // Fourth pass (review M2 gap): a message that looks meant for the question is also put in front of the task that asked,
+  // as context (it reads it when it next runs; owner chat in the ticket still holds automatic work for a while), every
+  // time, so a second unmatched message is not lost. The owner's DM notice stays one per question.
   if (!answered.length) for (const x of open) {
     x.channelContext = [...(x.channelContext || []), { at, text: content.slice(0, 300), message: messageId }].slice(-5);
-    if (notify && !x.unmatchedNoticeAt && (replied.includes(x) || meantFor(x, content, botId))) {
-      x.unmatchedNoticeAt = at;
-      notify(`owner-unmatched:${x.id}`, `Ticket ${ticket}: your message "${content.slice(0, 120)}" was not taken as your answer to "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}". That question is still open. To answer, ${howToAnswer(x)}.`.replace(/[\u2013\u2014]/g, ","));
+    if (!(replied.includes(x) || meantFor(x, content, botId))) continue;
+    const asker = d.jobs?.[x.jobId];
+    if (asker && !JOB_TERMINAL.includes(asker.state)) (asker.inbox ||= []).push({ authorId: "owner-channel", role: "system", at: new Date(at).toISOString(), decision: x.id,
+      content: `The owner wrote in the ticket channel: "${content.slice(0, 400)}". It was not taken as the answer to your open question "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}", which stays open. Use it as context; do not act on it as the decision.` });
+    if (notify && !x.unmatchedNoticeAt) {
+      const sent = notify(`owner-unmatched:${x.id}`, `Ticket ${ticket}: your message "${content.slice(0, 120)}" was not taken as your answer to "${String(x.question).replace(/\s+/g, " ").slice(0, 160)}". That question is still open. To answer, ${howToAnswer(x)}.`.replace(/[\u2013\u2014]/g, ","));
+      if (sent !== false) x.unmatchedNoticeAt = at; // a preview notice does not use up the real one (review N7)
     }
   }
   if (answered.length) (d.ownerChannelAnswers ||= {})[ticket] = { at, text: content.slice(0, 600), message: messageId, decisions: answered };

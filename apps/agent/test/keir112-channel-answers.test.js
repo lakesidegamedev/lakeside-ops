@@ -58,7 +58,11 @@ test("a reply to a Keir post in the channel that carries the question answers it
 
 test("naming an option by label or number answers it", () => {
   let w = cap1860();
-  assert.deepEqual(say(w, "Keep the current cap, we will revisit later"), [w.x.id]);
+  // Fourth pass (review N4): outside a reply only the whole message names an option. A label with more around it is
+  // context: the asking task is told, and the question stays open.
+  assert.deepEqual(say(w, "Keep the current cap, we will revisit later"), []);
+  assert.match(w.data.jobs.j1.inbox.at(-1).content, /not taken as the answer to your open question/);
+  assert.deepEqual(say(w, "go with Keep the current cap please"), [w.x.id]);
   assert.equal(w.x.state, "selected");
   assert.equal(w.x.selectedOption.label, "Keep the current cap");
   w = tech1852();
@@ -152,4 +156,40 @@ test("M2: the three real production messages never answer and never nag more tha
   assert.equal(sayN(elsewhere, "<@100000000000000002> yeah can you raise the cap for them?").sent.length, 0);
   const unrelated = tech1852();
   assert.equal(sayN(unrelated, "Keir is wrong").sent.length, 0, "nothing in it is about the question");
+});
+
+test("N4: a label inside a negated or deferring sentence is not a choice, even as a reply; mixed yes and no is no answer", () => {
+  const refund = () => world(1890, "Ticket 1890: Refund the player for the lost build, or leave it?", [{ label: "Refund the player" }, { label: "Leave it" }]);
+  for (const text of ["we should not refund the player until I check the logs", "dont refund the player yet, I will check", "refund the player later maybe", "should we refund the player"]) {
+    const w = refund();
+    assert.deepEqual(say(w, text), [], text);
+    w.x.sent[OWNER] = { channelId: "dm", messageId: "q1" };
+    assert.deepEqual(say(w, text, { replyTo: { id: "q1", authorId: BOT } }), [], `${text} (reply)`);
+    assert.equal(w.x.state, "pending");
+  }
+  // The other side: a plain choice still counts, alone or inside a reply.
+  let w = refund();
+  assert.deepEqual(say(w, "Refund the player"), [w.x.id]);
+  w = refund(); w.x.sent[OWNER] = { channelId: "dm", messageId: "q1" };
+  assert.deepEqual(say(w, "ok, refund the player please, thanks", { replyTo: { id: "q1", authorId: BOT } }), [w.x.id]);
+  const yn = world(1891, "Ticket 1891: Refund the lost shop build?", null);
+  assert.equal(sd.yesNo("No, absolutely yes"), null);
+  assert.deepEqual(say(yn, "No, absolutely yes"), []);
+  assert.deepEqual(say(yn, "No."), [yn.x.id]);
+});
+
+test("M2: every unmatched owner message meant for the question reaches the asking task; the DM notice stays one per question", () => {
+  const w = cap1860();
+  const sent = [];
+  const notify = (key, line) => { sent.push(key); return true; };
+  say(w, "the demand cap is the real issue here", { notify });
+  say(w, "honestly the demand cap needs a rethink", { notify });
+  assert.deepEqual(sent, [`owner-unmatched:${w.x.id}`], "one notice");
+  const lines = w.data.jobs.j1.inbox.filter((m) => m.authorId === "owner-channel");
+  assert.equal(lines.length, 2, "the second message is not lost");
+  assert.match(lines[1].content, /needs a rethink/);
+  // A preview notice does not use up the real one.
+  const v = cap1860();
+  say(v, "the demand cap is the real issue here", { notify: () => false });
+  assert.equal(v.x.unmatchedNoticeAt, undefined);
 });
