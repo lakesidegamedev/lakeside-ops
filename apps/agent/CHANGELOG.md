@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- When the owner tells Keir to close a ticket in that ticket's own channel ("close this ticket please and wrap up"), Keir closes it. The channel names the ticket, so Keir no longer asks the owner to confirm, and the owner's instruction lifts any closure hold an earlier follow-up set on that ticket (cleared on every task for it, with an audit line). If the owner confirms a close Keir asked about, the hold no longer refuses it a second time. Staff still cannot lift the owner's hold (Keir says so at once instead of asking the owner), and "close this" in another ticket's channel closes nothing else. Ticket 1860 stayed open three hours after the owner asked.
+
 ## 11.4.0 (2026-11-21)
 
 ### For users
