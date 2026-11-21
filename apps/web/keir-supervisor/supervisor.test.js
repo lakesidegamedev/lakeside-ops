@@ -101,11 +101,11 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 // Fake host: a `claude` that records how it was started and speaks stream-json,
 // a systemd-run that records its scope request and execs the command after
 // "--", and a systemctl that records what it was asked to kill.
-function fakeHost(root, { mode = "answer" } = {}) {
+function fakeHost(root, { mode = "answer", extraServers = {} } = {}) {
   const home = path.join(root, "home"); const bin = path.join(root, "bin"); const rec = path.join(root, "rec");
   for (const d of [home, bin, rec, path.join(home, ".claude")]) fs.mkdirSync(d, { recursive: true });
   fs.writeFileSync(path.join(home, ".claude/.credentials.json"), "{}");
-  fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({ mcpServers: { support: { type: "http", url: "http://127.0.0.1:9735/mcp", headers: { Authorization: "Bearer sk-not-a-real-token-000000000000" } }, gamestate: { type: "http", url: "http://127.0.0.1:9730/mcp" } },
+  fs.writeFileSync(path.join(home, ".claude.json"), JSON.stringify({ mcpServers: { support: { type: "http", url: "http://127.0.0.1:9735/mcp", headers: { Authorization: "Bearer sk-not-a-real-token-000000000000" } }, gamestate: { type: "http", url: "http://127.0.0.1:9730/mcp" }, ...extraServers },
     projects: { [home]: { mcpServers: { "ops-knowledge": { type: "http", url: "http://127.0.0.1:9725/mcp" } } } } }));
   const claude = path.join(bin, "claude");
   fs.writeFileSync(claude, `#!${process.execPath}
@@ -117,6 +117,18 @@ let stdin = ""; process.stdin.on("data", (c) => { stdin += c; }); process.stdin.
   const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
   out({ type: "system", subtype: "init", tools: ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "WebFetch", "WebSearch", "mcp__support__support_get", "mcp__supervisor__owner_attention"], mcp_servers: [{ name: "support", status: "connected" }, { name: "supervisor", status: "connected" }] });
   out({ type: "assistant", message: { content: [{ type: "tool_use", name: "Bash", input: { command: "gh pr list", description: "List open pull requests" } }] } });
+  if (mode === "act") {
+    // What a desk job does with full reach: a host shell command and a write
+    // through a host MCP server from the account's own ~/.claude.json.
+    const { execSync } = require("child_process");
+    fs.writeFileSync(rec + "/shell.txt", execSync("echo shell-ran-as-$(id -un)").toString());
+    const conf = JSON.parse(fs.readFileSync(process.env.HOME + "/.claude.json", "utf8"));
+    const r = await fetch(conf.mcpServers.kanban.url, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kanban_update", arguments: { id: 7, impact: "low" } } }) });
+    const written = await r.json();
+    out({ type: "result", subtype: "success", is_error: false, result: "Ran it and updated card 7: " + written.result.content[0].text, num_turns: 2 });
+    return;
+  }
   if (mode === "hang") {
     const kid = spawn("sleep", ["300"], { stdio: "ignore" });
     fs.writeFileSync(rec + "/tree.json", JSON.stringify({ claude: process.pid, child: kid.pid }));
@@ -473,4 +485,199 @@ test("the owner can recall an archived exchange after restart without returning 
   const results = await reopened.recall("TICKET 1867", current.seq);
   assert.deepEqual(results.map((row) => row.seq), [recent.seq, 1]);
   assert.match(results[1].excerpt, /equity allocation/);
+});
+
+// ---- Every owner chat in the app: images, model choice, the desk and side chats ----
+
+// A real 2x2 PNG, built here so the test needs no fixture file.
+const PNG = (() => {
+  const zlib = require("node:zlib");
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (buf) => { let c = 0xffffffff; for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(2, 0); ihdr.writeUInt32BE(2, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const raw = Buffer.from([0, 255, 0, 0, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255]);
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+})();
+function rawUpload(app, bytes, { who = "owner", thread = "owner-supervisor", name = "chart.png", headers = {} } = {}) {
+  return fetch(app.base + "/api/keir/supervisor/uploads", { method: "POST", body: bytes,
+    headers: { ...(who ? { cookie: `ops_session=${who}` } : {}), "content-type": "image/png", "x-filename": name, "x-keir-thread": thread, ...headers } });
+}
+
+test("uploads, files and the model picker are owner-only", async (t) => {
+  const executor = { available: () => ({ available: true }), model: "claude-opus-5-5", run: async () => ({ text: "ok" }) };
+  const { sup, root } = setup({ executor });
+  t.after(() => { sup.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  await sup.start();
+  const app = await serve(sup);
+  t.after(app.close);
+  for (const who of [null, "staff", "mod"]) {
+    const expected = who ? 403 : 401;
+    assert.equal((await rawUpload(app, PNG, { who })).status, expected, `upload as ${who}`);
+    assert.equal((await app.req("/api/keir/supervisor/models?thread=main", { who })).status, expected, `models as ${who}`);
+    assert.equal((await app.req("/api/keir/supervisor/models", { who, method: "POST", body: { thread: "main", selection: "claude-haiku-5-5" } })).status, expected);
+  }
+  assert.equal(Object.keys(sup.store.state.files).length, 0, "nothing was stored for a refused upload");
+  assert.equal((await rawUpload(app, PNG, { headers: { origin: "https://evil.example" } })).status, 403);
+  const up = await rawUpload(app, PNG);
+  assert.equal(up.status, 201);
+  const d = await up.json();
+  assert.match(d.url, /^\/api\/keir\/supervisor\/files\/[a-f0-9]{32}$/);
+  assert.equal(d.type, "image/png");
+  for (const who of [null, "staff", "mod"]) {
+    assert.equal((await app.req(d.url, { who })).status, who ? 403 : 401, `file read as ${who}`);
+    assert.equal((await app.req(d.url, { who, method: "DELETE" })).status, who ? 403 : 401, `file delete as ${who}`);
+  }
+  const got = await app.req(d.url);
+  assert.equal(got.status, 200);
+  assert.equal(got.headers.get("content-type"), "image/png");
+  assert.match(got.headers.get("cache-control"), /no-store/);
+  assert.ok(Buffer.from(await got.arrayBuffer()).equals(PNG));
+  // Not an image or document by its bytes: refused whatever the header says.
+  assert.equal((await rawUpload(app, Buffer.from([0, 1, 2, 3, 0, 0]))).status, 415);
+  assert.equal((await app.req(d.url, { method: "DELETE" })).status, 200);
+  assert.equal((await app.req(d.url)).status, 404);
+});
+
+test("an image attached to a home-chat message reaches the job and the model is told its path", async (t) => {
+  const root = tmp();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const host = fakeHost(root);
+  const executor = createClaudeExecutor({ env: host.env, stateDir: path.join(root, "state") });
+  const { sup } = setup({ executor, root });
+  t.after(() => sup.stop());
+  await sup.start();
+  const app = await serve(sup);
+  t.after(app.close);
+  const d = await (await rawUpload(app, PNG, { name: "corp chart.png" })).json();
+  const posted = await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "What chart is this?", clientId: "image-home-01", attachments: [{ id: d.id }] } });
+  assert.equal(posted.status, 202);
+  await untilIdle(sup);
+  const [run] = host.records();
+  const file = path.join(root, "state", "files", `${d.id}.png`);
+  assert.ok(fs.existsSync(file), "stored with an image extension Claude Code's Read tool recognises");
+  assert.ok(run.stdin.includes(file), "the prompt names the image's path");
+  assert.match(run.stdin, /Open each with the Read tool/i);
+  assert.match(run.stdin, /corp chart\.png, image\/png/);
+  const owner = sup.thread({}).messages.find((m) => m.role === "owner");
+  assert.deepEqual(owner.attachments.map((a) => a.id), [d.id]);
+  // A sent upload is part of the message now: it cannot be claimed or deleted again.
+  assert.equal((await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "again", clientId: "image-home-02", attachments: [d.id] } })).status, 409);
+  assert.equal((await app.req(d.url, { method: "DELETE" })).status, 409);
+  // An upload from another chat is not usable here.
+  const other = await (await rawUpload(app, PNG, { thread: "main" })).json();
+  assert.equal((await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "x", clientId: "image-home-03", attachments: [other.id] } })).status, 404);
+  // Attachments alone are a message.
+  const alone = await (await rawUpload(app, PNG)).json();
+  assert.equal((await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "", clientId: "image-home-04", attachments: [alone.id] } })).status, 202);
+  await untilIdle(sup);
+});
+
+test("the owner's model choice reaches the spawned command, per chat and per message", async (t) => {
+  const root = tmp();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const host = fakeHost(root);
+  const executor = createClaudeExecutor({ env: host.env, stateDir: path.join(root, "state") });
+  const { sup } = setup({ executor, root });
+  t.after(() => sup.stop());
+  await sup.start();
+  const app = await serve(sup);
+  t.after(app.close);
+  const picker = await (await app.req("/api/keir/supervisor/models?thread=main")).json();
+  assert.deepEqual(picker.models.map((m) => m.id), ["auto", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]);
+  assert.deepEqual(picker.efforts, ["auto", "low", "medium", "high", "xhigh", "max"]);
+  assert.equal(picker.selection, "auto");
+  const set = await (await app.req("/api/keir/supervisor/models", { method: "POST", body: { thread: "main", selection: "claude-sonnet-5-5", effort: "max" } })).json();
+  assert.equal(set.selection, "claude-sonnet-5-5");
+  assert.equal(set.effort, "max");
+  assert.equal((await app.req("/api/keir/supervisor/models", { method: "POST", body: { thread: "main", selection: "gpt-6" } })).status, 400);
+  assert.equal((await app.req("/api/keir/supervisor/models", { method: "POST", body: { thread: "../etc", selection: "claude-opus-5-5" } })).status, 400);
+  // The desk's saved choice; the home chat keeps the default; one message overrides.
+  await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "desk question", clientId: "model-desk-01", thread: "main" } });
+  await untilIdle(sup);
+  await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "home question", clientId: "model-home-01" } });
+  await untilIdle(sup);
+  await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "quick one", clientId: "model-home-02", model: "claude-haiku-5-5", effort: "low" } });
+  await untilIdle(sup);
+  const flags = host.records().map((r) => [r.args[r.args.indexOf("--model") + 1], r.args[r.args.indexOf("--effort") + 1]]);
+  assert.deepEqual(flags, [["claude-sonnet-5-5", "max"], ["claude-opus-5-5", "high"], ["claude-haiku-5-5", "low"]]);
+  const desk = await (await app.req("/api/keir/supervisor/thread?thread=main")).json();
+  assert.equal(desk.modelSelection, "claude-sonnet-5-5");
+  assert.equal(desk.jobs[0].model, "claude-sonnet-5-5");
+});
+
+test("the support desk and side chats are the same unrestricted agent, each its own conversation", async (t) => {
+  const root = tmp();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const writes = [];
+  const hostMcp = http.createServer(async (req, res) => {
+    let body = ""; for await (const c of req) body += c;
+    const msg = JSON.parse(body); writes.push(msg.params);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "impact low" }] } }));
+  });
+  await new Promise((r) => hostMcp.listen(0, "127.0.0.1", r));
+  t.after(() => hostMcp.close());
+  const host = fakeHost(root, { mode: "act", extraServers: { kanban: { type: "http", url: `http://127.0.0.1:${hostMcp.address().port}/mcp` } } });
+  const executor = createClaudeExecutor({ env: host.env, stateDir: path.join(root, "state") });
+  const { sup } = setup({ executor, root });
+  t.after(() => sup.stop());
+  await sup.start();
+  const app = await serve(sup);
+  t.after(app.close);
+  await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "home only", clientId: "desk-home-01" } });
+  await untilIdle(sup);
+  await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "Run hostname and set card 7 to low", clientId: "desk-act-01", thread: "main" } });
+  await untilIdle(sup);
+  await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "side chat question", clientId: "side-act-01", thread: "abcdef012345" } });
+  await untilIdle(sup);
+  const [, desk, side] = host.records();
+  for (const run of [desk, side]) {
+    assert.ok(run.args.includes("--dangerously-skip-permissions"));
+    for (const restriction of ["--tools", "--allowedTools", "--disallowedTools", "--strict-mcp-config", "--permission-mode"]) assert.ok(!run.args.includes(restriction), restriction);
+    assert.match(run.args[run.args.indexOf("--append-system-prompt") + 1], /There is no approval step/);
+  }
+  assert.match(desk.stdin, /This conversation: the support desk chat/);
+  assert.doesNotMatch(desk.stdin, /home only/, "the desk does not see the home chat's transcript");
+  assert.match(side.stdin, /This conversation: a side chat \(id abcdef012345\)/);
+  // The shell command ran and the MCP write went through, with no approval step.
+  assert.match(fs.readFileSync(host.file("shell.txt"), "utf8"), /^shell-ran-as-/);
+  // One write per job (home, desk, side chat): every chat has the same reach.
+  assert.deepEqual(writes.map((w) => [w.name, w.arguments.impact]), [["kanban_update", "low"], ["kanban_update", "low"], ["kanban_update", "low"]]);
+  const deskView = await (await app.req("/api/keir/supervisor/thread?thread=main")).json();
+  assert.deepEqual(deskView.messages.map((m) => m.role), ["owner", "supervisor"]);
+  assert.match(deskView.messages[1].text, /^Ran it and updated card 7: impact low/);
+  for (const m of deskView.messages) assert.doesNotMatch(m.text, /Muse|cannot run|read-only|unsupported/i);
+  const homeView = await (await app.req("/api/keir/supervisor/thread")).json();
+  assert.deepEqual(homeView.messages.map((m) => m.text.slice(0, 9)), ["home only", "Ran it an"]);
+  assert.equal((await app.req("/api/keir/supervisor/thread?thread=watches")).status, 400);
+});
+
+test("a file Keir attaches shows inline with its reply, served owner-only", async (t) => {
+  const image = path.join(tmp(), "render.png");
+  fs.writeFileSync(image, PNG);
+  const executor = { available: () => ({ available: true }), async run({ toolUrl }) {
+    const client = mcp(toolUrl);
+    await client.init();
+    assert.equal((await client.call("attach_file", { path: image })).attached, true);
+    await assert.rejects(client.call("attach_file", { path: "relative.png" }), /absolute/);
+    return { text: "Here is the render." };
+  } };
+  const { sup, root } = setup({ executor });
+  t.after(() => { sup.stop(); fs.rmSync(root, { recursive: true, force: true }); });
+  await sup.start();
+  const app = await serve(sup);
+  t.after(app.close);
+  await app.req("/api/keir/supervisor/messages", { method: "POST", body: { text: "render the landing page", clientId: "render-01", thread: "main" } });
+  await untilIdle(sup);
+  const answer = (await (await app.req("/api/keir/supervisor/thread?thread=main")).json()).messages.find((m) => m.kind === "answer");
+  assert.equal(answer.attachments.length, 1);
+  assert.equal(answer.attachments[0].type, "image/png");
+  assert.equal(answer.attachments[0].name, "render.png");
+  const served = await app.req(answer.attachments[0].url);
+  assert.equal(served.status, 200);
+  assert.ok(Buffer.from(await served.arrayBuffer()).equals(PNG));
+  assert.equal((await app.req(answer.attachments[0].url, { who: "staff" })).status, 403);
+  // Keir's own files are not the owner's drafts to delete.
+  assert.equal((await app.req(answer.attachments[0].url, { method: "DELETE" })).status, 409);
 });

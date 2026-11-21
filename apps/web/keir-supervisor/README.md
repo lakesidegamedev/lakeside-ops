@@ -1,7 +1,9 @@
 # Keir private owner supervisor
 
-The owner's home chat in the Keir iPhone app, served by the ops web server at
-`/api/keir/supervisor/*`. Talking to Keir here works like the owner talking to
+Every chat the owner has with Keir in the iPhone app (the private home chat,
+the support desk and side chats), served by the ops web server at
+`/api/keir/supervisor/*`. Each chat is its own conversation (`thread`:
+`owner-supervisor`, `main` or a side chat id); all of them are the same agent. Talking to Keir here works like the owner talking to
 Claude Code as root on this box: a full Claude Code agent with every built-in
 tool, every MCP server registered for the account, real credentials, real
 network and a headless browser. There is no approval step, allowlist or
@@ -20,6 +22,8 @@ these routes, because they are reachable from the internet.
 | `supervisor.js` | Durable job runner, the chat's own tools, restart recovery, the brief. Old proposals stay decidable. |
 | `executor.js` | Runs Claude Code with permissions skipped in its own transient systemd scope (memory cap), with the host's own settings, CLAUDE.md files and `~/.claude.json` MCP servers; stream-json progress; stop and the runtime cap kill the whole tree. |
 | `owner-attention.js` | The one "needs you" function: Keir's pending decisions (valid task origin) and pending questions on open tasks, the same records and rules as the app badge (`apps/ios/Ops/Attention.swift`). Also a CLI (`node owner-attention.js`). |
+| `files.js` | Owner-only files: the owner's uploads (`POST /uploads`, raw bytes with `X-Filename` and `X-Keir-Thread`) and files Keir attaches (`attach_file`), served from `GET /files/<id>`. Types are decided by the bytes. |
+| `models.js` | The picker: Claude models and effort levels, chat keys. `GET /models?thread=` and `POST /models` save a choice per chat; a message may override it. |
 | `et.js` | US Eastern time formatting ("12:08 PM ET") for everything the owner reads. |
 | `render.js` | Renders a URL or HTML file to a PNG with the installed Playwright and Chromium, saved under the public preview directory, and prints its public URL. |
 | `store.js` | One state file written with fsync and rename; old transcript lines spill to an archive file. |
@@ -28,6 +32,12 @@ these routes, because they are reachable from the internet.
 | `repos.js`, `attention.js` | Kept for proposals made by the earlier read-only design (publishing and their push alerts). Nothing creates new proposals. |
 
 ## Behaviour
+
+- Images and files the owner attaches are stored under `<dir>/files/<id>.<ext>`
+  and listed in the job's prompt with their paths; the brief tells the model to
+  open each with the Read tool, which shows it the image itself.
+- The job runs with the chat's chosen model and effort (`--model`, `--effort`),
+  or the service default.
 
 - Each owner message is a job persisted before the response. Jobs run one at a
   time and survive the phone disconnecting. Progress shows as the job's

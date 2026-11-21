@@ -97,7 +97,10 @@ function createClaudeExecutor({ env = process.env, model = env.KEIR_SUPERVISOR_M
       execFileImpl(systemctl, ["stop", unit], { timeout: 15000 }, (e) => resolve(!e))));
   }
 
-  async function run({ jobId, attempt = 1, brief, prompt, toolUrl, signal, timeoutMs = 60 * 60000, sessionId = null, resume = false, onStart = () => {}, onActivity = () => {} }) {
+  // `model` and `effort` are the owner's choice for this job (validated by the
+  // caller against models.js); without one the service default applies.
+  async function run({ jobId, attempt = 1, brief, prompt, toolUrl, signal, timeoutMs = 60 * 60000, sessionId = null, resume = false, onStart = () => {}, onActivity = () => {},
+    model: jobModel = null, effort: jobEffort = null }) {
     const state = available();
     if (!state.available) throw Object.assign(new Error(state.reason), { unavailable: true });
     const runs = path.join(stateDir, "runs");
@@ -108,7 +111,8 @@ function createClaudeExecutor({ env = process.env, model = env.KEIR_SUPERVISOR_M
     // account's normal configuration, exactly as in an interactive session.
     const mcpFile = path.join(runs, `${jobId}-${attempt}-mcp.json`);
     fs.writeFileSync(mcpFile, JSON.stringify({ mcpServers: { supervisor: { type: "http", url: toolUrl } } }), { mode: 0o600 });
-    const claudeArgs = ["-p", "--model", model, "--effort", effort, "--dangerously-skip-permissions", "--append-system-prompt", brief,
+    const runModel = jobModel || model, runEffort = jobEffort || effort;
+    const claudeArgs = ["-p", "--model", runModel, "--effort", runEffort, "--dangerously-skip-permissions", "--append-system-prompt", brief,
       "--mcp-config", mcpFile, "--output-format", "stream-json", "--verbose", ...(canResume ? ["--resume", session] : ["--session-id", session])];
     const unit = `keir-supervisor-${String(jobId).replace(/[^A-Za-z0-9_-]/g, "")}-a${attempt}.scope`;
     const bin = findClaude(env);
@@ -128,7 +132,7 @@ function createClaudeExecutor({ env = process.env, model = env.KEIR_SUPERVISOR_M
         const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
         signal?.addEventListener?.("abort", kill, { once: true });
         if (signal?.aborted) kill();
-        onStart({ unit: scoped ? unit : null, pid: child.pid, sessionId: session, resumed: Boolean(canResume) });
+        onStart({ unit: scoped ? unit : null, pid: child.pid, sessionId: session, resumed: Boolean(canResume), model: runModel, effort: runEffort });
         const line = (raw) => {
           let ev; try { ev = JSON.parse(raw); } catch { return; }
           if (ev.type === "system" && ev.subtype === "init") {
