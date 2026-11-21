@@ -48,6 +48,7 @@ const config = {
   evidencePagesDir: env.EVIDENCE_PAGES_DIR || "/var/lib/lakeside-evidence", evidencePublicBase: env.EVIDENCE_PUBLIC_BASE || "",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   // @keir-bot on an AHDGame PR asks for a review; posted as keir-bot when its token is set.
+  ticketPostsPerHour: Number(env.KEIR_TICKET_POSTS_PER_HOUR || 4),
   prMentionEnabled: env.KEIR_PR_MENTION !== "0", githubReviewerToken: env.KEIR_GITHUB_TOKEN || "", keirGitEmail: env.KEIR_GIT_EMAIL || "keir@localhost",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
   ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
@@ -462,6 +463,10 @@ if (failures) tickers.every("failures", 15 * 60000, async () => {
 }, { immediateMs: 120000 });
 tickers.every("answerfeedback", 10 * 60000, async () => { await answerFeedback.sweep(); }, { immediateMs: 3 * 60000 });
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
+// Keir 11.2: a follow-up promised to a player wakes its ticket when due, even a blocked one; two failed wakes post one plain
+// "can't confirm yet" line and tell staff once (lib/operator/promises.js).
+const promiseKeeper = require("./lib/operator/promises").createPromises({ ledger, log, held: (job) => ticketHeld(job), post: (n, text) => broker.promiseFallback(n, text) });
+tickers.every("promises", 5 * 60000, async () => { if (killSwitch.state()?.engaged) return; const r = await promiseKeeper.tick(); if (r.woke) drain(); }, { immediateMs: 3 * 60000 });
 // Keir 11.1: keeps live evidence trackers current, once per settled turn, silently (KEIR_EVIDENCE_MONITOR=0 turns it off).
 // Page-only: no Discord post, no model call, no job created or revived. Ends at 24 h, stop, pause, takeover, kill switch, closed ticket or a wrong world.
 const evidenceMonitor = require("./lib/operator/evidencemonitor").createMonitor({ ledger, config, log,

@@ -1320,6 +1320,21 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (said) refuse(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
     }
     attempt(() => guardStall(job, ticketNo, message, posts));
+    // Keir 11.2 post budget (postbudget.js): one live announcement per shipped change, turn reports only when the answer
+    // changed, and an hourly cap without a new player message whose overflow is one merged correction or answer.
+    if (!opts.system && !answeringStaff) {
+      const pb = require("./postbudget"), h = humanAt(ticketNo);
+      if (pb.liveClaim(message)) {
+        const said = pb.liveAlreadySaid({ posts, receipt: pb.mainReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo)), humanAt: h });
+        if (said) { ledger.audit("live_repeat_refused", { job: job.id, ticket: ticketNo }); refuse(`Not posted: the player was already told this release is live ("${String(said.text).slice(0, 140)}"). Do not announce it again; post only what is new.`); }
+      }
+      const promiseDue = (d.ticketPromises?.[ticketNo] || []).some((p) => p.state === "open" && (p.wokenAt || p.dueAt <= now() + 30 * 60000));
+      const repeat = !isCorrection(message) && !promiseDue && pb.repeatsTurnAnswer({ posts, humanAt: h, message });
+      if (repeat) { ledger.audit("turn_repeat_refused", { job: job.id, ticket: ticketNo }); refuse(`Not posted: this turn report gives the same answer as the last one ("${String(repeat.text).slice(0, 140)}") and the player has not written since. Post a turn report only when the answer changes; keep checking privately.`); }
+      const cap = Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR;
+      const r = pb.hourly({ posts, humanAt: h, now: now(), cap, essential: owedNow || isCorrection(message), overflowUsedAt: d.postOverflow?.[ticketNo]?.at || null });
+      if (!r.allow) { ledger.audit("hourly_post_cap_refused", { job: job.id, ticket: ticketNo, count: r.count }); refuse(pb.hourlyRefusal(r, cap)); }
+    }
     // Keir 10: a post must not contradict this ticket's earlier posts without saying "Correction:", and must not call something
     // available that a read in this activation says is locked. check_draft runs the same two checks.
     if (!opts.system) {
@@ -1687,7 +1702,12 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       return false;
     }
 
-    const said = (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
+    // Keir 11.2: one live notice per ticket per shipped change (main release receipt). A model post that already said it is
+    // live for this release counts: the card notice and the model never both announce the same thing (ticket 1868).
+    const receipt = require("./postbudget").mainReceipt(Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo));
+    const announced = receipt && (card.liveReceipts || []).includes(receipt.key);
+    const saidSince = receipt && (d.ticketPosts?.[ticketNo] || []).some((p) => p.at >= receipt.at && !isCardPost(p) && require("./postbudget").liveClaim(p.text));
+    const said = announced || saidSince || (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { delete card.pendingLiveNotice; card.liveNotified = [...told, ...fresh.map(i => statusCard.cleanName(i.name))].slice(-20); ledger.save(); ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
     const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
@@ -1698,6 +1718,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       await effect(effectJob, key, () => callSupport("support_public_update", { kind: "ticket", number: Number(ticketNo), message, deliver: true, update_kind: "production", delivery_mode: "reply" }, true), { kind: "reply", ticket: Number(ticketNo), text: message });
       delete card.pendingLiveNotice;
       card.liveNotified = [...told, ...fresh.map((i) => statusCard.cleanName(i.name))].slice(-20);
+      if (receipt) card.liveReceipts = [...(card.liveReceipts || []), receipt.key].slice(-20);
       effectJob.lastPublishedAt = now(); recordTicketPost(effectJob, ticketNo, message);
       ledger.audit("live_notice", { job: effectJob.id, ticket: ticketNo, items: names.length }); ledger.save();
       return true;
@@ -1705,6 +1726,26 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       ledger.audit("live_notice_failed", { job: effectJob.id, ticket: ticketNo, reason: String(error.message).slice(0, 300) }); ledger.save();
       return false;
     }
+  }
+  // Keir 11.2 (promises.js): after two wakes failed to deliver a promised follow-up, the player gets one plain line from code.
+  // Staff ownership, a takeover, the kill switch and an ended ticket all stop it; it is never retried after delivery.
+  async function promiseFallback(ticketNo, message) {
+    killSwitch?.assertClear("A promise follow-up");
+    const n = Number(ticketNo), root = cardOwnership(n);
+    const ended = require("./ticketstate").endedReason(d, n, root);
+    if (ended) throw new Error(`ticket ended (${ended})`);
+    const notice = ledger.createJob(`promise-fallback:${n}:${Math.floor(now() / 3600000)}`, { kind: "notice", role: "support", ticket: n, internalProbe: true, channelId: root.channelId, deadline: now() + 300000, source: {} });
+    if (notice.state === "done") return { already: true };
+    notice.state = "running";
+    try {
+      guardPlayerRegister(notice, n, message);
+      await effect(notice, `promise-fallback:${n}`, () => callSupport("support_public_update", { kind: "ticket", number: n, message, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true), { kind: "reply", ticket: n, text: message });
+      notice.state = "done"; notice.summary = "Promise fallback delivered.";
+      recordTicketPost(notice, n, message);
+      ledger.audit("promise_fallback_posted", { ticket: n, job: notice.id });
+      return { posted: true };
+    } catch (e) { notice.state = "blocked"; notice.summary = String(e.message).slice(0, 300); throw e; }
+    finally { ledger.save(); }
   }
   // Ownership checks without a running task (admin path and CI waits).
   function cardOwnership(ticketNo) {
@@ -1879,6 +1920,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
   function outputBlocked() { return Boolean(killSwitch?.state().engaged); }
   function recordTicketPost(job, ticketNo, message, kind = "reply") {
     const card = kind === "status_card";
+    if (!card) {
+      // Keir 11.2: the post that goes past the hourly cap is the one merged overflow message for this player message.
+      try { const pb = require("./postbudget"), h = humanAt(ticketNo); if (pb.recentRun(d.ticketPosts?.[ticketNo], h, now()).length >= (Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR)) (d.postOverflow ||= {})[ticketNo] = { at: now(), humanAt: h }; } catch {}
+      // Keir 11.2: every follow-up promise Keir makes is recorded with a due time by the post path itself (promises.js).
+      if (job.kind !== "notice") { try { const p = require("./promises").notePost(d, ticketNo, job, message, now()); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt }); } catch {} }
+    }
     try { trustlog.recordReply(d, { ticket: ticketNo, jobId: job.id, text: message, at: now(), card }); } catch {}
     try { require("./ticketcase").recordPost(d, job, message, { now: now(), card }); } catch {} // Keir 10.3: durable case file
     if (message === require("./advicerouting").REPLY) job.adviceRedirectedAt = now();
@@ -5202,7 +5249,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, stageTick, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

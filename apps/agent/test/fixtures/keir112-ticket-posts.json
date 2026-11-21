@@ -1,0 +1,327 @@
+{
+ "note": "Keir posts on tickets 1845 and 1859 from the support record (2026-11-17 to 19). Parts of one split reply (within 30 seconds) are merged into one post. Player names, character and company names and links are replaced. Player message times are not in the record; they are inferred from Keir replies that answer a player message and marked inferred. Main release receipts are inferred from the status card items reaching Live (a renamed card item is the same release).",
+ "tickets": {
+  "1845": {
+   "posts": [
+    {
+     "at": "2026-11-17T15:20:48.590Z",
+     "kind": "reply",
+     "text": "Your company is only in its first turns and has nothing set aside for logistics, so I am checking whether stock is actually reaching your shops rather than blaming the wider market. Waiting will not balance it out if goods are not getting through. I will come back with what your shop figures show."
+    },
+    {
+     "at": "2026-11-17T16:12:46.680Z",
+     "kind": "reply",
+     "text": "Correction to my earlier reply: your company has no shops yet, so stock reaching your shops was never the issue. The real cause is a bug in the world market. Consumer goods are sold on one world market, and the background countries put about 160,000 units a turn onto it but buy none themselves. That floods the market, so retail plants everywhere sell only about a quarter of what they make, and the build screen shows little room for retail. Waiting would not have fixed it."
+    },
+    {
+     "at": "2026-11-17T16:12:51.582Z",
+     "kind": "reply",
+     "text": "The fix is written and in testing: background countries now buy consumer goods like everyone else and make less of them, which brings the world retail market roughly into balance. I will post here when it is live. If you were planning retail, it is worth waiting for that before you build."
+    },
+    {
+     "at": "2026-11-17T17:01:11.498Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: no retail demand.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-17T17:07:03.582Z",
+     "kind": "reply",
+     "text": "Correction: the fix is in the game, but this turn's retail market is unchanged, so it is not bringing you demand yet. Background countries update their retail output in rotation, so it should land over the next few turns, and I will tell you when your company's sales move."
+    },
+    {
+     "at": "2026-11-17T17:14:44.351Z",
+     "kind": "reply",
+     "text": "The retail fix is live from this turn: background countries now buy consumer goods and make fewer of them, so the world retail market is roughly in balance instead of flooded. A second change is on its way that makes retail plants cheaper to run, because the old recipe spent most of what a shop sells on its inputs. Reply here if retail still looks wrong after a turn or two."
+    },
+    {
+     "at": "2026-11-17T18:03:59.160Z",
+     "kind": "reply",
+     "text": "Turn 21 has now run and the consumer goods market is still flooded: supply was 160,270.84 against demand of 33,335.93, so 79.2% of what was offered went unsold, at a price of 102.19. Your company still shows no sales in turn 21 and its capital is unchanged at 4,000,000 dollars. Background countries have started reporting the new household buying and lower retail output, but the world total has not moved, so I am not calling this solved and I am checking why the two disagree. From: your corporation's page."
+    },
+    {
+     "at": "2026-11-17T18:12:24.360Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Retail demand rebalance.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-17T18:43:07.560Z",
+     "kind": "reply",
+     "text": "Retail demand on the world market was 30,979 baskets at turn 19, before the change, and is 33,336 at turn 21. That rise is not the fix: the first countries to update add 10,430 baskets of demand and remove 29,779 of supply, which reaches the market figures from turn 22, with the other groups following one a turn to turn 26. On the same pattern the full change is about 88,000 baskets of supply removed and 31,000 of demand added, leaving roughly 72,000 supply against 64,000 demand. Margins have not moved: none of the 11 retail plants in the world is making money, the seven that traded averaging about -272%, and only 28% of what they offered sold."
+    },
+    {
+     "at": "2026-11-17T18:43:30.995Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Cheaper retail running costs.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-17T19:04:25.358Z",
+     "kind": "reply",
+     "text": "Turn 22 figures: world consumer goods supply is 130,172 baskets against demand of 45,276, so 65% of what was offered went unsold, and the price is 100.24. France's own row holds 11,939.79 baskets of that supply. Across the seven retail plants that traded, margins average -94%, with one in profit and one at breakeven; the same measure was -272% at turn 21. The remaining country groups switch in over the coming turns, so treat this as a partial reading."
+    },
+    {
+     "at": "2026-11-17T19:04:49.328Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Background countries buy consumer goods.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-17T19:39:34.777Z",
+     "kind": "reply",
+     "text": "A further change for the same market is in testing: background countries will sell fewer consumer goods again, closer to what buyers actually order. It is not in the game yet, and I will check the market after it lands."
+    },
+    {
+     "at": "2026-11-17T20:31:21.606Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Background retail cut to real orders.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-17T21:07:19.034Z",
+     "kind": "reply",
+     "text": "Turn 24: the world consumer goods market has turned. Shops sold every basket they offered this turn, against 69% a turn ago, and the price ticked up to 100.80.\n\nThe five shops that traded average just above break even now, with two clearly in profit, after about -35% at turn 23.\n\nCorrection to what I said earlier: the lower output reached every computer-run country in this one turn rather than one group at a time, so there is no gradual build left to wait for.\n\nYour own company still has no shop, so its figures will not move until it has one."
+    },
+    {
+     "at": "2026-11-17T22:04:37.823Z",
+     "kind": "reply",
+     "text": "Turn 25 held: 31,861 baskets offered against 40,020 asked for, all of it sold, price up to 102.57 from 100.80. That is the second turn running where buyers took everything on offer, so the shortage of retail demand is gone.\n\nYour own company now has shop builds under way in California, Texas and New York, finishing on turn 28, and it booked its first sales this turn: revenue 1,012 dollars, capital 3,575,986.\n\nTake a look at your page and tell me if anything there still looks wrong."
+    },
+    {
+     "at": "2026-11-17T22:04:54.692Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Background countries sell less consumer goods.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-17T23:12:23.782Z",
+     "kind": "reply",
+     "text": "Turn 26 answers your question: the market did need to balance out, and it now has. Shops have sold every basket they offered for three turns running, and the price has risen from 99.30 three turns ago to 104.55.\n\nYour company is trading now, with revenue of 1,160 dollars last turn and a loss of 141, and its three expansions open on turn 28. Your shops still spend a little more on stock, wages and upkeep than they take in, so they run at a small loss even when everything sells, and that is worth checking again after turn 28."
+    },
+    {
+     "at": "2026-11-18T00:31:22.723Z",
+     "kind": "reply",
+     "text": "Turn 27: every basket on offer sold for a fourth turn, and the price rose to 106.64 from 104.55. Your company took 1,321 dollars in revenue and lost 117, a smaller loss than last turn, and the three shop expansions finish on turn 28. I will look at your margins again once they are open."
+    },
+    {
+     "at": "2026-11-18T04:52:02.010Z",
+     "kind": "reply",
+     "text": "Retail sold out again: all 34,667 baskets offered went at 115.43, up from 113.17. Your three shops made money for the first time this turn, 109 dollars on 1,645 of revenue, but the split is uneven: New York is about 127 up, Texas near flat and California about 13 down. Demand is still well ahead of what shops offer, so the price keeps climbing each turn. I am checking whether your shops' thin margins are just that spread or a fault."
+    },
+    {
+     "at": "2026-11-18T04:58:10.812Z",
+     "kind": "reply",
+     "text": "I can't authorise a refund myself; that is the owner's call, and I am putting your exact figures in front of them now. Your capital has fallen 424,395 dollars since turn 24, almost all of it the three shop builds, while running losses across those seven turns total 522 dollars including 109 profit this turn. The screen you sent is the game advising against another store: no room in the market and a forecast loss of 248 dollars a turn, so closing that order costs you nothing. I will come back here once the owner has answered."
+    },
+    {
+     "at": "2026-11-18T05:24:34.520Z",
+     "kind": "reply",
+     "text": "Correction: the 424,014 your capital fell by was 122,988 for building the three shops plus a 300,882 one-off fee for entering each new market, which the founding screen showed before you confirmed. You were not charged three times the quote."
+    },
+    {
+     "at": "2026-11-18T10:59:04.945Z",
+     "kind": "reply",
+     "text": "Your shops have now traded in profit six turns running: turn 37 brought in 2,138 dollars and gained 155, so your capital is back at 3.58 million. The refund you asked for is not mine to decide, and the owner has not answered yet."
+    },
+    {
+     "at": "2026-11-18T13:46:21.063Z",
+     "kind": "reply",
+     "text": "Turn 40: your shops brought in 2,657 dollars and gained 187, the ninth profitable turn in a row. Consumer goods sold out again, all 41,955 baskets offered went at 137.94, up from 135.24. A change is in testing that cuts the one-off fee for opening a new market from 100,000 to 5,000. It does not change the three entry fees you already paid."
+    },
+    {
+     "at": "2026-11-18T16:14:36.486Z",
+     "kind": "reply",
+     "text": "We credited $285,838.11 to [player] to refund the difference on the three original store permits. Your stores are still operating. The lower permit fee is live for new markets, and we are testing changes to make new stores cheaper to build. This ticket stays open while we work on store payback."
+    },
+    {
+     "at": "2026-11-18T17:13:02.001Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Cheaper new stores.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-18T19:52:16.032Z",
+     "kind": "reply",
+     "text": "Turn 46: your shops took 3,108 dollars and gained 771, the fifteenth profitable turn in a row, and your capital is 3.87 million. The team is still working on store costs, so I am keeping this open."
+    },
+    {
+     "at": "2026-11-18T20:36:46.724Z",
+     "kind": "reply",
+     "text": "Standard stores can now handle up to 26% more baskets per turn on the main server. They buy stock for the larger run and sell it to buyers through the regular market. This ticket stays open while we check the earnings from the next settled turn."
+    },
+    {
+     "at": "2026-11-18T20:55:50.462Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: More baskets per store.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-18T21:06:25.581Z",
+     "kind": "reply",
+     "text": "Turn 48: your three shops sold every basket they made, California 287, Texas 304 and New York 290, at a consumer goods price of 161.63, so the corporation took 7,019 dollars and gained 1,842. Output more than doubled because a further block of store capacity opened the same turn, and the shops now run above their normal capacity, which limits how much extra each one can show. Your capital fell to 3.57 million only because about 287,000 anchor went out as the construction payment for the expansion orders you placed on turn 47. The next expansion is due around turn 55. From: your retail page."
+    },
+    {
+     "at": "2026-11-18T21:40:29.813Z",
+     "kind": "reply",
+     "text": "No need to apologise, and thank you for carrying retail. Nothing on this ticket is waiting on you.\n\nThe next turn is due at 22:00 and I will check your shops' figures as soon as it lands."
+    },
+    {
+     "at": "2026-11-18T23:08:35.086Z",
+     "kind": "reply",
+     "text": "Your shops sold out again this turn and the new store space has opened, so retail is working. The fall in your capital is the construction bill for the extra store space you ordered, paid as the work begins, not a trading loss. Nothing is needed from you."
+    },
+    {
+     "at": "2026-11-19T00:12:30.523Z",
+     "kind": "reply",
+     "text": "Your support report has been resolved.\n\nYour stores are selling again. On turn 51, all four [player] stores sold their full offers and earned about $15,848 in combined operating profit. The $285,838.11 refund for the difference on the three original store permits was credited to [player]. We are continuing work on how long new stores take to pay back.\n\nWhat we did:\n- Restored retail sales and increased Standard store throughput.\n- Credited $285,838.11 to [player] for the original permit price difference.\n- Verified the sales and operating profit for all four stores on turn 51.\n\nIf a store stops selling again, send us the store link and game turn so we can check what happened."
+    }
+   ],
+   "player": [
+    {
+     "at": "2026-11-17T15:15:00Z",
+     "inferred": true
+    },
+    {
+     "at": "2026-11-18T04:55:00Z",
+     "inferred": true
+    },
+    {
+     "at": "2026-11-18T21:38:00Z",
+     "inferred": true
+    }
+   ],
+   "receipts": [
+    {
+     "key": "r1",
+     "at": "2026-11-17T17:00:00Z"
+    },
+    {
+     "key": "r2",
+     "at": "2026-11-17T18:40:00Z"
+    },
+    {
+     "key": "r3",
+     "at": "2026-11-17T20:30:00Z"
+    },
+    {
+     "key": "r4",
+     "at": "2026-11-18T17:12:00Z"
+    },
+    {
+     "key": "r5",
+     "at": "2026-11-18T20:35:00Z"
+    }
+   ]
+  },
+  "1859": {
+   "posts": [
+    {
+     "at": "2026-11-19T03:12:26.141Z",
+     "kind": "reply",
+     "text": "Your issue was filled by what the market could buy: 2,614 units, so $2.614 million of the $18.4 million you set. The slider is a borrowing limit, not cash the market holds, so the unsold remainder is not debt and pays no coupon. The pool only sells unsold units from cash above half its own target, and it holds far less than that, so none of the unsold units on your four earlier issues have moved since they were issued. I have not confirmed whether that part is intended; what is certain today is that nothing more will arrive from this issue. One more figure explains the gap: the whole dollar bond pool holds about $10.5 million, and a single issue can take at most a fifth of the pool. A ceiling of $18.4 million was never cash that existed in one place. Your $2.6 million is that fifth, and the rest of the face value waits for buyers that the pool's own cash rule has not provided. From: the game's rules."
+    },
+    {
+     "at": "2026-11-19T03:15:06.122Z",
+     "kind": "reply",
+     "text": "The slider is your legal borrowing limit, not cash buyers hold, so maxing it cannot create buyers; that split began when the bond market started funding new issues with its own money in September 2026. You are right the unsold part should place later: it never has for company bonds, and I have reported that fault."
+    },
+    {
+     "at": "2026-11-19T03:16:51.214Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Issuing bonds decreases how much I take out.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-19T03:29:03.959Z",
+     "kind": "reply",
+     "text": "Your latest issue filled 2,614 of the 18,397 units you asked for; counting the three earlier issues, 44,494 units are still unsold and have not placed. None of the unfunded part has placed, and that is under review, not fixed."
+    },
+    {
+     "at": "2026-11-19T03:38:55.382Z",
+     "kind": "reply",
+     "text": "Correction: the \"now live on the main server\" note above was wrong for your report. Nothing has been fixed for this yet; the unsold part of your issue is still under review."
+    },
+    {
+     "at": "2026-11-19T04:11:56.176Z",
+     "kind": "notice",
+     "text": "This is now live on the main server: Issue screen shows how much the market will fund.\n\nIf you still see the problem, reply here."
+    },
+    {
+     "at": "2026-11-19T04:20:48.698Z",
+     "kind": "reply",
+     "text": "You are right: this is a money problem, not a wording problem. The market holds only what it took in, and when it buys bonds it swaps that cash for paper and then waits for coupons and maturities; nothing puts cash back as the economy grows, so it runs dry and stays dry. Governments have a central bank buyer to fall back on, companies do not. The fix I would build is a standing credit line that lets the market borrow against the bonds it already holds, so it gets back to its intended size every turn instead of waiting years.\n\nSay go and I will put that change up for your approval."
+    },
+    {
+     "at": "2026-11-19T04:30:20.865Z",
+     "kind": "reply",
+     "text": "We confirmed the dollar bond market opened without its starting cash. We’re checking what each bond issue actually paid and how to restore funding to the market. The earlier screen update showed the funding limit. The market repair is still in progress."
+    },
+    {
+     "at": "2026-11-19T05:15:32.012Z",
+     "kind": "reply",
+     "text": "The slider is still your legal borrowing ceiling, not money the market has; what changed on 3 September is that new issues started being bought from the market's own cash. We have now confirmed why that cash buys so little: the dollar market opened with no starting cash, and the rule for selling the unsold part could never sell any while the market held far less than its full size. The rule is fixed in code and being released, not yet on the live server, so your unsold units still have no buyers. The cash itself is the real gap and the owner is deciding how to fund it."
+    },
+    {
+     "at": "2026-11-19T07:19:04.086Z",
+     "kind": "reply",
+     "text": "The repair for unsold units is built and almost ready to go live, but it is not on the live server yet, so those units still will not place. I will confirm here once a turn has run on it."
+    },
+    {
+     "at": "2026-11-19T09:55:12.884Z",
+     "kind": "reply",
+     "text": "The slider is the legal cap on how much debt you can issue; the market pays for bonds out of its own cash, and that is a separate limit. The split began on 3 September 2026, when new issues started being paid for from the market's own cash."
+    },
+    {
+     "at": "2026-11-19T10:23:37.848Z",
+     "kind": "reply",
+     "text": "The gap is money, not wording: the dollar bond market should have opened holding about $1.38 trillion and it holds $11 million. That exact repair is now with the owner for a yes or no, and nothing moves until he answers. The other currencies' markets opened empty in the same way and will be fixed together with it."
+    },
+    {
+     "at": "2026-11-19T12:36:13.792Z",
+     "kind": "reply",
+     "text": "The slider is the legal cap on how much debt you may issue; the market paying for bonds is a separate limit, and that split has been in place since September 2026. So the slider is not there to promise buyers, and a further fix now in testing lets unsold company bonds draw on the cash the market holds before government offers use it."
+    },
+    {
+     "at": "2026-11-19T12:41:33.451Z",
+     "kind": "reply",
+     "text": "The owner has now settled the amount for the bond market repair, and that repair has gone up for the final go-ahead before anything is applied. Nothing has changed in your market yet. The other repair, so the unsold part of an issue can place later, is in the release line but is not on the live server yet; I will confirm here once a turn has run with both."
+    },
+    {
+     "at": "2026-11-19T13:06:48.090Z",
+     "kind": "reply",
+     "text": "The market's missing money has been restored: it now holds $1.38 trillion, so your next issue will be funded in full. That fixes the cash side; the older unsold part of your earlier issues still waits on the placement change, which is built but not yet running on the live game. I will confirm here once a turn has run with it."
+    },
+    {
+     "at": "2026-11-19T14:02:41.430Z",
+     "kind": "reply",
+     "text": "The turn has now run and your older unsold units are placing again: 1,650 fell to 1,556, 12,225 to 11,904, 14,836 to 14,506 and 15,783 to 15,416, so each earlier issue sold its small share this turn. The rest follows turn by turn, and a new issue will be funded from the market's cash."
+    },
+    {
+     "at": "2026-11-19T14:03:52.726Z",
+     "kind": "reply",
+     "text": "Your support report has been resolved.\n\nWe restored the dollar bond market’s missing opening cash. On turn 65 the market bought 1,112 previously unsold units from your four issues. We checked your earlier sales and confirmed the proceeds reached your corporation. The earlier promise of full funding was incorrect. How much a new issue sells depends on the market’s available cash when you issue it.\n\nWhat we did:\n- Verified placements on all four issues, from turns 14, 30, 42 and 54.\n\nThe remaining 43,382 units are available to place on later turns. You can follow them on the bond details screen."
+    }
+   ],
+   "player": [
+    {
+     "at": "2026-11-19T03:09:00Z",
+     "inferred": true
+    },
+    {
+     "at": "2026-11-19T03:14:00Z",
+     "inferred": true
+    },
+    {
+     "at": "2026-11-19T04:18:00Z",
+     "inferred": true
+    },
+    {
+     "at": "2026-11-19T12:35:00Z",
+     "inferred": true
+    }
+   ],
+   "receipts": [
+    {
+     "key": "r1",
+     "at": "2026-11-19T04:10:00Z"
+    },
+    {
+     "key": "r2",
+     "at": "2026-11-19T13:05:00Z"
+    }
+   ]
+  }
+ }
+}
