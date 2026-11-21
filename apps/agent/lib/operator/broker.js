@@ -3928,7 +3928,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // Release claims in ticket copy are checked against these receipts.
         // Review 3 F1: owned means this repository and this number, held by the job (not the same number in another repo).
         const ownPr = input.number && require("./livecoverage").jobOwnsPr(d, job, repo, input.number);
-        (job.releaseEvidence ||= {})[out.sha] = { at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, ...(input.number ? { pr: Number(input.number) } : {}), ...(ownPr ? {} : { source: "lookup" }) };
+        // Review 4 m4: a later lookup of the same commit merges into the receipt; it never drops its PR or turns an owned
+        // receipt into a lookup.
+        const prior = (job.releaseEvidence ||= {})[out.sha] || {};
+        const owned = ownPr || (Number(prior.pr) > 0 && prior.source !== "lookup");
+        const receipt = { ...prior, at: now(), development: out.development === true, staging: out.staging === true, main: !desktop && out.main === true, repository: repo, turnWorker: out["turn-worker/production"] === true, ...(input.number ? { pr: Number(input.number) } : {}), source: owned ? prior.source : "lookup" };
+        if (!receipt.source) delete receipt.source;
+        job.releaseEvidence[out.sha] = receipt;
         ledger.save();
         if (!desktop && input.number && out.main === true && !musePolicy.origin(d, job).scoped) {
           const { closed, live, closureHeld } = await closeFixedIssues(Number(input.number));

@@ -321,3 +321,21 @@ test("1829: an unlinked reporter does not block the public issue, and the ticket
   const joined = await g.broker.tool(g.job, "raise_to_developers", { title, detail, kind, issue, issueNumber: 480 }).catch((e) => e);
   assert.ok(!/verified reporter identity/.test(String(joined.message || "")), String(joined.message || ""));
 });
+
+test("review 4 m4: a later where by commit merges into the owned receipt instead of replacing it", async () => {
+  const f = fixture({ pr: { number: 600, merged: true, merge_commit_sha: "abcabcabcabc", head: { ref: "keir/fix-panel" }, body: "Fix the panel.", files: ["src/components/A.tsx"] }, compare: { main: "identical" } });
+  f.job.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/600"];
+  await f.broker.tool(f.job, "github", { action: "where", number: 600 });
+  const key = "abcabcabca";
+  assert.equal(f.job.releaseEvidence[key].pr, 600);
+  assert.equal(f.job.releaseEvidence[key].source, undefined, "owned");
+  await f.broker.tool(f.job, "github", { action: "where", sha: "abcabcabcabc" });
+  assert.equal(f.job.releaseEvidence[key].pr, 600, "the PR is kept");
+  assert.equal(f.job.releaseEvidence[key].source, undefined, "still owned, not a lookup");
+  assert.equal(require("../lib/operator/livecoverage").ownMainReceipt([f.job]), true);
+  // The opposite: a where by commit on a job with no receipt for it is only a lookup.
+  const g = fixture({ compare: { main: "identical" } });
+  await g.broker.tool(g.job, "github", { action: "where", sha: "fedcba987654" });
+  assert.equal(g.job.releaseEvidence.fedcba9876.source, "lookup");
+  assert.equal(g.job.releaseEvidence.fedcba9876.pr, undefined);
+});
