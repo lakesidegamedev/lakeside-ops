@@ -804,9 +804,14 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       if (existing) throw badInput(`${github.repo}#${github.number} is already item ${existing.id}; update that item instead`);
     }
     const start = input.start === true;
-    const assigned = normalizeActor(clean(input.assigned_to, 120)) || clean(input.assigned_to, 120) || (start && actor !== "unnamed" ? actor : null);
-    // Now means someone is working it this moment.
-    if (start && !assigned) throw badInput("start:true puts the card in Now, which says someone is working it right now. Send actor (your name, e.g. claude:7f3a) or assigned_to, or file it without start.");
+    const named = normalizeActor(clean(input.assigned_to, 120)) || clean(input.assigned_to, 120);
+    const assigned = named || (start ? actor : null);
+    // Now means someone is working it this moment. Without a name the card
+    // is still filed (existing callers keep working) but held by "unnamed",
+    // which nobody can follow up; the reply says so.
+    const startWarning = start && !named && actor === "unnamed"
+      ? "start:true without actor or assigned_to: the card is in Now held by \"unnamed\", so nobody can tell who is working it, and it goes back to Next after a day without progress. Send actor (your name, e.g. claude:7f3a) next time."
+      : null;
     if (start) { lane = "now"; checkWip(actor, { force: input.force }); }
     const stamp = iso();
     const link = ticketLinkFor(input, title, detailText);
@@ -832,7 +837,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
       if (start) logEvent({ item_id: newId, product, event_type: "started", actor, summary: clean(input.summary, 4000) || "Started", created_at: stamp });
       return newId;
     })();
-    return get(id, { events: 5 });
+    return startWarning ? { warning: startWarning, ...get(id, { events: 5 }) } : get(id, { events: 5 });
   }
 
   const UPDATABLE = ["title", "detail", "lane", "impact", "kind", "needs_owner", "assigned_to", "evidence_url", "github", "product", "progress_summary", "stale", "force", "area", "class", "parent_id", "ticket", "tickets", "ticket_role", "pull_request", "still_owed", "alert_key", "alert_check"];
@@ -1053,7 +1058,7 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
     return {
       scope: slug || "all products",
       generated_at: stamp,
-      rules: `Add with start:true before you write code (start needs your actor: Now means someone is on it). Name the source a card comes from: ticket (a card stays open as a follow-up when its ticket closes; send ticket_role own only for a card that is purely the ticket's status or question, which then closes with it), pull_request (set still_owed if work remains after the merge), alert_key for monitors. Automatic counts are not cards: see mcp_capability_requests. A Now card with no progress for ${ACTIVITY_HOURS} hours goes back to Next, unassigned. Send actor as your name (claude, codex, keir, muse, deepseek), with :session if several run at once. Cap: ${WIP_CAP} cards in progress per actor. Cards quiet ${RELEASE_DAYS} days go back to Next automatically. completed needs evidence_url or no_evidence_reason. Ask the owner in chat, never in a card.`,
+      rules: `Add with start:true before you write code, with your actor (Now means someone is on it). Name the source a card comes from: ticket (a card stays open as a follow-up when its ticket closes; send ticket_role own only for a card that is purely the ticket's status or question, which then closes with it), pull_request (set still_owed if work remains after the merge), alert_key for monitors. Automatic counts are not cards: see mcp_capability_requests. A Now card with no progress for ${ACTIVITY_HOURS} hours goes back to Next, unassigned. Send actor as your name (claude, codex, keir, muse, deepseek), with :session if several run at once. Cap: ${WIP_CAP} cards in progress per actor. Cards quiet ${RELEASE_DAYS} days go back to Next automatically. completed needs evidence_url or no_evidence_reason. Ask the owner in chat, never in a card.`,
       lanes: laneHealth(slug),
       counts: {
         now: count("lane = 'now'"), next: count("lane = 'next'"), blocked: count("lane = 'blocked'"),

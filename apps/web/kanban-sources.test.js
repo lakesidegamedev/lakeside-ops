@@ -374,11 +374,18 @@ describe("one pass for every source", () => {
 describe("lanes mean what they say", () => {
   beforeEach(() => { fresh(); R = readers(); });
 
-  it("start:true needs someone to be working it", async () => {
+  it("start:true without an actor still files the card, with a warning", async () => {
+    // Review m4: existing callers must keep working.
     const r = await tools().kanban_add({ product: "ahd", title: "Something", start: true });
-    assert.equal(r.ok, false);
-    assert.match(r.m, /start:true puts the card in Now/);
-    assert.equal(k.add({ product: "ahd", title: "Something", start: true }, { actor: "claude:s1" }).assigned_to, "claude:s1");
+    assert.equal(r.ok, true);
+    assert.equal(Object.keys(r.o)[0], "warning");
+    assert.match(r.o.warning, /^start:true without actor or assigned_to: the card is in Now held by "unnamed"/);
+    assert.deepEqual([r.o.lane, r.o.assigned_to], ["now", "unnamed"]);
+    // The opposite: a named caller gets no warning.
+    const named = k.add({ product: "ahd", title: "Something else", start: true }, { actor: "claude:s1" });
+    assert.equal(named.assigned_to, "claude:s1");
+    assert.equal(named.warning, undefined);
+    assert.equal(k.add({ product: "ahd", title: "A third thing", start: true, assigned_to: "codex" }).warning, undefined);
   });
 
   it("brief and list count parked and unassigned cards per lane", () => {

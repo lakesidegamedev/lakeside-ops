@@ -35,7 +35,8 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
   // The token name is shared by many agents, so it is never used as an actor.
   const actorFor = (actor) => normalizeActor(actor) || "unnamed";
   const ACTOR = z.string().max(120).optional().describe("Who you are: claude, codex, keir, muse or deepseek, plus :session when several run at once (e.g. claude:7f3a). Always send it.");
-  const withWarning = (result, actor) => (normalizeActor(actor) ? result : { ...result, warning: "No actor given, so this was recorded as 'unnamed'. Send actor on every write." });
+  // The store's own warning (start:true without a name) is more specific; keep it.
+  const withWarning = (result, actor) => (normalizeActor(actor) || (result && result.warning) ? result : { ...result, warning: "No actor given, so this was recorded as 'unnamed'. Send actor on every write." });
 
   async function guarded(fn, { write = false } = {}) {
     if (write && !canWrite) return errorResult("this token has no write scope");
@@ -88,7 +89,7 @@ function registerKanbanTools(server, { auth, jsonResult, errorResult, store = sh
 
   server.tool(
     "kanban_add",
-    `Add a kanban item: work a person or agent chose to track. start:true puts it straight into now, assigned to you (needs actor; cap ${WIP_CAP} in progress per actor). Name its source (ticket, pull_request, alert_key) and it closes when that source closes, merges or clears. Keir's automatic tool-gap and failure counts are recorded in the counter list instead (the reply has counted:true and id null). lane next needs an owner; without one it lands in inbox. If an open card already covers the same work it is returned with duplicate:true instead of adding a copy (force:true to add anyway). Never file a question for the owner; ask in chat.`,
+    `Add a kanban item: work a person or agent chose to track. start:true puts it straight into now, assigned to you (send actor, or it is held by "unnamed"; cap ${WIP_CAP} in progress per actor). Name its source (ticket, pull_request, alert_key) and it closes when that source closes, merges or clears. Keir's automatic tool-gap and failure counts are recorded in the counter list instead (the reply has counted:true and id null). lane next needs an owner; without one it lands in inbox. If an open card already covers the same work it is returned with duplicate:true instead of adding a copy (force:true to add anyway). Never file a question for the owner; ask in chat.`,
     {
       product: z.string().describe(PRODUCT_HELP),
       title: z.string().min(1).max(300),
