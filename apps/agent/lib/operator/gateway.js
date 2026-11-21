@@ -232,10 +232,12 @@ function createGateway({ ledger, config, conversation, drain = () => {}, now = (
     if (!historical && nTicket && d.channels[channel.id]?.keirStopped && role === "player") {
       d.seen[`discord:${message.id}`] = "ticket-stopped"; ledger.save(); return;
     }
-    // Keir 10.1.14 (ticket 1842): the owner answered in the ticket channel after a decision was raised. That is the answer,
-    // whether or not the message is phrased as a direction to Keir.
+    // Keir 10.1.14 (ticket 1842), narrowed in 11.2: an owner message answers an open question only as a Discord reply to
+    // it or by naming one of its options (standdown.js). Anything else is context and the question stays open.
     if (!historical && !summonTask && nTicket && actor === config.ownerId) {
-      try { const answered = require("./standdown").applyOwnerChannelAnswer(d, { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now() }); if (answered.length) { ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save(); } } catch {}
+      try { const answered = require("./standdown").applyOwnerChannelAnswer(d, { ticket: nTicket, ownerId: config.ownerId, authorId: actor, text: s.content, messageId: message.id, at: now(), botId: config.botId,
+        replyTo: message.referenced_message ? { id: message.referenced_message.id, authorId: message.referenced_message.author?.id, content: message.referenced_message.content } : message.message_reference?.message_id ? { id: message.message_reference.message_id } : null });
+        if (answered.length) ledger.audit("owner_decision_answered_in_channel", { ticket: nTicket, message: message.id, decisions: answered }); ledger.save(); } catch {}
     }
     if (!historical && explicit && nTicket && authority.granter(config, actor) && authority.isDirection(s.content)) {
       delete d.channels[channel.id]?.keirStopped;

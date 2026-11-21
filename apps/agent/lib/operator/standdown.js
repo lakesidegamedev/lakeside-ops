@@ -165,29 +165,84 @@ function outstandingPromise(rows, isAnswer) {
 const OWNER_WAIT = /\b(?:needs?|awaiting|waiting (?:on|for)|pending|with|up to|for) (?:the )?owner(?:'s)?(?: decision| call| answer| approval| yes)?\b|\bowner(?:'s)? (?:decision|call|approval|answer)\b[^.!?]{0,40}\b(?:needed|pending|awaited|required|outstanding)\b|\bneeds the owner\b|\bthe owner has to decide\b/i;
 function claimsOwnerWait(message) { return OWNER_WAIT.test(String(message || "")); }
 
-// Marks every free-text pending decision on this ticket answered by the owner's channel message. Decisions that gate an
-// action (actionId, binds, review) still need the button: a sentence in a channel is direction, not execution approval.
-function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId = null, at = Date.now() }) {
+// Keir 11.2 (audit 2026-11-21): any owner sentence in a ticket used to answer every open question on it. All three cases
+// in two weeks were wrong ("can you link it here for review?" answered "Ship PR 6865 now?"; "yeah automobiles was removed"
+// answered "Raise the demand cap?"; "Keir is wrong" answered a pricing question). A channel message now answers a question
+// only when it is a Discord reply to that question's message, or it clearly names one option: its number, its full label,
+// or yes or no when the question is a single yes or no. Anything else stays context and the question stays open.
+// Decisions that gate an action (actionId, binds) still need the button: a sentence in a channel is direction, not approval.
+const YES = /^(?:yes|yeah|yep|yup|y|ok(?:ay)?|sure|approved?|go ahead|do it|ship it|go for it|sounds good|agreed)$/i;
+const NO = /^(?:no|nope|nah|n|declined?|rejected?|don'?t|do not|hold off|not now|leave it)$/i;
+const norm = (t) => String(t || "").toLowerCase().replace(/[*_`~>]/g, " ").replace(/[^a-z0-9%$.' ]+/g, " ").replace(/\s+/g, " ").trim();
+// yes, no, or null. Only a standalone clause counts: "Do the refund, yes." is yes; "yeah automobiles was removed" is not.
+function yesNo(text) {
+  const clauses = String(text || "").split(/[,.;!?\n]+/).map((c) => c.trim().replace(/\s+/g, " ")).filter(Boolean);
+  const yes = clauses.some((c) => YES.test(c)), no = clauses.some((c) => NO.test(c));
+  return yes === no ? null : yes ? "yes" : "no";
+}
+function optionNumber(text) {
+  const t = String(text || "").trim();
+  const m = /^(?:option|choice|#)?\s*([1-6])\s*[.!)]?$/i.exec(t) || /\b(?:option|choice)\s*#?\s*([1-6])\b/i.exec(t) || /^(?:go with|pick|choose|take)\s+(?:option\s*)?#?([1-6])\b/i.exec(t);
+  return m ? m[1] : null;
+}
+// The option this message clearly names, or null. A single-choice question (no options) takes a yes or no.
+function namedOption(x, text, { alone }) {
+  const options = x.options || [];
+  if (!options.length) { const yn = yesNo(text); return yn ? { free: yn } : null; }
+  const n = alone ? optionNumber(text) : null;
+  if (n && options.some((o) => o.id === n)) return options.find((o) => o.id === n);
+  const msg = ` ${norm(text)} `;
+  const byLabel = options.filter((o) => norm(o.label).length >= 3 && msg.includes(` ${norm(o.label)} `));
+  if (byLabel.length === 1) return byLabel[0];
+  if (alone && options.length === 2) {
+    const yn = yesNo(text), yes = options.find((o) => /^yes\b/i.test(o.label)), no = options.find((o) => /^no\b/i.test(o.label));
+    if (yn && yes && no) return yn === "yes" ? yes : no;
+  }
+  return null;
+}
+// replyTo: the message the owner replied to ({ id, authorId, content }), or null. botId: Keir's Discord id.
+function repliesTo(x, replyTo, botId) {
+  if (!replyTo?.id) return false;
+  const ids = [...Object.values(x.sent || {}).map((s) => s.messageId), ...(x.channelMessages || [])].filter(Boolean).map(String);
+  if (ids.includes(String(replyTo.id))) return true;
+  if (!botId || replyTo.authorId !== botId) return false;
+  const body = norm(replyTo.content), q = norm(x.question).slice(0, 80);
+  return q.length >= 20 && body.includes(q.slice(0, 60));
+}
+function applyOwnerChannelAnswer(d, { ticket, ownerId, authorId, text, messageId = null, at = Date.now(), replyTo = null, botId = null }) {
   if (!ticket || !ownerId || authorId !== ownerId) return [];
   const content = String(text || "").trim();
   if (!content || content.startsWith("/")) return [];
   const jobs = Object.values(d.jobs || {}).filter((j) => Number(j.ticket) === Number(ticket));
+  const open = Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !x.actionId && !x.binds && (x.at || 0) <= at && (jobs.some((j) => j.id === x.jobId) || Number(x.ticket) === Number(ticket)));
+  const replied = open.filter((x) => repliesTo(x, replyTo, botId));
+  let picks = [];
+  if (replied.length) picks = replied.map((x) => ({ x, option: namedOption(x, content, { alone: true }), reply: true }));
+  else {
+    const named = open.map((x) => ({ x, option: namedOption(x, content, { alone: open.length === 1 }) })).filter((p) => p.option);
+    // A message that could answer several questions answers none of them.
+    if (named.length === 1) picks = named;
+  }
   const answered = [];
-  for (const x of Object.values(d.decisions || {})) {
-    if (x.state !== "pending" || !jobs.some((j) => j.id === x.jobId)) continue;
-    if (x.actionId || x.binds) continue;
-    if ((x.at || 0) > at) continue;
-    x.state = "answered"; x.answeredAt = at; x.answeredBy = ownerId; x.answerText = content.slice(0, 600); x.answeredVia = "ticket_channel"; x.answerMessage = messageId;
+  for (const { x, option, reply } of picks) {
+    if (option && !option.free) { x.state = "selected"; x.selectedOption = { ...option }; }
+    else x.state = "answered";
+    x.answeredAt = at; x.answeredBy = ownerId; x.answerText = content.slice(0, 600); x.answer = content.slice(0, 600); x.answeredVia = reply ? "ticket_channel_reply" : "ticket_channel_option"; x.answerMessage = messageId;
     answered.push(x.id);
   }
-  (d.ownerChannelAnswers ||= {})[ticket] = { at, text: content.slice(0, 600), message: messageId, decisions: answered };
+  // Not an answer: kept on each open question as context, and the question stays open.
+  if (!answered.length) for (const x of open) x.channelContext = [...(x.channelContext || []), { at, text: content.slice(0, 300), message: messageId }].slice(-5);
+  if (answered.length) (d.ownerChannelAnswers ||= {})[ticket] = { at, text: content.slice(0, 600), message: messageId, decisions: answered };
   for (const j of jobs) {
-    if (!answered.length) break;
-    if (Object.values(d.decisions || {}).some((y) => y.state === "pending" && y.jobId === j.id)) continue;
-    if (!answered.some((id) => d.decisions[id].jobId === j.id)) continue;
-    delete j.ownerDecisionPending;
-    (j.inbox ||= []).push({ authorId: ownerId, role: "owner", at: new Date(at).toISOString(), decision: answered[0],
-      content: `The owner answered the open decision in the ticket channel: ${content.slice(0, 600)}. Treat it as the decision (direction, not execution approval). Do not tell the player it is still waiting on the owner.` });
+    const mine = answered.filter((id) => d.decisions[id].jobId === j.id);
+    if (!mine.length) continue;
+    if (!Object.values(d.decisions || {}).some((y) => y.state === "pending" && y.jobId === j.id)) delete j.ownerDecisionPending;
+    for (const id of mine) {
+      const x = d.decisions[id];
+      const what = x.selectedOption ? `chose "${x.selectedOption.label}"` : "answered";
+      (j.inbox ||= []).push({ authorId: ownerId, role: "owner", at: new Date(at).toISOString(), decision: id,
+        content: `The owner ${what} in the ticket channel for "${String(x.question).slice(0, 160)}": ${content.slice(0, 600)}. Treat it as the decision (direction, not execution approval). Do not tell the player it is still waiting on the owner.` });
+    }
     if (!JOB_TERMINAL.includes(j.state)) { j.state = "queued"; j.wakeAt = 0; }
   }
   return answered;
@@ -201,5 +256,5 @@ function ownerAnsweredSince(d, ticket) {
   return !newer;
 }
 
-module.exports = { stateFingerprint, noNewRefusal, limitationLine, currentQuestionReceipt, PASSED_ON, NOT_PASSED_ON, isHoldingLine, holdingClaimRefusal, capabilityClaim,
+module.exports = { yesNo, namedOption, repliesTo, stateFingerprint, noNewRefusal, limitationLine, currentQuestionReceipt, PASSED_ON, NOT_PASSED_ON, isHoldingLine, holdingClaimRefusal, capabilityClaim,
   quoteFactors, priceVerdictRefusal, promisesFollowUp, outstandingPromise, claimsOwnerWait, applyOwnerChannelAnswer, ownerAnsweredSince };
