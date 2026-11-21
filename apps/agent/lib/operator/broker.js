@@ -2597,8 +2597,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     }
     if (name === "ticket_command") {
       if (input.op === "add_person") {
+        // Keir 11.4 review (M6): preview mode changes nothing, and the person is added only to the ticket the command names.
         const r = await ticketCommands.run(job, input, signal);
-        return tool(job, "add_to_ticket", { user: String(input.user || ""), ...(r.ticket ? { ticket: r.ticket } : {}) }, signal);
+        if (r.preview) return r;
+        if (!r.ticket) throw new Error("Name the ticket to add them to, by number, in tickets.");
+        return tool(job, "add_to_ticket", { user: String(input.user || ""), ticket: r.ticket }, signal);
       }
       return ticketCommands.run(job, input, signal);
     }
@@ -4230,8 +4233,16 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "add_to_ticket") {
       const staffAsk = [config.ownerId, ...config.staffIds].includes(job.actorId) && job.source?.authorId === job.actorId && job.role !== "player";
       if (!developerTask(job) && !(job.kind === "conversation" && staffAsk) && ticketCommands.refusal(job)) throw new Error("only the owner or a developer can have someone added to a ticket channel");
-      const ticketNo = Number(input.ticket) || ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
+      const ownTicket = ticketOf(job) || ticketNumberOf(d.jobs[job.id]?.source?.channelName);
+      const ticketNo = Number(input.ticket) || ownTicket;
       if (!ticketNo) throw new Error("name the ticket number to add them to");
+      // Keir 11.4 review (M6): adding someone to a ticket other than the one this request came from is a cross-ticket
+      // action, held by the same switch as ticket_command (off refuses, preview changes nothing).
+      if (Number(ticketNo) !== Number(ownTicket || 0)) {
+        const g = ctl().gate("crossTicketActions");
+        if (!g.run) throw new Error(`Not done: ticket commands are off right now (${g.why}). Tell the requester exactly that.`);
+        if (!g.act) { controlsLib.preview(d, "ticket-command", "add_person", String(ticketNo), `requested by ${job.actorId}`, {}, now()); ledger.save(); return { preview: true, instruction: "Ticket commands are in preview: nobody was added. Tell the requester that in one line." }; }
+      }
       const channelId = (job.channelId && snowflake(job.channelId) && ticketNumberOf((await discord("GET", `/channels/${job.channelId}`))?.name) === ticketNo) ? job.channelId
         : d.jobs[d.seen[`ticket:${ticketNo}`]]?.channelId;
       const ch = channelId && await discord("GET", `/channels/${channelId}`);

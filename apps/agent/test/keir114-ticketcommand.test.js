@@ -240,3 +240,26 @@ test("M2: a close goes through callSupport, so a private-evidence ticket's close
   assert.match(r.results[0].why, /public receipt|receipt/);
   assert.equal(resolves(f).length, 0);
 });
+
+// ---------- Keir 11.4 release review, M6 ----------
+test("M6: add_person in preview mode adds nobody and never reaches the channel", async () => {
+  const pv = setup({ controlsOverride: controls.staticControls({ crossTicketActions: "preview" }) });
+  const job = discordJob(pv);
+  const r = await pv.broker.tool(job, "ticket_command", { op: "add_person", user: "enigma", tickets: [1872] });
+  assert.equal(r.preview, true);
+});
+
+test("M6: add_person acts only on the ticket the command names; with none it is refused, not sent to the task's own ticket", async () => {
+  const f = setup();
+  const job = discordJob(f); job.ticket = 1873; // even a request made inside a ticket channel
+  await assert.rejects(f.broker.tool(job, "ticket_command", { op: "add_person", user: "enigma" }), /Name the ticket/);
+});
+
+test("M6: add_to_ticket on another ticket is held by the cross-ticket switch; the original own-ticket add is not", async () => {
+  const off = setup({ controlsOverride: controls.staticControls({ crossTicketActions: "off" }) });
+  const job = discordJob(off);
+  await assert.rejects(off.broker.tool(job, "add_to_ticket", { user: "enigma", ticket: 1872 }), /off right now/);
+  const pv = setup({ controlsOverride: controls.staticControls({ crossTicketActions: "preview" }) });
+  const r = await pv.broker.tool(discordJob(pv), "add_to_ticket", { user: "enigma", ticket: 1872 });
+  assert.equal(r.preview, true);
+});
