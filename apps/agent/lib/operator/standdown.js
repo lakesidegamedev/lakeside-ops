@@ -99,10 +99,12 @@ const CAPABILITY = new RegExp(
   `|\\bi(?:'|’)?ve (?:tested|tried|loaded|opened|visited|browsed|checked|viewed|seen)\\b[^.!?]{0,60}\\b(?:${CAP_OBJECT})\\b` +
   `|\\bi (?:tested|tried|loaded|opened|visited|browsed|viewed|saw|ran)\\b[^.!?]{0,60}\\b(?:${CAP_OBJECT})\\b` +
   `|\\bon (?:a|my|an|the) (?:phone|mobile|iphone|android|tablet|device)\\b[^.!?]{0,40}\\b(?:loads?|works?|looks?|renders?|opens?)\\b`, "i");
-function capabilityClaim(message) {
+// Keir 11.4: the old text said Keir "cannot open the site, a phone or a browser", which taught it to say "I cannot render".
+// It can look at a page as a signed-out visitor (view_page). A claim backed by a page view on this ticket goes out.
+function capabilityClaim(message, { pageViewed = false } = {}) {
   const m = CAPABILITY.exec(String(message || ""));
-  if (!m) return null;
-  return `Not posted: "${m[0].slice(0, 80)}" claims Keir tested or loaded something as a user would. Keir reads game records and code; it cannot open the site, a phone or a browser. Say what the records and code show, and ask the player for the device, browser and what they see.`;
+  if (!m || pageViewed) return null;
+  return `Not posted: "${m[0].slice(0, 80)}" claims Keir loaded something, and nothing on this ticket looked at the page. Call view_page first (a signed-out visitor's view, on desktop, iphone or android) and say what it showed. Keir cannot sign in as the player: for what only they see, say what the records and code show and ask for their device, browser and what they see.`;
 }
 
 // ---------- D: build quote breakdown ----------

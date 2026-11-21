@@ -624,7 +624,11 @@ async function flushOutbox() {
         // Keir 11.1: a chart staged by present_evidence goes on this answer's first message, with its report link.
         require("./lib/operator/evidencedelivery").attachOutbox(ledger, key, entry, channelJob, { at: Date.now() });
         // Only Keir's own rendered charts may carry an attachment into a channel.
-        if (entry.files?.length && !(entry.chart && entry.files.every((f) => f.chart && /\/artifacts\/chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(f.path)))) throw new Error("private attachments cannot be delivered to channels");
+        // Keir 11.4: and its labelled interface previews (render_preview), while image delivery is on.
+        const ownImage = (entry.chart && entry.files.every((f) => f.chart && /\/artifacts\/chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(f.path)))
+          || (entry.preview && entry.files.every((f) => f.preview && /\/artifacts\/preview-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(f.path)));
+        if (entry.files?.length && !ownImage) throw new Error("private attachments cannot be delivered to channels");
+        if (entry.preview && !(config.controls || require("./lib/operator/controls").DEFAULT_CONTROLS).gate("imageDelivery").act) { entry.deliveredAt = Date.now(); entry.skipped = "image delivery is off"; ledger.save(); continue; }
         const channel = await discord("GET", `/channels/${channelJob.replyChannel}`);
         if (channel.guild_id !== config.guildId) throw new Error("reply channel outside configured guild");
         clean = redactSecrets(entry.content);

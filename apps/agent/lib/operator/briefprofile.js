@@ -88,7 +88,8 @@ const PAGE = 10000;
 const page = (text, offset = 0) => ({ text: text.slice(offset, offset + PAGE), totalChars: text.length, nextOffset: offset + PAGE < text.length ? offset + PAGE : null });
 
 // Everything agent.js needs for one lean activation, or null when the job runs full.
-const CORE_DIRECT = ["conversation_updates", "finish", "submit_result", "retry_result", "finish_patch", "edit_verify", "checkpoint", "check_draft", "channel_reply", "progress_update", "support_action",
+// render_preview is only offered when the owner or staff asked for a picture, so it stays direct when it is.
+const CORE_DIRECT = ["render_preview", "ticket_command", "conversation_updates", "finish", "submit_result", "retry_result", "finish_patch", "edit_verify", "checkpoint", "check_draft", "channel_reply", "progress_update", "support_action",
   "calculate", "view_attachment", "read_servers", "read_tools", "read_tool", "ticket_history", "reporter_state", "ticket_record", "handoff",
   // Workspace tools stay direct when the broker, not the model's own tools, works the snapshot.
   "shell", "evidence_batch", "local_file", "repository_snapshot"];

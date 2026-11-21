@@ -220,7 +220,8 @@ function createAppChannel({ ledger, config, conversation, decisions = () => null
     if (key.startsWith("ack:")) { setStatus(d, job.id, text, now()); job.progressMessageId = `app-status-${job.id}`; return [job.progressMessageId]; }
     // A watch speaks only when its condition is met.
     if (job.appWatch && agent() && !agent().onWatchReply(job, text)) { clearStatus(d, job.id); return [`watch-${job.appWatch}-quiet`]; }
-    const chart = entry.chart && entry.files?.[0] && /^chart-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(path.basename(entry.files[0].path)) ? path.basename(entry.files[0].path) : undefined;
+    // Keir 11.4: a labelled interface preview is shown in the app the way a chart is.
+    const chart = (entry.chart || entry.preview) && entry.files?.[0] && /^(?:chart|preview)-[a-f0-9]{12}-[a-f0-9]{12}\.png$/.test(path.basename(entry.files[0].path)) ? path.basename(entry.files[0].path) : undefined;
     const cards = agent()?.cardsFor(job) || [];
     const voiceRoot = rootOf(job)?.voiceMode ? rootOf(job) : job.voiceMode ? job : null;
     if (!job.firstReplyAt && /^(channel-reply|finish):/.test(key) && entry.voiceProgress !== true) {
@@ -572,7 +573,7 @@ function createAppServer({ app, authenticate, artifactsDir, agentRoutes = null, 
         const out = await agentRoutes(route, req.method, b, url.searchParams);
         if (out !== undefined) return reply(200, out);
       }
-      const art = /^\/artifacts\/((?:chart|computer)-[a-f0-9]{12}-[a-f0-9]{12}\.png)$/.exec(route);
+      const art = /^\/artifacts\/((?:chart|computer|preview)-[a-f0-9]{12}-[a-f0-9]{12}\.png)$/.exec(route);
       if (art && req.method === "GET") {
         const file = path.join(artifactsDir, art[1]);
         if (!fs.existsSync(file)) return reply(404, { error: "not found" });

@@ -346,7 +346,7 @@ const REPORTER_BOUND = new Set(["reporter_operating_results", "reporter_action_p
 const IDENTITY_ARGS = ["character", "characterId", "character_id", "sequentialId", "id", "name", "player", "playerId", "username", "user", "userId", "account", "accountId", "reporter", "ticket"];
 const NOT_FOUND_LIKE = /outside support scope|not a \S+ read|unknown tool|tool not found|method not found|not available to this task/i;
 const handoffTruth = require("./handofftruth");
-const QUICK_TOOLS = ["ticket_command", "conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
+const QUICK_TOOLS = ["render_preview", "ticket_command", "conversation_updates", "check_draft", "ticket_performance", "release_efficiency", "chart", "present_evidence", "add_to_ticket", "present_choices", "owner_updates", "support_directive", "read_servers", "read_tools", "read_tool", "ticket_history", "source_history", "view_attachment", "task_progress", "channel_reply", "checkpoint", "finish", "handoff", "recall", "calculate", "recent_changes", "similar_reports", "past_ticket", "turn_status", "ask"];
 // Owner-set overnight hold: /var/lib/keir-operator/prod-hold holds an ISO expiry.
 // While active, nothing reaches production: no promote to main, no prod heal.
 function prodHold() {
@@ -1273,7 +1273,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       const sameJobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
       const staffAsked = (job.role === "owner" || developerTask(job)) && Math.max(job.observedPlayerAt || 0, Date.parse(job.source?.at || "") || 0) > (job.lastPublishedAt || 0);
       attempt(() => { const t = standdown.holdingClaimRefusal(message); if (t) { ledger.audit("holding_guess_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
-      attempt(() => { const t = standdown.capabilityClaim(message); if (t) { ledger.audit("capability_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
+      attempt(() => { const t = standdown.capabilityClaim(message, { pageViewed: (d.ticketObservations?.[ticketNo] || []).some((o) => o.tool === "view_page") }); if (t) { ledger.audit("capability_claim_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
       attempt(() => { const refusals = (d.priceVerdictRefusals ||= {}); if ((refusals[ticketNo] || 0) >= 3) return;
         const t = standdown.priceVerdictRefusal(message, ticketReadTexts(ticketNo, sameJobs)); if (t) { refusals[ticketNo] = (refusals[ticketNo] || 0) + 1; ledger.save(); ledger.audit("price_verdict_refused", { job: job.id, ticket: ticketNo }); throw new Error(t); } });
       // Keir 11.2: "waiting on the owner" needs an open question. GitHub-reconciled decisions (prtruth.js) close when the PR merged or closed.
@@ -2500,7 +2500,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!config.roleSnapshot || !["watchkeeper", "engineering"].includes(require("./roles").roleOf(job, ledger.data.jobs))) throw new Error("Operator role state is restricted to observer and engineering tasks");
       return config.roleSnapshot();
     }
-    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)
+    if (job.kind === "finding" && ["channel_reply", "progress_update", "status_card", "chart", "render_preview", "ticket_command", "support_action", "open_ticket", "open_suggestion", "merge_related", "merge_into_incident", "execute_action"].includes(name)
       && !(name === "execute_action" && (() => { const x = ledger.data.actions?.[input.action]; return x && x.jobId === job.id && x.kind === "heal" && x.state === "approved" && x.approvedBy === config.ownerId; })())) throw new Error("finding tasks never post in Discord or execute privileged actions");
     if (job.prMention && !prMention.PR_MENTION_TOOLS.includes(name)) throw new Error("A PR review task only reads the pull request and the code, and posts one review comment on it");
     if (job.codingParent && !childTools(job).includes(name)) throw new Error(job.investigation ? "Investigators only read: code in the snapshot, live game state, history and past tickets. The worker handles fixes, publication and communication." : "Coding subworkers only edit and test their isolated snapshot; the worker handles investigation, publication and communication.");
@@ -4206,6 +4206,40 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // Private pages are pinned to the ticket's original reporter from the support service's own ticket row.
       return require("./evidencepages").present({ ledger, config, job, input: input || {}, now: now(),
         readTicket: (number) => mcp.call("support", "support_get", { kind: "ticket", number }, false, signal) });
+    }
+    if (name === "render_preview") {
+      // Keir 11.4 (ticket 1875): a labelled interface preview from HTML Keir writes, posted as an image where it is answering.
+      const previewLib = require("./preview");
+      if (job.role === "player" || job.kind === "finding" || job.codingParent || job.internalProbe) throw new Error("previews are drawn for the owner and staff");
+      const g = ctl().gate("imageDelivery");
+      if (!g.run) throw new Error(`Not drawn: image delivery is off right now (${g.why}). Say that once and give the proposed wording as text.`);
+      const caption = input.caption ? publicText(String(input.caption)).replace(/(?:^|\n+)\s*(?:From|Source|Sources|Checked):[^\n]*$/i, "").trim().slice(0, 600) : "";
+      const ticketNo = ticketOf(job);
+      if (caption) { const t = handoffTruth.deflection(caption, { d, job, ticketNo, jobs: ticketNo ? Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo) : [], config }); if (t) throw new Error(t); }
+      if (!g.act) { controlsLib.preview(d, "image-delivery", "post preview", `job ${job.id}`, caption || previewLib.LABEL, {}, now()); ledger.save(); return { preview: true, instruction: "Image delivery is in preview: nothing was posted. Give the proposed wording as text." }; }
+      let out;
+      try { out = await previewLib.render({ sandbox, jobId: job.id, html: input.html, signal }); }
+      catch (e) {
+        job.previewFailure = { at: now(), why: String(e.message).slice(0, 160) }; ledger.save();
+        ledger.audit("preview_failed", { job: job.id, ticket: ticketNo || null, why: job.previewFailure.why });
+        throw new Error(`The preview could not be drawn: ${job.previewFailure.why}. Say once, plainly, what failed and give the proposed wording as text. Do not say you cannot render in general.`);
+      }
+      delete job.previewFailure;
+      const dir = path.join(config.stateDir, "artifacts"); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const digest = hash({ html: input.html, caption });
+      const file = path.join(dir, `preview-${job.id}-${digest.slice(0, 12)}.png`);
+      fs.writeFileSync(file, out.png, { mode: 0o600 });
+      // The label always leads the message; it is not a claim about the game, so no source line.
+      const text = `${previewLib.LABEL}${caption ? `\n\n${caption}` : ""}`;
+      const destination = job.replyChannel ? `channel:${job.id}` : job.actorId === config.ownerId ? "owner" : job.actorId;
+      const key = `chart:preview:${job.id}:${digest.slice(0, 16)}`;
+      ledger.notify(key, destination, text.slice(0, 1800));
+      if (d.outbox[key]) { d.outbox[key].files = [{ path: file, name: "keir-preview.png", preview: true }]; d.outbox[key].preview = true; }
+      if (job.replyChannel) { job.channelReplyQueued = true; job.channelRepliedAt = now(); }
+      if (ticketNo && job.replyChannel && job.replyChannel !== "app") recordTicketPost(job, ticketNo, text);
+      ledger.audit("preview_posted", { job: job.id, ticket: ticketNo || null });
+      ledger.save();
+      return { posted: true, label: previewLib.LABEL, renderedText: out.text.slice(0, 1500), instruction: "The preview is posted as an image with its label. Do not post the same wording again as text unless asked; answer anything else they asked, then finish." };
     }
     if (name === "chart") {
       // An AHD house-style chart, posted where the conversation is happening.
