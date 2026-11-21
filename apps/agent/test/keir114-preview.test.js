@@ -100,3 +100,14 @@ test("the label strip is forced on top of whatever the HTML does", () => {
   assert.ok(out.indexOf(preview.LABEL) < out.indexOf("<h1>"));
   assert.match(out, /z-index:2147483647!important/);
 });
+
+test("B1: with image delivery off, the true 'I can't draw it right now' is posted, not looped back to render_preview", async () => {
+  const off = setup({ controlsOverride: controls.staticControls({ imageDelivery: "off" }) });
+  await assert.rejects(off.broker.tool(off.job, "render_preview", { html: HTML }), /image delivery is off/);
+  assert.ok(off.job.previewFailure);
+  const r = await off.broker.tool(off.job, "channel_reply", { message: "I can't draw it right now: image delivery is switched off. The two lines would read: Sold last turn 40 of 100. Supply this turn 120." });
+  assert.ok(!r?.skipped);
+  // Without a recorded failure the same sentence is still refused, with the tool to use.
+  const on = setup();
+  await assert.rejects(on.broker.tool(on.job, "channel_reply", { message: "I cannot render the page from here, so here is the copy." }), /render_preview/);
+});

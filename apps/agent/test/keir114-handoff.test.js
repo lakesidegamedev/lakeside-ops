@@ -111,3 +111,58 @@ test("'I will come back when there is something to try' is a tracked promise tha
   const p = promises.detect("I am preparing a fix and I will come back when there is something to try.", 0);
   assert.equal(p.kind, "release");
 });
+
+// ---------- Keir 11.4 release review: B1, M1 and the answer that must still go out ----------
+
+test("B1: true rule answers with cannot create / can't make / can't produce pass; the 1875 sentence is still refused", () => {
+  const f = setup();
+  const ctx = { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config, renderOffered: true };
+  for (const m of [
+    "You cannot create a second company while your first one is still listed.",
+    "You can't produce steel in a region with no iron supply.",
+    "I can't make changes to your account balance; a moderator has to approve a refund.",
+    "I can't make that merge myself; it changes the economy, so it is your call.",
+    "This page cannot render a chart for a company with no history.",
+  ]) assert.equal(truth.deflection(m, ctx), null, m);
+  assert.match(truth.deflection("I cannot render the page from here, so that is the copy as it would appear.", ctx), /render_preview/);
+  assert.match(truth.deflection("I can't show you an image of it.", ctx), /render_preview/);
+});
+
+test("B1: a player's rule answer containing 'cannot create' is posted through the real broker", async () => {
+  const f = setup();
+  f.job.source.content = "Why can I not start a second company?";
+  f.d.ticketObservations = { 1872: [{ at: 1, job: f.job.id, tool: "read_tool", input: JSON.stringify({ server: "ops-knowledge", tool: "code_read", args: { path: "src/lib/corporations/founding.ts" } }), result: JSON.stringify({ path: "src/lib/corporations/founding.ts", text: "one listed company" }) }] };
+  f.job.lastCodeReadAt = 1; f.job.codeLookups = 1;
+  await f.broker.tool(f.job, "channel_reply", { message: "You cannot create a second company while your first one is still listed." });
+  assert.equal(f.posts().length, 1);
+  assert.match(f.posts()[0], /cannot create a second company/);
+});
+
+test("B1: 'I cannot render' is only checked when render_preview was offered, so a player's ticket is never told to draw", () => {
+  const f = setup();
+  assert.equal(truth.deflection("I cannot render a preview here, but the wording would be: Sold last turn.", { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config, renderOffered: false }), null);
+});
+
+test("a refusal is never the end of the answer: the third try goes out without the false sentence", async () => {
+  const f = setup(); workerOn(f);
+  const draft = "The page reads a field that some companies do not have, so it shows the error panel.\n\nIt is with the developers now.";
+  for (let i = 0; i < 2; i++) await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: draft }), /no developer has it/);
+  assert.equal(f.posts().length, 0);
+  await f.broker.tool(f.job, "channel_reply", { message: draft });
+  assert.equal(f.posts().length, 1);
+  assert.match(f.posts()[0], /error panel/);
+  assert.ok(!/with the developers/.test(f.posts()[0]));
+  assert.equal(f.job.deflectionRefusals.n, 2);
+});
+
+test("a message that is nothing but the false claim is still refused on the third try", async () => {
+  const f = setup(); workerOn(f);
+  for (let i = 0; i < 3; i++) await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "It is with the developers now." }), /no developer has it/);
+  assert.equal(f.posts().length, 0);
+});
+
+test("withoutDeflections keeps paragraphs and drops only the false sentence", () => {
+  const f = setup(); workerOn(f);
+  const out = truth.withoutDeflections("First line of the answer. It is with the developers now.\n\nSecond paragraph.", { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config });
+  assert.equal(out, "First line of the answer.\n\nSecond paragraph.");
+});

@@ -955,9 +955,35 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("team_cover_refused", { job: job.id, ticket: ticketNo, conclusion: kind, attempt: refused[ticketNo], staffSaidFixing: Boolean(activity.staffSaidFixing) });
     throw new Error(`${why}\n${activity.report}`);
   }
+  // Keir 11.4 review: what the deflection guard needs to tell a false claim from a true one.
+  function deflectionContext(job, ticketNo) {
+    const previewLib = require("./preview");
+    return { d, job, ticketNo: ticketNo || null, jobs: ticketNo ? Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo) : [], config,
+      previewFailed: Boolean(job.previewFailure), renderOffered: previewLib.requested(job, config) || (job.role === "owner" && job.replyChannel === "app"),
+      ticketCommandsOn: ctl().gate("crossTicketActions").run && !ticketCommands.refusal(job) };
+  }
+  // Keir 11.4 review (B1, M1): a refusal is never the end of an answer. The first two deflection refusals in an activation
+  // name the true sentence to use; after that the message goes out without the sentences that make the false claim, so a
+  // player owed an answer gets it instead of the code's "no confirmed answer" line. Returns the text to post.
+  function deflectionGate(job, ticketNo, message) {
+    const ctx = deflectionContext(job, ticketNo);
+    const t = handoffTruth.deflection(message, ctx);
+    if (!t) return message;
+    const kind = /you can render/.test(t) ? "render" : /ticket_command/.test(t) ? "read_only" : "handoff";
+    const budget = job.deflectionRefusals?.at === (job.startedAt || 0) ? job.deflectionRefusals : (job.deflectionRefusals = { at: job.startedAt || 0, n: 0 });
+    if (budget.n < 2) {
+      budget.n += 1; ledger.audit("deflection_refused", { job: job.id, ticket: ticketNo || null, kind, attempt: budget.n }); ledger.save();
+      throw new Error(t);
+    }
+    const kept = handoffTruth.withoutDeflections(message, ctx);
+    if (!kept) { ledger.audit("deflection_refused", { job: job.id, ticket: ticketNo || null, kind, attempt: budget.n + 1, empty: true }); throw new Error(`${t} Nothing else in the message is left to post.`); }
+    ledger.audit("deflection_stripped", { job: job.id, ticket: ticketNo || null, kind }); ledger.save();
+    return kept;
+  }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
     { const why = require("./ticketstate").endedReason(d, ticketNo, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: ticketNo, why }); throw new Error(`Ticket ${ticketNo} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
+    if (!opts.system) message = deflectionGate(job, ticketNo, message);
     notePageSymptom(ticketNo, message);
     await pageGate(job, ticketNo, message);
     guardTicketNumbers(job, ticketNo, message);
@@ -998,6 +1024,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     } catch (e) { if (e.screened) throw e; }
     await guardNeedlessClarification(job, ticketNo, message);
     if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
+    return message;
   }
   // Keir 10 claim check: check_draft runs every content guard a real post runs, against a draft, and lists all the problems at
   // once with a fix for each. It posts nothing, records nothing, spends no post budget and leaves every refusal counter as it was,
@@ -1339,9 +1366,10 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     }
     // Keir 11.4 (owner, 2026-11-21): "with the developers" only when a person holds it and never to the person who asked;
     // no blanket "I cannot render" or "read-only". Each refusal names the true sentence to use.
-    if (!opts.system) {
-      const t = handoffTruth.deflection(message, { d, job, ticketNo, jobs: Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo), config, previewFailed: Boolean(job.previewFailure) });
-      if (t) { ledger.audit("deflection_refused", { job: job.id, ticket: ticketNo, kind: /render/.test(t) ? "render" : /ticket_command/.test(t) ? "read_only" : "handoff" }); refuse(t); }
+    // Real posts run deflectionGate in guardTicketPost (it may post the answer without the false sentence); check_draft lists it here.
+    if (!opts.system && opts.collect) {
+      const t = handoffTruth.deflection(message, deflectionContext(job, ticketNo));
+      if (t) refuse(t);
     }
     const ev = ticketEvidence(ticketNo);
     const claims = outcomeClaims(message);
@@ -1649,7 +1677,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (ticketNo) {
         text = shapeTicketPost(text);
         if (TECHNICAL.test(text)) throw new Error("Ticket finish copy must use the player's register, without technical release details.");
-        await guardTicketPost(job, ticketNo, text);
+        text = await guardTicketPost(job, ticketNo, text);
         recordTicketPost(job, ticketNo, text);
       }
       return text;
@@ -2920,8 +2948,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         throw new Error("Public ticket acknowledgements should give the ticket link in one short sentence. Keep intake bookkeeping and task handoffs private.");
       require("./advicerouting").guard(job, d, message);
       if (!(job.ticket || ticketNumberOf(job.source?.channelName))) {
-        const t = handoffTruth.deflection(message, { d, job, config, previewFailed: Boolean(job.previewFailure) });
-        if (t) { ledger.audit("deflection_refused", { job: job.id, ticket: null }); throw new Error(t); }
+        message = deflectionGate(job, null, message);
       }
       if (/^(?:i['’]m on it|on it|looking into it|will do)[.!]*$/i.test(message.trim())) return { skipped: "generic acknowledgment suppressed; use progress_update with a specific line" };
       const ticketNo = job.ticket || ticketNumberOf(job.source?.channelName);
@@ -2939,7 +2966,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         // A ticket channel belongs to the player, whoever asked. Player-register
         // copy only; the technical trail lives in the PR.
         if (TECHNICAL.test(message)) throw new Error("This is the player's ticket channel. Rewrite for the player in one to three sentences: what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server). No PR or issue numbers, links, CI, checks, merges, branches, commits, file names or code.");
-        await guardTicketPost(job, ticketNo, message);
+        message = await guardTicketPost(job, ticketNo, message);
         message = softenSettingClaims(job, ticketNo, softenAccountClaims(job, ticketNo, softenBugClaims(job, ticketNo, softenUnreadClaims(job, ticketNo, message))));
         message = require("./sources").appendChecked(message, ledger.data.ticketObservations?.[ticketNo]);
         // Owner, 2026-10-14 (ticket 1553): Keir asked "which bank" when the
@@ -4214,11 +4241,12 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       const previewLib = require("./preview");
       if (job.role === "player" || job.kind === "finding" || job.codingParent || job.internalProbe) throw new Error("previews are drawn for the owner and staff");
       const g = ctl().gate("imageDelivery");
-      if (!g.run) throw new Error(`Not drawn: image delivery is off right now (${g.why}). Say that once and give the proposed wording as text.`);
+      // Keir 11.4 review (B1): switched off is a true reason; record it so "I can't draw it right now" is not refused.
+      if (!g.run) { job.previewFailure = { at: now(), why: `image delivery is off (${g.why})` }; ledger.save(); throw new Error(`Not drawn: image delivery is off right now (${g.why}). Say that once and give the proposed wording as text.`); }
       const caption = input.caption ? publicText(String(input.caption)).replace(/(?:^|\n+)\s*(?:From|Source|Sources|Checked):[^\n]*$/i, "").trim().slice(0, 600) : "";
       const ticketNo = ticketOf(job);
       if (caption) { const t = handoffTruth.deflection(caption, { d, job, ticketNo, jobs: ticketNo ? Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo) : [], config }); if (t) throw new Error(t); }
-      if (!g.act) { controlsLib.preview(d, "image-delivery", "post preview", `job ${job.id}`, caption || previewLib.LABEL, {}, now()); ledger.save(); return { preview: true, instruction: "Image delivery is in preview: nothing was posted. Give the proposed wording as text." }; }
+      if (!g.act) { job.previewFailure = { at: now(), why: "image delivery is in preview" }; controlsLib.preview(d, "image-delivery", "post preview", `job ${job.id}`, caption || previewLib.LABEL, {}, now()); ledger.save(); return { preview: true, instruction: "Image delivery is in preview: nothing was posted. Give the proposed wording as text." }; }
       let out;
       try { out = await previewLib.render({ sandbox, jobId: job.id, html: input.html, signal }); }
       catch (e) {
@@ -4568,7 +4596,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (input.tool === "support_public_update" && TECHNICAL.test(args.message || "")) throw new Error("Ticket updates are for the player: no PR or issue numbers, links, CI, merges, branches, commits or code. Say what was wrong and where the fix is (being built / in testing on dev / on sandbox / live on the main server).");
       if (args.followUp) args.followUp = publicText(args.followUp);
       if (args.actions) args.actions = args.actions.map(publicText);
-      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(require("./ownercopy").discordTimes(args.message || "", now())); await guardTicketPost(job, job.ticket, args.message); args.message = softenSettingClaims(job, job.ticket, softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
+      if (input.tool === "support_public_update") { args.deliver = true; args.delivery_mode = "reply"; args.update_kind = "progress"; args.message = shapeTicketPost(require("./ownercopy").discordTimes(args.message || "", now())); args.message = await guardTicketPost(job, job.ticket, args.message); args.message = softenSettingClaims(job, job.ticket, softenAccountClaims(job, job.ticket, softenBugClaims(job, job.ticket, softenUnreadClaims(job, job.ticket, args.message)))); args.message = require("./sources").appendChecked(args.message, ledger.data.ticketObservations?.[job.ticket]); }
       if (input.tool === "support_set_status" && !["open", "triaging", "in_progress", "blocked", "parked"].includes(args.status)) {
         // Models reach for "waiting_on_player" or "answered", which are not statuses
         // at all; calling them terminal sent them round again (replay 2026-10-19: 15 runs).

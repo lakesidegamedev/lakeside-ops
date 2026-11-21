@@ -12,7 +12,9 @@ const { JOB_TERMINAL } = require("./machines");
 // "With the developers" and its relatives: a claim that a person on the team now holds the work.
 const DEV_HANDOFF = /\b(?:it(?:'|’)?s|this is|that is|it is|is|are|now) (?:now |still )?with (?:the |our )?(?:developers?|devs?|dev team|team)\b|\b(?:passed|handed|raised|flagged|sent|reported|forwarded|escalated|given|put)\b[^.!?\n]{0,60}\b(?:to|with|over to) (?:the |our )?(?:developers?|devs?|dev team)\b|\b(?:the |our )?(?:developers?|devs?|dev team) (?:now |already )?(?:have|has|got|are (?:on|looking at|working on|handling|reviewing)|will (?:fix|look|handle|check|pick))\b/i;
 // Blanket capability refusals that were false when said.
-const CANNOT_RENDER = /\b(?:i )?(?:can(?:'|’)?t|cannot|can not|am unable to|(?:am|is) not able to|have no way to)\s+(?:render|draw|produce|make|create|generate|show (?:you|us) (?:an? )?(?:image|picture|preview|mock-?up|screenshot)|take (?:an? )?screenshot|show (?:you |us )?(?:how it|what it) (?:would )?looks?)\b/i;
+// Keir 11.4 review (B1): only Keir saying Keir cannot produce an image. "You cannot create a second company" and "I can't make
+// changes to your balance" are true answers; the subject must be "I" and the object a picture, preview or screenshot.
+const CANNOT_RENDER = /\bi\s+(?:can(?:'|’)?t|cannot|can not|am unable to|am not able to|have no way to)\s+(?:render|draw|take (?:an? )?screenshot|show (?:you|us) (?:an? |the )?(?:image|picture|preview|mock-?up|screenshot|render)|show (?:you |us )?(?:how it|what it) (?:would )?looks?)\b/i;
 const READ_ONLY = /\b(?:my|keir(?:'|’)?s) (?:ticket |support )?access (?:is|being) read[- ]only\b|\bi (?:only )?have read[- ]only (?:ticket |support )?access\b|\bi (?:can(?:'|’)?t|cannot|can not|am unable to) (?:merge|close|create|open|resolve|reopen)(?:,? (?:or |and )?(?:merge|close|create|open|resolve|reopen))* (?:these |those |the |any )?(?:tickets?|incidents?)\b/i;
 
 const sentencesOf = (text) => String(text || "").replace(/\s+/g, " ").match(/[^.!?]+(?:[.!?]+|$)/g)?.map((s) => s.trim()).filter(Boolean) || [];
@@ -79,14 +81,18 @@ function audienceOf(job, config = {}, { named = null } = {}) {
   return who && addressed.test(String(human?.content || "")) ? who : "player";
 }
 
-// The one refusal for a deflection in an outgoing message, or null. ctx: { d, job, ticketNo, jobs, config, previewFailed }.
-function deflection(message, { d, job, ticketNo = null, jobs = [], config = {}, previewFailed = false } = {}) {
+// The one refusal for a deflection in an outgoing message, or null.
+// ctx: { d, job, ticketNo, jobs, config, previewFailed, renderOffered, ticketCommandsOn }.
+// Keir 11.4 review: a guard refuses only the specific false claim. "I cannot render" is checked only when this activation
+// was offered render_preview (renderOffered, default true) and no render has failed; "my access is read-only" only when
+// the reader is the owner or staff and ticket commands are switched on. Where the code cannot tell, the message goes out.
+function deflection(message, { d, job, ticketNo = null, jobs = [], config = {}, previewFailed = false, renderOffered = true, ticketCommandsOn = true } = {}) {
   const text = String(message || "");
-  if (CANNOT_RENDER.test(text) && !previewFailed) return `Not posted: you can render. render_preview draws a labelled preview from HTML you write (the proposed wording or layout in the game's style), and view_page shows a live game page as a signed-out visitor. Call render_preview now and post the image; if it fails, say once what failed and give the text.`;
-  if (READ_ONLY.test(text)) return "Not posted: that is not true. For the owner and staff you can open an incident, merge tickets into it or into another ticket, resolve or reopen a ticket and add a person, with ticket_command. Do what was asked, or name the one operation you lack and why in one sentence.";
+  if (CANNOT_RENDER.test(text) && renderOffered && !previewFailed) return `Not posted: you can render. render_preview draws a labelled preview from HTML you write (the proposed wording or layout in the game's style), and view_page shows a live game page as a signed-out visitor. Call render_preview now and post the image; if it fails, say once what failed and give the text.`;
+  const audience = audienceOf(job, config);
+  if (READ_ONLY.test(text) && audience !== "player" && ticketCommandsOn) return "Not posted: that is not true. For the owner and staff you can open an incident, merge tickets into it or into another ticket, resolve or reopen a ticket and add a person, with ticket_command. Do what was asked, or name the one operation you lack and why in one sentence.";
   const s = handoffSentence(text);
   if (!s) return null;
-  const audience = audienceOf(job, config);
   const receipts = ticketNo ? developerReceipts(d, ticketNo, jobs) : [];
   if (audience !== "player") {
     // The asker is the owner or a developer. A status that names the person's own receipt is fine; a deflection is not.
@@ -100,4 +106,18 @@ function deflection(message, { d, job, ticketNo = null, jobs = [], config = {}, 
   return null;
 }
 
-module.exports = { DEV_HANDOFF, CANNOT_RENDER, READ_ONLY, handoffSentence, keirWork, developerReceipts, audienceOf, deflection, FIRST_PERSON };
+// Keir 11.4 review: a refusal is never the end of an answer. After the guard has refused twice in one activation, the
+// broker posts the message without the sentences that make the false claim, so the rest of the answer still goes out.
+// Returns the remaining text (paragraphs kept), or "" when every sentence was a deflection.
+function withoutDeflections(message, ctx = {}) {
+  const parts = String(message || "").split(/((?<=[.!?])[ \t]+|\n+)/);
+  const out = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const piece = parts[i], sep = parts[i + 1] || "";
+    if (piece.trim() && deflection(piece, ctx)) { if (/\n/.test(sep) && out.length) out[out.length - 1] = out[out.length - 1].replace(/[ \t]+$/, "") + sep; continue; }
+    out.push(piece + sep);
+  }
+  return out.join("").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+module.exports = { DEV_HANDOFF, CANNOT_RENDER, READ_ONLY, handoffSentence, keirWork, developerReceipts, audienceOf, deflection, withoutDeflections, FIRST_PERSON };
