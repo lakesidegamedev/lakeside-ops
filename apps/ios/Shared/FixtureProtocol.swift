@@ -424,8 +424,8 @@ final class FixtureProtocol: URLProtocol, @unchecked Sendable {
         // The private supervisor. Without --uitest-supervisor it answers 404, like a
         // server that has none, so every other UI test keeps Support Keir as home.
         if url.path.hasPrefix(KeirSupervisor.base + "/") {
-            let reply = KeirSupervisorFixture.shared.handle(request, enabled: ProcessInfo.processInfo.arguments.contains("--uitest-supervisor"))
-            deliver(reply.data, url: url, status: reply.status, type: "application/json"); return
+            let reply = KeirSupervisorFixture.shared.handleTyped(request, enabled: ProcessInfo.processInfo.arguments.contains("--uitest-supervisor"))
+            deliver(reply.data, url: url, status: reply.status, type: reply.type); return
         }
         if ProcessInfo.processInfo.arguments.contains("--uitest-metrics-partial"), url.path == "/api/keir/hub" {
             deliver(Data(#"{"at":1792020000000,"kpis":{"activations24h":0}}"#.utf8), url: url, status: 200, type: "application/json"); return

@@ -437,7 +437,7 @@ function createSupervisor({ stateDir, repos = {}, executor, guardianDir = "/var/
     return { messages: rows.map(messageView), cursor: rows.length ? rows.at(-1).seq : (after ?? st().seq), latest: st().seq, archived: st().archived,
       working: open.length > 0, version: String(st().rev), session: st().session, thread: key, modelSelection: st().preferences[key]?.model || "auto", effort: st().preferences[key]?.effort || "auto",
       current: jobView(jobs.find((j) => j.state === "running")), queued: open.filter((j) => j.state === "queued").length,
-      jobs: jobs.slice(-10).reverse().map(jobView), proposals: proposals().filter((p) => p.state === "pending"), executor: executor.available() };
+      jobs: jobs.slice(-10).reverse().map(jobView), proposals: key === HOME ? proposals().filter((p) => p.state === "pending") : [], executor: executor.available() };
   }
 
   function cancel(jobId) {

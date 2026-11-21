@@ -1,7 +1,9 @@
 import Foundation
 import LakesideCore
 
-// The private owner supervisor, native side. It talks only to
+// The private owner supervisor, native side. For the owner it serves every
+// chat with Keir in the app: the private home chat, the support desk and side
+// chats, each its own conversation (`thread`). It talks only to
 // /api/keir/supervisor/* on the same origin and never to the support
 // operator, so it keeps working while the operator is down. Everything here
 // is plain logic with no views, so it can be tested without a screen.
@@ -19,6 +21,19 @@ enum KeirSupervisor {
     private static func matches(_ value: String, _ pattern: String) -> Bool {
         value.range(of: pattern, options: .regularExpression) != nil
     }
+
+    /// Which of the owner's chats the supervisor answers: home, the support desk
+    /// ("main") and side chats (the operator's 12-hex thread ids that are not
+    /// system threads such as "watches"). Only when the account has a supervisor.
+    static func serves(_ thread: String, system: Bool = false) -> Bool {
+        if thread == Self.thread || thread == "main" { return true }
+        return !system && matches(thread, "^[a-f0-9]{12}$")
+    }
+
+    /// Supervisor file links (owner uploads and Keir's attachments). Nothing
+    /// else is fetched from or deleted at this prefix.
+    static let filePrefix = base + "/files/"
+    static func validFileURL(_ url: String) -> Bool { matches(url, "^/api/keir/supervisor/files/[a-f0-9]{32}$") }
 
     /// The client id makes a retried send idempotent: the same id and text give
     /// the same message back instead of a second job. 8 to 128 of [A-Za-z0-9_.:-].
@@ -100,10 +115,11 @@ enum KeirSupervisor {
 
     enum Destination: Equatable { case supervisor, support, withheld(String) }
 
-    /// Where a message typed now would go. the support desk is only a destination
-    /// when the account is known and either the person has no supervisor or
-    /// they opened the support desk themselves. It is never a default for an owner.
-    static func destination(thread: String, supervisorAvailable: Bool, resolved: Bool, chosen: Bool) -> Destination {
+    /// Where a message typed now would go. For an owner with a supervisor every
+    /// chat they have with Keir (home, the support desk they opened, side chats)
+    /// goes to the supervisor; the support desk is never a default for an owner.
+    /// Everyone else talks to the support operator.
+    static func destination(thread: String, supervisorAvailable: Bool, resolved: Bool, chosen: Bool, system: Bool = false) -> Destination {
         guard resolved else { return .withheld("Keir is still checking which account this is. Nothing was sent.") }
         if thread == Self.thread {
             return supervisorAvailable ? .supervisor : .withheld("Your private conversation is not available. Nothing was sent.")
@@ -111,6 +127,7 @@ enum KeirSupervisor {
         if thread == "main", supervisorAvailable, !chosen {
             return .withheld("Open support desk yourself to message the support desk. Nothing was sent.")
         }
+        if supervisorAvailable && serves(thread, system: system) { return .supervisor }
         return .support
     }
 }

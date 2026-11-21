@@ -28,6 +28,8 @@ final class ChatAttachments: ObservableObject {
     }
     let keir: Bool
     init(keir: Bool = false) { self.keir = keir }
+    /// Whether a Keir chat is answered by the private supervisor; its files go there.
+    var supervisorServes: @MainActor (String) -> Bool = { _ in false }
     @Published private var drafts: [String: [Item]] = [:]
     @Published var scope = "main"
     var items: [Item] {
@@ -51,7 +53,7 @@ final class ChatAttachments: ObservableObject {
         }
         uploading = true; error = nil; defer { uploading = false }
         do {
-            let result = try await session.upload(data, name: name, mime: mime, keirThread: keir ? selected : nil)
+            let result = try await session.upload(data, name: name, mime: mime, keirThread: keir ? selected : nil, supervisor: keir && supervisorServes(selected))
             drafts[selected, default: []].append(Item(name: result["name"].string.nonempty ?? name, size: data.count,
                               image: mime.hasPrefix("image/") ? UIImage(data: data) : nil, value: result))
         } catch { self.error = error.localizedDescription }
