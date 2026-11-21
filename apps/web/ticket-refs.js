@@ -50,24 +50,30 @@ function ticketNumbersFromText(...texts) {
 }
 
 // A card's longer detail mentions tickets for context ("see ticket 1700 for
-// background"), so only the established intake forms link from it: "Raised by
-// Keir from ticket N", "from support ticket N", a "(ticket N)" aside, or a
-// "Ticket: N" line.
+// background", "the re-entry bar (ticket 1391) is working as designed"), so
+// only the established intake forms link from it: "Raised by Keir from ticket
+// N", "from support ticket N", a "Ticket: N" line, or a "(ticket N)" aside
+// that ends the card's last line. An aside in the middle of the text is
+// background, not the card's source.
 const DETAIL_FORMS = [
   /\bfrom\s+(?:support\s+)?(?:ticket|incident)\s*#?(\d{1,6})(?![\d.]?\d)/gi,
-  /\((?:support\s+)?(?:ticket|incident)\s*#?(\d{1,6})\)/gi,
   /^\s*(?:support\s+)?(?:ticket|incident)\s*(?::|#|no\.)\s*#?(\d{1,6})(?![\d.]?\d)/gim,
 ];
+const LAST_LINE_ASIDE = /\((?:support\s+)?(?:ticket|incident)\s*#?(\d{1,6})\)[.\s]*$/i;
 function ticketNumbersFromDetail(detail) {
   const text = String(detail || "");
   const out = [];
+  const add = (value) => {
+    const n = Number(value);
+    if (Number.isSafeInteger(n) && n > 0 && !out.includes(n)) out.push(n);
+  };
   for (const re of DETAIL_FORMS) {
     re.lastIndex = 0;
-    for (const m of text.matchAll(re)) {
-      const n = Number(m[1]);
-      if (Number.isSafeInteger(n) && n > 0 && !out.includes(n)) out.push(n);
-    }
+    for (const m of text.matchAll(re)) add(m[1]);
   }
+  const last = text.split("\n").map((l) => l.trim()).filter(Boolean).pop() || "";
+  const aside = last.match(LAST_LINE_ASIDE);
+  if (aside) add(aside[1]);
   return out;
 }
 

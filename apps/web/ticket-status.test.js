@@ -92,9 +92,18 @@ describe("ticket matcher", () => {
 
   it("links from a card's detail only in the intake forms", () => {
     assert.deepEqual(ticketNumbersFromDetail("Raised by Keir from ticket 1852. Similar to ticket 1700."), [1852]);
-    assert.deepEqual(ticketNumbersFromDetail("Context (ticket 1852) and more"), [1852]);
     assert.deepEqual(ticketNumbersFromDetail("Ticket: 1852\nSee ticket 1700 for background"), [1852]);
     assert.deepEqual(ticketNumbersFromDetail("See ticket 1700 for background; PR #7025."), []);
+  });
+
+  it("reads a (ticket N) aside in a detail only when it ends the card's last line", () => {
+    // Card 255124 (21 Nov): the background aside named ticket 1391 next to its real source, 1792.
+    const detail = "Player (ticket 1792, character 26) says they never withdrew. The re-entry bar (ticket 1391) is working as designed.\n\nRaised by Keir from ticket 1792.";
+    assert.deepEqual(ticketNumbersFromDetail(detail), [1792]);
+    assert.deepEqual(ticketNumbersFromDetail("Context (ticket 1852) and more"), []);
+    // The opposite failure: an aside that is the card's last line is its source and still links.
+    assert.deepEqual(ticketNumbersFromDetail("The tech cap fills on day one.\n\nSeen on the R&D page (ticket 1852)."), [1852]);
+    assert.deepEqual(ticketNumbersFromDetail("Short note (support ticket 1852)"), [1852]);
   });
 
   it("normalizes explicit ticket input", () => {
