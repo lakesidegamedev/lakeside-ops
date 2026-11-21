@@ -155,7 +155,14 @@ function plainPhase(phase) {
   if (!phase) return null;
   return PLAIN_PHASES[phase] || UNNAMED_STEP;
 }
-const clock = (t) => `${new Date(t).toISOString().slice(11, 16)} UTC`;
+// No time shown to anyone is UTC (owner rule). Player copy uses Discord's timestamp markup, which every reader sees in
+// their own time zone (the same form as the waiting updates in broker.js); the owner gets US Eastern, labelled ET.
+// A missing or invalid time is left out rather than printed wrong.
+const validTime = (t) => typeof t === "number" && Number.isFinite(t) && t > 0;
+const stamp = (t) => (validTime(t) ? `<t:${Math.floor(t / 1000)}:t>` : null);
+const EASTERN = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" });
+const eastern = (t) => (validTime(t) ? `${EASTERN.format(new Date(t)).replace(/\s/g, " ")} ET` : "an unknown time");
+const ownerWhen = (rec) => `${rec.approxTime ? "was first seen failing at" : "failed at"} ${eastern(rec.firstFailedAt)}`;
 function duration(ms) {
   const m = Math.max(1, Math.round(ms / MINUTE)), h = Math.floor(m / 60), r = m % 60;
   const part = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
@@ -172,10 +179,10 @@ function titleFor(f) { return `Turn ${f.turn} failed: the game is not advancing`
 function whatHappened(f) {
   const step = plainPhase(f.phase);
   if (f.kind === "dead") return `Turn ${f.turn} stopped partway through${step ? `, in ${step},` : ""} and has not finished.`;
-  if (f.kind === "overdue") return `Turn ${f.turn} was due by ${clock(f.firstFailedAt)} and has not started.`;
+  if (f.kind === "overdue") return stamp(f.firstFailedAt) ? `Turn ${f.turn} was due by ${stamp(f.firstFailedAt)} and has not started.` : `Turn ${f.turn} is overdue and has not started.`;
   if (f.kind === "paused") return `No turn has finished recently, so the game has paused itself before turn ${f.turn}.`;
-  if (f.approxTime) return `Turn ${f.turn} failed and has not finished${step ? `; it stopped in ${step}` : ""}.`;
-  return `Turn ${f.turn} failed to finish at ${clock(f.firstFailedAt)}${step ? `, in ${step}` : ""}.`;
+  if (f.approxTime || !stamp(f.firstFailedAt)) return `Turn ${f.turn} failed and has not finished${step ? `; it stopped in ${step}` : ""}.`;
+  return `Turn ${f.turn} failed to finish at ${stamp(f.firstFailedAt)}${step ? `, in ${step}` : ""}.`;
 }
 function openingMessage(f) {
   return finish(`${whatHappened(f)} The game is not advancing until this is fixed, so no new turns will run for now. Keir is on it and will post here when there is news.`);
@@ -195,8 +202,8 @@ const RECOVERY_END = { clean: "This incident stays open until the next turns run
   unknown: "Keir is checking that the turn's work completed fully." };
 function recoveryMessage({ turn, at, state, clean, downMs, folded }) {
   const how = state || (clean === true ? "clean" : clean === false ? "skipped" : "unknown");
-  const when = at ? `finished at ${clock(at)}` : "has finished";
-  return finish(`Turn ${turn} ${when} and the game is advancing again. It was stuck for ${at ? "" : "about "}${duration(downMs)}.${folded ? foldedRepeats(folded.count, folded.turn) : ""} ${RECOVERY_END[how] || RECOVERY_END.unknown}`);
+  const when = stamp(at) ? `finished at ${stamp(at)}` : "has finished";
+  return finish(`Turn ${turn} ${when} and the game is advancing again. It was stuck for ${stamp(at) ? "" : "about "}${duration(downMs)}.${folded ? foldedRepeats(folded.count, folded.turn) : ""} ${RECOVERY_END[how] || RECOVERY_END.unknown}`);
 }
 
 // An open incident is the turn failure incident only on strong evidence (release review M2): Keir opened it for a turn
@@ -328,7 +335,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     d.channels[channelId] = { ...(d.channels[channelId] || {}), category: "incident" };
     const existing = d.jobs[d.seen[`ticket:${n}`]];
     if (existing) return existing;
-    const content = [`Keir opened this incident in code the moment turn ${rec.turn} failed (first failure ${clock(rec.firstFailedAt)}${rec.phase ? `, phase ${rec.phase}` : ""}${rec.reason ? `, reason ${rec.reason}` : ""}). Keir owns it.`,
+    const content = [`Keir opened this incident in code the moment turn ${rec.turn} failed (first ${rec.approxTime ? "seen" : "failure"} ${stamp(rec.firstFailedAt)}, ${eastern(rec.firstFailedAt)}${rec.phase ? `, phase ${rec.phase}` : ""}${rec.reason ? `, reason ${rec.reason}` : ""}). Keir owns it.`,
       `Its first message is already posted: "${message}" Keir also posts, in code, one update when another turn fails or the step changes and one when the game advances again; do not repeat those.`,
       `Your work: investigate with turn_status and the latest turn failure, post only meaningful findings, merge player reports about the same problem into it, propose a repair for approval when there is one, and close it once turns run cleanly again (two clean turns).`,
       finding ? `The monitor's finding ${finding.fp}${findingJob ? ` (task ${findingJob.id}, ${findingJob.state})` : ""} is already investigating the cause; build on its evidence instead of repeating it. Evidence: ${String(finding.evidence || "").slice(0, 800)}` : null,
@@ -375,7 +382,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
         if (orphan) { rec.unrecordedCreates = (rec.unrecordedCreates || 0) + 1; rec.orphans = [...new Set([...(rec.orphans || []), orphan[1]])].slice(-10); }
         ledger.audit("turn_incident_open_uncertain", { key: rec.key, error });
       }
-      note(rec.key, "blocked", `Turn ${rec.turn} failed at ${clock(rec.firstFailedAt)} but Keir could not open the incident yet (${error.slice(0, 160)}). It keeps trying while the turn is failed.`);
+      note(rec.key, "blocked", `Turn ${rec.turn} ${ownerWhen(rec)} but Keir could not open the incident yet (${error.slice(0, 160)}). It keeps trying while the turn is failed.`);
       ledger.save();
       return null;
     }
@@ -398,7 +405,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
     if (job) cur.jobId = job.id;
     ledger.audit("turn_incident_opened", { key: rec.key, incident: number, turn: rec.turn, how, job: job?.id || null, supportDeferred: Boolean(rec.supportDeferred) });
     log(`turn incident opened: #${number} for turn ${rec.turn} (${how})`);
-    note(`incident:${number}`, "opened", `Turn ${rec.turn} failed at ${clock(rec.firstFailedAt)}. Keir opened incident #${number} and is on it.${rec.orphans?.length ? ` Earlier tries left ${rec.orphans.map((c) => `#${c}`).join(", ")} with no ticket record; those channels can be removed.` : ""}`);
+    note(`incident:${number}`, "opened", `Turn ${rec.turn} ${ownerWhen(rec)}. Keir opened incident #${number} and is on it.${rec.orphans?.length ? ` Earlier tries left ${rec.orphans.map((c) => `#${c}`).join(", ")} with no ticket record; those channels can be removed.` : ""}`);
     try { require("./incidents").resetIncidentCache(); } catch {}
     onOpened(cur);
     ledger.save();
@@ -570,7 +577,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
       catch (e) {
         rec.lastError = `open incidents could not be read: ${String(e.message).slice(0, 160)}`;
         rec.unreadSince ||= at;
-        if (at - rec.unreadSince >= 5 * MINUTE || (rec.tries || 0) > 0) note(rec.key, "blocked", `Turn ${f.turn} failed at ${clock(rec.firstFailedAt)} but Keir cannot read the support service to open the incident (${rec.lastError.slice(0, 120)}). It keeps trying while the turn is failed.`);
+        if (at - rec.unreadSince >= 5 * MINUTE || (rec.tries || 0) > 0) note(rec.key, "blocked", `Turn ${f.turn} ${ownerWhen(rec)} but Keir cannot read the support service to open the incident (${rec.lastError.slice(0, 120)}). It keeps trying while the turn is failed.`);
         ledger.save(); return { key, unreadable: "support" };
       }
       delete rec.unreadSince;
@@ -583,7 +590,7 @@ function createTurnIncidents({ ledger, mcp, controls, config = {}, now = () => D
         if (!gate.act) { preview(d, "turn-incidents", "add to incident", `${key} -> #${existing.number}`, `incident #${existing.number} "${existing.title}" is already open`, {}, now()); ledger.save(); return { key, incident: Number(existing.number), preview: true }; }
         const c = adopt(Number(existing.number), existing.title, "existing", rec);
         hold(key, "already-open", `incident #${existing.number} ("${String(existing.title).slice(0, 80)}") is already open; added to it`);
-        note(`incident:${existing.number}`, "opened", `Turn ${f.turn} failed at ${clock(rec.firstFailedAt)}. Incident #${existing.number} was already open; Keir is adding to it.`);
+        note(`incident:${existing.number}`, "opened", `Turn ${f.turn} ${ownerWhen(rec)}. Incident #${existing.number} was already open; Keir is adding to it.`);
         // Said only when the open incident is about another turn; the same turn needs no repeat.
         if (!new RegExp(`\\bturn\\s+${f.turn}\\b`, "i").test(existing.title || "")) await postOnce(c, `turn:${f.turn}`, newTurnMessage(f, null), true);
         ledger.save(); return { key, incident: c.number, adopted: true };

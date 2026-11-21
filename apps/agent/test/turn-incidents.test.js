@@ -15,6 +15,10 @@ const at = (hhmm) => Date.parse(`2026-11-21T${hhmm}:00.000Z`);
 const RECOVERED = Date.parse(DETAIL.attempts.find((a) => a.success).realTime);
 const COMMIT = DETAIL.attempts[0].buildCommit;
 const STACK = DETAIL.attempts[1].failedPhaseDetails[0].message;
+// Player copy carries Discord's timestamp markup (each reader's own time zone); the owner gets US Eastern.
+const T = (t) => `<t:${Math.floor((typeof t === "number" ? t : Date.parse(t)) / 1000)}:t>`;
+const FIRST = Math.min(...DETAIL.attempts.filter((a) => !a.success).map((a) => Date.parse(a.realTime)));
+const re = (s) => new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
 // The game and the support service as this morning, at the clock's time.
 function makeWorld({ clock, lock = {}, overview = {}, incidents = [], failCreate = null, failList = null } = {}) {
@@ -79,7 +83,8 @@ test("11:31 opens exactly one incident on the first sweep; 11:34, 11:43 and 12:0
   assert.equal(c.category, "incident");
   assert.equal(c.discord_user_id, undefined, "the support service's own bot is the reporter; nobody is impersonated");
   assert.equal(c.title, "Turn 108 failed: the game is not advancing");
-  assert.match(c.description, /^Turn 108 failed to finish at 11:31 UTC, in the step that runs companies' production and sales\./);
+  assert.match(c.description, re(`Turn 108 failed to finish at ${T(FIRST)}, in the step that runs companies' production and sales.`));
+  assert.ok(c.description.startsWith("Turn 108 failed to finish at <t:"));
   assert.match(c.description, /not advancing until this is fixed/);
   assert.match(c.description, /Keir is on it/);
   assert.equal(out.incident, 1880);
@@ -96,7 +101,7 @@ test("11:31 opens exactly one incident on the first sweep; 11:34, 11:43 and 12:0
   assert.equal(r.d.channels["900000000000000001"].category, "incident");
   // The owner is told once.
   assert.equal(r.notes.filter((n) => /opened/.test(n.key)).length, 1);
-  assert.match(r.notes[0].content, /Turn 108 failed at 11:31 UTC\. Keir opened incident #1880/);
+  assert.match(r.notes[0].content, /Turn 108 failed at 6:31 AM ET\. Keir opened incident #1880/);
   assert.ok(r.d.alerts.some((a) => /^error:watch-turn-incident:/.test(a.key)), "through the Watchkeeper incident alert path");
 
   for (const hhmm of ["11:35", "11:36", "11:44", "11:50", "12:01", "12:30", "13:05"]) { r.set(hhmm); await r.sweep(); }
@@ -106,7 +111,7 @@ test("11:31 opens exactly one incident on the first sweep; 11:34, 11:43 and 12:0
   r.set(RECOVERED + 4 * 60000); await r.sweep();
   assert.equal(r.w.updates.length, 2, "one recovery update");
   const rec = r.w.updates[1].message;
-  assert.match(rec, /^Turn 108 finished at 13:16 UTC and the game is advancing again\./);
+  assert.ok(rec.startsWith(`Turn 108 finished at ${T(RECOVERED)} and the game is advancing again.`), rec);
   assert.match(rec, /stuck for 1 hour and 45 minutes/);
   assert.match(rec, /Turn 108 was tried 3 more times without success/);
   assert.match(rec, /follow-up on that is still in progress/, "the recovery skipped work, so it is not called resolved");
@@ -160,7 +165,7 @@ test("a different turn failing while the incident is open adds one update, with 
   r.set("12:11"); await r.sweep();
   assert.equal(r.w.creates.length, 1, "no second incident");
   assert.equal(r.w.updates.length, 2);
-  assert.match(r.w.updates[1].message, /^Turn 109 failed to finish at 12:10 UTC, in the banking step\./);
+  assert.ok(r.w.updates[1].message.startsWith(`Turn 109 failed to finish at ${T("2026-11-21T12:10:00.000Z")}, in the banking step.`));
   assert.match(r.w.updates[1].message, /Turn 108 was tried 3 more times without success/);
   r.set("12:20"); await r.sweep();
   assert.equal(r.w.updates.length, 2, "the same turn again adds nothing");
@@ -307,7 +312,7 @@ test("preview opens nothing and records what it would open", async () => {
   await r.sweep();
   assert.equal(r.w.creates.length, 0); assert.equal(r.w.updates.length, 0);
   const row = r.d.preview.items["turn-incidents:open incident:w3:t108"];
-  assert.ok(row); assert.match(row.reason, /Turn 108 failed: the game is not advancing\. Turn 108 failed to finish at 11:31 UTC/);
+  assert.ok(row); assert.match(row.reason, re(`Turn 108 failed: the game is not advancing. Turn 108 failed to finish at ${T(FIRST)}`));
   assert.equal(r.notes.length, 0, "no owner alert in preview");
   assert.equal(Object.keys(r.d.jobs).length, 0);
 });
@@ -316,7 +321,7 @@ test("a restart with the turn already failed opens one incident, with the engine
   const r = rig({ start: "12:30" });
   await r.sweep();
   assert.equal(r.w.creates.length, 1);
-  assert.match(r.w.creates[0].description, /^Turn 108 failed to finish at 11:31 UTC/);
+  assert.ok(r.w.creates[0].description.startsWith(`Turn 108 failed to finish at ${T(FIRST)}`));
 });
 
 test("a failure three hours old that has recovered opens nothing", async () => {
@@ -335,7 +340,7 @@ test("processing-dead: a stale lock opens an incident with no failed attempt rec
   assert.match(r.w.creates[0].description, /^Turn 108 stopped partway through, in the step that runs companies' production and sales, and has not finished\./);
   const late = rig({ start: "10:40", world: { lock: { verdict: "overdue (not processing, past schedule)", overdueMin: 15 } } });
   await late.sweep();
-  assert.match(late.w.creates[0].description, /^Turn 108 was due by 10:25 UTC and has not started\./);
+  assert.ok(late.w.creates[0].description.startsWith(`Turn 108 was due by ${T(at("10:25"))} and has not started.`));
 });
 
 test("another coordinator owning support intake does not stop it, and is recorded", async () => {
@@ -663,4 +668,21 @@ test("M5, the other way: a passing registration fault and plain timeouts still e
   await minutes(slow, "11:30", "13:10");
   assert.ok(slow.w.calls.filter((c) => c.tool === "support_create_ticket").length > 3, "timeouts that made nothing are not bounded");
   assert.equal(slow.w.creates.length, 1);
+});
+
+test("times: player messages carry Discord timestamp markup and no UTC clock; the title has no time; the owner gets ET", async () => {
+  const r = rig({ start: "11:32" });
+  await r.sweep();
+  for (const t of [at("12:01"), at("12:30"), RECOVERED + 60000]) { r.set(t); await r.sweep(); }
+  const player = [r.w.creates[0].description, ...r.w.updates.map((u) => u.message)];
+  for (const text of player) {
+    assert.doesNotMatch(text, /UTC|GMT|\b\d{1,2}:\d{2}\b/, "no clock time outside the markup");
+    assert.match(text, /<t:\d{10}:t>/, "the markup passes the shape and leak rules unchanged");
+  }
+  assert.doesNotMatch(r.w.creates[0].title, /<t:|\d{1,2}:\d{2}|UTC|ET\b/, "the title is not rendered as a timestamp, so it has no time");
+  assert.match(r.notes.find((n) => /opened/.test(n.key)).content, /at 6:31 AM ET\./);
+  assert.doesNotMatch(r.notes.map((n) => n.content).join(" "), /UTC|<t:/);
+  // A missing time is left out, never printed as midnight.
+  assert.match(ti.openingMessage({ turn: 110, kind: "failed", firstFailedAt: null, attempts: 1 }), /^Turn 110 failed and has not finished\./);
+  assert.match(ti.openingMessage({ turn: 110, kind: "overdue", firstFailedAt: NaN, attempts: 1 }), /^Turn 110 is overdue and has not started\./);
 });
