@@ -81,7 +81,7 @@ test("N1 reproduction: a deploy wait on merged PR 7001 parks, and the fix reachi
   assert.ok(line);
   assert.match(line.content, /The player is owed a follow-up Keir promised \("I'll let you know once it's live\."\)/);
   assert.match(line.content, /It wakes when the fix reaches the main server/);
-  assert.match(line.content, /re-checks it in code every 2 hours/);
+  assert.match(line.content, /Every 2 hours Keir also re-reads the wait in code/);
   const view = ticketDetail(w.data, 1900, w.now());
   assert.ok(view.blockers.some((b) => b.kind === "parked" && /owed/.test(b.detail)));
   // Hours later the auto-promote lands it on main. The reconcile pass reads it and wakes the job, parked or not.
@@ -135,7 +135,7 @@ test("N1 parking table: every kind that may park is woken by its event; kind oth
     c.after?.(w);
     quietUntilEscalated(w, job, input, () => c.refresh?.(w));
     assert.ok(job.closing.parked, `${c.kind} may park`);
-    assert.equal(closing.PARKING[c.kind].park !== false, true);
+    assert.equal(typeof closing.PARKABLE[c.kind], "function");
     w.advance(5 * MIN); c.refresh?.(w); c.event(w, job); w.wake(job);
     assert.equal(job.state, "queued", `${c.kind}: its event wakes the parked job before the safety net`);
   }
@@ -228,4 +228,89 @@ test("N8 and N1: a handed-off ticket that owes the player something still gets t
   const line = Object.values(w.data.outbox).find((o) => /Ticket 1980 is parked/.test(o.content));
   assert.ok(line, "never silent while the player is owed an answer");
   assert.match(line.content, /owed an answer to "Why did my factory produce nothing\?"/);
+});
+
+// Review 3 F3 (the reviewer's park.js): a readable wait that can no longer change never parks. It slows down to a model
+// run every two hours, and the owner is never told it will wake on an event that cannot come.
+test("F3 reproduction: a reached turn, and a worker wait with no worker, slow down instead of parking", () => {
+  const cases = [
+    { label: "turn 97 after turn 97 ran", waitOn: { kind: "turn", ref: 97 }, waitingOn: "turn 97", setup: (w) => { w.data.watch.turnClock = { turn: 97, iteration: 3, at: w.now() }; } },
+    { label: "the turn worker to pick up the deploy", waitOn: null, waitingOn: "the turn worker to pick up the deploy", setup: (w) => { w.data.watch.turnClock = { turn: 97, iteration: 3, at: w.now() }; } },
+  ];
+  for (const c of cases) {
+    const w = world();
+    const job = ticketJob(w, "jf3", 1990);
+    c.setup(w);
+    const input = { state: "waiting", summary: "s", closesWhen: "closes when the figures settle", waitingOn: c.waitingOn, ...(c.waitOn ? { waitOn: c.waitOn } : {}) };
+    finish(w, job, input);
+    // The turn moves on while the job waits; its mark stays the same.
+    let turn = 97;
+    const runs = quietUntilEscalated(w, job, input, () => { w.data.watch.turnClock = { turn: ++turn, iteration: 3, at: w.now() }; });
+    assert.equal(job.closing.parked, undefined, `${c.label}: not parked`);
+    assert.ok(job.closing.slowed, `${c.label}: slowed`);
+    assert.equal(runs, 0);
+    assert.equal(job.wakeAt - w.now(), 2 * HOUR, "a model run every two hours");
+    assert.equal(Object.values(w.data.outbox).filter((o) => /is parked/.test(o.content)).length, 0, "no parked line promising a wake");
+    assert.match(audits(w, "job_slowed")[0].why, /already run|no coding worker/);
+  }
+});
+
+test("F3: a pr wait on a merged or closed PR, and a deploy wait already on main or closed unmerged, may not park", () => {
+  const w = world();
+  const job = ticketJob(w, "jp", 1991, { pullRequests: [`https://github.com/${REPO}/pull/7010`] });
+  const rec = { number: 7010, repo: REPO, state: "merged", merged: true, head: "h", mergeSha: "m", onMain: true, checkedAt: T0 };
+  w.data.prTruth.prs[`${REPO}#7010`] = rec;
+  job.closing = { closesWhen: "x", waitingOn: "PR 7010", on: { kind: "pr", ref: 7010 } };
+  assert.equal(closing.parkable(w.data, job, w.now()).ok, false);
+  job.closing.on = { kind: "deploy", ref: 7010 };
+  assert.match(closing.parkable(w.data, job, w.now()).why, /already on the main server/);
+  Object.assign(rec, { state: "closed", merged: false, onMain: undefined });
+  assert.match(closing.parkable(w.data, job, w.now()).why, /closed without merging/);
+  job.closing.on = { kind: "pr", ref: 7010 };
+  assert.equal(closing.parkable(w.data, job, w.now()).ok, false);
+  // The opposite: an open PR, and a merged PR not yet on main, may park, each with its true event.
+  Object.assign(rec, { state: "open", merged: false });
+  assert.match(closing.parkable(w.data, job, w.now()).source, /merged, closed or changes/);
+  Object.assign(rec, { state: "merged", merged: true, onMain: false });
+  job.closing.on = { kind: "deploy", ref: 7010 };
+  assert.match(closing.parkable(w.data, job, w.now()).source, /reaches the main server/);
+  // A worker wait parks only while a run or a coding child is live.
+  job.closing.on = { kind: "worker", ref: null };
+  assert.equal(closing.parkable(w.data, job, w.now()).ok, false);
+  w.data.codingWorkers.runs.r = { id: "r", jobId: job.id, state: "done" };
+  assert.equal(closing.parkable(w.data, job, w.now()).ok, false, "a finished run changes nothing");
+  w.data.jobs.kid = { id: "kid", codingParent: job.id, state: "running" };
+  assert.equal(closing.parkable(w.data, job, w.now()).ok, true);
+});
+
+test("F3: the parking list is closed: only the listed kinds can park, and an unknown or new kind never does", () => {
+  assert.deepEqual(Object.keys(closing.PARKABLE).sort(), ["decision", "deploy", "developer", "owner", "player", "pr", "staff", "turn", "worker"]);
+  assert.ok(Object.isFrozen(closing.PARKABLE));
+  const w = world();
+  for (const kind of ["other", "weather", "toString", "__proto__", "constructor"]) {
+    const job = ticketJob(w, `jk-${kind}`, 1992, { closing: { closesWhen: "x", waitingOn: "y", on: { kind, ref: null } } });
+    assert.equal(closing.parkable(w.data, job, w.now()).ok, false, kind);
+  }
+});
+
+test("F3: a parked wait that can no longer change is handed back by the safety net, not re-armed forever", () => {
+  const w = world();
+  const job = ticketJob(w, "jsn", 1993);
+  w.data.watch.turnClock = { turn: 97, iteration: 3, at: w.now() };
+  // Parked by an earlier release on turn 97 before it ran; the turn ran and the mark was taken after (nothing woke it).
+  job.state = "waiting"; job.wakeAt = w.now() + MIN;
+  job.closing = { closesWhen: "x", waitingOn: "turn 97", on: { kind: "turn", ref: 97 }, mark: "turn:3:reached", parked: { at: w.now() - HOUR }, timerAt: job.wakeAt, timerMs: 2 * HOUR };
+  w.advance(2 * MIN); w.data.watch.turnClock.at = w.now(); w.wake(job);
+  assert.equal(job.state, "queued");
+  assert.equal(job.closing.parked, undefined);
+  assert.match(audits(w, "job_unparked").at(-1).why, /already run/);
+  // The opposite: a live parked wait (an unnamed turn) is re-armed quietly at the safety net.
+  const w2 = world();
+  const j2 = ticketJob(w2, "jsn2", 1994);
+  w2.data.watch.turnClock = { turn: 50, iteration: 3, at: w2.now() };
+  j2.state = "waiting"; j2.wakeAt = w2.now() + MIN;
+  j2.closing = { closesWhen: "x", waitingOn: "the next turn", on: { kind: "turn", ref: null }, mark: "turn:3:50", parked: { at: w2.now() - HOUR }, timerAt: j2.wakeAt, timerMs: 2 * HOUR };
+  w2.advance(2 * MIN); w2.data.watch.turnClock.at = w2.now(); w2.wake(j2);
+  assert.equal(j2.state, "waiting");
+  assert.ok(j2.closing.parked);
 });

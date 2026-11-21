@@ -27,6 +27,7 @@
 // Finding jobs that are blocked with no question behind them, parked with nothing changing, or from a world that no
 // longer exists are closed with a one-line record after KEIR_FINDING_EXPIRY_HOURS (72).
 const { JOB_TERMINAL } = require("./machines");
+const RUN_ENDED = require("./investigation").ENDED; // coding worker run states that will not change again
 
 const HOUR = 3600000, MIN = 60000;
 const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
@@ -63,20 +64,30 @@ const WAIT_KINDS = ["turn", "pr", "deploy", "decision", "player", "owner", "deve
 const clip = (t, n) => String(t || "").replace(/\s+/g, " ").trim().slice(0, n);
 
 // Fourth pass (review N1, the blocker): a parked job has no model timer, so it may park only on a wait some event will
-// end. For each kind: may it park, and what wakes it. "question" means only while an owner question is pending for the job.
-// Every parked job is also re-checked in code (parkRecheckHours), and wakes at once when any event below changes its mark
+// end. Every parked job is also re-checked in code (parkRecheckHours), and wakes at once when any event changes its mark
 // (quietWake runs for parked jobs on every lifecycle step, not only when the re-check is due).
-const PARKING = Object.freeze({
-  turn: { park: true, source: "the next turn runs (the turn clock is read every 5 minutes)" },
-  pr: { park: true, source: "the pull request is merged, closed or changes (GitHub is read every 30 minutes)" },
-  deploy: { park: true, source: "the fix reaches the main server (GitHub is read every 30 minutes)" },
-  decision: { park: "question", source: "the owner answers the open question, or GitHub settles it" },
-  owner: { park: "question", source: "the owner answers the open question, or GitHub settles it" },
-  player: { park: true, source: "the player writes" },
-  developer: { park: true, source: "a developer replies" },
-  staff: { park: true, source: "staff write" },
-  worker: { park: true, source: "the coding worker or its task changes state" },
-  other: { park: false, source: null },
+// Review 3 F3: THE closed list of waits that may park, in one place. A kind not listed here, or a case its entry refuses,
+// never parks: it slows down to a model run every slowWakeHours. Each entry names the wired event that ends the wait and
+// refuses when that event can no longer come (the turn already ran, the PR is already merged or closed, the fix is already
+// on main, no coding worker or child task is running). seen is observe() now, and readable.
+const mayPark = (source) => ({ ok: true, source });
+const noPark = (why) => ({ ok: false, why });
+const questionOpen = (d, job) => Object.values(d.decisions || {}).some((x) => x.jobId === job.id && x.state === "pending");
+const ownerWait = (d, job) => (questionOpen(d, job) ? mayPark("the owner answers the open question, or GitHub settles it") : noPark("no owner question is open, so no answer can wake it"));
+const workerLive = (d, job) => Object.values(d.codingWorkers?.runs || {}).some((r) => r.jobId === job.id && !RUN_ENDED.has(r.state))
+  || Object.values(d.jobs || {}).some((j) => j.codingParent === job.id && !JOB_TERMINAL.includes(j.state));
+const PARKABLE = Object.freeze({
+  turn: (d, job, seen) => (seen.reached ? noPark("the turn it waits on has already run, so no turn event can end it")
+    : mayPark(`${Number.isFinite(job.closing.on.ref) ? `turn ${job.closing.on.ref}` : "the next turn"} runs (the turn clock is read every 5 minutes)`)),
+  pr: (d, job, seen) => (seen.reached ? noPark("the pull request is already merged or closed") : mayPark("the pull request is merged, closed or changes (GitHub is read every 30 minutes)")),
+  deploy: (d, job, seen) => (seen.reached ? noPark("the fix is already on the main server") : seen.closedUnmerged ? noPark("the pull request was closed without merging")
+    : mayPark("the fix reaches the main server (GitHub is read every 30 minutes)")),
+  decision: ownerWait,
+  owner: ownerWait,
+  player: () => mayPark("the player writes"),
+  developer: () => mayPark("a developer replies"),
+  staff: () => mayPark("staff write"),
+  worker: (d, job) => (workerLive(d, job) ? mayPark("the coding worker or its task changes state") : noPark("no coding worker or child task is running, so nothing will change it")),
 });
 
 // Root ticket and finding jobs. Coding children, probes, commands and conversations keep their own rules.
@@ -154,7 +165,7 @@ function observe(d, job, now) {
       // reconcile pass reads that (prtruth.js, onMain) and the mark carries it, so reaching main changes the mark. Until the
       // main read exists, code cannot tell and the wake reaches the model.
       if (pr.merged && typeof pr.onMain !== "boolean") return { checkable: false, why: "merged; main server not read yet" };
-      return { checkable: true, mark: `pr:${n}:${pr.state}:${pr.head || ""}:${pr.merged ? (pr.onMain ? "main" : "not-main") : ""}`, reached: Boolean(pr.merged && pr.onMain) };
+      return { checkable: true, mark: `pr:${n}:${pr.state}:${pr.head || ""}:${pr.merged ? (pr.onMain ? "main" : "not-main") : ""}`, reached: Boolean(pr.merged && pr.onMain), closedUnmerged: pr.state === "closed" && !pr.merged };
     }
     case "decision": case "owner":
       return { checkable: true, mark: `dec:${decisions()}:${heard()}` };
@@ -261,29 +272,28 @@ function owedTo(d, job, now) {
   return null;
 }
 
-// May this job park on its wait? { ok, why }. Only a kind with a wired event source, only when code can read the wait now,
-// and an owner wait only while a question is actually open.
+// May this job park on its wait? { ok, source } or { ok: false, why }. Only a kind on the closed list (PARKABLE), only when
+// code can read the wait now, and only when its entry says the event can still come.
 function parkable(d, job, now) {
   const kind = job.closing?.on?.kind || "other";
-  const rule = PARKING[kind] || PARKING.other;
-  if (!rule.park) return { ok: false, why: `nothing in code can tell when "${kind}" waits end` };
-  if (rule.park === "question" && !Object.values(d.decisions || {}).some((x) => x.jobId === job.id && x.state === "pending")) return { ok: false, why: "no owner question is open, so no answer can wake it" };
+  const rule = Object.prototype.hasOwnProperty.call(PARKABLE, kind) ? PARKABLE[kind] : null;
+  if (!rule) return { ok: false, why: `nothing in code can tell when "${kind}" waits end` };
   const seen = observe(d, job, now);
   if (!seen.checkable) return { ok: false, why: seen.why || "the wait cannot be read in code now" };
-  return { ok: true, source: rule.source };
+  return rule(d, job, seen);
 }
 
-function park(d, job, now, why, config = DEFAULTS, { silent = false } = {}) {
+function park(d, job, now, why, config = DEFAULTS, { silent = false, source } = {}) {
   const c = job.closing;
   const owed = owedTo(d, job, now);
   const every = recheckMs(job, config);
-  const source = (PARKING[c.on?.kind] || PARKING.other).source || "something changes";
+  source ||= "something it waits on changes";
   c.parked = { at: now, on: c.waitingOn, why, source, ...(owed ? { owed } : {}) };
   delete c.slowed;
   job.state = "waiting"; job.wakeAt = now + every; c.timerAt = job.wakeAt; c.timerMs = every;
   const effects = [{ type: "audit", kind: "job_parked", detail: { job: job.id, ticket: job.ticket || null, on: clip(c.waitingOn, 160), waitKind: c.on?.kind || "other", why, quietWakes: c.quietWakes || 0, owed: owed ? clip(owed, 160) : null } }];
   // A ticket where the player is owed something is never parked without a line the owner sees.
-  if (!silent || owed) effects.push({ type: "notify", key: `parked:${job.id}:${c.setAt || 0}`, destination: "owner", content: `${label(job)} is parked: it has woken ${c.quietWakes || 0} times with nothing changing and is now waiting on ${clip(c.waitingOn, 200)}. It closes when ${clip(c.closesWhen, 200).replace(/^closes when /i, "")}.${owed ? ` The player is owed ${owed}.` : ""} It wakes when ${source}, when someone writes, and Keir re-checks it in code every ${Math.round(every / HOUR)} hours.` });
+  if (!silent || owed) effects.push({ type: "notify", key: `parked:${job.id}:${c.setAt || 0}`, destination: "owner", content: `${label(job)} is parked: it has woken ${c.quietWakes || 0} times with nothing changing and is now waiting on ${clip(c.waitingOn, 200)}. It closes when ${clip(c.closesWhen, 200).replace(/^closes when /i, "")}.${owed ? ` The player is owed ${owed}.` : ""} It wakes when ${source}, or when someone writes. Every ${Math.round(every / HOUR)} hours Keir also re-reads the wait in code and hands it back if it can no longer be read or can no longer change.` });
   return { parked: true, effects };
 }
 
@@ -298,7 +308,7 @@ function slow(d, job, now, why, config = DEFAULTS) {
 }
 function parkOrSlow(d, job, now, why, config = DEFAULTS) {
   const p = parkable(d, job, now);
-  return p.ok ? park(d, job, now, why, config) : slow(d, job, now, `${why}; ${p.why}`, config);
+  return p.ok ? park(d, job, now, why, config, { source: p.source }) : slow(d, job, now, `${why}; ${p.why}`, config);
 }
 
 // Exactly one of: hand the PR to the open-PR pass, one activation to raise the single ask, park, or slow down.
@@ -316,7 +326,7 @@ function escalate(d, job, now, config = DEFAULTS) {
     c.escalation = { at: now, how: "handoff", pr: n };
     // The open-PR pass makes the one ask, repair or close, which the owner sees; a ticket that owes the player something
     // still gets the parked line.
-    const out = park(d, job, now, `PR ${n} handed to the open-PR pass`, config, { silent: true });
+    const out = park(d, job, now, `PR ${n} handed to the open-PR pass`, config, { silent: true, source: `the open-PR pass merges, closes or asks the owner about PR ${n}` });
     out.effects.push({ type: "audit", kind: "pr_handed_to_open_pr_pass", detail: { job: job.id, pr: n } });
     return { handedOff: n, effects: out.effects };
   }
@@ -382,9 +392,11 @@ function parkedCheck(d, job, now, config = DEFAULTS) {
     return { quiet: false, effects: [{ type: "audit", kind: "job_unparked", detail: { job: job.id, ticket: job.ticket || null, mark: seen.mark, by: "change" } }] };
   }
   if (!(job.wakeAt <= now)) return { quiet: true, effects: [] };
-  if (!seen.checkable) {
+  // Review 3 F3: a wait that can no longer change (its turn ran, its PR closed) is handed back too, so it slows down.
+  const still = seen.checkable && !c.handedPrs ? parkable(d, job, now) : { ok: true };
+  if (!seen.checkable || !still.ok) {
     unpark(c); c.wokeFor = "timer-unchecked";
-    return { quiet: false, effects: [{ type: "audit", kind: "job_unparked", detail: { job: job.id, ticket: job.ticket || null, by: "safety net", why: seen.why || "wait unreadable" } }] };
+    return { quiet: false, effects: [{ type: "audit", kind: "job_unparked", detail: { job: job.id, ticket: job.ticket || null, by: "safety net", why: seen.why || still.why || "wait unreadable" } }] };
   }
   c.parked.checkedAt = now;
   job.wakeAt = now + recheckMs(job, config); c.timerAt = job.wakeAt;
@@ -572,6 +584,6 @@ function describe(job) {
     ...(c.slowed ? { slowed: { since: new Date(c.slowed.at).toISOString(), why: c.slowed.why } } : {}), ...(c.derived ? { derived: true } : {}) };
 }
 
-module.exports = { DEFAULTS, settings, WAIT_KINDS, PARKING, MISSING, applies, infer, observe, fromFinish, afterFinish, quietWake, onActivation, escalate, park, slow, parkable, owedTo, recheckMs, heldPr,
+module.exports = { DEFAULTS, settings, WAIT_KINDS, PARKABLE, MISSING, applies, infer, observe, fromFinish, afterFinish, quietWake, onActivation, escalate, park, slow, parkable, owedTo, recheckMs, heldPr,
   notePost, stepBackLevel, stepBack, stepBackRefusal, stepBackActive, blockedByOwnFinish, hasQuestion, timeline, closingCallsForTurn, noteTurnReport, oldWorld, expireFindings, describe, turnClock,
   CLOCK_FRESH_MS, PR_FRESH_MS, PARK_RECHECK_MS, MIN_CHECKED_WAIT_MS };
