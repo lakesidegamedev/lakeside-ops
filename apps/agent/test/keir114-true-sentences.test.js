@@ -36,6 +36,14 @@ const TRUE_SENTENCES = [
 const FALSE_SENTENCES = [
   "It is with the developers now and I will come back when there is something to try.",
   "I cannot render the page from here, so that is the copy as it would appear.",
+  // Keir 11.4 second release review (B1): near twins of the true developer sentences above. Each must stay refused, so a
+  // future loosening of the handoff guard fails here, not in a player's ticket.
+  "The developers are working on a fix and I will come back when there is something to try.",
+  "The developers are fixing the company page crash now.",
+  "It is with the developers now, so you won't need to send anything else.",
+  "Your report is with the developers now; nothing is lost and you do not need to do anything.",
+  "The developers have it now and have not changed anything yet.",
+  "Our dev team is looking into the crash.",
 ];
 
 function contexts() {

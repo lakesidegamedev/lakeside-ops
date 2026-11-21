@@ -298,3 +298,23 @@ test("minor: a merged ticket's task is closed through the shared path (no wake, 
   tc.settle({ id: "cmd" }, 1880, "reopened", { by: "owner's" });
   assert.equal(old.state, "cancelled"); assert.equal(last.state, "queued");
 });
+
+// ---------- Keir 11.4 second release review: minors ----------
+
+test("review minor: a named close goes through when the player's newest message is a thank-you, not a question", async () => {
+  const said = "close 1873, they confirmed";
+  const thanks = [{ id: "200000000000000001", author: { id: PLAYER }, content: "thanks, it works now" }];
+  const f = setup({ said, channels: chans, rows: { [CH1873]: thanks } });
+  const job = discordJob(f, { content: said });
+  const r = await f.broker.tool(job, "ticket_command", { op: "resolve", tickets: [1873], message: "Glad it works; closing this one." });
+  assert.equal(r.results[0].closed, true, r.results[0].why);
+});
+
+test("review minor: when the ticket channel list cannot be read the close is refused, not waved through", async () => {
+  const said = "close 1873";
+  const f = setup({ said, channels: null });
+  const job = discordJob(f, { content: said });
+  const r = await f.broker.tool(job, "ticket_command", { op: "resolve", tickets: [1873], message: "Closing this one now." });
+  assert.match(r.results[0].why, /could not be read/);
+  assert.equal(resolves(f).length, 0);
+});

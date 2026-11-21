@@ -187,3 +187,78 @@ test("withoutDeflections keeps paragraphs and drops only the false sentence", ()
   const out = truth.withoutDeflections("First line of the answer. It is with the developers now.\n\nSecond paragraph.", { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config });
   assert.equal(out, "First line of the answer.\n\nSecond paragraph.");
 });
+
+// ---------- Keir 11.4 second release review: B1, the handoff that came back in ordinary wordings ----------
+
+const B1_REVIEW_REFUSED = [
+  "It is with the developers now, so you won't need to send anything else.",
+  "The developers are working on a fix and I will come back when there is something to try.",
+  "It is with the developers now and it should not take long.",
+  "Your report is with the developers now; nothing is lost and you do not need to do anything.",
+  "The developers are fixing the company page crash now.",
+];
+const B1_OWN_REFUSED = [
+  "Our dev team is looking into the crash.",
+  "The devs are on it.",
+  "A developer is looking into it now.",
+  "This is now with our developers.",
+  "It's sitting with the developers, no need to resend.",
+  "The developers will fix it in the next update.",
+  "No need to worry, the developers are investigating.",
+  "I have flagged it to the dev team and they are not slow.",
+  "Don't worry, it is in the developers' hands now.",
+  "One of our developers has your report now.",
+  "The development team is handling the crash, so there is nothing else to do.",
+  "Nothing is lost because the developers have it now.",
+  "The developers are working on it, not me.",
+];
+const B1_TRUE = [
+  "It is not with the developers yet; I am still reading the code.",
+  "No developer has it; I am preparing a fix.",
+  "I have not passed this to the developers yet.",
+  "None of this has been sent to the developers yet; I am still checking.",
+  "Nobody has handed it to the developers, so I am doing it myself.",
+  "It has not been passed to the developers because I can fix it myself.",
+  "No one has raised it with the developers yet.",
+  "I passed nothing to the developers; this one is a setting I can change.",
+  "The developers have decided to keep the tariff.",
+];
+
+test("B1: the reviewer's five wordings are refused through the real broker while Keir's own worker holds the fix", async () => {
+  for (const m of B1_REVIEW_REFUSED) {
+    const f = setup(); workerOn(f);
+    await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: m }), /no developer has it/, m);
+    assert.equal(f.posts().length, 0, m);
+  }
+});
+
+test("B1: other handoff wordings, including ones with an unrelated negation, are refused in the player's ticket", () => {
+  const f = setup(); workerOn(f);
+  const ctx = { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config };
+  for (const m of [...B1_REVIEW_REFUSED, ...B1_OWN_REFUSED]) assert.match(truth.deflection(m, ctx) || "", /no developer has it/, m);
+});
+
+test("B1: a negation that negates the claim itself still passes", () => {
+  const f = setup(); workerOn(f);
+  const ctx = { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config };
+  for (const m of B1_TRUE) assert.equal(truth.deflection(m, ctx), null, m);
+});
+
+test("B1: the owner is not told 'It isn't blocked; it is with the developers now.'", () => {
+  const f = setup({ kind: "command", role: "owner", actorId: OWNER, source: { channelId: "app", authorId: OWNER, content: "where is 1872?" } });
+  f.job.replyChannel = "app";
+  assert.match(truth.deflection("It isn't blocked; it is with the developers now.", { d: f.d, job: f.job, config: f.config }), /answers the owner/);
+});
+
+test("review minor: outside a ticket a pull request named anywhere in the message makes it a status", () => {
+  const f = setup({ kind: "command", role: "owner", actorId: OWNER, source: { channelId: "app", authorId: OWNER, content: "where is the loan fix?" } });
+  f.job.replyChannel = "app";
+  assert.equal(truth.deflection("PR #512 is open. The developers are reviewing it.", { d: f.d, job: f.job, config: f.config }), null);
+});
+
+test("review minor: 'I'm unable to render' is the same refusal as 'I cannot render'", () => {
+  const f = setup();
+  const ctx = { d: f.d, job: f.job, ticketNo: 1872, jobs: [f.job], config: f.config, renderOffered: true };
+  assert.match(truth.deflection("I'm unable to render the page from here.", ctx), /render_preview/);
+  assert.match(truth.deflection("Im not able to draw it.", ctx), /render_preview/);
+});

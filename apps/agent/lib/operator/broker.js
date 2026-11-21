@@ -626,6 +626,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const staffIds = new Set([config.ownerId, ...(config.staffIds || [])].filter(Boolean));
     if (jobs.some((j) => j.kind === "ticket" && !JOB_TERMINAL.includes(j.state) && Math.max(j.lastPlayerAt || 0, j.observedPlayerAt || 0) > (j.lastPublishedAt || 0))) return "the player is still waiting for an answer";
     const channels = await discord("GET", `/guilds/${config.guildId}/channels`).catch(() => null);
+    if (!Array.isArray(channels)) return "the ticket channels could not be read, so a newer player message cannot be ruled out";
     const channel = Array.isArray(channels) ? channels.find((c) => (!tj?.channelId || c.id === tj.channelId) && String(c.name || "").endsWith(`-${n}`)) : null;
     if (channel) {
       const rows = await discord("GET", `/channels/${channel.id}/messages?limit=100`).catch(() => null);
@@ -634,7 +635,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (claimant && claimant !== job.actorId) return "a staff member has claimed it; they close it";
       const ordered = rows.filter((m) => m?.author && m.id).sort((a, b) => BigInt(a.id) < BigInt(b.id) ? -1 : 1);
       const lastHuman = ordered.filter((m) => !m.author.bot).at(-1);
-      if (lastHuman && !staffIds.has(lastHuman.author.id) && !ordered.some((m) => BigInt(m.id) > BigInt(lastHuman.id) && (m.author.bot || staffIds.has(m.author.id))))
+      if (lastHuman && !staffIds.has(lastHuman.author.id) && UNANSWERED.test(String(lastHuman.content || "")) && !ordered.some((m) => BigInt(m.id) > BigInt(lastHuman.id) && (m.author.bot || staffIds.has(m.author.id))))
         return "the player's newest message has no answer yet";
     }
     const answerAt = tj?.resolutionReadyAt || 0;

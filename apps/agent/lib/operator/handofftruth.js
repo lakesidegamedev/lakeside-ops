@@ -10,24 +10,40 @@
 const { JOB_TERMINAL } = require("./machines");
 
 // "With the developers" and its relatives: a claim that a person on the team now holds the work.
-// Keir 11.4 review (M1): only a present claim that someone holds THIS work. "The developers have said this works as intended"
-// and "the developers have not changed loan interest" are true sentences about the game and pass; so does a bare "team".
+// Keir 11.4 review (M1): "The developers have said this works as intended" and "the developers have not changed loan
+// interest" are true sentences about the game and pass; so does a bare "team". The "have" form needs a held object
+// (have it, have your report), so a past report ("have said", "have decided") never matches.
+// Keir 11.4 release review (B1): present-tense ownership verbs stay open-ended. "The developers are working on a fix",
+// "are fixing the company page crash" and "our dev team is looking into the crash" are the same false claim.
+const DEV = String.raw`(?:developers?|devs?|dev team|development team)`;
 const HELD = String.raw`(?:it|this|that|these|those|them|your (?:report|ticket|issue|bug|problem|request|question|case))`;
-const DEV_HANDOFF = new RegExp(String.raw`\b(?:it(?:'|’)?s|this is|that is|it is|is|are|now) (?:now |still )?with (?:the |our )?(?:developers?|devs?|dev team)\b` +
-  String.raw`|\b(?:passed|handed|raised|flagged|sent|reported|forwarded|escalated|given|put)\b[^.!?\n]{0,60}\b(?:to|with|over to) (?:the |our )?(?:developers?|devs?|dev team)\b` +
-  String.raw`|\b(?:the |our )?(?:developers?|devs?|dev team) (?:now |already )?(?:(?:have|has|got) ${HELD}|(?:are|is) (?:on|looking (?:at|into)|working on|handling|reviewing|fixing) ${HELD}|will (?:fix|look (?:at|into)|handle|check|pick up|sort) ${HELD})\b`, "i");
+const DEV_HANDOFF = new RegExp(String.raw`\b(?:it(?:'|’)?s|this is|that is|it is|is|are|now) (?:now |still |already |currently )?(?:sitting |waiting )?with (?:the |our )?${DEV}\b` +
+  String.raw`|\bin (?:the |our )?${DEV}(?:'|’)?s? hands\b|\bin the hands of (?:the |our )?${DEV}\b` +
+  String.raw`|\b(?:passed|handed|raised|flagged|sent|reported|forwarded|escalated|given|put)\b[^.!?\n]{0,60}\b(?:to|with|over to) (?:the |our )?${DEV}\b` +
+  String.raw`|\b(?:the |our |a |one of the |one of our )?${DEV} (?:now |already |currently )?(?:(?:have|has|got) (?:now )?${HELD}|(?:are|is) (?:now |already |currently |actively )?(?:on (?:it|this|that)|looking (?:at|into)|working on|handling|reviewing|fixing|investigating|checking)|will (?:fix|look|handle|check|pick up|sort|investigate|review))\b`, "i");
 // Blanket capability refusals that were false when said.
 // Keir 11.4 review (B1): only Keir saying Keir cannot produce an image. "You cannot create a second company" and "I can't make
 // changes to your balance" are true answers; the subject must be "I" and the object a picture, preview or screenshot.
-const CANNOT_RENDER = /\bi\s+(?:can(?:'|’)?t|cannot|can not|am unable to|am not able to|have no way to)\s+(?:render|draw|take (?:an? )?screenshot|show (?:you|us) (?:an? |the )?(?:image|picture|preview|mock-?up|screenshot|render)|show (?:you |us )?(?:how it|what it) (?:would )?looks?)\b/i;
+const CANNOT_RENDER = /\bi(?:\s+(?:can(?:'|’)?t|cannot|can not|am unable to|am not able to|have no way to)|(?:'|’)?m\s+(?:unable|not able) to)\s+(?:render|draw|take (?:an? )?screenshot|show (?:you|us) (?:an? |the )?(?:image|picture|preview|mock-?up|screenshot|render)|show (?:you |us )?(?:how it|what it) (?:would )?looks?)\b/i;
 const READ_ONLY = /\b(?:my|keir(?:'|’)?s) (?:ticket |support )?access (?:is|being) read[- ]only\b|\bi (?:only )?have read[- ]only (?:ticket |support )?access\b|\bi (?:can(?:'|’)?t|cannot|can not|am unable to) (?:merge|close|create|open|resolve|reopen)(?:,? (?:or |and )?(?:merge|close|create|open|resolve|reopen))* (?:these |those |the |any )?(?:tickets?|incidents?)\b/i;
 
 const sentencesOf = (text) => String(text || "").replace(/\s+/g, " ").match(/[^.!?]+(?:[.!?]+|$)/g)?.map((s) => s.trim()).filter(Boolean) || [];
 const QUOTED = /"[^"\n]*"|“[^”\n]*”/g;
-const NEGATED = /\b(?:not|never|no longer|nobody|no one|isn(?:'|’)?t|aren(?:'|’)?t|haven(?:'|’)?t|hasn(?:'|’)?t|didn(?:'|’)?t|won(?:'|’)?t)\b/i;
+const NEGATED = /\b(?:not|never|no(?! (?:need|problem|worries|rush|doubt|matter)\b)|no longer|nobody|no one|none|nothing|neither|nor|isn(?:'|’)?t|aren(?:'|’)?t|haven(?:'|’)?t|hasn(?:'|’)?t|didn(?:'|’)?t|won(?:'|’)?t)\b/i;
+const DEV_HANDOFF_ALL = new RegExp(DEV_HANDOFF.source, "gi");
+// Keir 11.4 release review (B1): a negation exempts a handoff only when it negates the claim itself: inside the matched
+// words ("passed nothing to the developers"), or in the same clause within five words before them ("I have not passed
+// this", "no developer has it", "nobody has handed it to the developers"). "It is with the developers now, so you won't
+// need to send anything else" is still the claim; the negation belongs to another clause.
+const CLAUSE_BREAK = /[,;:()]|\b(?:and|but|so|because|since|while|although|though|then|which)\b/gi;
+function negatesClaim(s, m) {
+  if (NEGATED.test(m[0])) return true;
+  const clause = s.slice(0, m.index).split(CLAUSE_BREAK).at(-1) || "";
+  return NEGATED.test(clause.trim().split(/\s+/).slice(-5).join(" "));
+}
+const claimsHandoff = (s) => [...s.matchAll(DEV_HANDOFF_ALL)].some((m) => !negatesClaim(s, m));
 function handoffSentence(text) {
-  // A negation anywhere in the sentence makes it a statement that nobody holds it, not a handoff claim.
-  return sentencesOf(String(text || "").replace(QUOTED, " ")).find((s) => DEV_HANDOFF.test(s) && !NEGATED.test(s)) || null;
+  return sentencesOf(String(text || "").replace(QUOTED, " ")).find(claimsHandoff) || null;
 }
 
 const RUN_ENDED = new Set(["done", "escalated", "needs_owner", "cancelled", "reported", "failed", "abandoned"]);
@@ -105,7 +121,7 @@ function deflection(message, { d, job, ticketNo = null, jobs = [], config = {}, 
     // The asker is the owner or a developer. A status that names the person's own receipt is fine; a deflection is not.
     // Outside a ticket there is no receipt list, so a sentence naming a pull request, issue or card number is a status.
     const named = ticketNo ? receipts.some((r) => new RegExp(`(?:#|\\b)(?:${r.ref}${r.issue ? `|${r.issue}` : ""})\\b`).test(text))
-      : /\b(?:PR|pull request|issue|card)\s*#?\d+\b|#\d+\b/i.test(s);
+      : /\b(?:PR|pull request|issue|card)\s*#?\d+\b|#\d+\b/i.test(text);
     if (!named) return `Not posted: "${s.slice(0, 160)}" answers ${audience === "owner" ? "the owner" : "a developer"} who asked you directly; they are the developers. Do what they asked now with your tools, or say in one sentence the specific thing that blocks you and what would unblock it.${ticketNo ? ` If someone else does hold this work, name it (the issue or card number and who has it).` : ""}`;
     return null;
   }
