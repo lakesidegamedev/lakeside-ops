@@ -125,3 +125,40 @@ test("watch proposals stay proposals without a staff answer and do not collide",
   assert.equal(a.state, "proposed");
   assert.equal(f.calls.filter(([name]) => name === "support_create_ticket").length, 0);
 });
+
+// Keir 11.3 release review M1: Keir opens a failed turn's incident in code; a staff proposal for the same turn must not
+// become a second incident, and must still open one when Keir has none.
+function turnProposal(incidentForTurn) {
+  const f = fixture({ members: { 111: { roles: ["mod"] } }, reactions: { "✅": [{ id: "111" }] } });
+  const created = () => f.calls.filter((c) => c[0] === "support_create_ticket").length;
+  return { f, created, surge: createSurge({ ledger: { data: f.data, save() {}, audit: (k, x) => f.audit.push({ kind: k, ...x }) }, mcp: { call: async (s, tool, args) => { f.calls.push([tool, args]); return tool === "support_create_ticket" ? { ticketNumber: 1881 } : {}; } },
+    discord: async (m, route) => { f.posts.push([m, route]); if (m === "POST") return { id: "m1" }; if (/reactions\/%E2%9C%85/.test(route)) return [{ id: "111" }]; if (/members\/111/.test(route)) return { roles: ["mod"] }; return []; },
+    config: { incidentChannel: "modbot", incidentPingRoles: ["mod"], incidentApproverRoles: ["mod"], turnIncidents: { incidentForTurn } }, now: () => T0, ask: async () => null }) };
+}
+
+test("a staff-approved watch proposal for a turn that already has Keir's incident is withdrawn, not opened twice", async () => {
+  const t = turnProposal((turn) => (turn === 108 ? 1880 : null));
+  await t.surge.propose({ title: "Turn 108 failed", summary: "x", severe: true, source: "watch", fingerprint: "turn:108:failed" });
+  await t.surge.tick();
+  assert.equal(t.created(), 0);
+  const p = Object.values(t.f.data.incidentProposals)[0];
+  assert.equal(p.state, "covered"); assert.equal(p.incident, 1880);
+  assert.ok(t.f.posts.some(([m, route]) => m === "PATCH" && /messages\/m1$/.test(route)), "the proposal message is edited to name Keir's incident");
+  await t.surge.open(p, "111");
+  assert.equal(t.created(), 0, "opening it directly does not create one either");
+});
+
+test("a staff-approved watch proposal still opens the incident when Keir has none for that turn", async () => {
+  const t = turnProposal(() => null);
+  await t.surge.propose({ title: "Turn 108 failed", summary: "x", severe: true, source: "watch", fingerprint: "turn:108:failed" });
+  await t.surge.tick();
+  assert.equal(t.created(), 1);
+  assert.equal(Object.values(t.f.data.incidentProposals)[0].state, "opened");
+});
+
+test("the watch tick runs the turn incident check before the watch can propose an incident to staff", () => {
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "operator.js"), "utf8");
+  const body = src.slice(src.indexOf("async function watchTick()"), src.indexOf("tickers.every(\"watch\""));
+  const check = body.indexOf("turnIncidents.check("), tick = body.indexOf("watch.tick(");
+  assert.ok(check > 0 && tick > 0 && check < tick);
+});

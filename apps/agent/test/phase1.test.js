@@ -317,7 +317,7 @@ test("Keir does not ask the player which bank when the ticket already names thei
   assert.equal((await say(f, "Which bank's page shows the zero deposit ceiling? Please send its game link.")).published, true, "asking again after checking goes out");
 });
 
-test("Keir introduces itself once per player, then answers returning players without an opener, and never introduces itself to staff", async () => {
+test("Keir gives a new player the full introduction once, and every other new report one line saying it is an AI", async () => {
   const run = async ({ uid, prior, introduced = false, priorDisclosed = false, fail = false, answered = false, keirOpened = false }) => {
     const f = fixture(), posted = [];
     f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
@@ -349,15 +349,19 @@ test("Keir introduces itself once per player, then answers returning players wit
   assert.match(welcome, /\*\*Details that help\*\*.*screenshot or game link/);
   assert.match(welcome, /\*\*Rate a reply\*\*.*⭐.*👍.*👎.*Report a problem/);
   assert.deepEqual(require("../lib/operator/replysplit").splitReply(welcome), [welcome], "the welcome stays together in Discord");
-  assert.equal(await run({ uid: "888888888888888888", prior: 4, introduced: true }), REPLY, "a returning player gets the answer first");
-  assert.equal(await run({ uid: "888888888888888888", prior: 2, priorDisclosed: true }), REPLY);
+  const AI_LINE = "I'm Keir, an AI assistant. Staff review anything that needs a decision.";
+  // Owner, 2026-11-21 (ticket 1855): every new report says replies come from an AI, in one line.
+  assert.equal(await run({ uid: "888888888888888888", prior: 4, introduced: true }), AI_LINE, "a returning player gets the one-line AI note, not the full introduction");
+  assert.equal(await run({ uid: "888888888888888888", prior: 2, priorDisclosed: true }), AI_LINE);
+  assert.deepEqual(require("../lib/operator/replysplit").splitReply(AI_LINE), [AI_LINE], "the AI note is one message");
+  assert.doesNotMatch(AI_LINE, /[\u2013\u2014]|ticket, thank you|th ticket/, "no dashes, no ticket count, no thanks");
   assert.equal(await run({ uid: "888888888888888888", prior: 10 }), welcome, "never introduced before: the introduction once, with no count");
-  assert.equal(await run({ uid: "888888888888888888", prior: 22, introduced: true, keirOpened: true }), "I opened this ticket from your message so it can be tracked here.", "a ticket Keir opened from chat says so (ticket 1708)");
+  assert.equal(await run({ uid: "888888888888888888", prior: 22, introduced: true, keirOpened: true }), `${AI_LINE} I opened this ticket from your message so it can be tracked here.`, "a ticket Keir opened from chat says so (ticket 1708), after the AI note");
   const opened = await run({ uid: "888888888888888888", prior: 22, keirOpened: true });
   assert.match(opened, /\nI opened this ticket from your message[^\n]+\n- \*\*How I help/);
   assert.doesNotMatch(opened, /ticket, thank you|th ticket/);
   const f = fixture();
-  assert.equal(await run({ uid: f.config.ownerId, prior: 3 }), "The fund buys only Austrian bonds because candidates are sorted by country code.", "staff: no introduction, the reply is the first post");
+  assert.equal(await run({ uid: f.config.ownerId, prior: 3 }), AI_LINE, "staff and the owner get the one-line AI note too, never the full introduction");
   assert.match(await run({ uid: "888888888888888888", prior: 0, fail: true }), /^Hi, I'm Keir/, "lookup failure falls back to the introduction");
   assert.equal(await run({ uid: "888888888888888888", prior: 10, introduced: true, answered: true }), "The fund buys only Austrian bonds because candidates are sorted by country code.", "a ticket someone already answered gets no opening: the reply is the next post");
 });

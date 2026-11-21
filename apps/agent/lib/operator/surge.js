@@ -157,7 +157,21 @@ function createSurge({ ledger, mcp, discord, config, now = () => Date.now(), ask
     return null;
   }
 
+  // Keir 11.3 (release review M1): a failed turn's incident is opened by Keir in code (turnincidents.js). A staff
+  // proposal from the watch for the same turn is withdrawn instead of opening a second incident, approved or not.
+  async function withdrawIfCovered(p) {
+    const m = p.source === "watch" && /^turn:(\d+):/.exec(p.fingerprint || "");
+    const n = m ? config.turnIncidents?.incidentForTurn?.(Number(m[1])) || null : null;
+    if (!n) return false;
+    p.state = "covered"; p.incident = n; p.decidedAt = now();
+    ledger.audit("incident_proposal_covered", { proposal: p.id, incident: n });
+    await edit(p, `Keir already opened incident #${n} for **${p.title}**, so this proposal is withdrawn and no second incident is opened.`);
+    ledger.save();
+    return true;
+  }
+
   async function open(p, by) {
+    if (await withdrawIfCovered(p)) return;
     const tickets = p.tickets.map(ticketJob).filter(Boolean);
     const description = [p.summary, tickets.length ? `Reported in tickets ${p.tickets.map((n) => `#${n}`).join(", ")}.` : null, ...tickets.slice(0, 3).map((j) => `> ${reportOf(j).slice(0, 300)}`)].filter(Boolean).join("\n\n").slice(0, 4800) || p.title;
     const r = await mcp.call("support", "support_create_ticket", { category: "incident", title: p.title.slice(0, 200), description }, true);
@@ -181,6 +195,7 @@ function createSurge({ ledger, mcp, discord, config, now = () => Date.now(), ask
     for (const p of Object.values(proposals())) {
       if (p.state !== "proposed") continue;
       try {
+        if (await withdrawIfCovered(p)) continue;
         const no = p.messageId && await approver(p.messageId, NO);
         if (no) {
           p.state = "declined"; p.declinedBy = no; p.decidedAt = now();

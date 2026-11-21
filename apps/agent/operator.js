@@ -373,8 +373,16 @@ const sentryIssues = async (query, period) => {
   if (!r.ok) throw new Error(`Sentry ${r.status}`);
   return (await r.json()).map((i) => ({ id: i.id, shortId: i.shortId, title: i.title, culprit: i.culprit, count: i.count, users: i.userCount, firstSeen: i.firstSeen, release: i.lastRelease?.shortVersion }));
 };
+// Keir 11.3 (owner, 2026-11-21): a failed turn opens its incident in code, at once, with no model and no staff approval.
+// Three places ask it to look: a one-minute probe (two small reads; the full read only when something looks wrong), the
+// five-minute watch tick, and every Watchkeeper turn observation. It runs its own lock files beside the ledger.
+const turnIncidents = require("./lib/operator/turnincidents").createTurnIncidents({ ledger, mcp, controls, log,
+  config: { supportDeferred: () => config.supportDeferred(), taskLifetimeMs: config.taskLifetimeMs },
+  lockDir: path.join(config.stateDir, "turn-incidents"), onOpened: () => drain() });
+config.turnIncidents = turnIncidents;
+tickers.every("turnincidents", 60000, async () => { await turnIncidents.probe(); }, { immediateMs: 15000 });
 const watch = createWatch({ ledger, mcp, log, config: { enabled: env.KEIR_WATCH !== "0", mode: env.KEIR_WATCH === "report" ? "report" : "active" }, sentry: sentryIssues,
-  viewPage: (url) => require("./lib/operator/capabilities").viewPage(url), propose: (p) => broker.proposeIncident(p) });
+  viewPage: (url) => require("./lib/operator/capabilities").viewPage(url), propose: (p) => broker.proposeIncident(p), turnIncident: (turn) => turnIncidents.incidentForTurn(turn) });
 broker.setWatch(watch);
 const engineering = createEngineering({ ledger, config });
 const accountAudit = require("./lib/operator/account-audit").createAccountAudit({ ledger, mcp, config });
@@ -395,6 +403,9 @@ async function watchTick() {
     const turn = overview?.turn == null ? undefined : Number(overview.turn);
     // Keir 11.2: the turn clock other parts read without a call of their own (closing checks, turn promises).
     if (Number.isFinite(turn)) (ledger.data.watch ||= {}).turnClock = { turn, nextTurn: Date.parse(overview.nextTurn || "") || null, iteration: overview.iteration?.number ?? null, paused: Boolean(overview.paused), at: Date.now() };
+    // Keir 11.3 (release review M1): the turn incident check runs first, so a failed turn already has Keir's incident
+    // when the watch decides whether to propose one to staff.
+    await turnIncidents.check({ source: "watch" });
     const r = await watch.tick({ turn });
     if (r.raised?.length) { log(`watch raised ${r.raised.join(", ")}`); if (config.rolesEnabled) engineering.tick(); drain(); }
   } catch (e) { log(`watch: ${e.message}`); }
@@ -917,7 +928,10 @@ const server = http.createServer(async (req, res) => {
   if (["/v5/watchkeeper/observations", "/v5/watchkeeper/heartbeat"].includes(req.url) && req.method === "POST") {
     if (!authorized(req) && !scopedToken(req, env.KEIR_WATCHKEEPER_TOKEN)) return reply(401, { error: "unauthorized" });
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 12000) return reply(413, { error: "too large" }); }
-    try { const input = JSON.parse(raw || "{}"); const result = req.url.endsWith("heartbeat") ? roles.heartbeat(input) : roles.observe(input); drain(); return reply(200, result); }
+    try { const input = JSON.parse(raw || "{}"); const result = req.url.endsWith("heartbeat") ? roles.heartbeat(input) : roles.observe(input);
+      // A turn failure seen by Watchkeeper (every minute) is checked for its incident at once, not at the next watch tick.
+      if (!req.url.endsWith("heartbeat") && ["game_turn_failed", "game_turn_stalled"].includes(input.kind)) turnIncidents.check({ source: "watchkeeper" }).catch(() => {});
+      drain(); return reply(200, result); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
   if (!authorized(req)) return reply(401, { error: "unauthorized" });
@@ -1011,7 +1025,7 @@ const server = http.createServer(async (req, res) => {
     try { const job = engineering.enqueue(JSON.parse(raw)); if (!job) return reply(409, { error: "engineering disabled or backlog full" }); drain(); return reply(202, { task: job.id, state: job.state }); }
     catch (e) { return reply(400, { error: String(e.message).slice(0, 200) }); }
   }
-  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), codingWorkers: codingWorkersInst?.status() || [], tickers: tickers.snapshot(), sweeper: sweeper.status(), evidenceMonitor: evidenceMonitor.status(), switches: controls.settings(), preview: { items: Object.keys(ledger.data.preview?.items || {}).length, updatedAt: ledger.data.preview?.updatedAt || null }, refusedPosts: Object.values(ledger.data.refusedPosts || {}).reduce((n, r) => n + r.length, 0), postDoubts: Object.values(ledger.data.postDoubts || {}).reduce((n, r) => n + r.length, 0), parkedJobs: Object.values(ledger.data.jobs).filter((j) => j.closing?.parked).length, trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
+  if (req.url === "/v5/trust/status" && req.method === "GET") return reply(200, { killSwitch: killSwitch.state(), limits: limits.get(), codingWorkers: codingWorkersInst?.status() || [], tickers: tickers.snapshot(), sweeper: sweeper.status(), evidenceMonitor: evidenceMonitor.status(), switches: controls.settings(), turnIncidents: turnIncidents.status(), preview: { items: Object.keys(ledger.data.preview?.items || {}).length, updatedAt: ledger.data.preview?.updatedAt || null }, refusedPosts: Object.values(ledger.data.refusedPosts || {}).reduce((n, r) => n + r.length, 0), postDoubts: Object.values(ledger.data.postDoubts || {}).reduce((n, r) => n + r.length, 0), parkedJobs: Object.values(ledger.data.jobs).filter((j) => j.closing?.parked).length, trustReport: { lastDate: ledger.data.trust?.reports?.lastDate || null, lastFile: ledger.data.trust?.reports?.lastFile || null }, guardian: guardianStatus() });
   if (req.url === "/v5/trust/report" && req.method === "POST") { try { const r = await trustReporter.tick({ force: true }); drain(); return reply(200, { ok: true, text: r?.text, file: r?.file }); } catch (e) { return reply(500, { error: String(e.message).slice(0, 200) }); } }
   if (req.url === "/v5/trust/killswitch" && req.method === "POST") {
     let raw = ""; for await (const chunk of req) { raw += chunk; if (raw.length > 4000) return reply(413, { error: "too large" }); }

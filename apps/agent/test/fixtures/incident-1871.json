@@ -1,0 +1,10 @@
+{
+ "_source": "support_get for incident 1871 (opened by a person at 13:04 UTC), trimmed to the fields Keir reads; no names or Discord ids.",
+ "number": 1871,
+ "title": "Turn 108 failed",
+ "category": "incident",
+ "status": "open",
+ "description": "Keir's monitor found this before any player report. Turn 108 failed to finish.",
+ "createdAt": "2026-11-21T13:04:53.329Z",
+ "publicUpdates": []
+}
