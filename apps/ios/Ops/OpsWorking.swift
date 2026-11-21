@@ -18,7 +18,8 @@ enum OpsMotion {
     /// UI tests capture stills. Motion is frozen at one fixed phase there so
     /// screenshots are stable and comparable between runs.
     static let frozen = ProcessInfo.processInfo.arguments.contains("--uitest-fixtures")
-    static let frozenPhase: Double = 0.35
+    /// At 0.6 the bright band sits over the start of a short status line.
+    static let frozenPhase: Double = 0.6
 
     /// Where a repeating animation of `period` seconds is at `date`, from 0 to 1.
     /// Derived from the clock, not from view state, so a re-render never

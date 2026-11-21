@@ -923,7 +923,7 @@ struct DecisionCard: View {
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(10)
                     }.background(OpsTheme.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .opacity(busy && sending != verdict ? 0.5 : 1)
-                    .disabled(busy || decision["canAnswer"] == .bool(false))
+                    .disabled(decision["canAnswer"] == .bool(false))
                 }
                 Text("Your choice gives direction. Actions needing permission get a separate approval.").font(.caption).foregroundStyle(OpsTheme.muted)
                 Button("Ask a question or give another answer") { explaining = true }.disabled(busy)
@@ -935,10 +935,12 @@ struct DecisionCard: View {
             }
             // Decline on the left, approve on the right, both full capsules: the
             // same shape an approval sheet uses, with reply one tap away.
+            // Not disabled while sending: that would wash out the button that
+            // says "Approving". `act` ignores a second tap instead.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { decisionButtons }
                 VStack(spacing: 8) { decisionButtons }
-            }.buttonStyle(.plain).disabled(busy || decision["canAnswer"] == .bool(false))
+            }.buttonStyle(.plain).disabled(decision["canAnswer"] == .bool(false))
             }
             if decision["canRefresh"].bool && !(staleChecks && decision["type"].string != "choice") {
                 refreshButton(primary: false)
@@ -977,7 +979,7 @@ struct DecisionCard: View {
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .foregroundStyle(primary ? OpsTheme.onAccent : OpsTheme.sky)
                 .background(primary ? OpsTheme.sky : OpsTheme.sky.opacity(0.12), in: Capsule())
-        }.disabled(busy)
+        }
     }
     private var approveLocked: Bool { decision["canApprove"] == .bool(false) }
     @ViewBuilder private var decisionButtons: some View {

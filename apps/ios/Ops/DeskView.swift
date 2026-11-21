@@ -559,11 +559,11 @@ struct TicketDecisionInline: View {
                     }.accessibilityIdentifier("decision-failure")
                 }
                 if explained {
-                    VStack(spacing: 6) { buttons }.disabled(busy)
+                    VStack(spacing: 6) { buttons }
                 } else {
                     let layout = options.count > 2 || textSize.isAccessibilitySize
                         ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
-                    layout { buttons }.disabled(busy)
+                    layout { buttons }
                     // The effect of each option is not in the data: say so
                     // plainly and keep a way to ask, instead of a bare guess.
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
