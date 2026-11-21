@@ -38,6 +38,8 @@ const SWITCHES = Object.freeze({
   oneAsk: { env: "KEIR_ONE_ASK", on: true, what: "one ask per PR: join, refuse or replace a second ask about the same PR" },
   finishNeedsCondition: { env: "KEIR_FINISH_NEEDS_CONDITION", on: true, what: "refuse a ticket or finding finish that has no closing condition" },
   mergeDeadEnd: { env: "KEIR_MERGE_DEAD_END", on: true, what: "a refused approved merge: repair Keir's own PR description or tell the owner what blocks it" },
+  // Keir 11.3 (owner, 2026-11-21): a failed turn opens its incident in code, at once (lib/operator/turnincidents.js).
+  turnIncidents: { env: "KEIR_TURN_INCIDENTS", on: true, what: "open a turn failure incident the moment a turn fails, add later failures to it and post its recovery" },
 });
 const DEFAULT_FILE = "/var/lib/keir-operator/switches.json";
 const HISTORY_PER_RUN = 3;

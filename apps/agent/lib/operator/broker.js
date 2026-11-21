@@ -77,6 +77,9 @@ const DISCLOSURE = [
   "- **Details that help** Tell me what happened and what you expected. A screenshot or game link helps.",
   "- **Rate a reply** Use the buttons under my answers. Pick ⭐ or 👍 if it helped, 👎 if it missed the mark, or **Report a problem** to flag a specific issue.",
 ].join("\n");
+// Owner, 2026-11-21 (ticket 1855): every new report says up front that replies come from an AI, not only a player's
+// first one. A returning player, staff and the owner get this one line instead of the full introduction.
+const AI_LINE = "I'm Keir, an AI assistant. Staff review anything that needs a decision.";
 const { playerLeak, runtimeTalk, nameMisuse, shapeTicketPost, sentences, isCorrection, ackOnly } = require("./playercopy");
 
 const SUPPORT_READS = {
@@ -830,7 +833,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (Array.isArray(t?.publicUpdates) && t.publicUpdates.length) return { text: null, answered: true };
     if (!t?.discordUserId) return { text: DISCLOSURE };
     const uid = String(t.discordUserId);
-    if (uid === config.ownerId || (config.staffIds || []).includes(uid)) return { text: null, staff: true };
+    if (uid === config.ownerId || (config.staffIds || []).includes(uid)) return { text: AI_LINE, staff: true };
     const prior = await mcp.call("heal-ops", "heal_query", { env: "prod", collection: "tickets", filter: { discordUserId: uid, ticketNumber: { $lt: n } }, projection: { ticketNumber: 1 }, limit: 200 }, false);
     const count = Number(prior?.matched ?? (prior?.docs || []).length) + 1;
     const introduced = (d.introduced ||= {})[uid] || (prior?.docs || []).some((x) => d.disclosed?.[x.ticketNumber]?.posted);
@@ -842,14 +845,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const keirOpened = Object.values(d.jobs).some((j) => Object.values(j.openedTickets || {}).some((r) => Number(r?.number) === n));
     if (keirOpened) {
       const openedFromChat = "I opened this ticket from your message so it can be tracked here.";
-      return { text: introduced ? openedFromChat : DISCLOSURE.replace("\n", `\n${openedFromChat}\n`) };
+      return { text: introduced ? `${AI_LINE} ${openedFromChat}` : DISCLOSURE.replace("\n", `\n${openedFromChat}\n`) };
     }
     // Review 2026-11-01 (owner): the ticket count and thanks were padding
     // ahead of the answer ("Welcome back, Larry Fink. This is your 58th
     // ticket"). A new player hears the introduction once; a returning player
     // gets no opener, and Keir's first real post is the answer.
     if (!introduced) return { text: DISCLOSURE, count };
-    return { text: null, returning: true, count };
+    return { text: AI_LINE, returning: true, count };
   }
   async function ensureDisclosure(ticketNo) {
     const n = Number(ticketNo);
