@@ -262,21 +262,41 @@ test("a write lock during the in-place file-map step is waited out, not reported
 });
 
 test("repo argument: game by default, lists and all-internal expand, unknown names list the valid ones", () => {
-  assert.deepStrictEqual(ci.resolveRepos(undefined), { repos: ["game"] });
-  assert.deepStrictEqual(ci.resolveRepos(""), { repos: ["game"] });
-  assert.deepStrictEqual(ci.resolveRepos(["keir", "client"]), { repos: ["keir", "client"] });
-  assert.deepStrictEqual(ci.resolveRepos("game,keir"), { repos: ["game", "keir"] });
+  assert.deepStrictEqual(ci.resolveRepos(undefined).repos, ["game"]);
+  assert.deepStrictEqual(ci.resolveRepos("").repos, ["game"]);
+  assert.deepStrictEqual(ci.resolveRepos(["keir", "client"]).repos, ["keir", "client"]);
+  assert.deepStrictEqual(ci.resolveRepos("game,keir").repos, ["game", "keir"]);
+  assert.deepStrictEqual([...ci.resolveRepos("keir,all-internal").expanded], ["client", "discord-bot", "ask", "site", "accounts", "index-tools"]);
   assert.deepStrictEqual(ci.resolveRepos("all-internal").repos, Object.keys(ci.INTERNAL_REPOS));
   const bad = ci.resolveRepos("nope");
   assert.match(bad.error, /unknown repo "nope"\. Valid: game, keir, client, discord-bot/);
 });
 
-test("internal repositories need an explicit grant", () => {
-  assert.strictEqual(ci.canReadInternal(null), false);
-  assert.strictEqual(ci.canReadInternal({ name: "ask", scopes: { collections: ["docs"] } }, {}), false);
-  assert.strictEqual(ci.canReadInternal({ name: "x", scopes: { collections: [], internalCode: true } }, {}), true);
-  assert.strictEqual(ci.canReadInternal({ name: "keir", scopes: { collections: ["docs"] } }, { CODE_INDEX_INTERNAL_READERS: "keir, claude-box" }), true);
-  assert.strictEqual(ci.canReadInternal({ name: "keir-public", scopes: { collections: ["docs"] } }, { CODE_INDEX_INTERNAL_READERS: "keir" }), false);
+test("M2: the private-code grant is bound to the credential's identity, never its name", () => {
+  assert.strictEqual(ci.canReadPrivate(null), false);
+  assert.strictEqual(ci.canReadPrivate({ name: "ask", scopes: { collections: ["docs"] } }, {}), false);
+  assert.strictEqual(ci.canReadPrivate({ _id: "a1", name: "x", scopes: { collections: [], privateCode: true } }, {}), true);
+  assert.strictEqual(ci.canReadPrivate({ _id: "65f0c0ffee", name: "dev-agent", scopes: { collections: ["docs"] } }, { CODE_INDEX_PRIVATE_READER_IDS: "65f0c0ffee, 65f0beef" }), true);
+  // An ObjectId-like _id compares by its string form.
+  assert.strictEqual(ci.canReadPrivate({ _id: { toString: () => "65f0beef" }, scopes: { collections: [] } }, { CODE_INDEX_PRIVATE_READER_IDS: "65f0beef" }), true);
+});
+
+test("M2 opposite: a token name, the old scope flag or an unlisted id grants nothing", () => {
+  // A name anyone can give a token, even one that matches a listed id.
+  assert.strictEqual(ci.canReadPrivate({ _id: "other", name: "65f0c0ffee", scopes: { collections: ["docs"] } }, { CODE_INDEX_PRIVATE_READER_IDS: "65f0c0ffee" }), false);
+  assert.strictEqual(ci.canReadPrivate({ _id: "k1", name: "keir", scopes: { collections: ["docs"] } }, { CODE_INDEX_INTERNAL_READERS: "keir" }), false);
+  assert.strictEqual(ci.canReadPrivate({ _id: "k1", name: "keir", scopes: { collections: ["docs"], internalCode: true } }, {}), false);
+  assert.strictEqual(ci.canReadPrivate({ _id: "k1", scopes: { collections: ["docs"], privateCode: "true" } }, {}), false, "only the boolean true");
+});
+
+test("B3: a repository is public only when configured public and its index says GitHub agrees", () => {
+  assert.strictEqual(ci.repoTier("game"), "public");
+  assert.strictEqual(ci.repoTier("keir", { meta: { repo_visibility: "public" } }), "public");
+  assert.strictEqual(ci.repoTier("keir", { meta: { repo_visibility: "private" } }), "private", "turned private on GitHub");
+  assert.strictEqual(ci.repoTier("keir", { meta: {} }), "private", "no stamp: unknown is private");
+  assert.strictEqual(ci.repoTier("accounts", { meta: { repo_visibility: "public" } }), "private", "configured private stays private");
+  for (const name of ["ask", "site", "accounts", "index-tools"]) assert.strictEqual(ci.INTERNAL_REPOS[name].visibility, "private", name);
+  for (const name of ["keir", "client", "discord-bot"]) assert.strictEqual(ci.INTERNAL_REPOS[name].visibility, "public", name);
 });
 
 test("internal index files live outside the Ask index directory", () => {

@@ -9,18 +9,24 @@
 // survives the 15-minute publish swap.
 //
 // Internal repositories (Keir, the client, the Discord bot, the sites) have
-// their own index files outside everything Ask and the cloud sync read, and
-// are served only to tokens explicitly allowed to read private code.
+// their own index files outside everything Ask and the cloud sync read.
+// Access is per repository: public repositories (Keir and the ops site, the
+// client, the Discord bot) are open to any caller trusted with the game's
+// code; private ones need a grant bound to the credential's identity, and
+// their results are labelled so a model does not repeat them to players.
 
 const path = require("path");
 const { z } = require("zod");
 const ci = require("./code-index");
 const { createCheckoutScanner } = require("./checkout-scan");
 
+const PUBLIC_REPOS = Object.entries(ci.INTERNAL_REPOS).filter(([, r]) => r.visibility === "public").map(([n]) => n);
+const PRIVATE_REPOS = Object.entries(ci.INTERNAL_REPOS).filter(([, r]) => r.visibility !== "public").map(([n]) => n);
 const REPO_DESCRIPTION = [
   `Which code to search. Default "game": A House Divided (the game's code, engineering docs and player wiki).`,
-  ...Object.entries(ci.INTERNAL_REPOS).map(([name, r]) => `"${name}": ${r.describe}`),
-  `"${ci.ALL_INTERNAL}": every internal repository above. Pass a list to search several. Internal repositories need a token allowed to read private code.`,
+  ...Object.entries(ci.INTERNAL_REPOS).map(([name, r]) => `"${name}" (${r.visibility}): ${r.describe}`),
+  `"${ci.ALL_INTERNAL}": every repository above this credential may read. Pass a list to search several.`,
+  `${["game", ...PUBLIC_REPOS].join(", ")} are public code. ${PRIVATE_REPOS.join(", ")} are private studio code and need a credential with the private-code grant; their results are marked visibility: private and must never be quoted or described to players.`,
 ].join(" ");
 
 const repoArg = z.union([z.string(), z.array(z.string()).max(8)]).optional().describe(REPO_DESCRIPTION);
@@ -32,15 +38,39 @@ function registerCodeTools(server, {
 }) {
   const canReadAny = () => (auth.scopes.collections || []).some((k) => tokens.canRead(auth, k));
 
-  // Resolve the repo argument and enforce the internal-code grant.
+  // Private-tier code needs an explicit grant bound to this credential's
+  // identity (see code-index canReadPrivate). Public-tier repositories are
+  // open to anyone this server already trusts with the game's code.
+  const privateOk = ci.canReadPrivate(auth, env);
+  const refusal = (names) => `${names.join(", ")}: private studio code; this credential has no private-code grant. Without it you can search ${["game", ...PUBLIC_REPOS].join(", ")}.`;
+
+  // Resolve the repo argument. A private repository the caller named is an
+  // error; one that only came from "all-internal" is skipped and listed.
   function repos(repo) {
     const r = ci.resolveRepos(repo);
     if (r.error) return r;
-    const internal = r.repos.filter((name) => name !== ci.GAME);
-    if (internal.length && !ci.canReadInternal(auth, env)) {
-      return { error: `this token may not read internal repositories (${internal.join(", ")}). Search the game (the default) or ask for the internal-code grant.` };
+    const out = [], skipped = [], refused = [];
+    for (const name of r.repos) {
+      if (ci.repoTier(name) === "private" && !privateOk) { (r.expanded.has(name) ? skipped : refused).push(name); continue; }
+      out.push(name);
     }
-    return r;
+    if (refused.length) return { error: refusal(refused) };
+    if (!out.length) return { error: refusal(skipped) };
+    return { repos: out, skipped };
+  }
+
+  // After opening an index: a repository configured public is served as public
+  // only while its index says the repository is public on GitHub.
+  function admitted(name, gen) {
+    const tier = ci.repoTier(name, gen);
+    return { ok: tier === "public" || privateOk, tier };
+  }
+
+  function accessFields(chosen, tiers) {
+    const out = {};
+    if (chosen.skipped && chosen.skipped.length) out.notSearched = `${chosen.skipped.join(", ")} (private; this credential has no private-code grant)`;
+    if (tiers.includes("private")) out.privateNotice = ci.PRIVATE_NOTICE;
+    return out;
   }
 
   // One index location per (repo, source).
@@ -78,6 +108,7 @@ function registerCodeTools(server, {
   function indexInfo(t, gen) {
     return {
       repo: t.repo,
+      visibility: ci.repoTier(t.repo, gen),
       index: t.repo === ci.GAME ? t.source : "default-branch",
       revision: gen ? ci.revisionOf(gen) : null,
       generation: gen ? gen.generation : null,
@@ -126,12 +157,15 @@ function registerCodeTools(server, {
       if (chosen.error) return errorResult(chosen.error);
       let r;
       try { r = askRetrieve(); } catch (e) { return errorResult(`code search unavailable (retryable): ${e.message}`); }
-      const all = [], indexes = [], failures = [];
+      const all = [], indexes = [], failures = [], refused = [], tiers = [];
       let degraded = null, claim = null;
       for (const name of chosen.repos) {
         const t = target(name, source);
         let gen = null;
         try { gen = generation(t); } catch (e) { failures.push(unavailable(t, e)); continue; }
+        const access = admitted(name, gen);
+        if (!access.ok) { refused.push(name); continue; }
+        tiers.push(access.tier);
         indexes.push(indexInfo(t, gen));
         // Ask's retriever applies the budget itself; ask it for everything and
         // apply the caller's budget here so the cut can be reported.
@@ -142,7 +176,7 @@ function registerCodeTools(server, {
         } catch { out = null; }
         if (out && out.hits) {
           claim = claim || out.claimType;
-          for (const h of out.hits) all.push({ ...h, repo: t.repo });
+          for (const h of out.hits) all.push({ ...h, repo: t.repo, visibility: access.tier });
           continue;
         }
         // The retriever returns nothing when the query embedding fails or the
@@ -150,8 +184,9 @@ function registerCodeTools(server, {
         // (we hold a generation), so serve keyword matches and say so.
         const kw = ci.keywordSearch(gen, [question, ...(subQueries || [])].join(" "), { topK, maxChars: 120000 });
         degraded = "semantic search was unavailable for this request (embedding service error or index swap); these are keyword matches only. Retry for full results.";
-        for (const h of kw.hits) all.push({ ...h, repo: t.repo, revision: h.revision || ci.revisionOf(gen) });
+        for (const h of kw.hits) all.push({ ...h, repo: t.repo, visibility: access.tier, revision: h.revision || ci.revisionOf(gen) });
       }
+      if (!indexes.length) return errorResult([refused.length ? refusal(refused) : "", failures.length ? unavailableMessage(failures) : ""].filter(Boolean).join(" "));
       if (!all.length && failures.length) {
         return errorResult(unavailableMessage(failures));
       }
@@ -162,10 +197,11 @@ function registerCodeTools(server, {
         index: indexes[0]?.index, // back-compat: "dev" | "prod" for the game
         ...(degraded ? { degraded, retryable: true } : {}),
         ...(failures.length ? { unavailable: failures } : {}),
+        ...accessFields({ skipped: [...(chosen.skipped || []), ...refused] }, tiers),
         claimType: claim, count: budgeted.count, files: budgeted.files,
         ...(budgeted.droppedForBudget ? { droppedForBudget: budgeted.droppedForBudget, budgetNote: `${budgeted.droppedForBudget} more result(s) did not fit maxChars=${maxChars}; raise maxChars to see them. Fewer results here does not mean fewer matches exist.` } : {}),
         hits: budgeted.hits.map((h) => ({
-          repo: h.repo, path: h.path, part: h.ord + 1, source: h.source, revision: h.revision,
+          repo: h.repo, visibility: h.visibility, path: h.path, part: h.ord + 1, source: h.source, revision: h.revision,
           score: Number(Number(h.score).toFixed(4)), text: h.text,
         })),
       });
@@ -186,23 +222,28 @@ function registerCodeTools(server, {
       if (!canReadAny()) return errorResult("token has no read scope");
       const chosen = repos(repo);
       if (chosen.error) return errorResult(chosen.error);
-      const perRepo = [], failures = [];
+      const perRepo = [], failures = [], refused = [], tiers = [];
       for (const name of chosen.repos) {
         const t = target(name, source);
         let gen;
         try { gen = generation(t); } catch (e) { failures.push(unavailable(t, e)); continue; }
+        const access = admitted(name, gen);
+        if (!access.ok) { refused.push(name); continue; }
+        tiers.push(access.tier);
         const out = await ci.exactLookup(gen, question, { limit, maxChars: Math.floor(maxChars / chosen.repos.length), scanner: scannerFor(t, gen) });
         perRepo.push({ ...indexInfo(t, gen), ...out });
       }
-      if (!perRepo.length) return errorResult(unavailableMessage(failures));
+      if (!perRepo.length) return errorResult([refused.length ? refusal(refused) : "", failures.length ? unavailableMessage(failures) : ""].filter(Boolean).join(" "));
       if (perRepo.every((p) => !p.terms.length)) return errorResult("no searchable literal in the question: give an identifier, a quoted phrase, or a path");
-      if (perRepo.length === 1 && !failures.length) return jsonResult(perRepo[0]);
+      const access = accessFields({ skipped: [...(chosen.skipped || []), ...refused] }, tiers);
+      if (perRepo.length === 1 && !failures.length) return jsonResult({ ...perRepo[0], ...access, ...(access.notSearched ? { complete: false } : {}) });
       const files = [];
       for (const p of perRepo) for (const f of p.files) files.push(`${p.repo}:${f}`);
       return jsonResult({
         repos: perRepo, files, count: files.length,
-        found: perRepo.some((p) => p.found), complete: perRepo.every((p) => p.complete) && !failures.length,
+        found: perRepo.some((p) => p.found), complete: perRepo.every((p) => p.complete) && !failures.length && !access.notSearched,
         ...(failures.length ? { unavailable: failures } : {}),
+        ...access,
       });
     }
   );
@@ -216,7 +257,7 @@ function registerCodeTools(server, {
       startLine: z.number().int().min(1).optional(),
       endLine: z.number().int().min(1).optional(),
       source: z.enum(["dev", "prod"]).optional().default("dev").describe("Game only: dev (development branch, default) or prod (main)"),
-      repo: z.string().optional().describe(`One repository (default "game"). ${Object.keys(ci.INTERNAL_REPOS).join(", ")} are internal.`),
+      repo: z.string().optional().describe(`One repository (default "game"). Public: ${["game", ...PUBLIC_REPOS].join(", ")}. Private (needs the private-code grant): ${PRIVATE_REPOS.join(", ")}.`),
     },
     async ({ path: filePath, maxChars, startLine, endLine, source, repo }) => {
       if (!canReadAny()) return errorResult("token has no read scope");
@@ -226,6 +267,9 @@ function registerCodeTools(server, {
       const t = target(chosen.repos[0], source);
       let gen;
       try { gen = generation(t); } catch (e) { return errorResult(unavailableMessage([unavailable(t, e)])); }
+      const access = admitted(t.repo, gen);
+      if (!access.ok) return errorResult(refusal([t.repo]));
+      const label = access.tier === "private" ? { privateNotice: ci.PRIVATE_NOTICE } : {};
       if (/(?:^|\/)\.env|\.(?:pem|key|p12|pfx)$/i.test(filePath)) return errorResult("secret files are never indexed");
       const out = ci.readFile(gen, filePath, { maxChars, startLine, endLine });
       if (!out) {
@@ -247,7 +291,7 @@ function registerCodeTools(server, {
       if (out.error) return errorResult(out.error);
       if (out.ambiguous) return errorResult(`several indexed files match ${filePath}: ${out.ambiguous.join(", ")}`);
       // Back-compat fields: files/count/context as before.
-      return jsonResult({ ...indexInfo(t, gen), ...out, files: [out.path], count: 1, context: out.content });
+      return jsonResult({ ...indexInfo(t, gen), ...label, ...out, files: [out.path], count: 1, context: out.content });
     }
   );
 }

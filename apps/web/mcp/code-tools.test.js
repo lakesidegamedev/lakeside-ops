@@ -13,7 +13,7 @@ const Database = require("better-sqlite3");
 const ci = require("./code-index");
 const { registerCodeTools } = require("./code-tools");
 
-function index(file, files, { revision = "rev1", visibility } = {}) {
+function index(file, files, { revision = "rev1", visibility, repoVisibility } = {}) {
   const db = new Database(file);
   db.exec(`CREATE TABLE chunks(id INTEGER PRIMARY KEY, source_kind TEXT NOT NULL, repository TEXT NOT NULL, revision TEXT NOT NULL,
       path TEXT NOT NULL, ord INTEGER NOT NULL, hash TEXT NOT NULL, text TEXT NOT NULL, vec BLOB NOT NULL, dims INTEGER NOT NULL, indexed_at TEXT NOT NULL);
@@ -24,22 +24,26 @@ function index(file, files, { revision = "rev1", visibility } = {}) {
   db.prepare("INSERT INTO source_revisions VALUES ('code','r',?,'now',1,1)").run(revision);
   db.prepare("INSERT INTO meta VALUES ('generation','g')").run();
   if (visibility) db.prepare("INSERT INTO meta VALUES ('visibility',?)").run(visibility);
+  if (repoVisibility) db.prepare("INSERT INTO meta VALUES ('repo_visibility',?)").run(repoVisibility);
   db.exec(`CREATE VIRTUAL TABLE chunks_fts USING fts5(text, source_kind UNINDEXED, path UNINDEXED, content='chunks', content_rowid='id', tokenize='unicode61');
     INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');`);
   db.close();
 }
 
-function setup({ grant = false, retrieve, checkout = "off", gameRevision = "gamerev" } = {}) {
+function setup({ grant = false, retrieve, checkout = "off", gameRevision = "gamerev", keirStamp = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "code-tools-test-"));
   const game = path.join(dir, "index-dev.db");
   index(game, { "src/lib/rules.ts": "export const GAME_RULE = 1; // national chamber rule\n" }, { revision: gameRevision });
   const internal = path.join(dir, "internal");
   fs.mkdirSync(internal);
-  index(path.join(internal, "keir.db"), { "apps/agent/lib/brief.js": "const OPENER_TEXT = 'Thanks for the report';\n" }, { revision: "keirrev", visibility: "internal" });
+  index(path.join(internal, "keir.db"), { "apps/agent/lib/brief.js": "const OPENER_TEXT = 'Thanks for the report';\n" }, { revision: "keirrev", visibility: "internal", repoVisibility: keirStamp });
+  index(path.join(internal, "accounts.db"), { "lakeside-auth/src/login.ts": "export const LOGIN_SECRET_RULE = 'x';\n" }, { revision: "accrev", visibility: "internal", repoVisibility: "private" });
   const handlers = {};
   const server = { tool: (name, _desc, _schema, fn) => { handlers[name] = fn; } };
-  const auth = { name: grant ? "keir" : "someone", scopes: { collections: ["docs"] } };
-  const env = { CODE_INDEX_INTERNAL_DIR: internal, CODE_INDEX_INTERNAL_READERS: "keir", CODE_INDEX_GAME_CHECKOUT_DEV: checkout };
+  // The grant is by token id; the ungranted token even carries a name that
+  // the old name-based list would have matched.
+  const auth = grant ? { _id: "tok-dev-1", name: "dev-agent", scopes: { collections: ["docs"] } } : { _id: "tok-keir-1", name: "keir", scopes: { collections: ["docs"] } };
+  const env = { CODE_INDEX_INTERNAL_DIR: internal, CODE_INDEX_PRIVATE_READER_IDS: "tok-dev-1", CODE_INDEX_INTERNAL_READERS: "keir", CODE_INDEX_GAME_CHECKOUT_DEV: checkout };
   const calls = [];
   registerCodeTools(server, {
     auth, env,
@@ -106,9 +110,9 @@ test("when semantic retrieval fails the tool serves keyword matches and says it 
 test("internal repositories are refused without the grant and listed on an unknown name", async () => {
   const { handlers } = setup({ grant: false });
   const denied = await handlers.code_search({ question: "opener", repo: "keir", topK: 8, maxChars: 30000 });
-  assert.match(denied.error, /may not read internal repositories \(keir\)/);
+  assert.match(denied.error, /keir: private studio code; this credential has no private-code grant/);
   const deniedExact = await handlers.code_exact({ question: "OPENER_TEXT", repo: "all-internal", limit: 8, maxChars: 18000 });
-  assert.match(deniedExact.error, /may not read internal/);
+  assert.match(deniedExact.error, /private studio code/);
   const unknown = await handlers.code_exact({ question: "x1", repo: "website", limit: 8, maxChars: 18000 });
   assert.match(unknown.error, /unknown repo "website"\. Valid: game, keir/);
 });
@@ -170,4 +174,35 @@ test("B2 opposite: with no checkout the tools say only the indexed files were se
   assert.match(exact.results[0].hint, /messages\/<locale>/);
   const read = await handlers.code_read({ path: "messages/en/bank.json", maxChars: 40000, source: "dev" });
   assert.match(read.error, /files the index leaves out were not searched/);
+});
+
+test("B3: public repositories are open to any trusted caller and labelled public", async () => {
+  const { handlers } = setup({ grant: false, keirStamp: "public" });
+  const exact = (await handlers.code_exact({ question: "OPENER_TEXT", repo: "keir", limit: 8, maxChars: 18000 })).json;
+  assert.strictEqual(exact.visibility, "public");
+  assert.deepStrictEqual(exact.files, ["apps/agent/lib/brief.js"]);
+  assert.strictEqual(exact.privateNotice, undefined);
+  const search = (await handlers.code_search({ question: "opener", repo: "keir", topK: 2, maxChars: 30000 })).json;
+  assert.strictEqual(search.hits[0].visibility, "public");
+  // "all-internal" searches what this credential may read and lists the rest.
+  const all = (await handlers.code_exact({ question: "OPENER_TEXT", repo: "all-internal", limit: 8, maxChars: 18000 })).json;
+  assert.deepStrictEqual(all.repos.map(r => r.repo), ["keir", "client", "discord-bot"].filter(r => r === "keir"));
+  assert.match(all.notSearched, /ask, site, accounts, index-tools \(private/);
+  assert.strictEqual(all.complete, false);
+});
+
+test("B3 opposite: private code is refused without the grant, and labelled private with it", async () => {
+  const denied = setup({ grant: false, keirStamp: "public" });
+  const r1 = await denied.handlers.code_read({ path: "lakeside-auth/src/login.ts", repo: "accounts", maxChars: 40000 });
+  assert.match(r1.error, /accounts: private studio code/);
+  // Configured public, but the index says the repository is private now.
+  const turned = setup({ grant: false, keirStamp: "private" });
+  const r2 = await turned.handlers.code_exact({ question: "OPENER_TEXT", repo: "keir", limit: 8, maxChars: 18000 });
+  assert.match(r2.error, /keir: private studio code/);
+  const granted = setup({ grant: true });
+  const r3 = (await granted.handlers.code_exact({ question: "LOGIN_SECRET_RULE", repo: "accounts", limit: 8, maxChars: 18000 })).json;
+  assert.strictEqual(r3.visibility, "private");
+  assert.match(r3.privateNotice, /Never quote, paraphrase or describe them to players/);
+  const r4 = (await granted.handlers.code_read({ path: "lakeside-auth/src/login.ts", repo: "accounts", maxChars: 40000 })).json;
+  assert.match(r4.privateNotice, /players/);
 });

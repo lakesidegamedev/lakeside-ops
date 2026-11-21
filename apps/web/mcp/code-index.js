@@ -779,14 +779,22 @@ function applyBudget(hits, maxChars) {
 
 // The game is the default and is served from the existing Ask-built indexes.
 // Internal repositories are one index file each under CODE_INDEX_INTERNAL_DIR.
+//
+// Access is two-tier, decided per repository. `visibility` is the most this
+// server will ever treat a repository as: "public" repositories are readable
+// by anyone already trusted with the game's code, but only while their index
+// file also says repo_visibility=public, which the index build stamps after
+// checking the repository's real GitHub visibility (a repository that turned
+// private, or whose visibility could not be read, is stamped private).
+// "private" repositories need an explicit grant on the caller's credential.
 const INTERNAL_REPOS = {
-  keir: { file: "keir.db", github: "lakesidegamedev/lakeside-ops", describe: "Keir itself and the studio ops tooling: apps/agent (Keir, the support operator), apps/web (ops site and these search tools), apps/ios (Keir iPhone app), apps/desktop, apps/cli. Search it for Keir's own behaviour and bugs." },
-  client: { file: "client.db", github: "lakesidegamedev/AHDClient", describe: "The A House Divided desktop and mobile client (Tauri). Search it for problems that only happen in the app, not in the browser." },
-  "discord-bot": { file: "discord-bot.db", github: "arle-bina/adhd-bot", describe: "The game's Discord bot (maintained by the cofounder; read-only for us). Search it for bot commands, bot messages and Discord-side bugs." },
-  ask: { file: "ask.db", github: "lakesidegamedev/ask", describe: "Ask, the player question-answering site and its in-game drawer backend. Search it for wrong or refused Ask answers." },
-  site: { file: "site.db", github: "lakesidegamedev/lakeside-landing", describe: "The studio's public website. Search it for problems on the landing pages." },
-  accounts: { file: "accounts.db", github: "lakesidegamedev/lakeside-accounts + lakeside-auth + lakeside-status", describe: "Accounts, sign-in and the status page. Search it for login, account and status-page problems." },
-  "index-tools": { file: "index-tools.db", github: "lakesidegamedev/LSGD-ops-dash", describe: "The code index builder and ops dashboard tooling. Search it for problems with code search itself." },
+  keir: { file: "keir.db", github: "lakesidegamedev/lakeside-ops", visibility: "public", describe: "Keir itself and the studio ops tooling: apps/agent (Keir, the support operator), apps/web (ops site and these search tools), apps/ios (Keir iPhone app), apps/desktop, apps/cli. Search it for Keir's own behaviour and bugs." },
+  client: { file: "client.db", github: "lakesidegamedev/AHDClient", visibility: "public", describe: "The A House Divided desktop and mobile client (Tauri). Search it for problems that only happen in the app, not in the browser." },
+  "discord-bot": { file: "discord-bot.db", github: "arle-bina/adhd-bot", visibility: "public", describe: "The game's Discord bot (maintained by the cofounder; read-only for us). Search it for bot commands, bot messages and Discord-side bugs." },
+  ask: { file: "ask.db", github: "lakesidegamedev/ask", visibility: "private", describe: "Ask, the player question-answering site and its in-game drawer backend. Search it for wrong or refused Ask answers." },
+  site: { file: "site.db", github: "lakesidegamedev/lakeside-landing", visibility: "private", describe: "The studio's public website. Search it for problems on the landing pages." },
+  accounts: { file: "accounts.db", github: "lakesidegamedev/lakeside-accounts + lakeside-auth + lakeside-status", visibility: "private", describe: "Accounts, sign-in and the status page. Search it for login, account and status-page problems." },
+  "index-tools": { file: "index-tools.db", github: "lakesidegamedev/LSGD-ops-dash", visibility: "private", describe: "The code index builder and ops dashboard tooling. Search it for problems with code search itself." },
 };
 const GAME = "game";
 const ALL_INTERNAL = "all-internal";
@@ -797,34 +805,55 @@ function validRepoNames() {
 
 /**
  * Normalise the optional `repo` argument (a name, a list, or "all-internal").
- * Returns { repos: [...names] } or { error }.
+ * Returns { repos: [...names], expanded: Set(names that came from
+ * "all-internal" rather than being named) } or { error }.
  */
 function resolveRepos(repo) {
-  if (repo == null || repo === "" || (Array.isArray(repo) && !repo.length)) return { repos: [GAME] };
+  if (repo == null || repo === "" || (Array.isArray(repo) && !repo.length)) return { repos: [GAME], expanded: new Set() };
   const names = (Array.isArray(repo) ? repo : String(repo).split(",")).map(s => String(s).trim().toLowerCase()).filter(Boolean);
   const out = [];
+  const named = new Set();
   for (const name of names) {
     if (name === ALL_INTERNAL || name === "all") { for (const k of Object.keys(INTERNAL_REPOS)) if (!out.includes(k)) out.push(k); continue; }
     if (name !== GAME && !INTERNAL_REPOS[name]) {
       return { error: `unknown repo "${name}". Valid: ${validRepoNames().join(", ")}` };
     }
+    named.add(name);
     if (!out.includes(name)) out.push(name);
   }
-  return { repos: out };
+  return { repos: out, expanded: new Set(out.filter(n => !named.has(n))) };
 }
 
 /**
- * May this token read internal (private) repositories? Explicit grant only:
- * the token record carries scopes.internalCode === true, or its name is in
- * CODE_INDEX_INTERNAL_READERS. Everything else, including any public-facing
- * caller, sees the game only.
+ * The tier a repository is served at. The game and configured-public
+ * repositories are public only while their index agrees; everything else,
+ * including an index without the stamp, is private.
  */
-function canReadInternal(auth, env = process.env) {
-  if (!auth) return false;
-  if (auth.scopes && auth.scopes.internalCode === true) return true;
-  const allow = String(env.CODE_INDEX_INTERNAL_READERS || "").split(",").map(s => s.trim()).filter(Boolean);
-  return !!auth.name && allow.includes(auth.name);
+function repoTier(name, gen = null) {
+  if (name === GAME) return "public";
+  const repo = INTERNAL_REPOS[name];
+  if (!repo || repo.visibility !== "public") return "private";
+  if (!gen) return "public-if-index-agrees";
+  return gen.meta && gen.meta.repo_visibility === "public" ? "public" : "private";
 }
+
+/**
+ * May this credential read private-tier code? Only by an explicit grant bound
+ * to the credential's identity as the server authenticated it: the token
+ * record carries scopes.privateCode === true (set by an administrator on that
+ * record; no tool or token-issuing path can set it), or the record's _id is
+ * listed in CODE_INDEX_PRIVATE_READER_IDS. Token names are free text and never
+ * count. Every existing token has neither, so no one holds the grant by
+ * default.
+ */
+function canReadPrivate(auth, env = process.env) {
+  if (!auth || typeof auth !== "object") return false;
+  if (auth.scopes && auth.scopes.privateCode === true) return true;
+  const ids = String(env.CODE_INDEX_PRIVATE_READER_IDS || "").split(",").map(s => s.trim()).filter(Boolean);
+  return !!auth._id && ids.includes(String(auth._id));
+}
+
+const PRIVATE_NOTICE = "Results marked visibility: private come from private studio code. Never quote, paraphrase or describe them to players or in anything a player can read.";
 
 function internalDir(env = process.env) {
   return env.CODE_INDEX_INTERNAL_DIR || "/var/lib/lakeside-code-index/internal";
@@ -864,7 +893,9 @@ module.exports = {
   keywordSearch,
   applyBudget,
   resolveRepos,
-  canReadInternal,
+  repoTier,
+  canReadPrivate,
+  PRIVATE_NOTICE,
   internalIndexPath,
   internalDir,
   revisionOf,
