@@ -103,7 +103,10 @@ function counterFromAdd(input = {}, actor) {
   }
   if (kind === "bug" && String(input.area || "").toLowerCase() === "keir") {
     const f = failureSignature(input.title, detail);
-    if (!f) return null;
+    // Only a spike is a running count. A failure kind never seen before
+    // ("new") and a release regression ("regressed") are alerts a person
+    // should see: they stay cards.
+    if (!f || f.alert !== "spike") return null;
     return {
       signature: f.sig, family: "failure_alert", product: "lakeside-mcp", reporter: "keir",
       title: String(input.title).trim().replace(/^Keir failure (?:new|spike): /, "Keir failure: ").slice(0, 280),
@@ -129,7 +132,7 @@ function counterFromReport(input = {}, actor) {
     return { signature: gap[1], family: "tool_gap", product: "lakeside-mcp", reporter: "keir", window_hits: Number(hits[1]), window_tasks: Number(hits[2]), total: null, tickets: [], samples: [], via: "work_report", card_id: Number(input.id) || null };
   }
   const fail = key.match(/^failure:(.+):(\d+)$/);
-  if (fail && /^Keir failures? (?:new|spike|regressed)\b/.test(summary)) {
+  if (fail && /^Keir failure spike\b/.test(summary)) {
     return { signature: `failure:${fail[1]}`, family: "failure_alert", product: "lakeside-mcp", reporter: "keir", window_hits: null, window_tasks: null, total: null, tickets: [], samples: [], via: "work_report", card_id: Number(input.id) || null };
   }
   return null;
@@ -147,7 +150,7 @@ function counterFromCard(row) {
   }
   if (row.kind === "bug") {
     const f = failureSignature(row.title, row.detail);
-    if (f) return { signature: f.sig, family: "failure_alert", title: String(row.title).replace(/^Keir failure (?:new|spike): /, "Keir failure: "), description: String(row.detail).split("\n\n")[0].slice(0, 600), window_hits: f.last24h ?? null, window_tasks: null, total: f.total ?? null, tickets: f.tickets || [], samples: failureSamples(row.detail) };
+    if (f && f.alert === "spike") return { signature: f.sig, family: "failure_alert", title: String(row.title).replace(/^Keir failure (?:new|spike): /, "Keir failure: "), description: String(row.detail).split("\n\n")[0].slice(0, 600), window_hits: f.last24h ?? null, window_tasks: null, total: f.total ?? null, tickets: f.tickets || [], samples: failureSamples(row.detail) };
   }
   return null;
 }

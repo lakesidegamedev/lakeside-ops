@@ -72,7 +72,11 @@ describe("recognising an automatic counter", () => {
     const f = counterFromAdd({ product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", actor: "keir", title: spike.title, detail: spike.detail }, "keir");
     assert.equal(f.signature, "failure:reasoning:unanswered_finish_refused:0dbfb588");
     assert.deepEqual([f.total, f.window_hits, f.tickets], [12, 10, [1833, 1837, 1836, 1838, 1842]]);
-    assert.equal(counterFromAdd({ product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", title: "Keir failures regressed: tool on 11.2.0", detail: "tool failures per 100 activations: 9 on 11.2.0 (40 activations) vs 3 on 11.1.0 (55).\n\nSamples:\nnone\n\nNext step: Compare releases" }, "keir").signature, "failure:regression:tool:11.2.0");
+    // Review m2: a never-seen failure kind and a release regression are alerts, not counts.
+    assert.equal(counterFromAdd({ product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", title: "Keir failures regressed: tool on 11.2.0", detail: "tool failures per 100 activations: 9 on 11.2.0 (40 activations) vs 3 on 11.1.0 (55).\n\nSamples:\nnone\n\nNext step: Compare releases" }, "keir"), null);
+    const fresh = card(255357);
+    assert.equal(counterFromAdd({ product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", actor: "keir", title: fresh.title, detail: fresh.detail }, "keir"), null);
+    assert.equal(counterFromReport({ id: 9, event: "progress", actor: "keir", summary: "Keir failure new: tool/x", idempotency_key: "failure:tool:x:aa11:4910" }, "keir"), null);
     assert.equal(counterFromReport({ id: 254959, event: "progress", actor: "keir", summary: "Now 8 hits across 2 tasks in 7 days.", idempotency_key: "gap:raw:governmentFormations:8" }, "keir").signature, "raw:governmentFormations");
     assert.equal(counterFromReport({ id: 9, event: "progress", actor: "keir", summary: "Keir failure spike: reasoning/x: y", idempotency_key: "failure:reasoning:x:0dbfb588:4910" }, "keir").signature, "failure:reasoning:x:0dbfb588");
     assert.equal(counterFromReport({ id: 9, event: "progress", actor: "keir", summary: "Now 3 hits across 1 tasks in 7 days.", idempotency_key: "gap:tool:code_search:tool timed out:3" }, "keir").signature, "tool:code_search:tool timed out");
@@ -159,6 +163,27 @@ describe("counters instead of cards", () => {
     assert.equal(boardCount(), 0);
   });
 
+  it("a new failure kind or a release regression is filed as a card, and its spike report updates that card", async () => {
+    const t = tools();
+    const fresh = card(255357);
+    const filed = (await t.kanban_add(viaTool({ product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", actor: "keir", title: fresh.title, detail: fresh.detail }))).o;
+    assert.equal(filed.counted, undefined);
+    assert.ok(keirCardId(filed) > 0, "Keir gets a card id back");
+    const regressed = (await t.kanban_add(viaTool({ product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", actor: "keir", title: "Keir failures regressed: tool on 11.2.0", detail: "tool failures per 100 activations: 9 on 11.2.0 (40 activations) vs 3 on 11.1.0 (55).\n\nSamples:\nnone\n\nNext step: Compare releases" }))).o;
+    assert.ok(keirCardId(regressed) > 0);
+    assert.equal(boardCount(), 2);
+    // The same failure later spikes: Keir reports on the card it holds, and the card hears it.
+    later(6 * HOUR);
+    const spikeTitle = fresh.title.replace("Keir failure new:", "Keir failure spike:");
+    const r = (await t.work_report({ id: filed.id, event: "progress", actor: "keir", summary: spikeTitle, idempotency_key: "failure:tool:raw_read_fallback:abc:4912" })).o;
+    assert.equal(r.counted, undefined);
+    assert.equal(k.get(filed.id).progress_summary, spikeTitle);
+    // The opposite failure: a spike with no open card is still only a count.
+    const spike = card(255399);
+    assert.equal(keirCardId((await t.kanban_add(viaTool({ product: "lakeside-mcp", area: "keir", kind: "bug", lane: "inbox", actor: "keir", title: spike.title, detail: spike.detail }))).o), null);
+    assert.equal(boardCount(), 2);
+  });
+
   it("a deliberately filed card with a similar title stays a card", async () => {
     const t = tools();
     const made = (await t.kanban_add({ product: "lakeside-mcp", kind: "capability", lane: "inbox", impact: "medium", title: "A read for retiredCharacters without raw database queries", detail: "Agents keep needing this.", actor: "claude:s2" })).o;
@@ -223,31 +248,33 @@ describe("promotion is a deliberate act", () => {
 
 describe("migrating the existing counter cards", () => {
   beforeEach(fresh);
-  const COUNTERS = [254959, 255330, 254943, 255033, 255399, 255357];
-  const OTHERS = [254935, 254939, 255627];
+  const COUNTERS = [254959, 255330, 254943, 255033, 255399];
+  // 255357 is a "Keir failure new" alert: it stays a card (review m2).
+  const OTHERS = [254935, 254939, 255627, 255357];
 
   it("the dry run changes nothing; the real run moves them with their history; a second run moves nothing", () => {
     loadCards([...COUNTERS, ...OTHERS]);
     // One counter card someone actually picked up stays on the board.
-    k.report({ id: 255357, event: "started", summary: "Looking at the characters raw reads", actor: "claude:s4" });
+    k.report({ id: 255033, event: "started", summary: "Looking at these raw reads", actor: "claude:s4" });
     const before = k.db.prepare("SELECT id, lane, updated_at FROM kanban_items ORDER BY id").all();
 
     const dry = k.counters.migrateCards({ dryRun: true });
-    assert.equal(dry.cards, 5);
-    assert.deepEqual(dry.kept_on_board.map((x) => x.id), [255357]);
+    assert.equal(dry.cards, 4);
+    assert.deepEqual(dry.kept_on_board.map((x) => x.id), [255033]);
     assert.match(dry.kept_on_board[0].reason, /assigned to claude:s4/);
     assert.deepEqual(k.db.prepare("SELECT id, lane, updated_at FROM kanban_items ORDER BY id").all(), before);
     assert.equal(k.counters.list().total, 0);
 
     const run = k.counters.migrateCards({ dryRun: false });
-    assert.equal(run.moved, 5);
-    assert.deepEqual(run.by_family, { tool_gap: 4, failure_alert: 1 });
+    assert.equal(run.moved, 4);
+    assert.deepEqual(run.by_family, { tool_gap: 3, failure_alert: 1 });
     const moved = k.get(254959);
     assert.equal(moved.lane, "done");
     assert.equal(moved.events[0].event_type, "moved_to_counters");
     assert.match(moved.events[0].summary, /^Moved to the counter list as raw:governmentFormations\. .*Lane was next\.$/);
     for (const id of OTHERS) assert.notEqual(k.get(id).lane, "done", `deliberate card ${id} untouched`);
-    assert.equal(k.get(255357).lane, "now");
+    assert.equal(k.get(255033).lane, "now");
+    assert.equal(k.get(255357).lane, "inbox", "the new-failure alert is not migrated");
 
     // 254959's history: filed at 5 (2 Nov), then 10, 13 and 8 within the week, so 13 occurrences in that week.
     const gov = k.counters.get("raw:governmentFormations");

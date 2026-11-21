@@ -928,7 +928,13 @@ function openKanban(dbPath = defaultDbPath(), { now = () => new Date() } = {}) {
 
   function report(input) {
     // Keir's repeat counts go to the counter list; the card is not touched.
-    const obs = counterFromReport(input || {}, input && input.actor);
+    let obs = counterFromReport(input || {}, input && input.actor);
+    // A spike reported on a "new" or "regressed" failure card that is still
+    // on the board updates that card: it is an alert someone is meant to see.
+    if (obs && obs.family === "failure_alert" && obs.card_id) {
+      const row = rowById(obs.card_id);
+      if (row && row.lane !== "done" && /^Keir failures? (?:new|regressed)\b/.test(row.title)) obs = null;
+    }
     if (obs) {
       const result = counters.record(obs);
       return { duplicate: false, counted: true, signature: obs.signature, added: result.added,
