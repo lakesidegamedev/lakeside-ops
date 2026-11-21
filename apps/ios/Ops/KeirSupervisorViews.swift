@@ -219,6 +219,8 @@ struct KeirSupervisorPlusMenu: View {
             .disabled(attachDisabled)
             Section {
                 Menu {
+                    // An empty submenu is hidden, so say it is loading instead.
+                    if keir.models.isEmpty { Text("Loading models…") }
                     ForEach(keir.models, id: \.["id"].string) { model in
                         Button { Task { await keir.selectModel(model["id"].string, session) } } label: {
                             if model["id"].string == keir.modelSelection { Label(model["label"].string, systemImage: "checkmark") }
@@ -226,9 +228,10 @@ struct KeirSupervisorPlusMenu: View {
                         }
                     }
                 } label: { Label("Model: \(keir.modelLabel)", systemImage: "cpu") }
-                    .disabled(keir.models.isEmpty || keir.selectingModel)
+                    .disabled(keir.selectingModel)
                     .accessibilityIdentifier("supervisor-model")
                 Menu {
+                    if keir.efforts.isEmpty { Text("Loading…") }
                     ForEach(keir.efforts, id: \.self) { effort in
                         Button { Task { await keir.selectEffort(effort, session) } } label: {
                             let label = effort == "auto" ? "Default" : effort.capitalized
@@ -236,7 +239,7 @@ struct KeirSupervisorPlusMenu: View {
                         }
                     }
                 } label: { Label("Effort: \(keir.effortLabel)", systemImage: "gauge.with.dots.needle.50percent") }
-                    .disabled(keir.efforts.isEmpty || keir.selectingModel)
+                    .disabled(keir.selectingModel)
                     .accessibilityIdentifier("supervisor-effort")
             }
             if keir.supervisorLiveJob != nil {
@@ -254,6 +257,8 @@ struct KeirSupervisorPlusMenu: View {
             .accessibilityLabel("Add to your message")
             .accessibilityHint("Attach a photo or file, choose the model and effort, or stop the running job")
             .accessibilityIdentifier("supervisor-plus")
+            // A failed or skipped load is retried here rather than leaving an empty picker.
+            .task(id: "\(keir.thread)|\(keir.models.isEmpty)") { if keir.models.isEmpty { await keir.loadModels(session) } }
     }
 }
 

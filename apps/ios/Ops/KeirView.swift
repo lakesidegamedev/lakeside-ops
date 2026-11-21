@@ -384,7 +384,9 @@ struct KeirView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .task(id: "\(scenePhase == .active)|\(keir.thread)|\(connectionAttempt)|\(voiceMode)") { if scenePhase == .active && !voiceMode { await keir.connect(session) } }
         .task { await keir.loadThreads(session) }
-        .task(id: keir.thread) { await keir.loadModels(session); await keir.loadControls(session) }
+        // Reload when the chat changes or when the same chat becomes a supervisor
+        // chat (the account resolved), so the picker always matches who answers.
+        .task(id: "\(keir.thread)|\(keir.isSupervisor)") { await keir.loadModels(session); await keir.loadControls(session) }
         .onAppear { appearedAt = Date(); attachments.scope = keir.thread; attachments.supervisorServes = { [weak keir = self.keir] in keir?.servedBySupervisor($0) ?? false }; handleShortcut() }
         .onChange(of: router.openKeirControls) { _, _ in handleShortcut() }
         .onChange(of: router.openKeirVoice) { _, _ in handleShortcut() }

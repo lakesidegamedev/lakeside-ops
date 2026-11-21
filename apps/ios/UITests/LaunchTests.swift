@@ -262,9 +262,15 @@ final class LaunchTests: XCTestCase {
         let plus = app.buttons["supervisor-plus"]
         XCTAssertTrue(plus.waitForExistence(timeout: 20), "the owner lands in the private chat")
         XCTAssertTrue(app.buttons["Open attachment landing-render.png"].waitForExistence(timeout: 15), "Keir's attached image is shown inline")
-        plus.tap()
         let photos = app.buttons["Photo library"]
-        XCTAssertTrue(photos.waitForExistence(timeout: 5))
+        let model = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model: Default")).firstMatch
+        // The picker fills from the server; reopen until it has.
+        for _ in 0..<6 {
+            if !photos.exists, plus.isHittable { plus.tap() }
+            if photos.waitForExistence(timeout: 3), model.waitForExistence(timeout: 2) { break }
+            dismissMenu(app, closing: photos); sleep(2)
+        }
+        XCTAssertTrue(photos.exists)
         XCTAssertTrue(app.buttons["Choose file"].exists)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model")).firstMatch.exists)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Effort")).firstMatch.exists)
