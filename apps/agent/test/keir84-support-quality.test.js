@@ -21,6 +21,7 @@ function setup({ discord = ticketDiscord } = {}) {
   let clock = 10 * 3600000;
   const broker = createBroker({ ledger, config, mcp, discord, sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: CH, replyChannel: CH, source: { channelId: CH, channelName: "ticket-bug-fixture-123" }, deadline: 9e15 });
+  job.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; job.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id;
   const advance = (min) => { clock += min * 60000; };
   return { ledger, config, broker, job, calls, advance, now: () => clock };
@@ -52,6 +53,7 @@ test("update spam: no milestone, no new read, no new player message means no pos
   // A question is a milestone; so is a finding after a new read; so is a player message.
   await f.broker.tool(f.job, "channel_reply", { message: "Did you reactivate the California plants after turn 675?" });
   f.advance(15); f.job.lastGameReadAt = f.now() + 1; f.advance(1);
+  f.job.observedPlayerAt = f.now() - 1000; // the player answered the question (the hourly cap counts posts since their last message)
   await f.broker.tool(f.job, "channel_reply", { message: "Your California plants were mothballed at turn 675 and still make nothing, which explains the drop." });
   f.advance(15);
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "I am still going over the plant records for you." }), /real milestone|status card/);

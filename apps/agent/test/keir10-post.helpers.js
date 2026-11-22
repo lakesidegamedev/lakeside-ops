@@ -22,6 +22,8 @@ function setup(over = {}) {
   const broker = createBroker({ ledger, config, mcp, discord: over.discord || ticketDiscord, ...(over.exec ? { exec: over.exec } : {}), sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: CH, replyChannel: CH, source: { channelId: CH, channelName: "ticket-bug-fixture-123", content: "Why is my plant idle?" }, deadline: 9e15 });
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id; ledger.data.disclosed = { 123: { at: 1, posted: true } };
+  // A read of the player's own record this activation, so the evidence-gated claim check (guardrails.js) is satisfied unless a test turns it off.
+  if (!over.noEntityRead) { job.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; job.ownRecordRead = true; }
   job.codeLookups = 1; job.lastCodeReadAt = clock - 1000; // a code read exists, so the rule-before-code check stays out of the way
   const posts = () => calls.filter((c) => c[1] === "support_public_update" && c[2].deliver === true).map((c) => c[2].message);
   const audits = (kind) => (ledger.data.audit || []).filter((a) => a.kind === kind);

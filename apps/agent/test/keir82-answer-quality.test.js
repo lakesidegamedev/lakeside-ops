@@ -18,6 +18,7 @@ function setup() {
   let clock = 10 * 3600000;
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" }, deadline: 9e15 });
+  job.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; job.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id;
   const advance = (min) => { clock += min * 60000; };
   return { ledger, broker, job, calls, advance, now: () => clock, get mcpFail() { return state.fail; }, set mcpFail(v) { state.fail = v; } };

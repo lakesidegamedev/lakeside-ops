@@ -275,6 +275,7 @@ test("a confirmed finding opens one bug ticket per affected player; the Discord 
   await assert.rejects(f.broker.tool(j, "open_affected_ticket", { ...input, character: 77 }), /No character 77/);
   const t = f.ledger.createJob("ticket:123", { kind: "ticket", role: "support", ticket: 123, channelId: "777777777777777777", source: {}, deadline: 9999999999999 }); t.state = "running";
   await assert.rejects(f.broker.tool(t, "open_affected_ticket", input), /Only a confirmed finding/);
+  t.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; t.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
 });
 
 test("reporter-scoped reads fill in the reporter and the assigned ticket; another player is still refused", async () => {
@@ -1481,6 +1482,7 @@ test("outcome claims are recognised without flagging game mechanics", () => {
 test("ticket copy cannot claim money, reversals or releases without a receipt", async () => {
   const f = fixture();
   const j = running(f, { role: "support", kind: "ticket", ticket: 123, channelId: "777777777777777777", replyChannel: "777777777777777777", source: { channelId: "777777777777777777", channelName: "ticket-bug-fixture-123" } });
+  j.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; j.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
   f.ledger.data.seen["ticket:123"] = j.id;
   await assert.rejects(f.broker.tool(j, "channel_reply", { message: "We've switched that back and you will be paid back." }), /no receipt/);
   await assert.rejects(f.broker.tool(j, "support_action", { tool: "support_public_update", args: { message: "The fix is live on the main server." } }), /github where/);

@@ -28,6 +28,7 @@ function setup({ search = [] } = {}) {
   const broker = createBroker({ ledger, config, mcp, discord: async () => [], sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock });
   const mk = (id, ticket, channel, text) => {
     const job = ledger.createJob(id, { role: "support", kind: "ticket", ticket, channelId: channel, replyChannel: channel, source: { channelId: channel, channelName: `ticket-bug-fixture-${ticket}`, content: text }, deadline: 9e15 });
+    job.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; job.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
     job.state = "running"; ledger.data.seen[`ticket:${ticket}`] = job.id; return job;
   };
   const a = mk("a", 123, CH_A, REPORT_A);

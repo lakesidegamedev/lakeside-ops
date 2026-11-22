@@ -85,6 +85,7 @@ test("event sink: audits and deliveries land with task, attempt and ticket ident
   assert.equal(sink.enabled, true);
   const ledger = attachSink(createLedger(path.join(dir, "ledger.json")), sink);
   const job = ledger.createJob("ticket:1522", { kind: "ticket", role: "support", ticket: 1522, source: {} });
+  job.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; job.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
   ledger.audit("status_card_refresh", { job: job.id, ticket: 1522 });
   sink.append("delivery", { taskId: taskIdOf(job, ledger.data.jobs), attemptId: job.id, ticket: 1522, key: "x", chars: 10 });
   assert.equal(sink.count(), 3, "created, audit, delivery");
@@ -109,6 +110,7 @@ function fixture() {
   const ch = "777777777777777777";
   const job = ledger.createJob("ticket:1522", { kind: "ticket", role: "support", ticket: 1522, channelId: ch, replyChannel: ch, deadline: 9999999999999,
     source: { channelId: ch, channelName: "ticket-bug-simonella-1522", content: "New ticket intake", at: new Date(1000).toISOString() } });
+  job.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; job.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
   job.state = "running";
   ledger.data.channels[ch] = { ticket: 1522 };
   ledger.data.disclosed = { 1522: { at: 0 } };
@@ -181,7 +183,8 @@ test("monologue cap: three Keir posts with no human reply, then the card only", 
   }
   assert.equal(f.ledger.data.monologue[1522].count, 3);
   await assert.rejects(say(f, "Still looking at the save path for the earlier revenue figure."), /posted 3 times/);
-  assert.equal((await say(f, "Does the error appear on the budget page or when you save?")).published, true, "questions pass");
+  // Keir guardrails (2026-11-22): the hourly cap is 3, so even a question waits for the player now.
+  await assert.rejects(say(f, "Does the error appear on the budget page or when you save?"), /posted 3 times/);
   f.tick(60000);
   f.job.observedPlayerAt = Date.now() + 10 ** 12;
   assert.equal((await say(f, "Thanks. The save path is the culprit and a correction is being investigated.")).published, true, "a human reply resets the run");

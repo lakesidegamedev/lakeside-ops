@@ -86,9 +86,9 @@ test("ticket 1845: eight 'now live' notices become four, the repeated model anno
   assert.equal(why["11-18T20:55 notice"], "the model already said it is live");
   // Keir 11.2 second pass: a turn having run is not a reason to post. Seven unprompted per-turn reports are held back.
   assert.deepEqual(r.suppressed.filter((s) => s.why === "turn not called for").map((s) => hhmm(s.at)),
-    ["11-17T22:04", "11-17T23:12", "11-18T00:31", "11-18T04:52", "11-18T13:46", "11-18T19:52", "11-18T21:06"]);
-  assert.equal(r.suppressed.length, 12);
-  assert.equal(r.accepted.length, 21);
+    ["11-17T19:04", "11-17T23:12", "11-18T00:31", "11-18T13:46", "11-18T19:52", "11-18T21:06"]);
+  assert.equal(r.suppressed.length, 13);
+  assert.equal(r.accepted.length, 20);
   // Corrections are never suppressed.
   assert.ok(!r.suppressed.some((s) => isCorrection(s.text)));
 });
@@ -98,7 +98,7 @@ test("ticket 1845 through the wake path: every turn report that goes out was cal
   // Why each turn report went out, as the rule decided it: a promise Keir had made (each promise licenses one report), the
   // closing condition's one turn, the player had just written, or a correction.
   const reasons = r.accepted.filter((p) => p.via).map((p) => [new Date(p.at).toISOString().slice(5, 16), p.via]);
-  assert.deepEqual(reasons, [["11-17T17:07", "correction"], ["11-17T18:03", "promise"], ["11-17T19:04", "closing"], ["11-17T21:07", "promise"],
+  assert.deepEqual(reasons, [["11-17T17:07", "correction"], ["11-17T18:03", "promise"], ["11-17T21:07", "promise"],
     ["11-18T04:58", "answer"], ["11-18T10:59", "promise"], ["11-18T23:08", "promise"]]);
   // The promises those posts kept were recorded by the post path, not by the model.
   assert.ok(r.promises.some((p) => p.state === "kept" && /\bI will check\b|\bI will\b/i.test(p.text)));
@@ -143,7 +143,8 @@ test("the single turn rule: called-for reports still never repeat the answer; qu
   const posts = [{ at: 10, text: "Turn 27: every basket on offer sold for a fourth turn, and the price rose to 106.64 from 104.55." }];
   const same = "Turn 28: every basket on offer sold again, and the price rose to 108.10 from 106.64.";
   assert.equal(pb.turnPostRule({ posts, humanAt: 0, message: same, calledFor: true }).why, "same turn answer");
-  assert.equal(pb.turnPostRule({ posts, humanAt: 0, message: "Turn 28: shops did not sell out; some went unsold.", calledFor: true }), null);
+  // Keir guardrails (2026-11-22): the closing condition alone never licenses a recap, even a changed one.
+  assert.equal(pb.turnPostRule({ posts, humanAt: 0, message: "Turn 28: shops did not sell out; some went unsold.", calledFor: true }).why, "turn not called for");
   assert.equal(pb.turnPostRule({ posts, humanAt: 0, message: same }).why, "turn not called for");
   assert.equal(pb.turnPostRule({ posts, humanAt: 0, message: same, promiseDue: true }), null);
   assert.equal(pb.turnPostRule({ posts, humanAt: 20, message: same }), null, "the player wrote");
@@ -178,9 +179,9 @@ test("post path: a promise in a delivered reply is recorded with a due time; a f
   assert.equal(p.dueAt, f.now() + 90 * 60000);
   // Three more posts fill the hour (seeded as earlier posts), then a plain update is refused with the merge instruction.
   const posts = f.ledger.data.ticketPosts[123];
-  for (const m of [3, 2, 1]) posts.push({ at: f.now() - m * 60000, jobId: "other", kind: "reply", text: `Update ${m}.` });
+  for (const m of [2, 1]) posts.push({ at: f.now() - m * 60000, jobId: "other", kind: "reply", text: `Update ${m}.` });
   f.advance(11);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your coal contract renews at turn 30." }), /in the last hour with no new message from the player \(limit 4\)\. Merge what is still needed into one message/);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your coal contract renews at turn 30." }), /in the last hour with no new message from the player \(limit 3\)\. Merge what is still needed into one message/);
   // A correction still goes out as the one merged message.
   await f.broker.tool(f.job, "channel_reply", { message: "Correction: the contract renews at turn 31, not 30." });
   assert.equal(f.posts().length, 2);
