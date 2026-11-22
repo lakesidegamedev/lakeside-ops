@@ -1021,10 +1021,95 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("deflection_stripped", { job: job.id, ticket: ticketNo || null, kind }); ledger.save();
     return kept;
   }
+  // Keir guardrails (owner decision 2026-11-22, audit sections 4 and 6). Pure rules live in guardrails.js.
+  // Incident facts: open incidents and turn failures of the last 24 hours, cached for a minute across jobs.
+  const guardrails = require("./guardrails");
+  let incidentCache = { at: 0, ctx: null };
+  async function incidentFacts(job, signal) {
+    if (!(incidentCache.ctx && now() - incidentCache.at < 60000)) {
+      const [recent, detail, open] = await Promise.allSettled([mcp.call("engine", "recent_turns", { limit: 30 }, false, signal), mcp.call("turndiag", "turn_failure_detail", { attempts: 8 }, false, signal), incidents.openIncidents(mcp, { now: now(), signal })]);
+      const readable = recent.status === "fulfilled" || detail.status === "fulfilled";
+      const rows = [...(recent.status === "fulfilled" ? guardrails.turnRows(recent.value) : []), ...(detail.status === "fulfilled" ? guardrails.failureRows(detail.value) : [])];
+      incidentCache = { at: now(), ctx: guardrails.incidentContext({ incidents: open.status === "fulfilled" ? open.value : [], rows, now: now(), readable }) };
+    }
+    if (job) job.incidentContext = incidentCache.ctx;
+    return incidentCache.ctx;
+  }
+  // A ticket lane that player-facing guardrails apply to: not the owner, not a developer's own task.
+  const playerFacing = (job) => job.kind === "ticket" && !job.codingParent && job.role !== "owner" && !developerTask(job);
+  // A needsHuman card for a person, filed straight on the board (not through raise_to_developers, whose own gates send an
+  // owner-decision question back to the model) with one owner alert. Returns the card id or null.
+  async function fileHumanCard(job, ticketNo, key, title, detail) {
+    let id = null;
+    try { const r = await mcp.call("ops-knowledge", "kanban_add", { product: "a-house-divided", title: String(title).slice(0, 300), detail: `${detail}\n\nRaised by Keir from ticket ${ticketNo}.`, kind: "task", lane: "next", actor: "keir" }, true); id = r?.id ?? null; }
+    catch (e) { ledger.audit("human_card_failed", { job: job.id, ticket: ticketNo, key, error: String(e.message).slice(0, 200) }); }
+    ledger.notify(`${key}:${ticketNo}`, "owner", `Ticket ${ticketNo} needs a person: ${title}\n\n${String(detail).slice(0, 900)}`);
+    ledger.save();
+    return id;
+  }
+  // One owner card per ticket for balance, design or intent questions, then a staff-review line for the player.
+  async function fileOwnerCard(job, ticketNo, why, detail) {
+    const cards = (d.ownerCards ||= {});
+    if (cards[ticketNo]) return cards[ticketNo];
+    const body = guardrails.ownerCardBody({ ticket: ticketNo, why, detail });
+    cards[ticketNo] = { at: now(), why: String(why).slice(0, 120), id: null }; ledger.save();
+    cards[ticketNo].id = await fileHumanCard(job, ticketNo, "ownercard", body.title, body.detail);
+    ledger.audit("owner_card_filed", { job: job.id, ticket: ticketNo, why: String(why).slice(0, 120), card: cards[ticketNo].id }); ledger.save();
+    return cards[ticketNo];
+  }
+  // Auto-escalate: one short "staff are reviewing" post, needsHuman card (alerts the owner), then Keir stops on the ticket.
+  async function escalateTicket(job, ticketNo, why, detail) {
+    const record = (d.ticketEscalations ||= {});
+    if (!ticketNo || record[ticketNo]) return record[ticketNo] || null;
+    record[ticketNo] = { at: now(), why, detail: String(detail || "").slice(0, 300) }; ledger.save();
+    try {
+      await callSupport("support_public_update", { kind: "ticket", number: ticketNo, message: guardrails.STAFF_REVIEWING, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
+      recordTicketPost(job, ticketNo, guardrails.STAFF_REVIEWING);
+    } catch (e) { ledger.audit("escalation_post_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
+    record[ticketNo].card = await fileHumanCard(job, ticketNo, "escalation", `Ticket ${ticketNo}: staff review needed (${why.replace(/_/g, " ")})`, `Keir stopped posting on this ticket because ${detail}. A person should read the ticket and answer the player.`);
+    if (job.channelId) { try { require("./ticketpause").setPause(ledger, job.channelId, ticketNo, true, { authorId: "keir-escalation", messageId: null, at: new Date(now()).toISOString() }, now()); } catch (e) { ledger.audit("escalation_pause_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); } }
+    ledger.audit("ticket_escalated", { job: job.id, ticket: ticketNo, why, detail: String(detail || "").slice(0, 200) }); ledger.save();
+    return record[ticketNo];
+  }
+  // Called when a ticket job wakes (player message) and when the wake cap trips. Returns the escalation if one just happened.
+  async function escalationCheck(job, { wakeCapped = false } = {}) {
+    const ticketNo = ticketOf(job);
+    if (!ticketNo || !playerFacing(job) || job.role === "player") return null;
+    const checked = (d.escalationChecked ||= {});
+    const human = [job.source, ...(job.requestInbox || []), ...(job.inbox || [])].filter((m) => m && m.content && m.role !== "system" && !["owner", "support", "developer"].includes(m.role) && !m.investigationResult && !m.codingResult && ![config.ownerId, ...config.staffIds, config.botId].includes(m.authorId));
+    const fresh = human.filter((m) => m.messageId && !checked[m.messageId]);
+    for (const m of fresh) checked[m.messageId] = now();
+    for (const k of Object.keys(checked)) if (now() - checked[k] > 7 * 86400000) delete checked[k];
+    const corrections = (d.ticketPosts?.[ticketNo] || []).filter((p) => /^correction\b/i.test(String(p.text || "").trim())).length + ((ledger.data.audit || []).filter((a) => a.kind === "correction_posted" && a.ticket === ticketNo).length);
+    // A challenge only counts once Keir has answered: an opening report that says "this is wrong" is the bug report itself.
+    const replied = Boolean(job.lastPublishedAt) || (d.ticketPosts?.[ticketNo] || []).length > 0 || Boolean(d.lastSubstantive?.[ticketNo]);
+    const e = guardrails.escalation({ playerText: replied ? fresh.map((m) => m.content).join("\n") : "", corrections: Math.max(corrections, 0) >= guardrails.CORRECTIONS_LIMIT ? corrections : 0, wakeCapped, already: Boolean(d.ticketEscalations?.[ticketNo]) });
+    ledger.save();
+    return e ? escalateTicket(job, ticketNo, e.why, e.detail) : null;
+  }
+  // Everything a player-facing post must pass for the incident, claim and scope guardrails. Throws a refusal.
+  async function guardrailGates(job, ticketNo, message, opts = {}) {
+    if (!playerFacing(job) || job.role === "player") return;
+    const esc = d.ticketEscalations?.[ticketNo];
+    if (esc && !opts.escalation) { ledger.audit("post_blocked_escalated", { job: job.id, ticket: ticketNo, why: esc.why }); throw new Error(`Ticket ${ticketNo} was handed to staff (${esc.why.replace(/_/g, " ")}). Nothing more is posted to the player. Finish now with no further tool calls.`); }
+    const scope = guardrails.scopeProblem(message);
+    if (scope) {
+      ledger.audit("scope_refused", { job: job.id, ticket: ticketNo, kind: scope.kind });
+      await fileOwnerCard(job, ticketNo, scope.kind === "offer" ? "feature or design request" : "question about the owner's intent", `What the player asked and what the lane drafted:\n${String(job.source?.content || "").slice(0, 600)}\n\nDraft: ${String(message).slice(0, 600)}`);
+      throw new Error(`${scope.refusal} An owner card is filed for this ticket; ${guardrails.STAFF_REVIEW_LINE}`);
+    }
+    if (!guardrails.recoveryClaim(message) && !guardrails.claimSentences(message).length) return;
+    const ctx = job.incidentContext && now() - (job.incidentContextAt || 0) < 120000 ? job.incidentContext : await incidentFacts(job).then((c) => { job.incidentContextAt = now(); return c; });
+    const rec = guardrails.recoveryRefusal(ctx, message);
+    if (rec) { ledger.audit("recovery_refused", { job: job.id, ticket: ticketNo, clean: ctx?.cleanTurnsSinceLastFailure ?? null, last: ctx?.lastFailureTurn ?? null }); throw new Error(rec); }
+    const problems = guardrails.claimProblems({ message, evidence: job.evidenceText, reporter: job.reporterCharacter, incident: ctx, ownRead: Boolean(job.ownRecordRead) });
+    if (problems.length) { ledger.audit("claim_refused", { job: job.id, ticket: ticketNo, why: problems[0].why, sentence: problems[0].sentence.slice(0, 120) }); throw new Error(guardrails.claimRefusal(problems)); }
+  }
   async function guardTicketPost(job, ticketNo, message, opts = {}) {
     killSwitch?.assertClear("A post to the player");
     { const why = require("./ticketstate").endedReason(d, ticketNo, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: ticketNo, why }); throw new Error(`Ticket ${ticketNo} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
     if (!opts.system) message = deflectionGate(job, ticketNo, message);
+    if (!opts.system && !opts.collect) await guardrailGates(job, ticketNo, message, opts);
     notePageSymptom(ticketNo, message);
     await pageGate(job, ticketNo, message);
     guardTicketNumbers(job, ticketNo, message);
@@ -1057,10 +1142,12 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (screen.refuse) throw Object.assign(new Error(screen.refuse), { screened: true });
       // Keir 8.2: ten drafts on 2026-11-05 scored 0.95 to 0.97 for asserting an outcome as settled
       // and went out anyway; one was reported wrong by the player. Without a verified receipt, refuse.
+      // Keir guardrails (2026-11-22): the semantic flag no longer yields to "any verified release on the ticket". An outcome claim
+      // needs a read of the player's own record in this activation; the per-claim check above covers the sentences it can parse.
       const certain = screen.labels.find((l) => l.label === "certaintyWithoutReceipt" && l.probability >= 0.9);
-      if (certain && !ticketEvidence(ticketNo).verified.done && !ticketEvidence(ticketNo).main.done) {
+      if (certain && !opts.system && playerFacing(job) && job.role !== "player" && !job.ownRecordRead && !guardrails.entityRead(job.evidenceText, job.reporterCharacter)) {
         ledger.audit("certainty_refused", { job: job.id, ticket: ticketNo, probability: certain.probability });
-        throw Object.assign(new Error("Not posted: this states an outcome (fixed, live, changed, paid) as settled fact, and this ticket has no release or verification behind it. Say what you found and what happens next, or verify it first."), { screened: true });
+        throw Object.assign(new Error("Not posted: this states an outcome (fixed, live, changed, paid) as settled fact, and no read in this activation shows a record for this player's own character or company. Read their own record first, then say what it shows and which turn, or say you have not confirmed it."), { screened: true });
       }
     } catch (e) { if (e.screened) throw e; }
     await guardNeedlessClarification(job, ticketNo, message);
@@ -2466,6 +2553,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       let text = ""; try { text = typeof result === "string" ? result : JSON.stringify(result, (k, v) => (v && typeof v === "object" && (v.stale || v.conflict || v.supersededBy)) || (k === "image" || k === "_images" || k === "data" && typeof v === "string" && v.length > 2000) ? undefined : v) ?? ""; } catch {}
       job.evidence = [...(job.evidence || []), ...knowledge.numbersIn(text).map((n) => n.value)].slice(-8000);
       job.evidenceText = (String(job.evidenceText || "") + `\n[${name}] ` + text.slice(0, 6000)).slice(-20000);
+      if (!job.ownRecordRead && job.reporterCharacter && guardrails.entityRead(text, job.reporterCharacter)) job.ownRecordRead = true;
       if (name === "read_tool") { try { const f = require("./typedfacts").fromRead(input, result); if (f.length) job.typedFacts = [...(job.typedFacts || []), ...f].slice(-200); } catch {} }
     }
     require("./investigation-memory").record(ledger, job, name, input, result, now());
@@ -2973,7 +3061,17 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (!job.channelReplyQueued && worker.replyChannel && !(appChannel && isAppJob(job))) worker.needsAck = true;
       ledger.save(); return { taskId: worker.id, state: worker.state };
     }
-    if (name === "delegate_fix") return delegation.delegate(job, input.instructions, signal);
+    if (name === "delegate_fix") {
+      if (job.kind === "ticket" && ticketOf(job) && playerFacing(job)) {
+        const why = guardrails.balanceChange({ texts: [input.instructions] });
+        if (why) {
+          ledger.audit("balance_delegate_refused", { job: job.id, ticket: ticketOf(job), why: why.slice(0, 160) });
+          await fileOwnerCard(job, ticketOf(job), "balance or economy change", `A ticket lane asked a coding worker for a change and was stopped because ${why}.\n\nInstructions:\n${String(input.instructions).slice(0, 1800)}`);
+          throw new Error(`Not delegated: ${why}. Ticket lanes do not change balance, rates, recipes or turn-engine numbers. An owner card is filed with your evidence. ${guardrails.STAFF_REVIEW_LINE}`);
+        }
+      }
+      return delegation.delegate(job, input.instructions, signal);
+    }
     if (name === "delegate_investigation") return delegation.investigate(job, input.question);
     if (name === "review_fix") return delegation.review(job, input, signal);
     if (name === "read_servers") return readServers(job);
@@ -4885,6 +4983,17 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // seeded without a market-mode stamp. Economy patches carry the world
       // cases they were tested against, so review can see what was covered.
       const economyFiles = [...patch.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]).filter((f) => ECONOMY_PATHS.test(f));
+      // Keir guardrails (2026-11-22): a ticket lane never opens a PR that changes balance, rates, recipes or turn-engine numbers.
+      // It files one owner card with the evidence and tells the player staff will review.
+      if (job.kind === "ticket" && ticketOf(job) && playerFacing(job) && !(job.role === "owner")) {
+        const changed = [...patch.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]);
+        const why = guardrails.balanceChange({ files: changed, texts: [input.title, input.body], economyPaths: ECONOMY_PATHS, workerPaths: blast.WORKER_PATHS });
+        if (why) {
+          ledger.audit("balance_pr_refused", { job: job.id, ticket: ticketOf(job), why: why.slice(0, 160) });
+          await fileOwnerCard(job, ticketOf(job), "balance or economy change", `A ticket lane prepared a change and was stopped because ${why}.\n\nTitle: ${String(input.title).slice(0, 200)}\n\nDescription:\n${String(input.body).slice(0, 1800)}\n\nFiles: ${changed.slice(0, 12).join(", ")}`);
+          throw new Error(`Not published: ${why}. Ticket lanes do not change balance, rates, recipes or turn-engine numbers. An owner card is filed with your evidence. ${guardrails.STAFF_REVIEW_LINE} Do not offer to build it and do not say what the owner will decide.`);
+        }
+      }
       if (job.repository === "AHDGame" && economyFiles.length && !/^#{2,3}\s*World validation\b[\s\S]{80,}/im.test(input.body || "")) throw new Error(`This patch changes the turn engine or economy (${economyFiles.slice(0, 4).join(", ")}). Before publishing, add tests that run it against the world states it will meet: existing and newly founded sector cohorts, worlds seeded without the stamps or flags your code reads, and the first turn after the switch. Then add a "## World validation" section to the PR body listing each case and its result. The owner approves economy changes; promotion to the main server waits for the owner's waking hours unless they grant a night pass.`);
       const dir = path.join(config.stateDir, "artifacts"); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const digest = crypto.createHash("sha256").update(patch).digest("hex");
@@ -5539,7 +5648,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { ticketCommandAllowed: (job) => !ticketCommands.refusal(job), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { incidentContext: incidentFacts, escalationCheck, escalateTicket, fileOwnerCard, ticketCommandAllowed: (job) => !ticketCommands.refusal(job), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

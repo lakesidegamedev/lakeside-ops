@@ -27,7 +27,7 @@ test("finish: a ticket cannot wait without a closing condition; with one, the wa
   await f.broker.tool(f.job, "finish", { state: "done", summary: "Answered." });
 });
 
-test("turn commentary is opt-in: a turn report needs a player message, a due promise or the closing condition", async () => {
+test("turn commentary is opt-in: a turn report needs a player message or a due promise, never the closing condition alone", async () => {
   const f = setup(); f.playerWrote(30);
   const d = f.ledger.data;
   d.watch = { turnClock: { turn: 40, iteration: 3, at: f.now() } };
@@ -37,17 +37,16 @@ test("turn commentary is opt-in: a turn report needs a player message, a due pro
   // A turn ran; nobody asked, no promise, no closing condition: refused.
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Turn 41: your plant still made nothing." }), /a turn having run is not a reason to post/);
   assert.equal(f.audits("turn_post_not_called_for").length, 1);
-  // The closing condition names turn 41: that one report goes out, then the call is used up.
+  // Keir guardrails (2026-11-22): the closing condition alone no longer licenses a recap, so turn 41 is still refused.
   f.job.closing = { closesWhen: CLOSE.closesWhen, waitingOn: CLOSE.waitingOn, on: { kind: "turn", ref: 41 }, setAt: f.now() };
   f.job.lastGameReadAt = f.now(); // the turn's figures were read in this activation
-  await f.broker.tool(f.job, "channel_reply", { message: "Turn 41: the coal contract started and your plant produced its first output." });
-  assert.equal(f.job.closing.turnReported, 41);
+  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Turn 41: the coal contract started and your plant produced its first output." }), /a turn having run is not a reason to post/);
   f.advance(65); d.watch.turnClock = { turn: 42, iteration: 3, at: f.now() };
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Turn 42: your plant kept producing and made a profit." }), /a turn having run is not a reason to post/);
   // A player message makes the next turn report an answer.
   f.playerWrote(1); f.job.lastGameReadAt = f.now();
   await f.broker.tool(f.job, "channel_reply", { message: "Turn 42: your plant kept producing and made a profit." });
-  assert.equal(f.posts().length, 3);
+  assert.equal(f.posts().length, 2);
 });
 
 test("a step-back activation checkpoints first and posts at most once", async () => {

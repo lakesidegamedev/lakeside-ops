@@ -48,7 +48,7 @@ const config = {
   evidencePagesDir: env.EVIDENCE_PAGES_DIR || "/var/lib/lakeside-evidence", evidencePublicBase: env.EVIDENCE_PUBLIC_BASE || "",
   ownerId: env.KEIR_OWNER_ID || "333052320252297216", botId: env.KEIR_BOT_ID || "1479984768194969663",
   // @keir-bot on an AHDGame PR asks for a review; posted as keir-bot when its token is set.
-  ticketPostsPerHour: Number(env.KEIR_TICKET_POSTS_PER_HOUR || 4),
+  ticketPostsPerHour: Number(env.KEIR_TICKET_POSTS_PER_HOUR || 3),
   prMentionEnabled: env.KEIR_PR_MENTION !== "0", githubReviewerToken: env.KEIR_GITHUB_TOKEN || "", keirGitEmail: env.KEIR_GIT_EMAIL || "keir@localhost",
   ownerMuseDelegateId: env.KEIR_MUSE_DELEGATE_ID || null,
   ownerDecisionChannel: ["app", "both"].includes(env.KEIR_OWNER_DECISION_CHANNEL) ? env.KEIR_OWNER_DECISION_CHANNEL : "discord",
@@ -68,7 +68,7 @@ const config = {
   // Model split (2026-10-12 trial): quick lane = conversation, worker lanes = coding and deep answers.
   computerUrl: env.KEIR_COMPUTER_URL || (env.WORKER_TOKEN ? "http://127.0.0.1:9770" : undefined), computerToken: env.KEIR_COMPUTER_TOKEN || env.WORKER_TOKEN,
   voiceProvider: env.KEIR_VOICE_PROVIDER || "agy:gemini-3.8-flash@low",
-  fallbackProvider: env.KEIR_FALLBACK_PROVIDER || "", ticketProvider: env.KEIR_TICKET_PROVIDER || "", quickProvider: env.KEIR_QUICK_PROVIDER || "claude", workerProvider: env.KEIR_WORKER_PROVIDER || "claude",
+  fallbackProvider: env.KEIR_FALLBACK_PROVIDER || "", ticketProvider: env.KEIR_TICKET_PROVIDER || "codex:gpt-6.1-terra@high", quickProvider: env.KEIR_QUICK_PROVIDER || "claude", workerProvider: env.KEIR_WORKER_PROVIDER || "claude",
   // Keir 7 fast lane: ticket questions answered by Ask Keir before any model run.
   // A deep Ask answer with live reads measured 80 s (2026-11-01), so the wait is 150 s.
   fastLane: env.KEIR_FAST_LANE !== "0", askUrl: (env.KEIR_ASK_URL || "https://ask.lakesidegames.net").replace(/\/+$/, ""), askSecret: env.KEIR_ASK_SECRET || null, askTimeoutMs: positive("KEIR_ASK_TIMEOUT_SECONDS", 150) * 1000,
@@ -646,7 +646,7 @@ async function flushOutbox() {
       // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
       const text = clean.replace(/[\u2013\u2014]/g, ",");
       // Keir 11.1: an answer carrying evidence (chart or report link) is one message, so the link never drifts onto a later part.
-      const chunks = channelJob && !entry.files?.length && !entry.components && !require("./lib/operator/evidencedelivery").carries(entry) ? splitReply(text).flatMap((c) => chunkMessage(c)) : chunkMessage(text);
+      const chunks = channelJob && !entry.files?.length && !entry.components && !require("./lib/operator/evidencedelivery").carries(entry) ? splitReply(text).flatMap((c) => chunkMessage(c, 2000)) : chunkMessage(text);
       const lastRow = entry.components || answerFeedback.components(key, entry, channelJob);
       for (let i = entry.deliveredChunks || 0; i < chunks.length; i++) {
         if (channelJob && i > 0) await new Promise((r) => setTimeout(r, replyGapMs));
@@ -886,7 +886,10 @@ function drain() {
       const role = rootJob(j, d.jobs).operatorRole;
       if (["watchkeeper", "engineering"].includes(role)) j.operatorRole = role;
     }
+    const wasCapped = Boolean(j.wakeCappedAt);
     lifecycle.applyEffects(ledger, lifecycle.wakeStep(j, wakeCtx));
+    // Keir guardrails (2026-11-22): a wake cap hit on a ticket is a handoff to staff, not silence.
+    if (!wasCapped && j.wakeCappedAt && j.kind === "ticket" && j.ticket && !j.codingParent) broker.escalationCheck(j, { wakeCapped: true }).catch((e) => ledger.audit("escalation_check_failed", { job: j.id, error: String(e.message).slice(0, 160) }));
   }
   ledger.save();
   // Keir 3.0 admission: reserved conversation and owner capacity, aging so

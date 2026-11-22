@@ -5,6 +5,21 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### Guardrails before Keir is turned back on (owner decision 2026-11-22)
+
+- **Incident context.** Every ticket job is told which incidents are open and which turns failed in the last 24 hours. Keir cannot say an incident or the game has "recovered", "resolved" or "is back to normal" until two clean turns have run after the last failure; if the turn record cannot be read, it says it could not confirm.
+- **Claims need evidence.** A causal or outcome claim about money, cash, production, sales, payments, or something being "running", "fixed", "live" or "paid" is refused unless this activation read a record for the player's own character or company. The old rule that let any verified release on the ticket pass every later outcome claim is gone: the semantic screen's "states an outcome as settled" flag now needs that same read. When a turn failure or open incident overlaps the period, the claim must name the turn range.
+- **One message per reply.** A reply is one Discord message and is split only when it passes 2000 characters. The default cap is 3 posts per ticket per hour with no new player message (`KEIR_TICKET_POSTS_PER_HOUR`), and a closing condition alone no longer licenses a per-turn recap; the player has to have asked or a promise has to be due.
+- **No design or balance work from tickets.** A ticket lane cannot publish a patch or delegate a fix that changes balance, rates, recipes or turn-engine numbers, cannot offer to build a feature or mockup, and cannot quote or describe the owner's intentions. It files one owner card per ticket with the evidence and tells the player staff will review.
+- **Auto-escalation.** After Keir has answered, a player writing "are you sure", "you didn't answer", "that's not true" and similar, a second correction on one ticket, or a wake cap hit posts one short "staff are reviewing" message, files a needsHuman card, alerts the owner and pauses Keir on that ticket.
+- **Route.** The default ticket route is `codex:gpt-6.1-terra@high` (GPT Terra). Release note: set `KEIR_TICKET_PROVIDER=codex:gpt-6.1-terra@high` in both `/etc/keir-operator.env` and `/etc/keir-owner-model.env` (the owner-model file loads last).
+
+### For developers
+
+- `lib/operator/guardrails.js` holds the pure rules (incident context, recovery and claim checks, scope checks, escalation triggers). `broker.js`: `incidentFacts` (60 second cache over `recent_turns`, `turn_failure_detail` and the open incident list), `guardrailGates` (runs in `guardTicketPost` for player-facing ticket jobs), `fileOwnerCard`, `escalateTicket`, `escalationCheck` (called at the start of a ticket activation and on a wake cap), and balance checks in `publish_patch` and `delegate_fix`. `job.ownRecordRead` records that a read this activation named the reporter's character.
+- `replysplit.js` now only splits above 2000 characters, at paragraph boundaries. `postbudget.js` default cap 3; `turnPostVia` no longer returns `closing`.
+- Figures in claims are still checked by the existing number guard; the new gate checks the entity read and the turn range.
+
 - **Keir never calls itself Muse to the owner.** The owner's chats in the Keir app (home, support desk and side chats) now run on the supervisor's full agent, so the operator's owner path only serves the web portal and older app builds. Its persona introduces itself as Keir, and its refusals name the support desk path and point to the app chat instead of "Owner Muse". Staff and player Discord paths and every guard on them are unchanged; a test now checks a staff and a player Discord message keep them.
 
 ## 11.4.1 (2026-11-21)

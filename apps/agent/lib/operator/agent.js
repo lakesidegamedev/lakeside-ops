@@ -386,6 +386,12 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // A ticket whose channel was closed by hand has nothing left to do; never
     // spend a model run rediscovering that (tickets 1512 and 1518 looped).
     if (job.channelClosed) { job.state = "done"; ledger.save(); return; }
+    // Keir guardrails (2026-11-22): a player who challenges Keir, a second correction, or a wake cap hands the ticket to staff
+    // before any model runs. One short post, a needsHuman card, then Keir stops on this ticket.
+    if (job.kind === "ticket" && job.ticket && !job.codingParent && !job.internalProbe && broker.escalationCheck) {
+      const esc = await broker.escalationCheck(job).catch((e) => { ledger.audit("escalation_check_failed", { job: job.id, error: String(e.message).slice(0, 160) }); return null; });
+      if (esc) { ledger.save(); return; }
+    }
     const ticketRetry = !quick && job.kind === "ticket" && job.ticket && job.role === "support" && !job.codingParent && !job.internalProbe;
     if (ticketRetry && humanInbox(job)) delete job.ticketStepLimits;
     if (require("./toolmarkup").hasToolMarkup(job.summary)) {
@@ -593,7 +599,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     }
     job.evidence = require("./knowledge").numbersIn([job.source, ...requestInbox].map((m) => m?.content || "").join("\n")).map((n) => n.value);
     if (job.ticket) job.evidence.push(...require("./knowledge").numbersIn(require("./knowledge").ticketRecord(ledger, job.ticket).facts.filter((f) => !f.closedAt).map((f) => f.text).join("\n")).map((n) => n.value));
-    job.evidenceText = ""; job.reviewRefusals = 0; job.listedTools = {};
+    job.evidenceText = ""; job.ownRecordRead = false; job.reviewRefusals = 0; job.listedTools = {};
     // The read also marks the shared record as seen (the reread gate), so it runs for every ticket; the compact profile shows it through the case file.
     const ticketRecordRead = job.ticket ? require("./knowledge").readTicketRecord(ledger, job.ticket, job) : undefined;
     context.ticketRecord = ticketCompact ? undefined : ticketRecordRead;
@@ -624,6 +630,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       if (ticketCompact) for (const [k, v] of Object.entries(context.orientation.tools || {})) context.orientation.tools[k] = v.slice(0, 24);
       mark("orientation");
       if (context.orientation.timings) preflightParts.orientationSteps = context.orientation.timings;
+    }
+    // Keir guardrails (2026-11-22): every ticket job sees the open incidents and the last 24 hours of turn failures.
+    if (job.kind === "ticket" && job.ticket && !job.codingParent && broker.incidentContext) {
+      try { context.incidentContext = await broker.incidentContext(job, signal); job.incidentContextAt = Date.now(); mark("incidentContext"); }
+      catch (e) { if (signal?.aborted) throw e; ledger.audit("incident_context_failed", { job: job.id, ticket: job.ticket, error: String(e.message).slice(0, 160) }); }
     }
     // Keir 10 evidence pack: the reads this lane nearly always needs, gathered in parallel before the model runs.
     if (!replyOnly && laneDef && discover && job.kind === "ticket" && job.ticket && config.evidencePack !== false) {

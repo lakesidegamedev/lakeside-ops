@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("fs"), os = require("os"), path = require("path");
-const { splitReply, DISCORD_LIMIT, MAX_CHUNKS } = require("../lib/operator/replysplit");
+const { splitReply, DISCORD_LIMIT } = require("../lib/operator/replysplit");
 const clarify = require("../lib/operator/clarify");
 const { createLedger } = require("../lib/operator/store");
 const { createBroker } = require("../lib/operator/broker");
@@ -16,36 +16,23 @@ test("splitter: a short reply stays one message", () => {
   assert.deepEqual(splitReply(""), []);
 });
 
-test("splitter: paragraphs and sentences become short messages in order, nothing lost", () => {
-  const text = "Your California plants were mothballed at turn 675 and still make nothing. That is why revenue fell.\n\nReactivating them restarts output the next turn. The loss counter does not reset, so expect one more weak turn before it clears.";
-  const parts = splitReply(text);
-  assert.ok(parts.length >= 2 && parts.length <= MAX_CHUNKS, JSON.stringify(parts));
-  assert.ok(parts.every((p) => p.length <= 220), JSON.stringify(parts.map((p) => p.length)));
-  assert.equal(squash(parts.join(" ")), squash(text));
-  assert.match(parts[0], /^Your California plants/);
-  assert.match(parts.at(-1), /weak turn before it clears\.$/);
+test("splitter (guardrails): a multi-paragraph reply under 2000 characters is still ONE message", () => {
+  const text = "Your California plants were mothballed at turn 675 and still make nothing. That is why revenue fell.\n\nReactivating them restarts output the next turn. The loss counter does not reset at once, so expect one weak turn before it clears.";
+  assert.deepEqual(splitReply(text), [text]);
+  const list = "You can fix it from the CEO office in three steps:\n1. Open the CEO office.\n2. Pick internal supply.\n3. Save the order.\n\nIt takes effect next turn.";
+  assert.deepEqual(splitReply(list), [list]);
 });
 
-test("splitter: a long paragraph is cut at sentence ends, never mid-sentence", () => {
-  const sentence = "The freight share you hold in Indiana is sold to the open market first.";
-  const text = Array.from({ length: 4 }, () => sentence).join(" ");
+test("splitter (guardrails): only a reply over the Discord limit is split, at paragraphs, losing nothing", () => {
+  const para = (i) => `Point number ${i} is its own idea. `.repeat(20).trim();
+  const text = Array.from({ length: 6 }, (_, i) => para(i + 1)).join("\n\n");
+  assert.ok(text.length > DISCORD_LIMIT);
   const parts = splitReply(text);
   assert.ok(parts.length >= 2);
-  for (const p of parts) assert.match(p, /market first\.( The freight.*market first\.)?$/);
-});
-
-test("splitter: a list stays whole with the line that introduces it", () => {
-  const text = "You can fix it from the CEO office in three steps:\n1. Open the CEO office.\n2. Pick internal supply.\n3. Save the order.\n\nIt takes effect next turn, so check your sector page after the turn ends.";
-  const parts = splitReply(text);
-  const list = parts.find((p) => /^1\. Open/m.test(p));
-  assert.ok(list && /three steps:/.test(list) && /3\. Save the order\./.test(list), JSON.stringify(parts));
+  for (const p of parts) assert.ok(p.length <= DISCORD_LIMIT, String(p.length));
   assert.equal(squash(parts.join(" ")), squash(text));
-});
-
-test("splitter: a code fence is never cut", () => {
-  const code = "```\nline one\n\nline two after a blank\n```";
-  const parts = splitReply(`Run this in the console and tell me exactly what it prints back to you and then do the next thing for me please now.\n\n${code}\n\nThat is all it needs. Nothing else changes on your side until the next turn runs.`);
-  assert.ok(parts.includes(code), JSON.stringify(parts));
+  assert.match(parts[0], /^Point number 1 /);
+  assert.match(parts.at(-1), /Point number 6 is its own idea\.$/);
 });
 
 test("splitter: no message passes the Discord limit and long unbroken text is cut at spaces", () => {
@@ -54,14 +41,6 @@ test("splitter: no message passes the Discord limit and long unbroken text is cu
   assert.ok(parts.length > 1);
   for (const p of parts) assert.ok(p.length <= DISCORD_LIMIT, String(p.length));
   assert.equal(squash(parts.join(" ")), squash(text));
-});
-
-test("splitter: more than the allowed messages folds the tail into the last, in order", () => {
-  const text = Array.from({ length: 8 }, (_, i) => `Point number ${i + 1} is its own short idea.`).join("\n\n");
-  const parts = splitReply(text);
-  assert.equal(parts.length, MAX_CHUNKS);
-  assert.equal(squash(parts.join(" ")), squash(text));
-  assert.match(parts.at(-1), /Point number 8/);
 });
 
 // ---- broker: a split reply is ONE update ----
@@ -86,6 +65,7 @@ const updates = (f) => f.calls.filter((c) => c[1] === "support_public_update");
 test("a ticket answer arrives as a single tracked message", async () => {
   const f = setup();
   f.job.lastCodeReadAt = 1; // an earlier code read, so the Keir 9 rule-lookup check does not apply to this test
+  f.job.reporterCharacter = { id: "4242", name: "Fixture Player" }; f.job.ownRecordRead = true; // a read of the player's own record
   const reply = "Your Indiana freight sector sells to the open market before your own manufacturing sees it. The sale order is by price, not by owner. That is why only five percent reaches your own company.\n\nNothing is missing from your account. A same-owner priority would be a rule change, so I am raising it with the developers.";
   const res = await f.broker.tool(f.job, "channel_reply", { message: reply });
   assert.equal(res.published, true);

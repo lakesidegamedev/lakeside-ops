@@ -57,6 +57,7 @@ async function fixture(t, { offline = false } = {}) {
   // uncertain write and a sealed approval waiting on the owner.
   const coordinator = ledger.createJob("ticket:123", { kind: "ticket", role: "support", ticket: 123, channelId: CH, replyChannel: CH,
     source: { channelId: CH, channelName: "ticket-bug-fixture-123", content: "My plant is idle" }, deadline: 9e15 });
+  coordinator.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; coordinator.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
   ledger.data.seen["ticket:123"] = coordinator.id;
   ledger.data.channels[CH] = { ticket: 123, category: "bug" };
   ledger.data.disclosed = { 123: { at: 1, posted: true } };
@@ -93,6 +94,7 @@ test("normal path: take, worker replies through the ticket gate, owner directs i
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const { workerId, takeoverId } = r.body.receipt;
   const worker = d.jobs[workerId];
+  worker.reporterCharacter = { id: "4242", name: "Fixture Player", username: "fixtureplayer" }; worker.ownRecordRead = true; // the player's own record was read (guardrails claim gate)
   assert.equal(r.body.supervision.state, "supervised");
   assert.equal(r.body.receipt.suppressedOutbox, 1, "Support Keir's queued reply is withdrawn on takeover");
   assert.match(d.outbox.stale.skipped, /takeover/);

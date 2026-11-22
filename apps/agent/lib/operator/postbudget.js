@@ -8,11 +8,11 @@
 //      it: the status card notice and the model's own post never both announce the same release.
 //   2. Turn updates: a turn report with no new player message since the last one goes out only when the answer
 //      changed (sold out to flooded, loss to profit, broken to fixed), not merely the numbers.
-//   3. Hourly cap: at most KEIR_TICKET_POSTS_PER_HOUR (default 4) Keir posts in an hour with no new player message.
+//   3. Hourly cap: at most KEIR_TICKET_POSTS_PER_HOUR (default 3) Keir posts in an hour with no new player message.
 //      Past the cap, one merged message may still go out if it carries a correction or an answer the player is owed;
 //      anything else is refused with an instruction to merge it, never dropped silently.
 const HOUR = 3600000;
-const DEFAULT_PER_HOUR = 4;
+const DEFAULT_PER_HOUR = 3;
 
 const isCard = (p) => (p.kind ? p.kind === "status_card" : String(p.text || "").startsWith("[status card]"));
 const LIVE = /\blive on the main server\b|\b(?:is|are) (?:now )?live\b|\blive (?:from|since) this turn\b|\bnow (?:in|on) the (?:live )?(?:game|main server)\b|\bon the main server\b/i;
@@ -88,18 +88,19 @@ function turnPostVia({ posts, humanAt, message, correction = false, promiseDue =
   // The first answer on a ticket, or one after the player wrote, answers them; only an unprompted follow-up is commentary.
   if (!lastAt || (humanAt || 0) > lastAt || answersAsk) return "answer";
   if (promiseDue) return "promise";
-  if (calledFor && !repeatsTurnAnswer({ posts, humanAt, message })) return "closing";
+  // Keir guardrails (2026-11-22, audit D5): the closing condition alone no longer calls for a recap. A recap needs the player to
+  // have asked or a recorded promise to be due; the hourly turn reports on ticket 1860 (turns 89 to 96) were this path.
   if (openAsk) return "doubt";
   return "refused";
 }
 function turnPostRule(args) {
   if (turnPostVia(args) !== "refused") return null;
   const { posts, humanAt, message, calledFor } = args;
-  if (calledFor) {
-    const prior = repeatsTurnAnswer({ posts, humanAt, message });
+  const prior = calledFor ? repeatsTurnAnswer({ posts, humanAt, message }) : null;
+  if (prior) {
     return { why: "same turn answer", prior, refusal: `Not posted: this turn report gives the same answer as the last one ("${String(prior.text).slice(0, 140)}") and the player has not written since. Post a turn report only when the answer changes; keep checking privately.` };
   }
-  return { why: "turn not called for", refusal: "Not posted: a turn having run is not a reason to post. A turn report goes out only when the player asked, a promise you made is due, or your closing condition (closesWhen and waitingOn) calls for this turn's result. Keep checking privately, or set waitOn {kind: \"turn\", ref: N} for the one turn whose result the player needs." };
+  return { why: "turn not called for", refusal: "Not posted: a turn having run is not a reason to post. A turn report goes out only when the player asked, or a promise you made is due. Keep checking privately, or set waitOn {kind: \"turn\", ref: N} for the one turn whose result the player needs." };
 }
 
 // The ticket's main release receipt: one key per shipped change set, and when it arrived.
