@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **Keir never calls itself Muse to the owner.** The owner's chats in the Keir app (home, support desk and side chats) now run on the supervisor's full agent, so the operator's owner path only serves the web portal and older app builds. Its persona introduces itself as Keir, and its refusals name the support desk path and point to the app chat instead of "Owner Muse". Staff and player Discord paths and every guard on them are unchanged; a test now checks a staff and a player Discord message keep them.
+
 ## 11.4.1 (2026-11-21)
 
 - When the owner tells Keir to close a ticket in that ticket's own channel ("close this ticket please and wrap up"), Keir closes it. The channel names the ticket, so Keir no longer asks the owner to confirm, and the owner's instruction lifts any closure hold an earlier follow-up set on that ticket (cleared on every task for it, with an audit line). If the owner confirms a close Keir asked about, the hold no longer refuses it a second time. Staff still cannot lift the owner's hold (Keir says so at once instead of asking the owner), and "close this" in another ticket's channel closes nothing else. Ticket 1860 stayed open three hours after the owner asked.

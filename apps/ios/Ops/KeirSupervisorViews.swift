@@ -153,6 +153,11 @@ struct KeirSupervisorJobCard: View {
                 Text(job["title"].string.nonempty ?? "Working on your request").font(.callout.weight(.semibold)).lineLimit(2)
                 if queued { Text("Waiting to start").font(.caption).foregroundStyle(OpsTheme.muted) }
                 else { LoadingShimmer(text: (job["attempts"].number ?? 1) > 1 ? "Working, attempt \(Int(job["attempts"].number ?? 1))" : "Working").font(.caption) }
+                // What the agent is doing right now (its latest tool call), from the server.
+                if !queued, let activity = job["activity"].string.nonempty {
+                    Text(activity).font(.caption).foregroundStyle(OpsTheme.muted).lineLimit(2)
+                        .accessibilityIdentifier("supervisor-job-activity")
+                }
             }
             Spacer(minLength: 8)
             Button(action: stop) {
@@ -192,29 +197,68 @@ struct KeirSupervisorNotice: View {
     }
 }
 
-/// The composer's "+" in the private conversation. The support menu offers
-/// attachments, ticket drafts, routing and a model picker, none of which the
-/// supervisor accepts. What is relevant here is stopping the running job and
-/// getting to the support desk on purpose.
+/// The composer's "+" in a chat the supervisor answers: attach photos or
+/// files, choose the model and effort for this chat, stop the running job, and
+/// reach the support desk from home.
 struct KeirSupervisorPlusMenu: View {
+    @EnvironmentObject private var session: AppSession
     @ObservedObject var keir: KeirStore
+    var attachDisabled = false
+    var attachPhotos: () -> Void = {}
+    var attachFiles: () -> Void = {}
     let stop: () -> Void
 
     var body: some View {
         Menu {
+            Section {
+                Button(action: attachPhotos) { Label("Photo library", systemImage: "photo.on.rectangle") }
+                    .accessibilityIdentifier("supervisor-attach-photo")
+                Button(action: attachFiles) { Label("Choose file", systemImage: "doc") }
+                    .accessibilityIdentifier("supervisor-attach-file")
+            }
+            .disabled(attachDisabled)
+            Section {
+                Menu {
+                    // An empty submenu is hidden, so say it is loading instead.
+                    if keir.models.isEmpty { Text("Loading models…") }
+                    ForEach(keir.models, id: \.["id"].string) { model in
+                        Button { Task { await keir.selectModel(model["id"].string, session) } } label: {
+                            if model["id"].string == keir.modelSelection { Label(model["label"].string, systemImage: "checkmark") }
+                            else { Text(model["label"].string) }
+                        }
+                    }
+                } label: { Label("Model: \(keir.modelLabel)", systemImage: "cpu") }
+                    .disabled(keir.selectingModel)
+                    .accessibilityIdentifier("supervisor-model")
+                Menu {
+                    if keir.efforts.isEmpty { Text("Loading…") }
+                    ForEach(keir.efforts, id: \.self) { effort in
+                        Button { Task { await keir.selectEffort(effort, session) } } label: {
+                            let label = effort == "auto" ? "Default" : effort.capitalized
+                            if effort == keir.effortSelection { Label(label, systemImage: "checkmark") } else { Text(label) }
+                        }
+                    }
+                } label: { Label("Effort: \(keir.effortLabel)", systemImage: "gauge.with.dots.needle.50percent") }
+                    .disabled(keir.selectingModel)
+                    .accessibilityIdentifier("supervisor-effort")
+            }
             if keir.supervisorLiveJob != nil {
                 Section {
                     Button(role: .destructive, action: stop) { Label("Stop current job", systemImage: "stop.circle") }
                         .disabled(keir.supervisor.stopping)
                 }
             }
-            Section {
-                Button { keir.select("main") } label: { Label("Open support desk", systemImage: "lifepreserver") }
+            if keir.thread == KeirStore.supervisorThread {
+                Section {
+                    Button { keir.select("main") } label: { Label("Open support desk", systemImage: "lifepreserver") }
+                }
             }
         } label: { KeirComposerIcon(system: "plus") }
-            .accessibilityLabel("More for your private conversation")
-            .accessibilityHint("Stop the running job or open the support desk")
+            .accessibilityLabel("Add to your message")
+            .accessibilityHint("Attach a photo or file, choose the model and effort, or stop the running job")
             .accessibilityIdentifier("supervisor-plus")
+            // A failed or skipped load is retried here rather than leaving an empty picker.
+            .task(id: "\(keir.thread)|\(keir.models.isEmpty)") { if keir.models.isEmpty { await keir.loadModels(session) } }
     }
 }
 

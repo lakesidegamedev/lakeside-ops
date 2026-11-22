@@ -97,12 +97,12 @@ function guard(ledger, config, job, name, input) {
   if (!p.scoped) return p;
   const deny = reason => fail(ledger, job, name, reason);
   const serialized = JSON.stringify(input);
-  if (hasCredentials(serialized)) deny("Credential-shaped content cannot be sent to tools or saved in owner Muse artifacts. Use a secure credential surface.");
+  if (hasCredentials(serialized)) deny("Credential-shaped content cannot be sent to tools or saved in owner artifacts. Use a secure credential surface.");
   if (job.ownerMuseBlocker && name === "finish" && ["done", "dismissed"].includes(input.state)) throw new Error("This task has an unsupported capability blocker. Report it honestly and finish blocked; do not claim completion.");
   if (["support_directive", "ticket_record"].includes(job.ownerMuseBlocker?.capability) && name === "channel_reply" && input.message !== job.ownerMuseBlocker.message) throw new Error(`The support handoff was refused. Report this exact status: ${job.ownerMuseBlocker.message}`);
   if (name === "local_file" && ["read", "list"].includes(input.operation)) return p;
   if (READS.has(name)) {
-    if (name === "read_tool" && !MCP_READS[input.server]?.includes(input.tool)) deny(`Unsupported owner Muse read capability: ${input.server}/${input.tool}. No reviewed read adapter.`);
+    if (name === "read_tool" && !MCP_READS[input.server]?.includes(input.tool)) deny(`Unsupported on the support desk path: ${input.server}/${input.tool} has no reviewed read adapter here. The owner's Keir app chats run on the full agent.`);
     return p;
   }
   if (name === "ticket_record" && input.op === "read") return p;
@@ -122,14 +122,14 @@ function guard(ledger, config, job, name, input) {
   if (PRIVATE.has(name) || ["support_directive", "ticket_record", "open_ticket", "open_suggestion", "ticket_command", "add_to_ticket", "render_preview"].includes(name)) return p;
   if (name === "chart" && job.replyChannel === "app" && job.source?.channelId === "app") return p;
   if (name === "request_heal" || name === "execute_action") return p;
-  if (name === "shell" || name === "request_action") deny("Owner Muse cannot run arbitrary commands, host actions, remote workflows or iOS builds/uploads. Use local_file for isolated drafts; unreviewed MCP writes are unsupported.");
+  if (name === "shell" || name === "request_action") deny("This support desk path cannot run arbitrary host commands, host actions, remote workflows or iOS builds. The owner's chats in the Keir app run on Keir's full agent, which can; send it there.");
   if (name === "computer") {
     if (input.action === "open" && (input.url || input.html)) return p;
     if (job.appComputer && !input.url && !input.html && ["look", "scroll", "close"].includes(input.action)) return p;
     if (job.appComputer && !input.url && !input.html && ["click", "type", "key"].includes(input.action)) return p;
     deny("Unsupported computer request: open a computer workspace first. Browser input requires an exact current-screen proposal.");
   }
-  deny(`Unsupported owner Muse mutation: ${name}${input.action ? `/${input.action}` : ""}. No reviewed exact-approval adapter; nothing executed and no approval was requested.`);
+  deny(`Unsupported on the support desk path: ${name}${input.action ? `/${input.action}` : ""} has no reviewed adapter here, so nothing ran and no approval was requested. The owner's Keir app chats run on the full agent.`);
 }
 // Initial consequential allowlist: native heal plans only, not generic MCP writes.
 function finiteJson(value) {

@@ -329,14 +329,17 @@ struct KeirView: View {
         return "Message Keir"
     }
 
-    /// The "+" differs in the private conversation: no attachments, ticket
-    /// drafts, routing or model picker, which only Support Keir understands.
+    /// The "+" in a chat the supervisor answers (all of the owner's chats):
+    /// attachments, the model and effort, and stopping the running job. Ticket
+    /// drafts and routing belong to the support operator.
     @ViewBuilder private var composerPlus: some View {
         if keir.isSupervisor {
-            KeirSupervisorPlusMenu(keir: keir) {
+            KeirSupervisorPlusMenu(keir: keir, attachDisabled: attachments.uploading || attachments.items.count >= 6,
+                                   attachPhotos: { afterMenu { attachPhotos = true } }, attachFiles: { afterMenu { attachFiles = true } }) {
                 guard let id = keir.supervisorLiveJob?["id"].string else { return }
                 Task { await keir.cancelSupervisorJob(id, session) }
             }
+            .attachmentSources(attachments, photos: $attachPhotos, files: $attachFiles)
         } else { plusMenu }
     }
 
@@ -381,8 +384,10 @@ struct KeirView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .task(id: "\(scenePhase == .active)|\(keir.thread)|\(connectionAttempt)|\(voiceMode)") { if scenePhase == .active && !voiceMode { await keir.connect(session) } }
         .task { await keir.loadThreads(session) }
-        .task(id: keir.thread) { await keir.loadModels(session); await keir.loadControls(session) }
-        .onAppear { appearedAt = Date(); attachments.scope = keir.thread; handleShortcut() }
+        // Reload when the chat changes or when the same chat becomes a supervisor
+        // chat (the account resolved), so the picker always matches who answers.
+        .task(id: "\(keir.thread)|\(keir.isSupervisor)") { await keir.loadModels(session); await keir.loadControls(session) }
+        .onAppear { appearedAt = Date(); attachments.scope = keir.thread; attachments.supervisorServes = { [weak keir = self.keir] in keir?.servedBySupervisor($0) ?? false }; handleShortcut() }
         .onChange(of: router.openKeirControls) { _, _ in handleShortcut() }
         .onChange(of: router.openKeirVoice) { _, _ in handleShortcut() }
         .onDisappear(perform: leaveConversation)
@@ -1106,7 +1111,9 @@ private struct KeirAttachment: View {
     private func load() async {
         guard bytes == nil, !loading else { return }
         let url = attachment["url"].string
-        guard url.hasPrefix("/api/keir/app/uploads/"), !url.contains("..") else { error = "Invalid private attachment reference"; return }
+        // Support desk uploads, or the supervisor's owner-only files (the owner's
+        // uploads and the images Keir attaches to its replies).
+        guard url.hasPrefix("/api/keir/app/uploads/") || KeirSupervisor.validFileURL(url), !url.contains("..") else { error = "Invalid private attachment reference"; return }
         loading = true; defer { loading = false }
         do { bytes = try await session.data(url, accept: attachment["type"].string, limit: 10 * 1024 * 1024); error = nil }
         catch { self.error = error.localizedDescription }

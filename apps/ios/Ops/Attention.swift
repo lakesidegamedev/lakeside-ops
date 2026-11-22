@@ -19,8 +19,18 @@ final class AttentionCenter: ObservableObject {
     /// Rebuilt only when an input changes. Views read this instead of
     /// re-scrubbing every ticket on each body evaluation.
     @Published private(set) var items: [AttentionItem] = []
+    /// For an owner with a supervisor: the server's own "needs you" count
+    /// (GET /api/keir/supervisor/attention), the same function the chat answers
+    /// from, so the badge and Keir's answer cannot disagree. Nil when the server
+    /// has no complete answer; the count is then rebuilt on the phone.
+    @Published private(set) var serverCount: Int?
 
     private init() {}
+
+    func setServer(_ result: JSONValue?) {
+        guard let result, result["complete"] != .bool(false), let count = result["count"].number else { serverCount = nil; return }
+        serverCount = Int(count)
+    }
 
     /// `tickets` is every ticket the app knows about (hub and work queue). Only
     /// the ones waiting on an owner decision are kept.
@@ -38,7 +48,7 @@ final class AttentionCenter: ObservableObject {
     }
 
     func reset() {
-        decisions = []; questions = []; ownerWork = []; heldTickets = []; heldTasks = []; items = []
+        decisions = []; questions = []; ownerWork = []; heldTickets = []; heldTasks = []; items = []; serverCount = nil
     }
 
     /// A ticket held on the owner: the server says a decision is pending, or
@@ -155,7 +165,7 @@ final class AttentionCenter: ObservableObject {
     /// has no decision row of its own.
     var decisionCount: Int { items.filter { [.decision, .ticket, .task].contains($0.kind) }.count }
 
-    var count: Int { items.count }
+    var count: Int { serverCount ?? items.count }
 
     var summary: String {
         switch count {

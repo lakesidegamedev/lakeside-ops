@@ -5,7 +5,9 @@
 // Another admin is refused. This is the one hard boundary for a chat that runs
 // a full Claude Code agent as root, because these routes are reachable from the
 // internet. Writes need JSON and a same-origin (or absent, native) Origin.
-// Creating a private side chat uses the authenticated app route.
+// Creating a private side chat uses the authenticated app route. Uploads and
+// files (/uploads, /files/<id>) and the model picker (/models) are owner-only
+// like everything else here.
 const path = require("node:path");
 
 function ownerIdentity(env = process.env) {
@@ -55,6 +57,18 @@ function sideChatCreator(req, env) {
   };
 }
 
+async function readBytes(req, limit) {
+  const chunks = []; let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw Object.assign(new Error("Files must be at most 10 MB."), { status: 413 });
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+const FILE_ROUTE = /^\/files\/([a-f0-9]{32})$/;
+
 async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, getSupervisor, env = process.env }) {
   if (!pathname.startsWith("/api/keir/supervisor/")) return false;
   const reply = (status, value) => {
@@ -77,11 +91,38 @@ async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, g
     if (!s.owner) return reply(503, { error: "The supervisor runner is owned by another web process on this server.", configured: true });
     const url = new URL(req.url, "http://request.local");
 
+    // Owner uploads from the phone: raw bytes, the name in X-Filename and the
+    // chat in X-Keir-Thread (the same shape the support desk upload uses).
+    if (route === "/uploads" && req.method === "POST") {
+      if (!sameOrigin(req)) return reply(403, { error: "Unexpected origin" });
+      const bytes = await readBytes(req, 10 * 1024 * 1024);
+      let name = String(req.headers["x-filename"] || "attachment");
+      try { name = decodeURIComponent(name); } catch { /* keep as sent */ }
+      const { threadKey } = require("./models");
+      return reply(201, s.files.upload(bytes, { name, thread: threadKey(String(req.headers["x-keir-thread"] || "")) }));
+    }
+    const file = FILE_ROUTE.exec(route);
+    if (file && req.method === "DELETE") {
+      if (!sameOrigin(req)) return reply(403, { error: "Unexpected origin" });
+      return reply(200, s.files.discard(file[1]));
+    }
+    if (file && req.method === "GET") {
+      const { item, bytes } = s.files.read(file[1]);
+      res.writeHead(200, { "Content-Type": item.type, "Content-Length": bytes.length, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": `inline; filename="${item.name.replace(/[^A-Za-z0-9 ._-]/g, "_")}"`, "Content-Security-Policy": "default-src 'none'; sandbox" });
+      res.end(bytes);
+      return true;
+    }
+
     if (req.method === "POST") {
       if (String(req.headers["content-type"] || "").split(";")[0].trim().toLowerCase() !== "application/json") return reply(415, { error: "JSON required" });
       if (!sameOrigin(req)) return reply(403, { error: "Unexpected origin" });
       const body = await readJson(req);
-      if (route === "/messages") { const r = s.post(body.text, body.clientId, sideChatCreator(req, env)); return reply(r.duplicate ? 200 : 202, r); }
+      if (route === "/messages") {
+        const r = s.post(body.text, body.clientId, sideChatCreator(req, env), { thread: body.thread, attachments: body.attachments, model: body.model, effort: body.effort });
+        return reply(r.duplicate ? 200 : 202, r);
+      }
+      if (route === "/models") return reply(200, s.setModel(body.thread, { selection: body.selection, effort: body.effort }));
       const cancel = /^\/jobs\/(j_[a-f0-9]{16})\/cancel$/.exec(route);
       if (cancel) return reply(200, s.cancel(cancel[1]));
       const decision = /^\/proposals\/(p_[a-f0-9]{16})$/.exec(route);
@@ -95,19 +136,21 @@ async function handleKeirSupervisorRoute(req, res, pathname, { resolveSession, g
       const limit = url.searchParams.get("limit");
       const wait = Math.min(25, Math.max(0, Number(url.searchParams.get("wait")) || 0)) * 1000;
       const since = url.searchParams.get("since");
-      let view = s.thread({ after, limit });
+      const threadParam = url.searchParams.get("thread") || undefined;
+      let view = s.thread({ after, limit, thread: threadParam });
       if (after !== null && wait) {
         const ac = new AbortController(); res.once("close", () => ac.abort());
         const end = Date.now() + wait;
         while (!view.messages.length && (!since || view.version === since) && Date.now() < end && !ac.signal.aborted) {
           await s.waitForChange(Number(view.version), end - Date.now(), ac.signal);
-          view = s.thread({ after, limit });
+          view = s.thread({ after, limit, thread: threadParam });
         }
         if (ac.signal.aborted) return true;
       }
       return reply(200, view);
     }
     if (route === "/proposals") return reply(200, { proposals: s.proposals() });
+    if (route === "/models") return reply(200, s.models(url.searchParams.get("thread") || undefined));
     if (route === "/attention") return reply(200, s.attention());
     return reply(404, { error: "not found" });
   } catch (error) {

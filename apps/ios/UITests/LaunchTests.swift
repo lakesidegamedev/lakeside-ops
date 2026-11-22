@@ -255,6 +255,36 @@ final class LaunchTests: XCTestCase {
         // launches a fresh app, so no synthetic dismissal is needed here.
     }
 
+    /// The owner's chats are answered by the private supervisor: the "+" offers
+    /// photos, files, the model and effort, and an image Keir attached shows inline.
+    func testOwnerChatOffersPhotosFilesAndModelAndShowsKeirsImage() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-fixtures", "--uitest-supervisor", "--uitest-reset-resume"]; app.launch()
+        let plus = app.buttons["supervisor-plus"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 20), "the owner lands in the private chat")
+        XCTAssertTrue(app.buttons["Open attachment landing-render.png"].waitForExistence(timeout: 15), "Keir's attached image is shown inline")
+        let photos = app.buttons["Photo library"]
+        let model = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model: Default")).firstMatch
+        // The picker fills from the server; reopen until it has.
+        for _ in 0..<6 {
+            if !photos.exists, plus.isHittable { plus.tap() }
+            if photos.waitForExistence(timeout: 3), model.waitForExistence(timeout: 2) { break }
+            dismissMenu(app, closing: photos); sleep(2)
+        }
+        XCTAssertTrue(photos.exists)
+        XCTAssertTrue(app.buttons["Choose file"].exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model")).firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Effort")).firstMatch.exists)
+        capture(app, "Owner chat attachments, model and effort")
+        dismissMenu(app, closing: photos)
+        chooseFromMenu(app, "supervisor-plus", "Model")
+        let sonnet = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Sonnet 5.5")).firstMatch
+        XCTAssertTrue(sonnet.waitForExistence(timeout: 8))
+        for _ in 0..<10 where !sonnet.isHittable { usleep(200_000) }
+        if sonnet.isHittable { sonnet.tap() } else { sonnet.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        sleep(1)
+        XCTAssertTrue(menuItemLabel(app, "supervisor-plus", "Model").contains("Sonnet 5.5"), "the chosen model sticks for this chat")
+    }
+
     func testKeirThreadDecisionAndReply() {
         let app = launch()
         XCTAssertTrue(find(app, "How did the last turn go?").waitForExistence(timeout: 10))

@@ -502,3 +502,44 @@ test("proposal refresh cannot bypass an uncertain effect", async t => {
   await assert.rejects(f.app.answer(proposed.decision, "refresh", "", true), /earlier action outcome/);
   assert.equal(f.ledger.data.decisions[proposed.decision].state, "pending");
 });
+
+// The owner's Keir app chats now run on the supervisor's full agent. Nothing
+// about that reaches the operator: a staff member or player talking to Keir in
+// Discord keeps every existing guard, and a forged "app" origin is still refused.
+test("staff and player Discord work keeps every guard while owner app chats moved to the full agent", async t => {
+  const f = fixture(t);
+  for (const [who, role] of [[STAFF, "staff"], ["444444444444444444", "player"]]) {
+    const job = f.ledger.createJob(`discord-${role}`, { kind: "command", role, actorId: who, replyChannel: "discord", channelId: "1400000000000000001",
+      source: { channelId: "1400000000000000001", authorId: who, messageId: `m-${role}`, content: "run this on the box" }, deadline: Date.now() + 3600000 });
+    job.state = "running";
+    assert.equal(policy.origin(f.ledger.data, job).scoped, false, `${role}: not an owner app origin`);
+    const before = f.commands.length;
+    if (role === "player") {
+      // Players can discuss and supply evidence; they never authorize a tool.
+      await assert.rejects(f.broker.tool(job, "shell", { command: "hostname" }), /players can discuss and supply evidence/);
+      assert.equal(f.commands.length, before);
+    } else {
+      // Staff shell stays in the isolated workspace; nothing runs on the host.
+      await f.broker.tool(job, "shell", { command: "hostname" });
+      assert.equal(f.commands.length, before + 1);
+      assert.equal(f.commands.at(-1), "hostname", "staff shell went to the sandbox, not host exec");
+    }
+    // MCP writes are not a direct tool; reads of write methods are refused.
+    await assert.rejects(f.broker.tool(job, "read_tool", { server: "support", tool: "support_resolve", args: {} }));
+    assert.equal(f.writes().length, 0, `${role}: no MCP write happened`);
+  }
+  // A staff job that pretends to be an app task is refused, as before.
+  const forged = f.ledger.createJob("forged-app", { kind: "command", role: "staff", actorId: STAFF, replyChannel: "app", channelId: "app",
+    source: { channelId: "app", authorId: STAFF, messageId: "forged", content: "run xcodebuild" }, deadline: Date.now() + 3600000 });
+  forged.state = "running";
+  await assert.rejects(f.broker.tool(forged, "shell", { command: "xcodebuild" }), /cannot run arbitrary|Start a new authenticated app task/);
+  assert.equal(f.writes().length, 0);
+});
+
+test("the operator never calls itself Muse to the owner", () => {
+  const { CONTRACT } = require("../lib/operator/ownermuse-persona");
+  assert.match(CONTRACT, /You are Keir/);
+  assert.doesNotMatch(CONTRACT.replace(/never call yourself Muse or Owner Muse/, ""), /Owner Muse|AHD Muse/);
+  const src = fs.readFileSync(path.join(__dirname, "..", "lib", "operator", "ownermuse-policy.js"), "utf8");
+  assert.doesNotMatch(src.match(/deny\([^;]*\);/g).join("\n"), /Muse/, "no refusal names Muse");
+});

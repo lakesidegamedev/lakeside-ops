@@ -349,13 +349,62 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertFalse(fixture.requests.contains { $0.hasPrefix("POST") })
     }
 
-    func testAnOwnerReachesSupportKeirOnlyByChoosingIt() async {
+    func testAnOwnersSupportDeskAndSideChatsAreTheSameUnrestrictedKeir() async {
         let session = session()
         let keir = await opened(session, connect: false)
         keir.select("main")
         XCTAssertEqual(keir.thread, "main")
-        _ = await keir.send("a ticket question", session)
-        XCTAssertEqual(OperatorOfflineProtocol.operatorRequests, ["POST /api/keir/app/messages"])
+        XCTAssertTrue(keir.isSupervisor, "the owner's support desk is answered by the supervisor")
+        let desk = await keir.send("a ticket question", session)
+        XCTAssertTrue(desk)
+        keir.select("abcdef012345")
+        XCTAssertTrue(keir.isSupervisor, "a side chat too")
+        let side = await keir.send("a side chat question", session)
+        XCTAssertTrue(side)
+        XCTAssertEqual(fixture.postedThreads, ["main", "abcdef012345"])
+        XCTAssertEqual(OperatorOfflineProtocol.operatorRequests, [], "nothing an owner types reaches the support operator")
+        keir.select("watches")
+        XCTAssertFalse(keir.isSupervisor, "system threads stay with the operator")
+    }
+
+    func testAnOwnersImageIsUploadedToTheSupervisorAndSentWithTheMessage() async {
+        let session = session()
+        let keir = await opened(session)
+        let files = ChatAttachments(keir: true)
+        files.supervisorServes = { keir.servedBySupervisor($0) }
+        files.scope = keir.thread
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAIAAAAy3EnLAAAAE0lEQVR4nGMQUTYgCTGMahiaGgCP3UBhi5xMcQAAAABJRU5ErkJggg==")!
+        await files.add(png, name: "chart.png", mime: "image/png", session: session)
+        XCTAssertEqual(files.items.count, 1)
+        XCTAssertTrue(KeirSupervisor.validFileURL(files.items[0].value["url"].string), "stored owner-only on the supervisor")
+        let sent = await keir.send("What chart is this?", session, attachments: files.payload)
+        XCTAssertTrue(sent)
+        let answered = await eventually { keir.messages.contains { $0["text"].string.hasPrefix("I looked at your image") } }
+        XCTAssertTrue(answered)
+        XCTAssertEqual(keir.messages.first { $0["role"].string == "owner" }?["attachments"].array.first?["type"].string, "image/png")
+        XCTAssertTrue(fixture.requests.contains("POST /api/keir/supervisor/uploads"))
+        XCTAssertEqual(OperatorOfflineProtocol.operatorRequests, [])
+        // A file link from the supervisor can be deleted; anything else is refused before the network.
+        await files.remove(files.items[0], session: session)
+        XCTAssertTrue(files.items.isEmpty)
+    }
+
+    func testTheModelAndEffortAreChosenPerChat() async {
+        let session = session()
+        let keir = await opened(session, connect: false)
+        await keir.loadModels(session)
+        XCTAssertEqual(keir.models.map { $0["id"].string }, ["auto", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"])
+        XCTAssertEqual(keir.efforts.first, "auto")
+        await keir.selectModel("claude-sonnet-5-5", session)
+        await keir.selectEffort("max", session)
+        XCTAssertEqual(keir.modelSelection, "claude-sonnet-5-5")
+        XCTAssertEqual(keir.modelLabel, "Sonnet 5.5")
+        XCTAssertEqual(keir.effortSelection, "max")
+        keir.select("main")
+        await keir.loadModels(session)
+        XCTAssertEqual(keir.modelSelection, "auto", "each chat keeps its own choice")
+        XCTAssertTrue(fixture.requests.contains("POST /api/keir/supervisor/models"))
+        XCTAssertEqual(OperatorOfflineProtocol.operatorRequests, [])
     }
 
     func testWhoseConversationIsHome() {
@@ -374,7 +423,11 @@ final class OperatorOfflineProtocol: URLProtocol, @unchecked Sendable {
         XCTAssertEqual(KeirSupervisor.destination(thread: t, supervisorAvailable: true, resolved: true, chosen: false), .supervisor)
         XCTAssertTrue(withheld(KeirSupervisor.destination(thread: t, supervisorAvailable: false, resolved: true, chosen: false)))
         XCTAssertTrue(withheld(KeirSupervisor.destination(thread: "main", supervisorAvailable: true, resolved: true, chosen: false)))
-        XCTAssertEqual(KeirSupervisor.destination(thread: "main", supervisorAvailable: true, resolved: true, chosen: true), .support)
+        XCTAssertEqual(KeirSupervisor.destination(thread: "main", supervisorAvailable: true, resolved: true, chosen: true), .supervisor)
+        XCTAssertEqual(KeirSupervisor.destination(thread: "abcdef012345", supervisorAvailable: true, resolved: true, chosen: true), .supervisor)
+        XCTAssertEqual(KeirSupervisor.destination(thread: "abcdef012345", supervisorAvailable: true, resolved: true, chosen: true, system: true), .support)
+        XCTAssertEqual(KeirSupervisor.destination(thread: "watches", supervisorAvailable: true, resolved: true, chosen: true), .support)
+        XCTAssertEqual(KeirSupervisor.destination(thread: "abcdef012345", supervisorAvailable: false, resolved: true, chosen: true), .support)
         XCTAssertEqual(KeirSupervisor.destination(thread: "main", supervisorAvailable: false, resolved: true, chosen: false), .support)
     }
 

@@ -36,11 +36,11 @@ async function boot(t, extraEnv) {
   });
   const req = (p, { who, method = "GET", body } = {}) => fetch(`http://127.0.0.1:${port}${p}`, { method,
     headers: { ...(who ? { cookie: `ops_session=${tokens[who]}` } : {}), ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
-  return { req, home };
+  return { req, home, port, tokens };
 }
 
 test("real server: owner-only supervisor routes work with the support operator down", { timeout: 90000 }, async (t) => {
-  const { req, home } = await boot(t, (h) => ({ KEIR_SUPERVISOR_DIR: path.join(h, "supervisor") }));
+  const { req, home, port, tokens } = await boot(t, (h) => ({ KEIR_SUPERVISOR_DIR: path.join(h, "supervisor") }));
   const ownerProfile = await (await req("/api/me", { who: "owner" })).json();
   assert.equal(ownerProfile.ownerSupervisor, true);
   assert.equal(ownerProfile.ownerSupervisorReady, false);
@@ -63,6 +63,19 @@ test("real server: owner-only supervisor routes work with the support operator d
   assert.equal(status.repos[0].key, "lakeside-ops");
   assert.equal(status.repos[0].available, false);
   assert.ok(fs.existsSync(path.join(home, "supervisor", "state.json")));
+  // Raw image upload through the real server, owner only, then served back owner only.
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
+  const upload = (who) => fetch(`http://127.0.0.1:${port}/api/keir/supervisor/uploads`, { method: "POST", body: png,
+    headers: { ...(who ? { cookie: `ops_session=${tokens[who]}` } : {}), "content-type": "image/png", "x-filename": "shot.png", "x-keir-thread": "main" } });
+  assert.equal((await upload(null)).status, 401);
+  assert.equal((await upload("staff")).status, 403);
+  const up = await upload("owner");
+  assert.equal(up.status, 201);
+  const file = await up.json();
+  assert.equal((await req(file.url, { who: "staff" })).status, 403);
+  const served = await req(file.url, { who: "owner" });
+  assert.equal(served.headers.get("content-type"), "image/png");
+  assert.ok(Buffer.from(await served.arrayBuffer()).equals(png));
 });
 
 test("real server: unconfigured supervisor says so instead of guessing a state location", { timeout: 90000 }, async (t) => {

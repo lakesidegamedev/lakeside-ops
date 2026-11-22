@@ -20,7 +20,7 @@ const sha = (text) => crypto.createHash("sha256").update(String(text)).digest("h
 
 function empty() {
   return { version: 1, session: id("s"), createdAt: Date.now(), seq: 0, rev: 0, messages: [], archived: 0,
-    clientIds: {}, jobs: {}, jobOrder: [], proposals: {}, workspaces: {} };
+    clientIds: {}, jobs: {}, jobOrder: [], proposals: {}, workspaces: {}, files: {}, preferences: {} };
 }
 
 function createStore(dir, { now = Date.now } = {}) {

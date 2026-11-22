@@ -230,15 +230,18 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate, @unchecked Se
     }
     func discardUpload(_ url: JSONValue, keir: Bool = false) async throws {
         if keir {
-            guard url.string.hasPrefix("/api/keir/app/uploads/"), !url.string.contains("..") else { throw URLError(.badURL) }
+            guard url.string.hasPrefix("/api/keir/app/uploads/") || KeirSupervisor.validFileURL(url.string), !url.string.contains("..") else { throw URLError(.badURL) }
             var r = try request(url.string); r.httpMethod = "DELETE"; _ = try await json(r); return
         }
         var r = try request(surface == .ask ? "/api/upload" : "/api/chat/upload", body: ["url": url])
         r.httpMethod = "DELETE"
         _ = try await json(r)
     }
-    func upload(_ data: Data, name: String, mime: String, keirThread: String? = nil) async throws -> JSONValue {
-        var r = try request(keirThread != nil ? "/api/keir/app/uploads" : surface == .ask ? "/api/upload" : "/api/chat/upload")
+    /// `supervisor`: the owner's chat is answered by the private supervisor, so the
+    /// file is stored there (owner-only) instead of with the support operator.
+    func upload(_ data: Data, name: String, mime: String, keirThread: String? = nil, supervisor: Bool = false) async throws -> JSONValue {
+        let keirPath = supervisor ? KeirSupervisor.base + "/uploads" : "/api/keir/app/uploads"
+        var r = try request(keirThread != nil ? keirPath : surface == .ask ? "/api/upload" : "/api/chat/upload")
         if let keirThread { r.setValue(keirThread, forHTTPHeaderField: "X-Keir-Thread") }
         r.httpMethod = "POST"; r.httpBody = data
         r.setValue(mime, forHTTPHeaderField: "Content-Type")
