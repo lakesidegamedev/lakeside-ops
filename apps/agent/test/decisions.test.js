@@ -104,7 +104,7 @@ test("a sign-off goes to the owner first; Ariane only after three hours", async 
 
 test("a decision DM shows the question once and ignores legacy generated commentary", () => {
   const { render } = require("../lib/operator/decisions");
-  assert.equal(render("Apply the reviewed repair?", { tldr: "Invented advice." }), "**Decision needed**\nApply the reviewed repair?");
+  assert.equal(render("Apply the reviewed repair?", { tldr: "Invented advice." }), "**Decision needed**\nApply the reviewed repair?\nIf you do nothing: nothing changes until you answer.");
 });
 
 test("rejecting a decision revokes the ticket's earlier carry authority", async () => {

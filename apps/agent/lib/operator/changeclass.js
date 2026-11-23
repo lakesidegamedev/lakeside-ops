@@ -3,6 +3,8 @@
 //
 // Owner, 2026-11-06: while the owner is away Keir may ship bug and display fixes and documented data
 // heals through the normal pipeline. Rule, balance and economy-behaviour changes wait for the owner.
+// Owner, 2026-11-23: a rule change whose direction the owner already chose on the ticket ships without a second
+// approval (broker.ruleDirectionChosen); a fix that makes the game follow its existing rules is a bugfix.
 //
 // The classification field is `changeClass` on the github tool's merge and promote actions (and
 // `Change-class: <class>` on its own line in a PR body). Allowed values:

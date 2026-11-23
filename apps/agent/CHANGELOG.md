@@ -5,6 +5,19 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### Keir only interrupts the owner for real decisions (owner, 2026-11-23)
+
+- **North star in KEIR.md**: how the coordinator session behaved overnight is the standard: one place, plain words, act on your own, interrupt only for real decisions, check facts first, push back with evidence, stay quiet when nothing changed.
+- **Owner DMs**: only multiple-choice decisions, the one daily digest, and Keir's direct replies to the owner's own requests. Hand-offs, stalls, escalations, watch alerts, parked and unread notices go to the daily digest ("Handled without you"). No link previews, no raw links, no jargon in owner DMs. Decision questions say what happens if he does nothing.
+- **Phone pushes**: only an answer to something the owner asked, a pending decision, and one quiet morning brief per day. Progress updates, Watchkeeper alerts and goal progress no longer push, and an internal error never reaches the lock screen.
+- **The 30-minute push loop is fixed**: the scheduled morning brief could not use the read-only team_activity tool, failed every day since 11-18, and every retry and restart pushed its error. team_activity is now an allowed read, a scheduled task is never re-run by a release, and there is one brief per Eastern day.
+- **Keir stays quiet when someone already has a ticket**: a developer agent or staff posted to the player in the last two hours, a worker is running on it, a claimed card or an open PR names it. No hand-off, no post, no escalation. Cards Keir filed for itself no longer count as someone covering a ticket.
+- **Challenges and repeated corrections go to a checking worker** (owner: always a worker), with a plain "I am rechecking this" line, never to staff who are not there.
+- **Hand-backs**: a developer agent that writes "HANDOFF TO KEIR" on a ticket's kanban card hands it to Keir. The note reaches the ticket task; each named fix is checked against the live build every 5 minutes, and Keir is told to post "fix is live" only once the running web and turn worker contain the fix's merge commit. A handed-back waiting ticket is never swept or escalated.
+- **Ordinary fixes merge without asking the owner**: once the owner has chosen the direction on a ticket, the fix that carries it out ships under the standing merge permission. Keir no longer asks for "exact execution approval" of ordinary fixes; money, product direction and irreversible removals still ask.
+- **Old decision messages leave the owner's DMs** a day after they end.
+- **Guardian checks the checkers' runs**, not just their timers: a failed run is re-run (at most hourly), and a unit that keeps failing gets a fix-it card on the board instead of an owner DM.
+
 ## 11.6.0 (2026-11-23)
 
 ### Tickets keep moving overnight (owner, 2026-11-23)

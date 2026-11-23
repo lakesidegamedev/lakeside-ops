@@ -28,7 +28,7 @@ test("a wake cap hands the ticket to a worker: one plain line, no pause, no staf
   f.job.runStarts = Array.from({ length: 6 }, (_, i) => f.now() - i * 60000);
   const e = await f.broker.escalationCheck(f.job, { wakeCapped: true });
   assert.equal(e.handedTo, "cw-123-1");
-  assert.equal(asked.length, 1); assert.equal(asked[0].stall, true); assert.match(asked[0].reason, /wake limit \(6 runs/);
+  assert.equal(asked.length, 1); assert.equal(asked[0].stall, true); assert.match(asked[0].reason, /retry limit \(6 runs/);
   assert.deepEqual(f.posts(), [g.CAP_HANDOFF_LINE], "the player hears one plain line");
   assert.doesNotMatch(g.CAP_HANDOFF_LINE, /staff|stopped/i);
   assert.equal(f.ledger.data.ticketEscalations?.[123], undefined, "not handed to staff");

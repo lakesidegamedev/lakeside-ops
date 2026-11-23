@@ -20,17 +20,16 @@ test("1834: the player-facing wording that promised a developer check is recogni
   assert.equal(claim("Thanks, mobile data helps."), 0);
 });
 
-test("1834: an account action is never Keir's own to-do; it DMs the owner and counts as a real handoff", async () => {
+test("1834: an account action is never Keir's own to-do; it counts as a real handoff and lands in the digest", async () => {
   const f = setup({ call: board([700]) });
   const r = await f.broker.tool(f.job, "raise_to_developers", { kind: "question", title: "Old account recovery: relink login to the player's new Discord", detail: DETAIL, force: true });
   assert.equal(r.id, 700);
   const rec = f.job.raisedToDevelopers.find((x) => x.id === 700);
   assert.ok(!rec.selfOwned, "account actions need a person");
   assert.equal(rec.needsHuman, true);
-  const dm = f.ledger.data.outbox["handoff:700"];
-  assert.ok(dm, "the owner is told");
-  assert.equal(dm.destination, "owner");
-  assert.match(dm.content, /needs a person/);
+  // Owner rule 2026-11-23: a hand-off is a board card plus a line in the daily digest, never an owner DM.
+  assert.equal(f.ledger.data.outbox["handoff:700"], undefined, "no owner DM");
+  assert.ok((f.ledger.data.alerts || []).some((a) => a.key === "handoff:700" && a.digest), "it is in the daily digest");
 });
 
 test("1834: a self-owned card is not proof that the developers have it", async () => {

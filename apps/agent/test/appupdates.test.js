@@ -95,14 +95,14 @@ test("the working-now board ranks what needs the owner first and shows one row p
   assert.deepEqual(b.items.map(i => [i.ticket, i.state]), [[1574, "needs-you"], [1580, "working"]]);
 });
 
-test("update pushes are quiet and collapse into one notice", () => {
-  const d = { appThread: { seq: 2, messages: [{ seq: 1, role: "keir", text: "Reply", thread: "main" }, { seq: 2, role: "keir", text: "- Ticket 1574: finished.", thread: "main", update: true }], push: { seq: 0, decisions: {}, alerts: {}, since: 0 } }, decisions: {}, alerts: [] };
-  const [reply, update] = duePushes(d, { now: 10 });
-  assert.equal(reply.payload.aps["interruption-level"], "active");
-  assert.equal(update.collapseId, "keir-updates");
-  assert.equal(update.payload.aps["interruption-level"], "passive");
-  assert.equal(update.payload.aps.sound, undefined);
-  assert.equal(update.payload.aps.alert.body, "Ticket 1574: finished.");
+test("only an answer to the owner pushes; progress updates and unprompted replies do not (owner rule 2026-11-23)", () => {
+  const d = { appThread: { seq: 4, messages: [{ seq: 1, role: "keir", text: "Unprompted note", thread: "main" }, { seq: 2, role: "owner", text: "Status?", thread: "main" }, { seq: 3, role: "keir", text: "All quiet.", thread: "main" }, { seq: 4, role: "keir", text: "- Ticket 1574: finished.", thread: "main", update: true }], push: { seq: 0, decisions: {}, alerts: {}, since: 0 } } };
+  const due = duePushes(d, { now: 10 });
+  assert.equal(due.length, 1);
+  assert.equal(due[0].payload.aps.alert.body, "All quiet.");
+  assert.equal(due[0].payload.aps["interruption-level"], "active");
+  due[0].mark();
+  assert.equal(duePushes(d, { now: 20 }).length, 0, "an answer pushes once");
 });
 
 test("progress updates are a main conversation preference", () => {

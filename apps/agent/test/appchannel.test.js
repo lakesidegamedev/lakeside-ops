@@ -154,7 +154,7 @@ test("device registration validates tokens and keeps the last five", () => {
   assert.equal(devices.length, 5); assert.equal(devices.at(-1).prefs.incidents, false); assert.equal(devices.at(-1).prefs.replies, true);
 });
 
-test("pushes cover new Keir replies, open decisions and Watchkeeper incidents once each", () => {
+test("pushes cover answers to the owner and open decisions once each; Watchkeeper incidents go to the digest (owner rule 2026-11-23)", () => {
   const { app, ledger } = setup();
   const d = ledger.data;
   duePushes(d, { now: 1000 }).forEach((p) => p.mark());
@@ -164,7 +164,7 @@ test("pushes cover new Keir replies, open decisions and Watchkeeper incidents on
   d.decisions = { aaaaaaaaaaaa: { id: "aaaaaaaaaaaa", jobId: "promo", question: "Promote to main?", state: "pending", at: 2000 } };
   d.alerts = [{ key: "error:watch-recurring:turn", content: "Turn warning again", at: 3000 }, { key: "digest:2026-10-15", content: "digest", at: 3000 }];
   const due = duePushes(d, { now: 4000 });
-  assert.deepEqual(due.map((p) => p.pref), ["replies", "decisions", "incidents"]);
+  assert.deepEqual(due.map((p) => p.pref), ["replies", "decisions"]);
   assert.equal(due[0].payload.aps.alert.body, "Turn 202.");
   assert.equal(due[1].payload.aps["interruption-level"], "time-sensitive");
   due.forEach((p) => p.mark());
@@ -226,7 +226,7 @@ test("brief Watchkeeper sensor timeouts do not produce lock-screen notifications
   ledger.data.alerts = [sensorAlert(1, 1000000, 940000)];
   assert.equal(duePushes(ledger.data, { now: 1000000 }).filter((p) => p.pref === "incidents").length, 0);
 });
-test("Watchkeeper episode counters are grouped and raw diagnostic JSON stays out of pushes", async () => {
+test("Watchkeeper alerts never push (owner rule 2026-11-23: status goes to the daily digest)", async () => {
   const { ledger, app } = setup();
   app.register("a".repeat(64));
   ledger.data.appThread.push = { seq: 0, decisions: {}, alerts: {}, since: 0 };
@@ -234,10 +234,7 @@ test("Watchkeeper episode counters are grouped and raw diagnostic JSON stays out
   const sent = [];
   const push = createAppPush({ ledger, now: () => 1002000, apns: { send: async (_token, payload, options) => { sent.push({ payload, options }); return { status: 200 }; } } });
   await push.tick(); await push.tick();
-  assert.equal(sent.length, 1);
-  assert.doesNotMatch(sent[0].payload.aps.alert.body, /incidentKey|lastSuccessAt|\{/);
-  assert.match(sent[0].payload.aps.alert.body, /Monitoring/);
-  assert.equal(sent[0].options.collapseId, "watchkeeper:sensor:operator");
+  assert.equal(sent.length, 0);
 });
 
 test("a handed-off voice reply stays correlated with the accepted voice turn", () => {

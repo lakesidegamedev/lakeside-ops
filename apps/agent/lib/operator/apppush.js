@@ -1,4 +1,5 @@
 "use strict";
+const { pushBody, plain, internal } = require("./ownerpolicy");
 // Push notifications for the owner's Lakeside Ops app: Keir's replies in the
 // app thread, open owner decisions, and Watchkeeper incidents. Off unless the
 // APNs key is configured. Nothing here ever reaches anyone but registered
@@ -6,7 +7,6 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http2 = require("node:http2");
-const { describeAlert } = require("./notification-policy");
 const { alertKind, threadOf } = require("./appchannel");
 const { decisionView } = require("./appdecision");
 const { obsoleteReason } = require("./decisionpolicy");
@@ -61,15 +61,15 @@ function duePushes(d, { now = Date.now() } = {}) {
   const t = threadOf(d);
   const state = t.push ||= { seq: t.seq || 0, decisions: {}, alerts: {}, since: now };
   const out = [];
+  // Owner rule 2026-11-23 (ownerpolicy.js): a Keir message pushes only when it answers something the owner wrote and that
+  // answer has not pushed yet. Progress updates, watch notes, scheduled tasks and retries never push, and an internal
+  // error never reaches the lock screen as such (a saved brief task pushed one every 30 minutes).
+  const ownerMsgs = (t.messages || []).filter((m) => m.role === "owner");
   for (const m of (t.messages || []).filter((m) => m.role === "keir" && m.seq > state.seq)) {
-    // A progress update is a quiet, replaceable notice; a decision already pushes on its own.
-    if (m.update) {
-      out.push({ key: `reply:${m.seq}`, pref: "replies", collapseId: "keir-updates", mark: () => { state.seq = Math.max(state.seq, m.seq); },
-        payload: { aps: { alert: { title: "Keir update", body: clip(m.text.replace(/^- /gm, ""), 240) }, "thread-id": "keir-updates", "interruption-level": "passive" }, route: "keir", thread: "main", seq: m.seq } });
-      continue;
-    }
-    out.push({ key: `reply:${m.seq}`, pref: "replies", mark: () => { state.seq = Math.max(state.seq, m.seq); },
-      payload: { aps: { alert: { title: m.watch ? "Keir watch" : "Keir", body: clip(m.text, 240) }, sound: "default", "thread-id": m.thread || "keir", "interruption-level": m.watch ? "time-sensitive" : "active" }, route: "keir", thread: m.thread || "main", seq: m.seq } });
+    const asked = ownerMsgs.filter((o) => o.seq < m.seq && o.seq > (state.answeredOwnerSeq || 0) && (o.thread || "main") === (m.thread || "main")).at(-1);
+    if (m.update || m.watch || !asked) { state.seq = Math.max(state.seq, m.seq); continue; }
+    out.push({ key: `reply:${m.seq}`, pref: "replies", mark: () => { state.seq = Math.max(state.seq, m.seq); state.answeredOwnerSeq = Math.max(state.answeredOwnerSeq || 0, asked.seq); },
+      payload: { aps: { alert: { title: "Keir", body: clip(pushBody(m.text), 240) }, sound: "default", "thread-id": m.thread || "keir", "interruption-level": "active" }, route: "keir", thread: m.thread || "main", seq: m.seq } });
   }
   // Support-origin approvals (a ticket's job) live in the same collection as the owner's own, so one rule covers both.
   for (const x of Object.values(d.decisions || {}).filter((x) => x.state === "pending" && !state.decisions[x.id] && x.at >= state.since - 3600000 && actionable(d, x, now))) {
@@ -77,21 +77,19 @@ function duePushes(d, { now = Date.now() } = {}) {
     out.push({ key: `decision:${x.id}`, pref: "decisions", decision: x.id, mark: () => { state.decisions[x.id] = now; },
       payload: { aps: { alert: { title: ticket ? `Keir, ticket ${ticket}: ${what}` : `Keir: ${what}`, body: clip(x.review?.title ? `${x.review.title}: ${x.question}` : x.question, 240) }, sound: "default", "thread-id": "decisions", "interruption-level": "time-sensitive", category: x.options ? "KEIR_CHOICE" : "KEIR_DECISION" }, route: "decision", decision: x.id, ...(ticket ? { ticket } : {}) } });
   }
-  for (const a of (d.alerts || []).filter((a) => alertKind(a.key) === "incident" && a.at > state.since && !state.alerts[`${a.key}@${a.at}`])) {
-    const notice = describeAlert(a, d, now);
-    if (notice.pending) continue;
-    state.incidentNotices ||= {};
-    const last = state.incidentNotices[notice.identity];
-    if (notice.suppressed || notice.cooldown && last && now - last < notice.cooldown) { state.alerts[`${a.key}@${a.at}`] = now; continue; }
-    out.push({ key: `incident:${a.key}@${a.at}`, pref: "incidents", group: notice.identity, cooldown: notice.cooldown,
-      mark: () => { state.alerts[`${a.key}@${a.at}`] = now; state.incidentNotices[notice.identity] = now; }, collapseId: notice.collapseId,
-      payload: { aps: { alert: { title: "Watchkeeper", body: clip(notice.text, 240) }, "thread-id": "incidents", "interruption-level": "passive" }, route: "alerts" } });
-  }
+  // Owner rule 2026-11-23: watch alerts are status; they go to the daily digest, not the lock screen.
+  for (const a of (d.alerts || []).filter((a) => alertKind(a.key) === "incident" && a.at > state.since && !state.alerts[`${a.key}@${a.at}`])) { state.alerts[`${a.key}@${a.at}`] = now; }
   // The morning brief and goal progress from the feed.
   state.feedAt ||= now;
-  for (const f of (t.feed || []).filter((f) => f.at > state.feedAt && (f.kind === "brief" || (f.goal && f.kind === "win"))).reverse()) {
-    out.push({ key: `feed:${f.id || f.at}`, pref: "feed", mark: () => { state.feedAt = Math.max(state.feedAt, f.at); },
-      payload: { aps: { alert: { title: f.kind === "brief" ? "Morning brief" : "Goal progress", body: clip(f.title + (f.body ? `: ${f.body}` : ""), 240) }, sound: f.kind === "brief" ? "default" : undefined, "thread-id": "feed", "interruption-level": f.kind === "brief" ? "active" : "passive" }, route: "feed" } });
+  // Owner rule 2026-11-23: one quiet morning-brief push per Eastern day; goal progress does not push.
+  const etDay = (ms) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date(ms));
+  const briefDays = new Set(state.briefDay ? [state.briefDay] : []);
+  for (const f of (t.feed || []).filter((f) => f.at > state.feedAt).sort((a, b) => a.at - b.at)) {
+    const day = etDay(f.at);
+    if (f.kind !== "brief" || briefDays.has(day) || internal(`${f.title} ${f.body || ""}`)) { state.feedAt = Math.max(state.feedAt, f.at); continue; }
+    briefDays.add(day);
+    out.push({ key: `feed:${f.id || f.at}`, pref: "feed", mark: () => { state.feedAt = Math.max(state.feedAt, f.at); state.briefDay = day; },
+      payload: { aps: { alert: { title: "Morning brief", body: clip(plain(f.title + (f.body ? `: ${f.body}` : "")), 240) }, "thread-id": "feed", "interruption-level": "passive" }, route: "feed" } });
   }
   // Answered or expired decisions and old alert marks are forgotten.
   for (const id of Object.keys(state.decisions)) if (d.decisions?.[id]?.state !== "pending" && now - state.decisions[id] > 86400000) delete state.decisions[id];

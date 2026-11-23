@@ -74,7 +74,7 @@ test("a developer's PR refused for its author's missing section gets one plain o
   const f = mergeFixture(pr, [["verify", "success"], ["dependency-review", "success"], ["custom-rules", "failure"]]);
   const job = f.ledger.createJob("ownerwait:6866", { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", ownerWaitPr: 6866, source: {}, deadline: 9e15 }); job.state = "running";
   for (let i = 0; i < 2; i++) await f.broker.tool(job, "github", { action: "merge", number: 6866, changeClass: "display" });
-  const lines = Object.entries(f.ledger.data.outbox).filter(([k]) => k.startsWith("pr-blocked:6866:"));
+  const lines = (f.ledger.data.alerts || []).filter((a) => a.key.startsWith("pr-blocked:6866:") && a.digest).map((a) => [a.key, a]); // owner rule 2026-11-23: digest, not a DM
   assert.equal(lines.length, 1, "one line per PR, head and reason");
   assert.match(lines[0][1].content, /PR #6866 \(fix\(bonds\): show fundable issuance\) is ready to merge but blocked: its description is missing the Conflict of interest section, which its author has to add\. Nothing was merged\./);
   assert.ok(!f.writes.some((x) => /pulls\/6866 .*body=/.test(x)), "never edits someone else's PR");
@@ -84,7 +84,7 @@ test("an adopted Keir PR whose verify check is red gets one owner line", async (
   const f = mergeFixture(keirDocPr(6853, "Frames portraits.\n\n## Conflict of interest\n- [x]"), [["verify", "failure"], ["dependency-review", "success"], ["custom-rules", "success"]]);
   const job = f.ledger.createJob("keirpr:6853", { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", adoptedPr: 6853, source: {}, deadline: 9e15 }); job.state = "running";
   await f.broker.tool(job, "github", { action: "merge", number: 6853, changeClass: "display" });
-  assert.match(f.ledger.data.outbox["pr-blocked:6853:verify:h6853"].content, /blocked: the build and test check failed/);
+  assert.match((f.ledger.data.alerts || []).find((a) => a.key === "pr-blocked:6853:verify:h6853").content, /blocked: the build and test check failed/);
 });
 
 test("m6 and N7: without Keir's own token the description is not edited under the owner's account; the owner hears instead", async () => {
@@ -92,7 +92,7 @@ test("m6 and N7: without Keir's own token the description is not edited under th
   const job = f.ledger.createJob("keirpr:6784", { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", adoptedPr: 6784, source: {}, deadline: 9e15 }); job.state = "running";
   await f.broker.tool(job, "github", { action: "merge", number: 6784, changeClass: "display" });
   assert.ok(!f.writes.some((x) => /body=/.test(x)), f.writes.join("\n"));
-  assert.match(f.ledger.data.outbox["pr-blocked:6784:custom-rules:h6784"].content, /Keir has no token of its own to add it/);
+  assert.match((f.ledger.data.alerts || []).find((a) => a.key === "pr-blocked:6784:custom-rules:h6784").content, /Keir has no token of its own to add it/);
   // With the token the repair goes out as Keir.
   const g = mergeFixture(keirDocPr(6791, "Corrects the guide."), [["verify", "success"], ["dependency-review", "success"], ["custom-rules", "failure"]]);
   const j2 = g.ledger.createJob("keirpr:6791", { role: "support", kind: "command", internalProbe: true, repository: "AHDGame", adoptedPr: 6791, source: {}, deadline: 9e15 }); j2.state = "running";

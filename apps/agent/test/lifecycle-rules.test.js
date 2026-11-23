@@ -335,12 +335,13 @@ test("a support outage cannot wake a channel-less job every cycle: wake, fail, w
   assert.ok(wakes <= 14, `${wakes} wakes in 29 hours (was 128)`);
 });
 
-test("held past deadline: one DM to the owner per job, flag stops repeats", () => {
+test("held past deadline: one digest line per job, flag stops repeats", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lc-")), ledger = createLedger(path.join(dir, "l.json"));
   const j = ticket({ state: "deferred", deadline: NOW - 1 });
   for (let i = 0; i < 3; i++) lc.applyEffects(ledger, lc.wakeStep(j, ctxFor({ claimedBy: () => "staff1" })));
-  assert.deepEqual(Object.keys(ledger.data.outbox), ["held-deadline:j1"]);
-  assert.equal(ledger.data.outbox["held-deadline:j1"].destination, "owner");
+  // Owner rule 2026-11-23: a held task past its deadline is a daily-digest line, not an owner DM.
+  assert.deepEqual(Object.keys(ledger.data.outbox), []);
+  assert.equal((ledger.data.alerts || []).filter((a) => a.key === "held-deadline:j1" && a.digest).length, 1);
   assert.equal(j.state, "deferred");
   assert.equal(j.deadline, NOW - 1);
 });

@@ -87,7 +87,7 @@ function sweeperSetup(over = {}) {
   return { ledger, root, sweeper, advance: (ms) => { clock += ms; } };
 }
 
-test("the sweep wakes a stale ticket with a system note once, then escalates in one owner DM", () => {
+test("the sweep wakes a stale ticket with a system note once, then records it once in the daily digest, never an owner DM", () => {
   const f = sweeperSetup();
   const first = f.sweeper.tick();
   assert.equal(first.actions.length, 1);
@@ -103,9 +103,10 @@ test("the sweep wakes a stale ticket with a system note once, then escalates in 
   f.advance(3 * H);
   const second = f.sweeper.tick();
   assert.equal(second.actions[0].action, "escalate_owner");
-  const dm = Object.entries(f.ledger.data.outbox).filter(([k]) => k.startsWith("sweeper-owner:"));
-  assert.equal(dm.length, 1);
-  assert.match(dm[0][1].content, /Ticket 7 needs a person/);
+  assert.equal(Object.keys(f.ledger.data.outbox).filter((k) => k.startsWith("sweeper-owner:")).length, 0, "no owner DM (owner rule 2026-11-23)");
+  const digest = (f.ledger.data.alerts || []).filter((a) => a.key.startsWith("sweeper-owner:") && a.digest);
+  assert.equal(digest.length, 1);
+  assert.match(digest[0].content, /Ticket 7 needs a person/);
   f.advance(3 * H);
   assert.equal(f.sweeper.tick().actions.length, 0, "no second escalation inside 12 hours");
 });

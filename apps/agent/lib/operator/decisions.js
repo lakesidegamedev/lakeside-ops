@@ -95,15 +95,18 @@ function digestBlock(siblings) {
   });
   return `\n\n**${siblings.length} more open question${siblings.length === 1 ? "" : "s"} on this ticket** (answer each in the app, or here once the one above is answered):\n${lines.join("\n")}${siblings.length > 8 ? `\n...and ${siblings.length - 8} more in the app.` : ""}`;
 }
-function render(question, { onBehalf, signoff, options, review, digest } = {}) {
-  if (options) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Choose one**\n${question.slice(0, 450)}\n\n${options.map(o => `${o.id}. **${o.label}**${o.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`).join("\n")}${digestBlock(digest)}\n\nYour choice sets the direction. Any action requiring approval gets a separate proposal.`.slice(0, 1990);
+// Owner rule 2026-11-23 (ownerpolicy.js): plain words, recommended option first, and what happens if nobody answers.
+function render(question, { onBehalf, signoff, options, review, digest, ifNothing } = {}) {
+  question = require("./ownerpolicy").plain(question);
+  const nothing = `\nIf you do nothing: ${ifNothing || "nothing changes until you answer."}`;
+  if (options) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Choose one**\n${question.slice(0, 450)}\n\n${options.map(o => `${o.id}. **${o.label}**${o.recommended ? " (recommended)" : ""}${o.detail ? `: ${o.detail}` : ""}`).join("\n")}${digestBlock(digest)}\n\nYour choice sets the direction. Any action requiring approval gets a separate proposal.${nothing}`.slice(0, 1990);
   if (review?.human) return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**${review.title}**\n${require("./approvalcopy").body(review)}\n\n**Approve:** ${review.approve}\n**Decline:** ${review.decline}\n**Ask a question:** send this back to Keir without approving it.`;
   if (review) {
     const scope = JSON.stringify(review.scope).replace(/\*\*Decision:\*\*/gi, "Decision:");
     return `${onBehalf ? "Answering on Egg's behalf.\n\n" : ""}**Approval required: ${review.title}**\n${question.slice(0, 300)}${scope.length > 850 ? "\n\nThis request is too large to review here. Review it in the Keir app before deciding." : ""}\n\n**Approve this action:** authorize the operation above, subject to its existing checks.\n**Decline:** do not run this operation.\n**Ask a question:** return it to Keir without approval.`;
   }
   const head = `${onBehalf ? "Egg hasn't answered this in 3 hours, so it's yours to decide on Egg's behalf.\n\n" : ""}**Decision needed**\n`;
-  return `${head}${question}`;
+  return `${head}${question}${nothing}`;
 }
 
 // Shared short preview for app work lists; permission copy is never rewritten.
@@ -284,7 +287,7 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
       if (a.approvalMessage) { d.actions[a.id] = a; x.actionId = a.id; ledger.audit("decision_bound_approval", { decision: x.id, action: a.id, pr: args.number, head: args.head }); }
     }
     if (job && !JOB_TERMINAL.includes(job.state)) {
-      const line = selected ? `${who} chose${x.digested ? ` for "${x.question.slice(0, 160)}"` : ""}: ${selected.label}${selected.detail ? `. ${selected.detail}` : ""}. This is direction, not execution approval.` : verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
+      const line = selected ? `${who} chose${x.digested ? ` for "${x.question.slice(0, 160)}"` : ""}: ${selected.label}${selected.detail ? `. ${selected.detail}` : ""}. That settles the direction: build it and merge it once the required checks are green, without asking the owner again. Only a change that moves money or the economy still needs his approval at merge.` : verdict === "approve" ? `${who} approved: ${x.question}` : verdict === "reject" ? `${who} rejected: ${x.question}` : `${who} replied to your decision request: ${text}`;
       (job.inbox ||= []).push({ authorId: actor, role: actor === config.ownerId ? "owner" : "support", content: line, at: new Date(now()).toISOString(), decision: x.id });
       if (!Object.values(d.decisions || {}).some((y) => y !== x && y.state === "pending" && y.jobId === x.jobId)) delete job.ownerDecisionPending;
       delete job.recoveryReviewRequired;
@@ -375,7 +378,23 @@ function createDecisions({ ledger, config, discord, now = () => Date.now(), log 
     ledger.save();
   }
 
+  // Owner rule 2026-11-23: the owner's DMs hold only live questions. A copy edited to say how it ended (Keir 10.1.1) stays
+  // a day so he sees the outcome, then is deleted.
+  const COPY_KEEP_MS = 24 * 3600000;
+  async function pruneClosedCopies() {
+    // Only copies already edited to show how they ended: the owner sees the outcome for a day first (Keir 10.1.1), and an
+    // older "answered" that keeps its buttons on purpose (Keir 11.2 first start) is never edited, so never removed here.
+    const old = Object.values(d.decisions || {}).filter((x) => x.state !== "pending");
+    let n = 0;
+    for (const x of old) for (const s of Object.values(x.sent || {})) {
+      if (!s.messageId || s.deleted || !s.edited || now() - s.edited < COPY_KEEP_MS || n >= 10) continue;
+      n += 1;
+      await discord("DELETE", `/channels/${s.channelId}/messages/${s.messageId}`).then(() => { s.deleted = true; }).catch((e) => { if (e.status === 404 || e.status === 403) s.deleted = true; });
+    }
+    if (n) { ledger.audit("decision_copies_pruned", { count: n }); ledger.save(); }
+  }
   async function tick() {
+    await pruneClosedCopies().catch(() => {});
     // A decision the task moved past (or whose action resolved) stops asking.
     // Keir 11.2: "answered" (a reply in the ticket channel) is an ending too; its DM copies used to keep live buttons for days.
     for (const x of Object.values(d.decisions || {})) if (x.state !== "pending" && (x.followers || []).some((f) => !f.releasedAt)) releaseFollowers(x, `The owner question another Keir task asked for you ended (${x.state}${x.withdrawnReason ? `: ${x.withdrawnReason}` : ""}): ${x.question.slice(0, 160)}. If the work is still needed, check its current state before asking again.`);

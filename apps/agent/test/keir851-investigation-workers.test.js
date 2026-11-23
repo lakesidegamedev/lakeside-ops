@@ -121,8 +121,10 @@ test("when no worker can be started the blocking card is escalated once, never l
     f.clock.now = T_POST + 25 * MIN;
     const out = sweeper.tick();
     assert.equal(out.actions[0].action, "escalate_owner", label);
-    const dm = Object.entries(f.d.outbox).filter(([k]) => k.startsWith("sweeper-owner:"));
-    assert.equal(dm.length, 1); assert.match(dm[0][1].content, /Ticket 1785 needs a person/); assert.match(dm[0][1].content, expect);
+    // Owner rule 2026-11-23: recorded once in the daily digest, never an owner DM.
+    assert.equal(Object.keys(f.d.outbox).filter((k) => k.startsWith("sweeper-owner:")).length, 0, "no owner DM");
+    const dm = (f.d.alerts || []).filter((a) => a.key.startsWith("sweeper-owner:") && a.digest);
+    assert.equal(dm.length, 1); assert.match(dm[0].content, /Ticket 1785 needs a person/); assert.match(dm[0].content, expect);
     f.clock.now = T_POST + 5 * H; assert.equal(sweeper.tick().actions.length, 0, "owner told once inside 12 h");
   }
 });
