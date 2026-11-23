@@ -52,7 +52,7 @@ const channelPosts = (w) => Object.values(w.ledger.data.outbox).filter((x) => x.
 
 test("a ticket run that hangs silently until its lane deadline retries once, then blocks; nothing is posted twice", { timeout: 60000 }, async (t) => {
   const w = world(t);
-  const first = w.activate(4000);
+  const first = w.activate(10000); // 10s: the agent must reach spawn before the deadline on a loaded host
   await first.done;
   assert.ok(w.pids.length >= 1, "the provider process was launched");
   assert.ok(w.pids.every((pid) => !w.alive(pid)), "the hung provider is killed");
@@ -66,7 +66,7 @@ test("a ticket run that hangs silently until its lane deadline retries once, the
   assert.equal(w.posts.filter(([, tool]) => /public_update|resolve|set_status/.test(tool)).length, 0);
 
   // The retry hangs the same way: blocked, the owner is told, no loop.
-  const second = w.activate(4000);
+  const second = w.activate(10000);
   await second.done;
   assert.equal(w.job.state, "blocked");
   assert.match(w.job.summary, /turn limit/);
