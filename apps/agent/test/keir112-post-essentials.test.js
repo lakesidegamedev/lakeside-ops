@@ -39,6 +39,7 @@ test("all rules at once: the answer to the player's question goes out, after a r
 
 test("all rules at once: a correction goes out even after the merged overflow message", async () => {
   const f = crowded();
+  f.job.evidenceText = "\n[read_tool] turn 41 output 120 units"; // a figure correction rests on a read (2026-11-23, ticket 1891)
   await f.broker.tool(f.job, "channel_reply", { message: "Correction: turn 41 made 120 units, not 100." });
   assert.equal(f.posts().length, 1);
 });

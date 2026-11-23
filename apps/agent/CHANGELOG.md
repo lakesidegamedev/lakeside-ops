@@ -5,6 +5,26 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.6.0 (2026-11-23)
+
+### Tickets keep moving overnight (owner, 2026-11-23)
+
+- **The wake cap hands a ticket to a worker, not to staff.** When a ticket task hits its wake limit, Keir starts an investigation worker on the ticket and tells the player once, in plain words, that a deeper check has started and it will post when it reports. The ticket is no longer paused with "Staff are reviewing", which was untrue overnight. The staff hand-off runs only when no worker can start.
+- **A stuck ticket waiting on Keir's own card gets a worker before anyone is paged.** The stuck-ticket sweep used to DM the owner "needs a person: waiting on a developer" for cards Keir filed for itself. It now starts a worker on the ticket (with every open card Keir filed in its brief) and has the ticket task tell the player; the owner hears only if no worker could start or the worker came back with nothing.
+- **Broken follow-up promises start a worker.** A promise two wakes could not deliver starts a worker instead of only DMing the owner. "I will follow up when a fix is in" now counts as a fix promise.
+- **Workers can pick up a stalled ticket** whether or not its cause was marked unverified, with one extra run on top of the per-ticket budget.
+
+### No wrong corrections, no asking players for Keir's own lookups (owner, 2026-11-23)
+
+- **Every public "Correction:" is checked first.** A separate one-shot check on the configured Codex route reads the earlier posts, the draft and the records this activation read. Unsupported corrections are refused with the reason (for example a turn's cash change mistaken for a mismatch); uncertain ones are refused once so Keir quotes the record. A correction with no read in the activation is refused. A checker outage lets the post through and is logged.
+- **Replies about harm from our bug or change say what to do meanwhile and when the fix is expected** (owner rule). A reply that explains a loss our fault caused but gives no in-game step for the meantime, or no stage or timing for the fix, is refused (at most twice per activation). Open-ended strategy advice still goes to Ask.
+- **Keir reads every site before answering about a total, and never writes "I still need your ..."** for data it can read. Such posts are refused with what to do instead: read the rest, or say what happens next and when. Players are asked only for what only they know.
+
+### Patch reads no longer time out
+
+- **Sandbox git compares mtime, size and mode only** (`core.checkStat=minimal`). The shared snapshot's index was written as root, so inside the sandbox every file looked changed and each patch read re-hashed the whole game repository, often past the 60 second limit.
+- **Patch reads get three minutes and one retry**, and a timeout says so. Before, it was reported as "larger than 2 MB, split the fix", which sent Keir shrinking small fixes and filing "blocked by delegation errors" cards.
+
 ## 11.5.0 (2026-11-23)
 
 ### MCPs first, then whatever works (owner, 2026-11-23)

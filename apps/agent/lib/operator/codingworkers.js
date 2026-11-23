@@ -219,25 +219,30 @@ function createCodingWorkers({
 
   // Keir 8.5.1: hand an unverified cause to a read-only investigation worker. Skips are reported with
   // `permanent` when retrying cannot help (switched off, skip list, budget spent), so the sweeper escalates.
-  function queueInvestigation({ job, reason = "" }) {
+  // 2026-11-23 (tickets 1886, 1889, 1891): stall=true is a ticket that stopped moving (its task hit the wake cap, or it has
+  // waited hours on a card Keir filed for itself). The worker picks the ticket up whether or not the cause is marked
+  // unverified: it finds the cause or builds the bug or display fix, and a rule or balance finding becomes owner options.
+  function queueInvestigation({ job, reason = "", stall = false }) {
     if (!enabled) return { skipped: true, permanent: true, reason: "coding workers are switched off" };
     const ticket = job?.ticket || null;
     if (!ticket) return { skipped: true, permanent: true, reason: "only a ticket's own task dispatches a worker" };
     if (skipped(ticket)) return { skipped: true, permanent: true, reason: "ticket is on the skip list" };
     if (job.resolved || job.channelClosed || ["done", "dismissed", "cancelled", "deferred"].includes(job.state)) return { skipped: true, reason: "ticket is not open for work" };
     const jobs = Object.values(d.jobs).filter((j) => j.ticket === ticket);
-    const cause = inv.causeUnverified(jobs);
+    const cause = inv.causeUnverified(jobs) || (stall ? inv.stallCause(jobs) : null);
     if (!cause) return { skipped: true, reason: "the cause is not marked unverified" };
     const active = inv.activeRun(d, ticket);
     if (active) return { skipped: true, active: true, reason: `ticket already has run ${active.id}`, run: active };
-    if (inv.investigationsFor(d, ticket) >= inv.MAX_INVESTIGATIONS_PER_TICKET) return { skipped: true, permanent: true, reason: `${inv.MAX_INVESTIGATIONS_PER_TICKET} investigation workers already ran for this ticket` };
+    const budget = inv.MAX_INVESTIGATIONS_PER_TICKET + (stall ? inv.EXTRA_STALL_RUNS : 0);
+    if (inv.investigationsFor(d, ticket) >= budget) return { skipped: true, permanent: true, reason: `${budget} investigation workers already ran for this ticket` };
     const card = cause.card || null;
-    const detail = card ? `${card.title}\n(Keir's own card ${card.id}; read it with ops-knowledge kanban_get for what he already checked.)` : cause.summary;
+    const detail = cause.source === "stall" ? cause.summary
+      : card ? `${card.title}\n(Keir's own card ${card.id}; read it with ops-knowledge kanban_get for what he already checked.)` : cause.summary;
     const report = String(job.source?.content || "").slice(0, 1200);
     const full = [detail, report && `The player's report:\n${report}`, job.summary && `Keir's own last summary:\n${String(job.summary).slice(0, 1500)}`, reason && `Why this was started: ${reason}`].filter(Boolean).join("\n\n");
     const s = store(); s.seq += 1;
     const id = `cw-${ticket}-${s.seq}`, sid = short(`${now().toString(36)}${s.seq}`);
-    const run = s.runs[id] = { id, kind: "investigate", ticket, jobId: job.id, card: card?.id || null, changeClass: null, title: String(card?.title || "Cause of the reported problem is unverified").slice(0, 200), detail: full.slice(0, 5000), issue: null,
+    const run = s.runs[id] = { id, kind: "investigate", ...(stall ? { trigger: "stall" } : {}), ticket, jobId: job.id, card: card?.id || null, changeClass: null, title: String(card?.title || (stall ? "Ticket stopped moving: pick it up" : "Cause of the reported problem is unverified")).slice(0, 200), detail: full.slice(0, 5000), issue: null,
       state: "queued", attempt: 1, mode: "build", short: sid, branch: `fix/keir-${sid}`, worktree: `${WORKTREE_ROOT}/keir-${sid}`,
       report: path.join(dir, `${id}.report.md`), log: path.join(dir, `${id}.log`), createdAt: now(), history: [], errors: 0 };
     note(run, `queued investigation (${cause.source})`); audit("coding_worker_queued", { run: id, ticket, card: run.card, kind: "investigate" });

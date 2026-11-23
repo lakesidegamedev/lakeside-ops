@@ -47,8 +47,12 @@ test("an unanswered player message waits 30 minutes, and only counts in Keir's a
   assert.equal(decideTicket(base({ waitingOnPlayer: true, lastSubstantiveAt: NOON - 30 * H }), NOON).action, "none");
 });
 
-test("waiting on a developer past 6 hours goes straight to the owner, not to another investigation", () => {
-  assert.equal(decideTicket(base({ waitingOnDeveloper: true, lastSubstantiveAt: NOON - 8 * H }), NOON).action, "escalate_owner");
+test("waiting on a developer past 6 hours starts a worker first; the owner hears only after that came back with nothing (1884, 1886, 1889)", () => {
+  const first = decideTicket(base({ waitingOnDeveloper: true, lastSubstantiveAt: NOON - 8 * H }), NOON);
+  assert.equal(first.action, "investigate_worker");
+  assert.equal(first.stall, true);
+  // The worker ran (sweep recorded 4 h ago) and nothing substantive followed: now the owner.
+  assert.equal(decideTicket(base({ waitingOnDeveloper: true, lastSubstantiveAt: NOON - 8 * H, lastActionKind: "investigate_worker", lastActionAt: NOON - 4 * H }), NOON).action, "escalate_owner");
 });
 
 test("a pending owner decision: tell the player once, never investigate, never re-ping (decisions.js owns the 12 h re-ping)", () => {

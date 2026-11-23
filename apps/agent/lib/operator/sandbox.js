@@ -5,6 +5,13 @@ const { spawn } = require("node:child_process");
 
 // Read-only dependency mirrors, kept current by bin/keir-deps-refresh.sh.
 const DEPS = { AHDGame: "/root/projects/AHDGame/worktrees/keir-deps/node_modules", AHDClient: "/root/projects/AHDClient/node_modules" };
+// Git settings inside every sandbox. The shared base checkout's index was written by root on the host; inside the
+// namespace the same files belong to uid 65534, so with git's default stat check every file looked changed and each
+// `git add -N` / `git diff` re-hashed all ~24,000 files (about 290 MB). Under load that ran past the 60 s run limit and
+// every patch read failed (tickets 1886 and 1889, 2026-11-22/23: "Coding patch is larger than 2 MB", "output capture
+// failed"). core.checkStat=minimal compares mtime, size and mode only, which is what a snapshot needs.
+const GIT_CONFIG = [["safe.directory", "*"], ["core.checkStat", "minimal"], ["core.trustctime", "false"]];
+const GIT_ENV = ["--setenv", "GIT_CONFIG_COUNT", String(GIT_CONFIG.length), ...GIT_CONFIG.flatMap(([k, v], i) => ["--setenv", `GIT_CONFIG_KEY_${i}`, k, "--setenv", `GIT_CONFIG_VALUE_${i}`, v])];
 function createSandbox(root) {
   function deps(repository) {
     const dir = DEPS[repository];
@@ -64,7 +71,7 @@ function createSandbox(root) {
       ...(archive ? ["--ro-bind", archive, "/source.tar"] : []),
       ...overlay,
       ...(depsDir && (overlay.length || fs.existsSync(path.join(dir, "repo"))) ? dependencyMounts(depsDir) : []),
-      "--clearenv", ...(computer ? ["--setenv", "PLAYWRIGHT_BROWSERS_PATH", "/opt/computer-browsers"] : []), "--setenv", "PATH", "/workspace/repo/node_modules/.bin:/opt/keir-runtime:/usr/bin:/bin", "--setenv", "HOME", "/workspace", "--setenv", "LANG", "C.UTF-8", "--setenv", "CI", "1", "--setenv", "GIT_CONFIG_COUNT", "1", "--setenv", "GIT_CONFIG_KEY_0", "safe.directory", "--setenv", "GIT_CONFIG_VALUE_0", "*", "--setenv", "NO_COLOR", "1", "--setenv", "FORCE_COLOR", "0", "--setenv", "NODE_OPTIONS", "--max-old-space-size=1536", "--setenv", "VITEST_CACHE_DIR", "/tmp/vitest",
+      "--clearenv", ...(computer ? ["--setenv", "PLAYWRIGHT_BROWSERS_PATH", "/opt/computer-browsers"] : []), "--setenv", "PATH", "/workspace/repo/node_modules/.bin:/opt/keir-runtime:/usr/bin:/bin", "--setenv", "HOME", "/workspace", "--setenv", "LANG", "C.UTF-8", "--setenv", "CI", "1", ...GIT_ENV, "--setenv", "NO_COLOR", "1", "--setenv", "FORCE_COLOR", "0", "--setenv", "NODE_OPTIONS", "--max-old-space-size=1536", "--setenv", "VITEST_CACHE_DIR", "/tmp/vitest",
       // vitest otherwise starts one worker per host core (17 here). Its threads count
       // against the service TasksMax, and two tasks testing at once hit spawn EAGAIN
       // and blocked tickets 1505 and 1506 (2026-10-12): one default run peaks at
@@ -90,10 +97,11 @@ function createSandbox(root) {
   // chunks, so a reviewable fix is never shrunk to fit a tool (ticket 1514
   // spent four rounds compressing its House fix below the window).
   const CAPTURE = "/workspace/.keir-capture";
-  async function capture(id, command, signal, { maxBytes = 2 * 1024 * 1024, chunk = 15000 } = {}) {
-    const head = await run(id, `{ ${command} ; } > ${CAPTURE}; s=$?; echo "keir-capture $s $(wc -c < ${CAPTURE})"`, signal);
+  async function capture(id, command, signal, { maxBytes = 2 * 1024 * 1024, chunk = 15000, timeoutMs } = {}) {
+    const head = await run(id, `{ ${command} ; } > ${CAPTURE}; s=$?; echo "keir-capture $s $(wc -c < ${CAPTURE})"`, signal, timeoutMs ? { timeoutMs } : {});
     const m = /keir-capture (\d+) (\d+)\s*$/.exec(head.output || "");
-    if (!m) throw new Error("output capture failed");
+    // No trailer: the command was killed (time limit or abort) before it finished. Say so; it is not a size problem.
+    if (!m) { const e = new Error(head.signal ? "output capture timed out" : "output capture failed"); e.timedOut = Boolean(head.signal); throw e; }
     const code = Number(m[1]), size = Number(m[2]);
     if (size > maxBytes) { await run(id, `rm -f ${CAPTURE}`, signal); return { code, output: "", truncated: true, size }; }
     const parts = [];
@@ -112,4 +120,4 @@ function createSandbox(root) {
   const hasRepository = (id) => /^[a-f0-9]{12}$/.test(id) && (fs.existsSync(path.join(overlayDir(id), "base")) || fs.existsSync(path.join(root, id, "repo")));
   return { workspace, run, capture, deps, attach, fork, remove, hasRepository };
 }
-module.exports = { createSandbox };
+module.exports = { GIT_CONFIG, createSandbox };
