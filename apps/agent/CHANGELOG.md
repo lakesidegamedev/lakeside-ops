@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.4 (2026-11-23)
+
+- **A gameplay ticket with a fix on it gets a real answer, not the Ask redirect.** Ticket 1884 was filed as gameplay, so the advice guard allowed only the Ask link even though the player's losses came from our own changes and two fixes had shipped on the ticket. Any fix on the ticket's status card past "found", or a pull request on any task for that ticket, now lifts the redirect; the meantime-steps rule applies instead (owner, 2026-11-23).
+
 ## 11.7.3 (2026-11-23)
 
 - **Coordinator hold.** A ticket listed in `coordinator-holds.json` in the state directory gets no Keir post at all, including from tasks the owner started, until the hold is removed or expires. A ticket bot claim in the owner's name let the owner's own task post a wrong correction on ticket 1890 (owner, 2026-11-23).
