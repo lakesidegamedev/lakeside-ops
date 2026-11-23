@@ -392,6 +392,13 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       const esc = await broker.escalationCheck(job).catch((e) => { ledger.audit("escalation_check_failed", { job: job.id, error: String(e.message).slice(0, 160) }); return null; });
       if (esc) { ledger.save(); return; }
     }
+    // Owner rule 2026-11-23 (ticket 1884): someone else has this ticket (a developer agent or staff posted to the player in
+    // the last two hours, a worker or claimed card or open PR names it; refreshed every 10 minutes). A timer or internal
+    // wake does nothing and looks again in 30 minutes; a player's message still gets answered. A handed-back ticket is Keir's.
+    if (job.kind === "ticket" && job.ticket && !job.codingParent && !job.internalProbe && !job.handback && !humanInbox(job)) {
+      const o = ledger.data.ticketOwners?.[job.ticket];
+      if (o?.owned && Date.now() - (o.at || 0) < 30 * 60000) { job.state = "waiting"; job.wakeAt = Date.now() + 30 * 60000; ledger.audit("wake_quiet_owned", { job: job.id, ticket: job.ticket, by: o.by }); ledger.save(); return; }
+    }
     const ticketRetry = !quick && job.kind === "ticket" && job.ticket && job.role === "support" && !job.codingParent && !job.internalProbe;
     if (ticketRetry && humanInbox(job)) delete job.ticketStepLimits;
     if (require("./toolmarkup").hasToolMarkup(job.summary)) {

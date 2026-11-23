@@ -1085,6 +1085,9 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   const OWNED_MS = 2 * 3600000;
   const normPost = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").slice(0, 120);
   async function ownedElsewhere(job, ticketNo) {
+    // A ticket handed back to Keir (handback.js) is Keir's, whoever posted on it last.
+    const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]];
+    if (job.handback || root?.handback) { (d.ticketOwners ||= {})[ticketNo] = { at: now(), owned: false, handback: true }; return null; }
     let who = null;
     try {
       const act = await w3.teamActivity(job, { ticket: ticketNo });
