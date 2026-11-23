@@ -672,8 +672,14 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (job.deadline < now()) throw new Error("task execution authority is inactive: this task's deadline has passed. Stop now: make no more tool calls.");
     require("./supporttakeover").assertCanAct(d, job);
   }
+  const coordinatorHolds = require("./coordinatorhold").createCoordinatorHolds({ stateDir: config.stateDir, now });
+  function assertNotHeld(ticket) {
+    const hold = coordinatorHolds.held(ticket);
+    if (hold) throw new Error(`The coordinator is answering ticket ${ticket} directly. Post nothing on it; finish now with no further tool calls.`);
+  }
   async function supportAuthority(job, states, { decisionNotice = false } = {}) {
     active(job, states);
+    assertNotHeld(job.ticket);
     if (config.supportDeferred(job)) throw new Error("another coordinator owns the active support shift");
     // A public update while the owner decides follows the same one-notice rule
     // as channel_reply (guardTicketPost); every other support write still waits.
@@ -697,6 +703,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (old?.state === "done") return old.result;
     conversationTurn.check(job);
     // Keir 10.1.13: nothing is said to a player on a ticket that is over (1842 got "still working on it" a minute after it closed).
+    if (settle?.kind === "reply" && settle.ticket) assertNotHeld(settle.ticket);
     if (settle?.kind === "reply" && settle.ticket) { const why = require("./ticketstate").endedReason(d, settle.ticket, job); if (why) { ledger.audit("post_blocked_ticket_ended", { job: job.id, ticket: settle.ticket, why }); throw new Error(`Ticket ${settle.ticket} has ended (${why}). Nothing more is posted to the player. Finish now with no further tool calls.`); } }
     // A merge receipt is settled from GitHub by effectrecovery.js; asking the
     // owner to inspect it pinged them about a race that fixes itself (ticket 1619).

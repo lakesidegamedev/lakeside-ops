@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.3 (2026-11-23)
+
+- **Coordinator hold.** A ticket listed in `coordinator-holds.json` in the state directory gets no Keir post at all, including from tasks the owner started, until the hold is removed or expires. A ticket bot claim in the owner's name let the owner's own task post a wrong correction on ticket 1890 (owner, 2026-11-23).
+
 ## 11.7.2 (2026-11-23)
 
 - **The "now live" note waits while the player's question is unanswered.** Keir had read the question, so nothing was left in its inbox, and the note went out over it two minutes later (owner, ticket 1890).
