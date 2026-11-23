@@ -5,6 +5,12 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### One "needs a person" alert per report (owner, 2026-11-23)
+
+- **No repeat DMs.** A needs-a-person handoff sends no second owner DM when one in the last 24 hours, from any task, cites the same Discord message, came from the same reporter's intake, or has a near-identical title. The card is still filed and marked as a repeat. One player's report in #america-chat had produced five DMs in twenty minutes.
+- **Intake can use the message that states the problem.** Automatic intake may open a ticket from another message by the same author in the same channel within 30 minutes of the one that woke it. Before, a report followed by "Im so confused" was refused because the wake landed on the vague message.
+- **"Broke", "bugged" and "glitch" count as problem phrases** for automatic intake.
+
 ### Guardrails before Keir is turned back on (owner decision 2026-11-22)
 
 - **Incident context.** Every ticket job is told which incidents are open and which turns failed in the last 24 hours. Keir cannot say an incident or the game has "recovered", "resolved" or "is back to normal" until two clean turns have run after the last failure; if the turn record cannot be read, it says it could not confirm.

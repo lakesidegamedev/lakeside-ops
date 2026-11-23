@@ -2946,8 +2946,11 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       if (selfOwned && r?.id) { const rec = job.raisedToDevelopers.find((x) => x.id === r.id); if (rec) { rec.selfOwned = true; ledger.save(); } }
       if (!selfOwned && (input.kind || "question") === "question" && r?.id) {
         const rec = job.raisedToDevelopers.find((x) => x.id === r.id);
-        if (rec) { rec.needsHuman = true; rec.notifiedAt = now(); }
-        if (!(n && require("./ticketstate").endedReason(d, n, job))) ledger.notify(`handoff:${r.id}`, "owner", `${n ? `Ticket ${n} needs a person: ` : "Needs a person: "}${title}\n\n${detail.slice(0, 900)}`);
+        const refs = handoffRefs(detail, new Set([job.source?.channelId, job.replyChannel].filter(Boolean)));
+        const repeat = repeatedHandoff(d.jobs, job, title, refs, now());
+        if (rec) { rec.needsHuman = true; rec.notifiedAt = now(); rec.refs = refs; if (repeat) { rec.dmSkipped = true; rec.repeatOf = repeat.id; } }
+        if (repeat) ledger.audit("handoff_dm_repeat", { job: job.id, ticket: n || null, item: r.id, repeatOf: repeat.id });
+        else if (!(n && require("./ticketstate").endedReason(d, n, job))) ledger.notify(`handoff:${r.id}`, "owner", `${n ? `Ticket ${n} needs a person: ` : "Needs a person: "}${title}\n\n${detail.slice(0, 900)}`);
         ledger.save();
       }
       if (input.kind === "decision") {
@@ -4637,7 +4640,14 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         const channel = await discord("GET", `/channels/${job.source.channelId}`);
         if (channel.guild_id !== config.guildId) throw new Error("ticket report channel is outside the configured guild");
         reportId = input.reportMessageId || job.source.replyTo || request.messageId;
-      } else if (input.reportMessageId && input.reportMessageId !== reportId) throw new Error("automatic intake cannot change its reporter");
+      } else if (input.reportMessageId && input.reportMessageId !== reportId) {
+        // Owner, 2026-11-23: a player often states the problem a few messages before the one that woke intake
+        // ("Something broke, how am I VP" then "Im so confused"). Automatic intake may bind to another message by the
+        // same author in the same channel within INTAKE_REPORT_WINDOW; the author check below still holds the reporter.
+        if (!snowflake(input.reportMessageId) || Math.abs(snowflakeTime(input.reportMessageId) - snowflakeTime(reportId)) > INTAKE_REPORT_WINDOW)
+          throw new Error("automatic intake can only use another message by the same author in this channel from within 30 minutes of the one it woke on");
+        reportId = input.reportMessageId;
+      }
       if (!snowflake(reportId)) throw new Error("select an actual source-channel report message");
       const original = await discord("GET", `/channels/${reportChannelId}/messages/${reportId}`);
       if (original.id !== reportId || original.webhook_id || !original.author || original.author.bot || !snowflake(original.author.id) || (!commanded && original.author.id !== job.source.authorId)) throw new Error("reporter provenance changed");
@@ -5655,5 +5665,23 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         messages: appChannel.history(30, root.appThread || "main") } : conversation?.snapshot(job);
     }, progress: (job) => conversation?.progress(job) || [] };
 }
-function problemReport(text) { return /\b(bug|broken|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
-module.exports = { outsideScopeMessage, mapSnapshotScopeCheck, nearCollections, TYPED_READS, SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+function problemReport(text) { return /\b(bug|bugged|broke|broken|glitch|glitched|error|crash|missing|disappeared|stuck|failed|not loading|not working|lost my|won't load|doesn't work|cannot|can't)\b/i.test(text || ""); }
+const INTAKE_REPORT_WINDOW = 30 * 60 * 1000;
+function snowflakeTime(id) { try { return Number((BigInt(id) >> 22n) + 1420070400000n); } catch { return NaN; } }
+// Owner, 2026-11-23: five intake activations on one player's report each DM'd "Needs a person". A needs-a-person
+// handoff repeats an earlier one (last 24 hours, any job) when it cites the same Discord message, comes from the same
+// reporter's intake, or has a near-identical title. The repeat keeps its card but sends no second DM.
+const HANDOFF_DM_WINDOW = 24 * 3600 * 1000;
+function handoffRefs(text, exclude) { return [...new Set((String(text || "").match(/\b\d{17,20}\b/g) || []).filter((x) => !exclude.has(x)))]; }
+function repeatedHandoff(jobs, job, title, refs, at) {
+  for (const other of Object.values(jobs || {})) {
+    for (const r of other.raisedToDevelopers || []) {
+      if (!r.needsHuman || !r.notifiedAt || at - r.notifiedAt > HANDOFF_DM_WINDOW) continue;
+      const sameRef = refs.some((x) => (r.refs || []).includes(x));
+      const sameReporter = other !== job && other.kind === "candidate" && job.kind === "candidate" && other.source?.authorId && other.source.authorId === job.source?.authorId;
+      if (sameRef || sameReporter || similarity(r.title, title) > 0.6) return r;
+    }
+  }
+  return null;
+}
+module.exports = { problemReport, snowflakeTime, handoffRefs, repeatedHandoff, outsideScopeMessage, mapSnapshotScopeCheck, nearCollections, TYPED_READS, SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
