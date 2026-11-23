@@ -87,4 +87,27 @@ function assertCanAct(data, job) {
   if (pause && pause.closePermission && scope && scope.jobId === job.id && scope.receipt === pause.closePermission.messageId) return;
   if (pause) throw Object.assign(new Error(`Ticket ${pause.ticket} is paused by the owner. Stop until an explicit resume.`), { code: "TICKET_OWNER_PAUSED" });
 }
-module.exports = { runAsCloser, pauseFor, setPause, assertCanAct, parseStopUpdates, applyStopUpdates };
+
+// Owner rule 2026-11-23 (always a worker, never "staff are reviewing"): lift the pauses Keir's own older staff hand-off left
+// on tickets (wake cap, a player challenge, repeated corrections). A pause a person set is never touched. Cleared directly:
+// setPause would tell the task the owner resumed it, which is not what happened. Returns the tickets lifted.
+function liftKeirEscalationPauses(data, now) {
+  const esc = data.ticketEscalations || {}, pauses = data.ticketPauses || {}, lifted = [];
+  for (const [n, e] of Object.entries(esc)) {
+    if (!["wake_cap", "player_challenge", "repeated_corrections"].includes(e?.why)) continue;
+    if (pauses[n] && pauses[n].by !== "keir-escalation") continue;
+    delete pauses[n];
+    for (const c of Object.values(data.channels || {})) if (Number(c.keirPaused?.ticket) === Number(n) && c.keirPaused.by === "keir-escalation") delete c.keirPaused;
+    for (const j of Object.values(data.jobs || {})) if (Number(j.ticketPaused?.ticket) === Number(n) && j.ticketPaused.by === "keir-escalation") {
+      delete j.ticketPaused;
+      if (j.state === "paused" && !j.channelClosed && !j.resolved) {
+        j.state = "waiting"; j.wakeAt = now + 60000;
+        (j.inbox ||= []).push({ role: "system", authorId: "keir-escalation-lift", at: new Date(now).toISOString(), content: "Your earlier \"staff are reviewing\" hand-off on this ticket is withdrawn: Keir owns it again (owner rule 2026-11-23). Read the ticket from the start. If someone else posted to the player in the last two hours, stay quiet; otherwise do the next owed step or set your closing condition." });
+      }
+    }
+    delete esc[n]; lifted.push(Number(n));
+  }
+  return lifted;
+}
+
+module.exports = { liftKeirEscalationPauses, runAsCloser, pauseFor, setPause, assertCanAct, parseStopUpdates, applyStopUpdates };

@@ -11,7 +11,7 @@
 //   - A player reply wakes the task as always; closing after a quiet period is closing.js's job.
 // The pure parts are here; operator.js runs the ticker.
 
-const MARK = /HANDOFF TO KEIR/i;
+const MARK = /HANDOFF TO KEIR|\bhand(?:ing|ed|s)? (?:ticket \d+ |this ticket |it )?back to Keir\b/i;
 const isHandback = (card) => MARK.test(`${card?.progress_summary || ""}\n${card?.detail || ""}\n${card?.detail_excerpt || ""}`);
 // The note is the hand-back paragraph itself.
 function noteOf(card) {
@@ -28,13 +28,13 @@ function parse(card) {
   return { card: card.id, tickets: (card.tickets || []).map(Number).filter((n) => n > 0), note: noteOf(card), prs: fixPrs(card), at: card.last_progress_at || card.updated_at || null };
 }
 
-const RULES = "You own this ticket again. Do exactly what the note says is owed, in order. Post \"the fix is live\" only when Keir has told you the live build contains the fix (never from a merge or a guess). Answer the player's next message. Once the player has been quiet and nothing is owed, close the ticket under your normal closing rules. Never send this ticket to the owner: it is only waiting.";
+const RULES = "You own this ticket again. Do what the note says is owed, in order, and set your closing condition from it (closesWhen, waitingOn, and the turn or event that wakes you). Post \"the fix is live\" only when Keir has told you the live build contains the fix (never from a merge or a guess). Answer the player's next message. Once nothing is owed and the player has been quiet, close the ticket yourself under your normal closing rules. Never send this ticket to the owner: it is only waiting. If the note says to ask the owner before closing, do not (owner rule 2026-11-23); the only owner question allowed is a real decision the note names, such as changing who holds an office, asked once as a multiple-choice question.";
 function inboxNote(h) {
   return `A developer handed this ticket back to you (kanban card ${h.card}).\n${h.note}\n\n${RULES}`;
 }
 function liveNote(h, pr, v) {
   const where = Object.entries(v.deployment || {}).map(([svc, dep]) => `${svc === "web" ? "the main server" : "the turn worker"} runs ${String(dep.sha).slice(0, 10)}`).join(" and ");
-  return `The fix (pull request ${pr}) is in the live build now: ${where}, both containing its merge commit ${String(v.pr?.merge_commit_sha || "").slice(0, 10)}. Do the next owed step from the hand-back note (card ${h.card}): post the fix-is-live update to the player now.`;
+  return `Every fix named on the hand-back (card ${h.card}: ${h.prs.map((n) => `#${n}`).join(", ")}) is in the live build now: ${where}, containing the merge commit of #${pr} (${String(v.pr?.merge_commit_sha || "").slice(0, 10)}). Do the next owed step from the note. If the player has not been told this fix is live, post it now in plain words (what they will see); if the note says they were already told, do not post again.`;
 }
 
 module.exports = { isHandback, noteOf, fixPrs, parse, inboxNote, liveNote, RULES, MARK };

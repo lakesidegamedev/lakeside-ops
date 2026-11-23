@@ -116,3 +116,23 @@ test("decision questions carry what happens if the owner does nothing, in plain 
   assert.match(out, /\*\*Choose one\*\*/); assert.match(out, /\(recommended\)/); assert.match(out, /If you do nothing: nothing changes until you answer\./);
   assert.doesNotMatch(out, /github\.com|needs a person/);
 });
+
+test("hand-backs written as \"Handing ticket N back to Keir\" are read too, with the card's linked fixes", () => {
+  const c = { id: 255739, tickets: [1890], pull_requests: ["lakesidegamedev/AHDGame#7272", "lakesidegamedev/AHDGame#7278"], progress_summary: "Handing ticket 1890 back to Keir. Done: #7272 is live. Still owed: (1) confirm 2eff188 is live." };
+  assert.equal(hb.isHandback(c), true);
+  assert.deepEqual(hb.parse(c).prs, [7272, 7278]);
+  assert.match(hb.RULES, /If the note says to ask the owner before closing, do not/);
+  assert.match(hb.liveNote(hb.parse(c), 7278, { deployment: { web: { sha: "a".repeat(40) } }, pr: { merge_commit_sha: "b".repeat(40) } }), /if the note says they were already told, do not post again/);
+});
+
+test("Keir's own staff hand-off pauses are lifted once; a pause a person set is never touched", () => {
+  const data = { jobs: { a: { id: "a", ticket: 1891, state: "paused", ticketPaused: { ticket: 1891, by: "keir-escalation" } }, b: { id: "b", ticket: 1700, state: "paused", ticketPaused: { ticket: 1700, by: "222" } } },
+    channels: { c1: { keirPaused: { ticket: 1891, by: "keir-escalation" } }, c2: { keirPaused: { ticket: 1700, by: "222" } } },
+    ticketPauses: { 1891: { ticket: 1891, by: "keir-escalation" }, 1700: { ticket: 1700, by: "222" } },
+    ticketEscalations: { 1891: { why: "wake_cap" }, 1700: { why: "player_challenge" } } };
+  const { liftKeirEscalationPauses } = require("../lib/operator/ticketpause");
+  assert.deepEqual(liftKeirEscalationPauses(data, 1000), [1891]);
+  assert.equal(data.jobs.a.state, "waiting"); assert.match(data.jobs.a.inbox[0].content, /Keir owns it again/);
+  assert.equal(data.jobs.b.state, "paused"); assert.ok(data.ticketPauses[1700]); assert.ok(data.channels.c2.keirPaused);
+  assert.deepEqual(liftKeirEscalationPauses(data, 2000), [], "once");
+});

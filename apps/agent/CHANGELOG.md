@@ -18,6 +18,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 - **Hand-backs**: a developer agent that writes "HANDOFF TO KEIR" on a ticket's kanban card hands it to Keir. The note reaches the ticket task; each named fix is checked against the live build every 5 minutes, and Keir is told to post "fix is live" only once the running web and turn worker contain the fix's merge commit. A handed-back waiting ticket is never swept or escalated.
 - **Ordinary fixes merge without asking the owner**: once the owner has chosen the direction on a ticket, the fix that carries it out ships under the standing merge permission. Keir no longer asks for "exact execution approval" of ordinary fixes; money, product direction and irreversible removals still ask.
 - **Old decision messages leave the owner's DMs** a day after they end.
+- **Tickets Keir paused with "staff are reviewing" before today are un-paused once at startup** (only Keir's own pauses; a person's pause is never touched), and the task is told Keir owns the ticket again.
+- **Hand-back notes that say "handing ticket N back to Keir"** are read as well. A note's "ask the owner before closing" is overridden by the owner rule: Keir closes waiting tickets itself once the player is quiet.
 - **Guardian checks the checkers' runs**, not just their timers: a failed run is re-run (at most hourly), and a unit that keeps failing gets a fix-it card on the board instead of an owner DM.
 
 ## 11.6.0 (2026-11-23)

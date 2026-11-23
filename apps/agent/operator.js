@@ -428,6 +428,9 @@ codingWorkersInst = createCodingWorkers({ ledger, api: ciApi, write: ciApi, mcp,
   model: config.providerOverride.startsWith("claude:") ? config.providerOverride.split("@")[0].split(":")[1] : undefined,
   effort: config.effortOverride || "high",
   probe: (service) => new Promise((resolve) => require("node:child_process").execFile(env.KEIR_DEPLOYED_SHA_CMD || "/opt/lakeside-platform/host/ahd-deployed-sha.sh", [service], { timeout: 45000 }, (e, out) => resolve(e ? null : String(out || "").trim()))) });
+// Owner rule 2026-11-23 (always a worker): lift the pauses Keir's own older staff hand-off left on tickets.
+try { const lifted = require("./lib/operator/ticketpause").liftKeirEscalationPauses(ledger.data, Date.now()); if (lifted.length) { ledger.audit("escalation_pauses_lifted", { tickets: lifted }); ledger.save(); log(`lifted Keir's own staff hand-off pauses: ${lifted.join(", ")}`); } }
+catch (e) { log(`escalation pause lift: ${e.message}`); }
 // Owner rule 2026-11-23 (handback.js): tickets handed back to Keir with "HANDOFF TO KEIR" on their kanban card. The
 // note reaches the ticket task once per change; each named fix is checked against the live build every 5 minutes and
 // the task is woken to post "fix is live" only when the running web (and turn worker) contain its merge commit.
