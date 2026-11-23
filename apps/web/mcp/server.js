@@ -30,6 +30,7 @@ const { registerReportTools, buildReportServer } = require("./report-publish-ser
 const { createCompanyStore, registerCompanyTools } = require("./company-tools");
 const { createTrackerStore, registerTrackerTools } = require("./tracker-tools");
 const { registerSupportEvidenceTools } = require("./support-evidence");
+const { registerCodeTools } = require("./code-tools");
 const { summarizeEntry } = require("../ollama-summarize");
 const fs = require("fs");
 const path = require("path");
@@ -318,85 +319,12 @@ async function main() {
     );
 
 
-    // Codebase retrieval: the same hybrid index Ask answers players from, so an
-    // agent grounds a code question the way the product does instead of
-    // grepping a checkout. Read scope on any collection is enough.
-    const canReadAny = () => (auth.scopes.collections || []).some((k) => tokens.canRead(auth, k));
-
-    server.tool(
-      "code_search",
-      "Hybrid (semantic + keyword + exact symbol) retrieval over the indexed A House Divided codebase, engineering docs, and player wiki: the index the Ask service answers from. Returns the chunks that would reach an answer model (path, part, source kind, revision, score, text) plus the file list. Ground a code or mechanics question here before reading files by hand; pass subQueries for a multi-part question.",
-      {
-        question: z.string().describe("Natural-language question, or a symbol or file name"),
-        topK: z.number().int().min(1).max(24).optional().default(8),
-        maxChars: z.number().int().min(2000).max(120000).optional().default(30000)
-          .describe("Character budget for returned chunk text; chunks that do not fit are dropped, as in Ask"),
-        claimType: z.enum(["mechanic", "intent", "player_help", "general"]).optional()
-          .describe("Which source kind wins conflicts (code for mechanics, docs for intent, wiki for player help); inferred from the question when omitted"),
-        fusion: z.enum(["legacy", "v2"]).optional().describe("Fusion mode; legacy is what Ask serves today"),
-        source: z.enum(["dev", "prod"]).optional().default("dev")
-          .describe("Which index: dev tracks the development branch (default for agents on this box), prod tracks main, which is what Ask serves players"),
-        subQueries: z.array(z.string()).max(4).optional().describe("Sub-questions of a multi-part question; each retrieves and the results merge"),
-      },
-      async ({ question, topK, maxChars, claimType, fusion, source, subQueries }) => {
-        if (!canReadAny()) return errorResult("token has no read scope");
-        let r;
-        try { r = askRetrieve(); } catch (e) { return errorResult(`code index unavailable: ${e.message}`); }
-        const idx = indexFor(source);
-        const opts = { topK, maxChars, game: idx.game, ...(claimType ? { claimType } : {}), ...(fusion ? { fusion } : {}) };
-        const out = subQueries && subQueries.length
-          ? await r.searchMulti(question, subQueries, opts)
-          : await r.search(question, opts);
-        if (!out) return errorResult("code index unavailable or empty");
-        return jsonResult({
-          index: idx.source, ...(idx.fallback ? { note: "dev index not built yet; served from the prod index" } : {}),
-          claimType: out.claimType, count: out.count, files: out.files,
-          hits: (out.hits || []).map((h) => ({
-            path: h.path, part: h.ord + 1, source: h.source, revision: h.revision,
-            score: Number(Number(h.score).toFixed(4)), text: h.text,
-          })),
-        });
-      }
-    );
-
-    server.tool(
-      "code_exact",
-      "Exact-match lookup in the Ask code index for literal symbols, phrases, and paths named in the question (constants, function names, file names). Cheaper and stricter than code_search; use it when you already know the identifier.",
-      {
-        question: z.string().describe("Text containing the identifiers, phrases, or paths to match literally"),
-        limit: z.number().int().min(1).max(20).optional().default(8),
-        maxChars: z.number().int().min(2000).max(60000).optional().default(18000),
-        source: z.enum(["dev", "prod"]).optional().default("dev").describe("dev (development branch, default) or prod (main)"),
-      },
-      async ({ question, limit, maxChars, source }) => {
-        if (!canReadAny()) return errorResult("token has no read scope");
-        let r;
-        try { r = askRetrieve(); } catch (e) { return errorResult(`code index unavailable: ${e.message}`); }
-        const idx = indexFor(source);
-        const out = r.searchExact(question, { limit, maxChars, game: idx.game });
-        if (!out) return jsonResult({ index: idx.source, count: 0, files: [], context: "" });
-        return jsonResult({ index: idx.source, ...(idx.fallback ? { note: "dev index not built yet; served from the prod index" } : {}), count: out.count, files: out.files, context: out.context });
-      }
-    );
-
-    server.tool(
-      "code_read",
-      "Read one indexed source file from the Ask code index by repository path (the `path` a code_search hit reports), reassembled from its chunks in order. Use after code_search to see the whole file rather than the retrieved slice. Code files only; secrets and key material are never indexed.",
-      {
-        path: z.string().describe("Repository-relative path, e.g. src/lib/turn/billLifecycle/configs/us.ts"),
-        maxChars: z.number().int().min(2000).max(120000).optional().default(40000),
-        source: z.enum(["dev", "prod"]).optional().default("dev").describe("dev (development branch, default) or prod (main)"),
-      },
-      async ({ path: filePath, maxChars, source }) => {
-        if (!canReadAny()) return errorResult("token has no read scope");
-        let r;
-        try { r = askRetrieve(); } catch (e) { return errorResult(`code index unavailable: ${e.message}`); }
-        const idx = indexFor(source);
-        const out = r.readIndexedFile(filePath, { maxChars, game: idx.game });
-        if (!out) return errorResult(`not in the ${idx.source} index: ${filePath}`);
-        return jsonResult({ index: idx.source, ...(idx.fallback ? { note: "dev index not built yet; served from the prod index" } : {}), path: filePath, count: out.count, files: out.files, context: out.context });
-      }
-    );
+    // Codebase retrieval (code_search, code_exact, code_read): see code-tools.js.
+    registerCodeTools(server, {
+      auth, tokens, jsonResult, errorResult, askRetrieve,
+      devFallback: indexFor,
+      gameIndexPath: (source) => (source === "dev" ? ASK_RAG_DB_DEV : ASK_RAG_DB),
+    });
 
     // Write tools are only exposed when the token carries write scope, so a
     // read-only agent never sees (and can't hallucinate calls to) them.
