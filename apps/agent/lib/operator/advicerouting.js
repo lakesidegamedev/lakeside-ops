@@ -35,6 +35,13 @@ function bugFollowup(job) {
   return job.tags?.kind === "gameplay_advice" && latest && latest !== job.source &&
     /\b(?:broken|error|incorrect|missing|not working|cannot log in|can.t log in)\b|\b(?:shares|holding|balance)\b[\s\S]{0,100}\b(?:but|says|wrong)\b/i.test(String(latest.content || ""));
 }
+function fixOnTicket(job, d) {
+  const ticket = Number(job.ticket);
+  if (!Number.isFinite(ticket) || ticket <= 0 || !d) return false;
+  const card = d.statusCards?.[ticket];
+  if ((card?.items || []).some((i) => i && i.stage && i.stage !== "found")) return true;
+  return Object.values(d.jobs || {}).some((j) => Number(j?.ticket) === ticket && j.pullRequests?.length);
+}
 function requiresRedirect(job, d) {
   if (!["ticket", "conversation", "command"].includes(job.kind) || !["support", "player"].includes(job.role) || job.codingParent) return false;
   if (job.incidentCandidates?.length) return false;
@@ -44,6 +51,9 @@ function requiresRedirect(job, d) {
   // separately by the brief; a gameplay category never overrides a bug.
   if (["bug_report", "data_repair", "feature_request", "design_feedback", "moderation"].includes(kind) || job.pullRequests?.length) return false;
   if (bugFollowup(job)) return false;
+  // A loss our own change caused is not advice: any fix on the ticket, from any task or a
+  // developer, means the player gets a real answer and the meantime steps (ticket 1884).
+  if (fixOnTicket(job, d)) return false;
   if (kind === "gameplay_advice") return true;
   const latest = latestInput(job);
   return adviceQuestion(latest?.content);
@@ -59,4 +69,4 @@ function guardResolution(job, d, args) {
       (args.followUp && args.followUp !== "Report a concrete bug here if something is broken."))
     throw new Error("Advice resolution must contain only the Ask redirect, action 'Directed gameplay advice to Ask.', and optional follow-up 'Report a concrete bug here if something is broken.'. Do not add investment advice.");
 }
-module.exports = { noteAskHealth, askUnavailable, askNote, resetAskHealth, URL, REPLY, adviceQuestion, bugFollowup, requiresRedirect, guard, guardResolution };
+module.exports = { fixOnTicket, noteAskHealth, askUnavailable, askNote, resetAskHealth, URL, REPLY, adviceQuestion, bugFollowup, requiresRedirect, guard, guardResolution };
