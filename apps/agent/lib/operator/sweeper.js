@@ -49,7 +49,7 @@ function inActiveHours(at, cfg = DEFAULTS) {
 }
 
 // Pure decision for one ticket snapshot. Returns { action, reason } where action is one of
-// none | investigate | investigate_worker | escalate_owner | notice_player_once. The 12 h owner re-ping of a pending decision is decisions.js's alone.
+// none | investigate | investigate_worker | escalate_owner | notice_player_once. investigate_worker may carry stall: true. The 12 h owner re-ping of a pending decision is decisions.js's alone.
 function decideTicket(t, now, cfg = DEFAULTS) {
   if (!t.open) return { action: "none", reason: "closed" };
   if (t.held) return { action: "none", reason: `held: ${t.held}` };
@@ -74,6 +74,10 @@ function decideTicket(t, now, cfg = DEFAULTS) {
   if (!unanswered && !stale) return { action: "none", reason: t.waitingOnPlayer ? "waiting on the player" : "healthy" };
   const reason = unanswered ? `the player's message has been unanswered for ${Math.round((now - t.lastHumanAt) / MIN)} min` : `no substantive progress for ${Math.round((now - t.lastSubstantiveAt) / HOUR)} h`;
   const investigatedWithoutResult = ["investigate", "investigate_worker", "escalate_owner"].includes(t.lastActionKind) && t.lastActionAt > t.lastSubstantiveAt;
+  // 2026-11-23 (tickets 1884, 1886, 1889): "waiting on a developer" meant a card Keir filed for itself, and nobody was ever
+  // sent; the owner got a DM at 3 a.m. instead. A worker picks the ticket up first; the owner hears only when that could
+  // not start or came back with nothing.
+  if (t.waitingOnDeveloper && !investigatedWithoutResult) return { action: "investigate_worker", stall: true, reason: `${reason}; waiting on a card Keir filed, so a worker picks it up` };
   if (investigatedWithoutResult || t.waitingOnDeveloper) {
     if (t.lastEscalationAt && now - t.lastEscalationAt < cfg.ownerRepingMs) return { action: "none", reason: "owner already told" };
     return { action: "escalate_owner", reason: `${reason}${investigatedWithoutResult ? "; a fresh investigation produced nothing substantive" : "; waiting on a developer"}` };
@@ -138,8 +142,13 @@ function createSweeper({ ledger, config, now = () => Date.now(), log = () => {},
       const rec = (t.sweeps[n] ||= {});
       if (decision.action === "investigate" || decision.action === "investigate_worker") {
         let out = null;
-        if (investigate) { try { out = investigate(s.root, { reason: decision.reason }); } catch (e) { log(`sweeper: ticket ${n}: investigation dispatch: ${e.message}`); } }
-        if (out && !out.skipped) { Object.assign(rec, { at, kind: "investigate_worker", reason: decision.reason, runId: out.run?.id }); }
+        if (investigate) { try { out = investigate(s.root, { reason: decision.reason, stall: Boolean(decision.stall) }); } catch (e) { log(`sweeper: ticket ${n}: investigation dispatch: ${e.message}`); } }
+        if (out && !out.skipped) {
+          Object.assign(rec, { at, kind: "investigate_worker", reason: decision.reason, runId: out.run?.id });
+          // The player hears that work continues, once per dispatch, in the ticket task's own words.
+          if (decision.stall) nudge(s.root, "A deeper check of this ticket has just started and will report back to you. Tell the player in one or two plain sentences that you are still on it and will post here when it reports. No internal names, card numbers or tools. Then finish; do not start other work.", at);
+        }
+        else if (out?.active && decision.stall) { Object.assign(rec, { at, kind: "investigate_worker", reason: `${decision.reason}; run ${out.run?.id} is already on it`, runId: out.run?.id }); }
         else if (decision.action === "investigate_worker") {
           // Nothing could be started (switched off, skip list, budget spent): a card must not just wait, so a person is told.
           if (t.sweeps[n]?.lastEscalationAt && at - t.sweeps[n].lastEscalationAt < c.ownerRepingMs) { actions.push({ ticket: n, action: "none", reason: "owner already told" }); continue; }

@@ -201,7 +201,8 @@ const starmer = require("./lib/operator/starmer").createStarmer({ ledger, config
 // Keir 2.1 owner app (Muse parity): goals, feed, brief, approvals, upcoming, files.
 const appMuse = createAppMuse({ ledger, config, app: appChannel, starmer, drain: () => drain() });
 let codingWorkersInst = null; // Keir 8.5: built after the CI helpers below; the broker reads it lazily
-const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse, codingWorkers: () => codingWorkersInst });
+const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse, codingWorkers: () => codingWorkersInst,
+  correctionCheck: require("./lib/operator/correctioncheck").makeChecker({ providerOverride: config.providerOverride, stateDir: config.stateDir }) });
 const agent = createAgent({ ledger, broker, config });
 const toolSessions = new Map(); // Keir 4.0: Rust runner tool sessions (see /v4/tool-session)
 // Keir 5.7: Jev-logged feedback and a daily self-review (lib/operator/selfimprove.js).
@@ -476,7 +477,7 @@ const ticketHeld = (job) => {
     return null;
 };
 const sweeper = require("./lib/operator/sweeper").createSweeper({ ledger, config: { sweeperEnabled: env.KEIR_SWEEPER !== "0" }, log, killSwitch, wake: () => drain(),
-  investigate: (root, o) => (codingWorkersInst ? codingWorkersInst.queueInvestigation({ job: root, reason: o.reason }) : { skipped: true, permanent: true, reason: "coding workers are not running" }),
+  investigate: (root, o) => (codingWorkersInst ? codingWorkersInst.queueInvestigation({ job: root, reason: o.reason, stall: Boolean(o.stall) }) : { skipped: true, permanent: true, reason: "coding workers are not running" }),
   held: ticketHeld });
 
 // Keir 10: failure scan every 15 minutes (new kinds, spikes, release regressions) files one card per fingerprint; retention daily.
@@ -496,7 +497,8 @@ tickers.every("answerfeedback", 10 * 60000, async () => { await answerFeedback.s
 tickers.every("sweeper", 10 * 60000, async () => { sweeper.tick(); drain(); }, { immediateMs: 2 * 60000 });
 // Keir 11.2: a follow-up promised to a player wakes its ticket when due, even a blocked one; two failed wakes post one plain
 // "can't confirm yet" line and tell staff once (lib/operator/promises.js).
-const promiseKeeper = require("./lib/operator/promises").createPromises({ ledger, log, controls, held: (job) => ticketHeld(job), post: (n, text) => broker.promiseFallback(n, text) });
+const promiseKeeper = require("./lib/operator/promises").createPromises({ ledger, log, controls, held: (job) => ticketHeld(job), post: (n, text) => broker.promiseFallback(n, text),
+  dispatch: (job, reason) => { if (!codingWorkersInst) return null; const out = codingWorkersInst.queueInvestigation({ job, reason, stall: true }); return out && (!out.skipped || out.active) ? out : null; } });
 // Keir 11.2: finding jobs blocked with no question, parked with nothing changing, or from an old world are closed with a record.
 tickers.every("findingexpiry", 30 * 60000, async () => { require("./lib/operator/closing").expireFindings(ledger, { now: Date.now(), config: closingSettings, controls }); }, { immediateMs: 5 * 60000 });
 tickers.every("promises", 5 * 60000, async () => { const r = await promiseKeeper.tick(); if (r.woke) drain(); }, { immediateMs: 3 * 60000 });

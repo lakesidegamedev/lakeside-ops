@@ -23,13 +23,28 @@ function codingSpec(config = {}) {
 // cause with evidence; the driver keeps judgment, player copy and fixes.
 const INVESTIGATOR_TOOLS = ["evidence_batch", "shell", "local_file", "view_attachment", "read_servers", "read_tools", "read_tool", "recent_changes", "past_ticket", "similar_reports", "recall", "calculate", "checkpoint", "finish"];
 const childTools = (job) => job.investigation ? INVESTIGATOR_TOOLS : ["evidence_batch", ...(job.codingContract ? ["edit_verify", ...(job.codingContract.allowCompleteOnPass ? ["finish_patch"] : [])] : []), "shell", "local_file", "view_attachment", "checkpoint", "finish"];
+// Reading a task's patch runs git over the whole snapshot; give it room on a busy host.
+const PATCH_READ_MS = 3 * 60000;
+// What a failed patch read means, in words the model can act on. Never "split the fix" unless the patch is truly large.
+function patchReadError(r) {
+  const timedOut = r?.timedOut || r?.signal || /timed out/.test(String(r?.message || ""));
+  if (timedOut) return "Reading the patch timed out twice (the host is busy); the patch size is not the problem. Do not shrink or split the fix. Try review_fix or delegate_fix again in a few minutes; if it fails again, finish with the fix described in your summary so the ticket's coding worker can build it.";
+  return `The patch could not be read (git exited ${r?.code ?? "with an error"}); the patch size is not the problem. Run git status in your snapshot with shell to see why, then try again.`;
+}
 function createDelegation({ ledger, sandbox, config, now = () => Date.now() }) {
   const coder = codingSpec(config);
   const investigator = codingSpec({ codingProvider: config.investigatorProvider || config.codingProvider });
   async function diff(job, signal) {
     const read = sandbox.capture ? sandbox.capture.bind(sandbox) : sandbox.run.bind(sandbox);
-    const r = await read(job.id, "cd repo && git add -N -- . && git --no-pager diff --no-ext-diff --no-textconv --binary HEAD", signal);
-    if (r.code !== 0 || r.truncated) throw new Error("Coding patch is larger than 2 MB or could not be read; split the fix rather than compressing it.");
+    // 2026-11-23 (tickets 1886, 1889): a timed-out read was reported as "larger than 2 MB", so the model tried to shrink a
+    // small fix, then filed "blocked by delegation errors" cards and the tickets waited all night. Each failure now says
+    // what happened, and a slow read gets a longer limit and one retry.
+    const once = () => read(job.id, "cd repo && git add -N -- . && git --no-pager diff --no-ext-diff --no-textconv --binary HEAD", signal, { timeoutMs: PATCH_READ_MS });
+    let r;
+    try { r = await once(); }
+    catch (e) { if (signal?.aborted || !/output capture (?:timed out|failed)/.test(e.message)) throw e; r = await once().catch((e2) => { throw new Error(patchReadError(e2)); }); }
+    if (r.truncated && (r.size === undefined || r.size > 0)) throw new Error("Coding patch is larger than 2 MB; split the fix rather than compressing it.");
+    if (r.code !== 0 || r.truncated) throw new Error(patchReadError(r));
     return r.output;
   }
   async function delegate(parent, instructions, signal) {
@@ -126,4 +141,4 @@ function createDelegation({ ledger, sandbox, config, now = () => Date.now() }) {
   }
   return { delegate, investigate, review, complete, tick };
 }
-module.exports = { codingSpec, createDelegation, childTools, INVESTIGATOR_TOOLS };
+module.exports = { patchReadError, PATCH_READ_MS, codingSpec, createDelegation, childTools, INVESTIGATOR_TOOLS };

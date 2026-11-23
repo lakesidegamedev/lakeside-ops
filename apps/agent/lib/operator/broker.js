@@ -561,7 +561,7 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null, correctionCheck = null }) {
   // Keir 11.2: closing-condition settings (KEIR_QUIET_WAKES and friends); tests may pass config.closing.
   const closingConfig = config.closing || closing.settings(process.env);
   // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, quiet-wake escalation and the
@@ -1071,6 +1071,33 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("ticket_escalated", { job: job.id, ticket: ticketNo, why, detail: String(detail || "").slice(0, 200) }); ledger.save();
     return record[ticketNo];
   }
+  // 2026-11-23 (ticket 1891): the wake cap hands the ticket to a worker run, not to staff. The task waits out its cap as
+  // before; the worker's report wakes it. The player gets one plain line (recorded as a promise by the post path). At
+  // most one hand-off per ticket in CAP_HANDOFF_MS. Only when no worker can start does the old staff escalation run.
+  const CAP_HANDOFF_MS = 6 * 3600000;
+  async function capHandoff(job, ticketNo) {
+    const rec = (d.capHandoffs ||= {});
+    const prev = rec[ticketNo];
+    if (prev && now() - prev.at < CAP_HANDOFF_MS) return null;
+    const cw = codingWorkers();
+    let out = null;
+    try { out = cw ? cw.queueInvestigation({ job, reason: `Keir's ticket task hit its wake limit (${(job.runStarts || []).filter((t) => now() - t < 3600000).length} runs in the last hour) without settling the ticket`, stall: true }) : null; }
+    catch (e) { ledger.audit("cap_handoff_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
+    const run = out?.run || null;
+    if (!run) {
+      ledger.audit("cap_handoff_failed", { job: job.id, ticket: ticketNo, reason: String(out?.reason || "coding workers are not running").slice(0, 200) });
+      return escalateTicket(job, ticketNo, "wake_cap", `the ticket hit its wake cap and no worker could be started (${out?.reason || "coding workers are not running"})`);
+    }
+    rec[ticketNo] = { at: now(), run: run.id, existing: Boolean(out.skipped) }; ledger.save();
+    if (!out.skipped) {
+      try {
+        await callSupport("support_public_update", { kind: "ticket", number: ticketNo, message: guardrails.CAP_HANDOFF_LINE, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
+        recordTicketPost(job, ticketNo, guardrails.CAP_HANDOFF_LINE);
+      } catch (e) { ledger.audit("cap_handoff_post_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
+    }
+    ledger.audit("cap_handoff", { job: job.id, ticket: ticketNo, run: run.id, existing: Boolean(out.skipped) }); ledger.save();
+    return { why: "wake_cap", handedTo: run.id };
+  }
   // Called when a ticket job wakes (player message) and when the wake cap trips. Returns the escalation if one just happened.
   async function escalationCheck(job, { wakeCapped = false } = {}) {
     const ticketNo = ticketOf(job);
@@ -1085,7 +1112,40 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const replied = Boolean(job.lastPublishedAt) || (d.ticketPosts?.[ticketNo] || []).length > 0 || Boolean(d.lastSubstantive?.[ticketNo]);
     const e = guardrails.escalation({ playerText: replied ? fresh.map((m) => m.content).join("\n") : "", corrections: Math.max(corrections, 0) >= guardrails.CORRECTIONS_LIMIT ? corrections : 0, wakeCapped, already: Boolean(d.ticketEscalations?.[ticketNo]) });
     ledger.save();
+    if (e?.why === "wake_cap") return capHandoff(job, ticketNo);
     return e ? escalateTicket(job, ticketNo, e.why, e.detail) : null;
+  }
+  // 2026-11-23 (ticket 1891): a public correction is checked by a separate one-shot model call against the records this
+  // activation read before the player sees it (correctioncheck.js). The checker runs on the configured Codex route; tests
+  // inject correctionCheck. One answer per draft per activation.
+  const cc = require("./correctioncheck");
+  // operator.js injects the live checker (cc.makeChecker); without one the check is recorded as unavailable.
+  async function askCorrection(payload) { return typeof correctionCheck === "function" ? correctionCheck(payload) : null; }
+  async function correctionGate(job, ticketNo, message) {
+    if (!cc.isCorrection(message)) return;
+    if (!String(job.evidenceText || "").trim()) {
+      // A correction that states a figure needs a read that shows it; a status correction ("not live yet") does not.
+      if (cc.statesFigure(message)) {
+        ledger.audit("correction_refused", { job: job.id, ticket: ticketNo, why: "no_read" });
+        throw new Error("Not posted: a correction that states a figure needs a read in this activation that shows it. Read the record first and say what the figure measures, or do not post a correction.");
+      }
+      ledger.audit("correction_checked", { job: job.id, ticket: ticketNo, verdict: "no_read_status_only", refused: false });
+      return;
+    }
+    const memo = (job.correctionChecks ||= {}), key = hash([job.startedAt || 0, message]).slice(0, 16);
+    if (!memo[key]) {
+      const earlier = (d.ticketPosts?.[ticketNo] || []).map((p) => p.text).filter(Boolean);
+      let answer = null;
+      try { answer = await askCorrection({ earlier, draft: message, evidence: job.evidenceText }); }
+      catch (e) { ledger.audit("correction_check_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
+      memo[key] = { at: now(), verdict: answer?.verdict || null, reason: String(answer?.reason || "").slice(0, 300) };
+      for (const k of Object.keys(memo)) if (now() - memo[k].at > 6 * 3600000) delete memo[k];
+    }
+    const m = memo[key], uncertainSeen = job.correctionUncertainAt === (job.startedAt || 0) && m.verdict === "uncertain" && m.seen;
+    const r = cc.decide(m.verdict ? { verdict: m.verdict, reason: m.reason } : null, { uncertainSeen });
+    if (m.verdict === "uncertain") { job.correctionUncertainAt = job.startedAt || 0; m.seen = true; }
+    ledger.audit("correction_checked", { job: job.id, ticket: ticketNo, verdict: m.verdict || "unavailable", refused: Boolean(r.refuse) }); ledger.save();
+    if (r.refuse) throw new Error(r.refuse);
   }
   // Everything a player-facing post must pass for the incident, claim and scope guardrails. Throws a refusal.
   async function guardrailGates(job, ticketNo, message, opts = {}) {
@@ -1098,6 +1158,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       await fileOwnerCard(job, ticketNo, scope.kind === "offer" ? "feature or design request" : "question about the owner's intent", `What the player asked and what the lane drafted:\n${String(job.source?.content || "").slice(0, 600)}\n\nDraft: ${String(message).slice(0, 600)}`);
       throw new Error(`${scope.refusal} An owner card is filed for this ticket; ${guardrails.STAFF_REVIEW_LINE}`);
     }
+    await correctionGate(job, ticketNo, message);
     if (!guardrails.recoveryClaim(message) && !guardrails.claimSentences(message).length) return;
     const ctx = job.incidentContext && now() - (job.incidentContextAt || 0) < 120000 ? job.incidentContext : await incidentFacts(job).then((c) => { job.incidentContextAt = now(); return c; });
     const rec = guardrails.recoveryRefusal(ctx, message);
@@ -1580,6 +1641,22 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       // Keir 10.4 (ticket 1852): answer what the player asked before anything else. A post that redirects ("the real blocker is")
       // or concludes ("working as intended") without touching an open asked item is refused, at most twice per ticket so it never sticks.
       // Staff-directed tasks answer staff, not the player's open items. check_draft (collect) reports it without spending the budget.
+      // 2026-11-23 (ticket 1884, owner): never phrase Keir's own lookups as something the player must supply, and never
+      // answer for one site of many while saying the rest is still "needed". Read it, or say what happens next and when.
+      if (!answeringStaff && playerFacing(job)) {
+        const own = require("./ownlookups"), miss = own.ownLookupProblem(message);
+        if (miss) { ledger.audit("own_lookup_refused", { job: job.id, ticket: ticketNo, shape: miss.kind, sentence: miss.sentence.slice(0, 120), collect: Boolean(opts.collect) || undefined }); refuse(own.ownLookupRefusal(miss)); }
+        // Owner rule 2026-11-23: a reply explaining harm from our bug or change also says what the player can do meanwhile
+        // and when the fix is expected (harmreply.js). Refused at most twice per activation, so it never stalls a ticket.
+        const tjobs = Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo);
+        const bugContext = tjobs.some((j) => (j.raisedToDevelopers || []).some((r) => r && r.id && !r.selfOwned) || (j.pullRequests || []).length) || Object.values(d.codingWorkers?.runs || {}).some((r) => String(r.ticket) === String(ticketNo) && r.kind !== "investigate");
+        const harm = require("./harmreply").harmProblem(message, { bugContext });
+        if (harm) {
+          const hb = job.harmRefusals?.at === (job.startedAt || 0) ? job.harmRefusals : (job.harmRefusals = { at: job.startedAt || 0, n: 0 });
+          if (hb.n < 2) { if (!opts.collect) hb.n += 1; ledger.audit("harm_reply_refused", { job: job.id, ticket: ticketNo, missing: harm.missing.join("+"), attempt: hb.n, collect: Boolean(opts.collect) || undefined }); refuse(require("./harmreply").harmRefusal(harm)); }
+          else ledger.audit("harm_reply_allowed", { job: job.id, ticket: ticketNo, missing: harm.missing.join("+") });
+        }
+      }
       if (!answeringStaff) {
         const tcase = require("./ticketcase");
         const deflect = tcase.deflectionBudgetLeft(d, ticketNo) ? tcase.deflection(d, ticketNo, message) : null;

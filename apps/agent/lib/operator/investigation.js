@@ -31,9 +31,24 @@ function causeUnverified(jobs) {
   return j ? { source: "summary", summary: String(j.summary).slice(0, 300) } : null;
 }
 
+// 2026-11-23: what a worker picks up when a ticket stopped moving: every card Keir filed on it that is still open,
+// plus the task's own last summary. Always returns something, so a stalled ticket is never left with no one on it.
+const EXTRA_STALL_RUNS = 1;
+function stallCause(jobs) {
+  const cards = jobs.flatMap((j) => (j.raisedToDevelopers || []).filter((r) => r && r.id && !r.releasedAt).map((r) => r));
+  const blocking = cards.find((r) => r.blocking) || cards.at(-1) || null;
+  const root = jobs.filter((j) => j.kind === "ticket").sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+  const list = cards.slice(-6).map((r) => `- card ${r.id}${r.blocking ? " (blocking)" : ""}: ${String(r.title || "").slice(0, 160)}`).join("\n");
+  const summary = [
+    "Keir's ticket task stopped making progress and handed the ticket to you. Read the ticket from the start (support_get), then take it the rest of the way: verify the cause with numbers if it is not verified, and if it is a bug or display defect, build the fix per the rules above.",
+    list && `Cards Keir filed on this ticket that are still open (read each with ops-knowledge kanban_get for what was already checked):\n${list}`,
+  ].filter(Boolean).join("\n\n");
+  return { source: "stall", card: blocking ? { id: blocking.id, title: blocking.title } : null, summary, root: root?.id || null };
+}
+
 const runsOf = (d, ticket) => Object.values(d.codingWorkers?.runs || {}).filter((r) => String(r.ticket) === String(ticket));
 const activeRun = (d, ticket) => runsOf(d, ticket).find((r) => !ENDED.has(r.state)) || null;
 const lastEndedAt = (d, ticket) => Math.max(0, ...runsOf(d, ticket).filter((r) => ENDED.has(r.state)).map((r) => r.endedAt || 0));
 const investigationsFor = (d, ticket) => runsOf(d, ticket).filter((r) => r.kind === "investigate").length;
 
-module.exports = { ENDED, MAX_INVESTIGATIONS_PER_TICKET, openOwnQuestion, causeUnverified, activeRun, lastEndedAt, investigationsFor, UNVERIFIED };
+module.exports = { ENDED, MAX_INVESTIGATIONS_PER_TICKET, EXTRA_STALL_RUNS, stallCause, openOwnQuestion, causeUnverified, activeRun, lastEndedAt, investigationsFor, UNVERIFIED };

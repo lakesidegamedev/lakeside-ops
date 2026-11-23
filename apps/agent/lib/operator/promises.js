@@ -77,7 +77,7 @@ function detect(text, now, due = DUE) {
     if (s.endsWith("?") || !m || NOT_PROMISE.test(s) || NEGATED.test(m[1] || "")) continue;
     const kind = /\b(?:next|a|the|another|each|every)\s+turn\b|\bnext (?:few|couple of|two|three) turns\b|\bturn (?:has )?(?:run|processed|passes|finishes)\b|\bafter turn \d+/i.test(s) ? "turn"
       // Keir 11.4 (ticket 1872): "I will come back when there is something to try" waits on the fix, so it is a release promise.
-      : /\b(?:deploy\w*|released?|goes live|is live|reaches the main server|on the main server|ships?)\b|\b(?:something|anything) (?:for you )?to try\b|\b(?:ready|there) (?:for you )?to try\b|\bfix (?:is|to) (?:ready|try)\b/i.test(s) ? "release"
+      : /\b(?:deploy\w*|released?|goes live|is live|reaches the main server|on the main server|ships?)\b|\bfix (?:is in|lands|is out|is merged)\b|\b(?:it|this|that) is fixed\b|\b(?:something|anything) (?:for you )?to try\b|\b(?:ready|there) (?:for you )?to try\b|\bfix (?:is|to) (?:ready|try)\b/i.test(s) ? "release"
       : /\btomorrow\b/i.test(s) ? "tomorrow"
       : /\b(?:later today|this (?:evening|afternoon|morning)|tonight|in a few hours)\b/i.test(s) ? "today"
       : /\bowner\b|\bEgg\b|\bdevelopers?\b/.test(s) ? "owner"
@@ -143,7 +143,9 @@ function notePost(d, ticket, job, message, now, { askedAt = 0 } = {}) {
 }
 
 // held(job) -> reason or null (staff claim, takeover, pause). post(ticket, text) -> resolves when delivered.
-function createPromises({ ledger, now = () => Date.now(), log = () => {}, held = () => null, post = null, retryMs = RETRY_MS, controls = controlsLib.DEFAULT_CONTROLS }) {
+// dispatch(job, reason) -> { run } when a worker was started or is already on the ticket, else null (2026-11-23, ticket 1886:
+// "I will follow up here when a fix is in" failed after two wakes and nothing else happened; now a worker picks it up).
+function createPromises({ ledger, now = () => Date.now(), log = () => {}, held = () => null, post = null, retryMs = RETRY_MS, controls = controlsLib.DEFAULT_CONTROLS, dispatch = null }) {
   const d = ledger.data;
   // Per-ticket bound over a rolling day, kept on the ledger so it survives restarts.
   // Review N7: in preview it only reads (act false), so the budget record is never created or trimmed by a preview.
@@ -217,7 +219,10 @@ function createPromises({ ledger, now = () => Date.now(), log = () => {}, held =
           try { await post(Number(ticket), FALLBACK); p.fallbackAt = now(); outcome = "The player was told Keir cannot confirm it yet."; }
           catch (e) { p.fallbackError = String(e.message).slice(0, 200); log(`promise fallback ${ticket}: ${p.fallbackError}`); outcome = `The plain "cannot confirm yet" line could not be posted (${p.fallbackError}), so the player has heard nothing.`; }
         }
-        ledger.notify(`promise-overdue:${ticket}:${p.id}`, "owner", `Ticket ${ticket}: Keir promised the player a follow-up ("${p.text.slice(0, 200)}") and ${p.chainedFrom ? "its wake" : "two wakes"} did not produce it. ${outcome} A person may want to look.`);
+        let worker = null;
+        if (dispatch) { try { worker = dispatch(job, `Keir promised the player "${p.text.slice(0, 200)}" and could not deliver it after two wakes`); } catch (e) { log(`promise dispatch ${ticket}: ${String(e.message).slice(0, 160)}`); } }
+        if (worker?.run) { p.worker = worker.run.id; ledger.audit("promise_worker_dispatched", { ticket: Number(ticket), promise: p.id, run: worker.run.id }); }
+        else ledger.notify(`promise-overdue:${ticket}:${p.id}`, "owner", `Ticket ${ticket}: Keir promised the player a follow-up ("${p.text.slice(0, 200)}") and ${p.chainedFrom ? "its wake" : "two wakes"} did not produce it. ${outcome} No worker could be started. A person may want to look.`);
       }
     }
     if (changed) ledger.save();
