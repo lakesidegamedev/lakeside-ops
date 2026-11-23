@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### MCPs first, then whatever works (owner, 2026-11-23)
+
+- **Keir tries the MCP that covers a question first**, then falls back at once to the repository snapshot, shell reproduction, ticket history or past tickets when the MCP errors, comes back empty, lacks the field or contradicts other evidence. A failed MCP read is never treated as proof something is absent.
+- **Fallbacks get reported.** The failed call is named in the findings and filed or joined as a capability card, so broken or thin MCP tools get fixed instead of silently worked around.
+
 ### One "needs a person" alert per report (owner, 2026-11-23)
 
 - **No repeat DMs.** A needs-a-person handoff sends no second owner DM when one in the last 24 hours, from any task, cites the same Discord message, came from the same reporter's intake, or has a near-identical title. The card is still filed and marked as a repeat. One player's report in #america-chat had produced five DMs in twenty minutes.
