@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- Intake tasks with no assigned ticket are now refused a full ticket transcript with the read that works for them: support_search for duplicate summaries, and open_ticket when the report needs a canonical ticket. The old refusal told them to read the assigned ticket they did not have.
+
 ## 11.5.0 (2026-11-23)
 
 ### MCPs first, then whatever works (owner, 2026-11-23)

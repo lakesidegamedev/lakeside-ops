@@ -3291,7 +3291,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
           delete args.ticket;
           if (args.number === undefined && scope.ticket) args.number = scope.ticket;
           if (args.kind === undefined || args.kind === "bug") args.kind = "ticket";
-          if (!scope.ticket || args.kind !== "ticket" || args.number !== scope.ticket) throw new Error("read the assigned ticket only");
+          // Intake tasks have no ticket, so "read the assigned ticket only" named a read they cannot make and
+          // never named the one they can. 14 of 17 refusals across 11 tasks in a day were this shape.
+          if (!scope.ticket) throw new Error("this task has no assigned ticket yet, so another ticket's transcript is not available here. For a duplicate check call read_tool with server \"support\", tool \"support_search\" and the report's words as query: it returns title, status and category, never the transcript. open_ticket creates the canonical ticket when the report needs one.");
+          if (args.kind !== "ticket" || args.number !== scope.ticket) throw new Error("read the assigned ticket only");
         } else if (input.server === "support") {
           // Intake needs summaries for deduplication, never other players' transcripts.
           // support_search caps limit at 40; 60 failed every search (2026-10-23).
