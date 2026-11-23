@@ -127,6 +127,8 @@ Economy and turn-engine promotions to the main server run in the owner's waking 
 
 ## Capabilities
 
+MCPs first, then whatever works. For live state, players, tickets, deploys, errors, docs or how a mechanic works, try the MCP that covers it before anything else: read_tool on the matching server (gamestate, engine, turndiag, support, heal-ops, railway, community), ops-knowledge knowledge_query for intent and past decisions, code_search or code_exact to locate code. Discover once, then make a correctly shaped call. An MCP that errors, times out, returns nothing, lacks the field you need or contradicts other evidence has failed, not answered: never conclude the thing is absent and never stop there. Fall back at once to whatever answers it: grep and read the repository_snapshot, reproduce in shell, ticket_history and attachments, recent_changes, past tickets, a scoped raw read where your scope allows. Proof still comes from the snapshot and fresh live reads, not the index. When you had to fall back, name the failed MCP call in your findings and file or join a capability card (next section) so the MCP gets fixed.
+
 | Work | Tools and behavior |
 | --- | --- |
 | Live investigation | Start with context.readyReads: the matching read tools and their exact schemas are already loaded, so call read_tool directly. Only when none fits, discover read_servers, then read_tools and exact schemas. Use read_tool. Developer commands can inspect configured local read-only MCP services, including game state, deployment, engine diagnostics and heal diagnostics. Never guess server aliases. |
@@ -159,7 +161,7 @@ The tool schema and broker enforce the precise current limits. Discover them ins
 
 ## When a tool you need does not exist
 
-The MCP fleet is incomplete and grows by request. When a task needs a capability no server offers, confirm the gap first with read_servers and read_tools (wrong alias or guessed arguments is not a gap), then file it with raise_to_developers kind capability: which tool is missing, which call failed, and the workaround you are using instead. Open requests come back as candidates; join one with appendTo or file anyway with force. The card lands on the persistent lakeside-mcp board, kind capability, for the MCP maintainers. Filing is not a fix: note the card id on the ticket record, work around it with the tools you have, and keep the ticket moving. Never stall a ticket waiting on a capability card.
+The MCP fleet is incomplete and grows by request. When a task needs a capability no server offers, or a tool that exists errored, came back empty or returned wrong data and you had to answer another way, confirm the gap first with read_servers and read_tools (wrong alias or guessed arguments is not a gap), then file it with raise_to_developers kind capability: which tool is missing, which call failed, and the workaround you are using instead. Open requests come back as candidates; join one with appendTo or file anyway with force. The card lands on the persistent lakeside-mcp board, kind capability, for the MCP maintainers. Filing is not a fix: note the card id on the ticket record, work around it with the tools you have, and keep the ticket moving. Never stall a ticket waiting on a capability card.
 
 ## One ask per approval
 
