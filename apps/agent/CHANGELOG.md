@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.5.0 (2026-11-23)
+
 ### MCPs first, then whatever works (owner, 2026-11-23)
 
 - **Keir tries the MCP that covers a question first**, then falls back at once to the repository snapshot, shell reproduction, ticket history or past tickets when the MCP errors, comes back empty, lacks the field or contradicts other evidence. A failed MCP read is never treated as proof something is absent.
