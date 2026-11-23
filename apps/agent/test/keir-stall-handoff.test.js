@@ -56,6 +56,21 @@ test("a wake cap falls back to the staff hand-off only when no worker can start"
   assert.equal(f.audits("cap_handoff_failed").length, 1);
 });
 
+test("old corrections hand off once, not again every six hours after the ticket is answered (1884)", async () => {
+  const asked = [];
+  const f = setup({ call: posted, codingWorkers: () => ({ queueInvestigation: () => { asked.push(1); return { skipped: false, run: { id: `cw-123-${asked.length}` } }; } }) });
+  f.ledger.data.ticketPosts = { 123: [{ text: "Correction: the price fell, not rose." }, { text: "Correction: it was turn 12." }] };
+  const first = await f.broker.escalationCheck(f.job);
+  assert.equal(first.why, "repeated_corrections");
+  f.advance(7 * 60);
+  assert.equal(await f.broker.escalationCheck(f.job), null, "same corrections, no second recheck");
+  assert.equal(asked.length, 1);
+  f.ledger.data.ticketPosts[123] = [1, 2, 3].map((i) => ({ text: `Correction: fix ${i}.` }));
+  f.advance(7 * 60);
+  assert.equal((await f.broker.escalationCheck(f.job)).why, "repeated_corrections", "a new correction hands off again");
+  assert.equal(asked.length, 2);
+});
+
 // ---- stall pickup by the investigation worker ---------------------------------------------------------------------
 
 function workers() {

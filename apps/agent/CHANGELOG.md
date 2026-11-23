@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.6 (2026-11-24)
+
+- A ticket whose Keir answers were corrected twice hands off to a recheck worker once per new correction. An old count no longer re-fires the "rechecking" line every six hours after the ticket was answered (1884).
+
 ## 11.7.5 (2026-11-23)
 
 - **A held ticket's task waits instead of running.** The coordinator hold only blocked posts, so a task on a held ticket still started, read the ticket and retried the blocked post until its deadline (tickets 1884 and 1892, Sentry KEIR-1C). The hold now defers the task the same way an operator shift does; it resumes when the hold is removed or expires.
