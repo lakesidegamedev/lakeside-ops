@@ -3,6 +3,8 @@
 Keir: the A House Divided Discord operator, support desk and /summon bridge.
 New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/release.sh`.
 
+## Unreleased
+
 ## 11.5.0 (2026-11-23)
 
 ### MCPs first, then whatever works (owner, 2026-11-23)
