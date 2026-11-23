@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.6.0 (2026-11-23)
+
 ### Tickets keep moving overnight (owner, 2026-11-23)
 
 - **The wake cap hands a ticket to a worker, not to staff.** When a ticket task hits its wake limit, Keir starts an investigation worker on the ticket and tells the player once, in plain words, that a deeper check has started and it will post when it reports. The ticket is no longer paused with "Staff are reviewing", which was untrue overnight. The staff hand-off runs only when no worker can start.
