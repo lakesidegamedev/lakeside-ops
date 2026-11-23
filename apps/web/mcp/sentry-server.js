@@ -48,7 +48,9 @@ function buildServerFor(client) {
       around: z.string().optional().describe("ISO time the player says it happened; omit to use statsPeriod"),
       windowMinutes: z.number().int().min(5).max(1440).optional().default(60),
       statsPeriod: z.string().optional().default("7d"),
-      detail: z.number().int().min(0).max(5).optional().default(3), project },
+      // Agents often send detail: true; read it as the default depth instead of rejecting the call.
+      detail: z.preprocess(v => (v === true ? 3 : v === false ? 0 : v), z.number().int().min(0).max(5).optional().default(3))
+        .describe("how many recent events to show in full, 0 to 5 (true means 3)"), project },
     run(args => sentry.playerErrors(client, args)));
   server.tool("sentry_new_since",
     "Unresolved issues first seen after a timestamp. For watchers: pass the last check time.",
