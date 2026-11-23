@@ -80,7 +80,7 @@ function classifyRefusal(error, tool) {
 // Real loops and deadlocks built from the same refusals still alert as refusal_loop and guard_deadlock.
 const EXPECTED_KINDS = new Set(["raw_read_fallback", "refused_authority", "finish_refused_open_work", "unanswered_finish", "unanswered_finish_refused",
   "certainty_refused", "clarification_refused", "stall_refused", "status_card_regression_refused", "ticket_quality_refused", "owner_muse_refused", "update_spam", "post_refused", "claim_without_receipt"]);
-const EXPECTED_DETAIL = /read the assigned ticket only|no concrete problem phrase|no linked character profile|did not match exactly one account/i;
+const EXPECTED_DETAIL = /read the assigned ticket only|has no assigned ticket yet, so another ticket's transcript|no concrete problem phrase|no linked character profile|did not match exactly one account/i;
 // Blips that a restart or a flaky connection produce: only a real spike (see detect) is worth an alert.
 const TRANSIENT_KINDS = new Set(["network", "interrupted", "transient_retry"]);
 const isExpected = (g) => EXPECTED_KINDS.has(g.kind) || EXPECTED_DETAIL.test(`${g.title || ""} ${g.detail || ""}`);

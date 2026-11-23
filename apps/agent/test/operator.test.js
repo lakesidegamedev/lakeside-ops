@@ -312,6 +312,22 @@ test("an investigator reads its ticket task's ticket and reporter, and nothing w
   await assert.rejects(f.broker.tool(orphan, "read_tool", { server: "gamestate", tool: "trace_character", args: {} }), /need an assigned ticket/);
 });
 
+test("an intake task with no ticket is told which read checks duplicates instead of a ticket it cannot have", async () => {
+  const f = fixture(), j = f.ledger.createJob("candidate:fixture", { kind: "candidate", role: "support", source: { content: "a made up report" }, deadline: 9999999999999 });
+  j.state = "running";
+  await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { kind: "ticket", number: 456 } }), (e) => {
+    assert.match(e.message, /no assigned ticket yet/);
+    assert.match(e.message, /support_search/);
+    assert.match(e.message, /open_ticket/);
+    assert.doesNotMatch(e.message, /read the assigned ticket only/);
+    return true;
+  });
+  assert.equal(f.calls.filter(([, tool]) => tool === "support_get").length, 0);
+  // The refusal names a read this task can actually make: summaries only, never another transcript.
+  const summaries = await f.broker.tool(j, "read_tool", { server: "support", tool: "support_search", args: { query: "a made up report" } });
+  assert.deepEqual(summaries, []);
+});
+
 test("support reads cannot access unrelated transcripts or general private knowledge", async () => {
   const f = fixture(), j = running(f, { role: "support", ticket: 123 });
   await assert.rejects(f.broker.tool(j, "read_tool", { server: "support", tool: "support_get", args: { kind: "ticket", number: 456 } }), /assigned ticket/);

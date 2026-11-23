@@ -200,6 +200,10 @@ test("different MCP tool errors get different fingerprints; the same one repeats
   assert.equal(fingerprint(err("ticket 1834 has no linked character")), fingerprint(err("ticket 1835 has no linked character")));
 });
 
+test("an intake task with no ticket is an expected guard refusal, not a not-found error", () => {
+  assert.equal(F.isExpected({ kind: "not_found", title: "", detail: "this task has no assigned ticket yet, so another ticket's transcript is not available here." }), true);
+});
+
 // Sentry sweep 2026-11-17: guards doing their job and one-off network blips are recorded but do not alert.
 test("expected guard refusals and transient blips never raise a NEW alert", () => {
   const { rec, clock } = mk();
@@ -207,6 +211,7 @@ test("expected guard refusals and transient blips never raise a NEW alert", () =
     rec.record({ class: "tool", kind: "raw_read_fallback", tool: "raw_read", detail: "collection corporations", ticket: i + 1 });
     rec.record({ class: "tool", kind: "refused_authority", tool: "read_tool", detail: "read tool is outside support scope", ticket: i + 1 });
     rec.record({ class: "tool", kind: "refused_other", tool: "read_tool", detail: "read the assigned ticket only", ticket: i + 1 });
+    rec.record({ class: "tool", kind: "not_found", tool: "read_tool", detail: "this task has no assigned ticket yet, so another ticket's transcript is not available here. For a duplicate check call read_tool with server \"support\" and tool \"support_search\": it returns title, status and category, never the transcript. open_ticket creates the canonical ticket when the report needs one.", ticket: i + 1 });
     rec.record({ class: "tool", kind: "network", tool: "read_tool", detail: "fetch failed", ticket: i + 1 });
     rec.record({ class: "provider", kind: "interrupted", detail: "activation interrupted", ticket: i + 1 });
   }
@@ -215,7 +220,7 @@ test("expected guard refusals and transient blips never raise a NEW alert", () =
   rec.record({ class: "tool", kind: "schema_rejected", tool: "x", detail: "bad args" });
   const alerts = rec.detect(clock.now());
   assert.deepEqual(alerts.map((a) => a.group.kind), ["schema_rejected"]);
-  assert.equal(rec.groups().length, 6);
+  assert.equal(rec.groups().length, 7);
 });
 test("a real spike of network failures still alerts", () => {
   const { rec, clock } = mk();
