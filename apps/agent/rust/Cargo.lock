@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "keir-shadow-rs"
-version = "11.7.4"
+version = "11.7.5"
 dependencies = [
  "anyhow",
  "chrono",

@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.5 (2026-11-23)
+
+- **A held ticket's task waits instead of running.** The coordinator hold only blocked posts, so a task on a held ticket still started, read the ticket and retried the blocked post until its deadline (tickets 1884 and 1892, Sentry KEIR-1C). The hold now defers the task the same way an operator shift does; it resumes when the hold is removed or expires.
+
 ## 11.7.4 (2026-11-23)
 
 - **A gameplay ticket with a fix on it gets a real answer, not the Ask redirect.** Ticket 1884 was filed as gameplay, so the advice guard allowed only the Ask link even though the player's losses came from our own changes and two fixes had shipped on the ticket. Any fix on the ticket's status card past "found", or a pull request on any task for that ticket, now lifts the redirect; the meantime-steps rule applies instead (owner, 2026-11-23).
