@@ -32,3 +32,15 @@ test("the live notice is not posted on a held ticket", async () => {
   await f.broker.liveNotice(f.job, 123, [], [{ name: "Margins", stage: "main", blocked: false }]);
   assert.equal(f.posts().length, 0);
 });
+
+test("a held ticket's support task is not admitted, other tickets are", () => {
+  const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "keir-hold-"));
+  const holds = createCoordinatorHolds({ stateDir: dir });
+  fs.writeFileSync(path.join(dir, "coordinator-holds.json"), JSON.stringify({ 1884: { by: "coordinator" } }));
+  const { hold } = require("../lib/operator/admission");
+  const job = (ticket) => ({ id: `t${ticket}`, kind: "ticket", role: "player", ticket, state: "queued", deadline: Date.now() + 60000 });
+  assert.equal(holds.heldJob(job(1884)), true);
+  assert.equal(holds.heldJob({ kind: "conversation" }), false);
+  assert.equal(hold(job(1884), { supportDeferred: holds.heldJob }), "support-deferred");
+  assert.equal(hold(job(1885), { supportDeferred: holds.heldJob }), null);
+});

@@ -21,7 +21,10 @@ function createCoordinatorHolds({ stateDir, now = () => Date.now(), file = null 
     if (Number.isFinite(until) && until <= now()) return null;
     return hold;
   }
-  return { held, file: target };
+  // A held ticket's task should not start at all: without this the task ran,
+  // read the ticket and kept retrying a blocked post until its deadline.
+  const heldJob = (job) => Boolean(job?.ticket && held(job.ticket));
+  return { held, heldJob, file: target };
 }
 
 module.exports = { createCoordinatorHolds };
