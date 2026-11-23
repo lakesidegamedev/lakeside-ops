@@ -794,9 +794,17 @@ test("revoked requests, bot reports and untrusted requesters cannot create ticke
   assert.equal(revoked.calls.length + bot.calls.length + player.calls.length, 0);
 });
 
-test("automatic intake cannot replace the original reporter with a model-chosen message", async () => {
+test("automatic intake cannot reach outside 30 minutes for a model-chosen message", async () => {
   const f = fixture(), j = running(f, { kind: "candidate", role: "support", source: { channelId: f.ch.id, messageId: "666666666666666666", authorId: "888888888888888888" } });
-  await assert.rejects(f.broker.tool(j, "open_ticket", { reportMessageId: "666666666666666667" }), /cannot change its reporter/);
+  await assert.rejects(f.broker.tool(j, "open_ticket", { reportMessageId: "666674468072106666" }), /within 30 minutes/);
+  await assert.rejects(f.broker.tool(j, "open_ticket", { reportMessageId: "not-a-message" }), /within 30 minutes/);
+  assert.equal(f.calls.length, 0);
+});
+
+test("automatic intake can use a nearby message only from the same reporter", async () => {
+  const f = fixture(), j = running(f, { kind: "candidate", role: "support", source: { channelId: f.ch.id, messageId: "666666666666666666", authorId: "888888888888888888" } });
+  // The window passes; the fetched message is then held to the same author check as the original anchor.
+  await assert.rejects(f.broker.tool(j, "open_ticket", { reportMessageId: "666666666666666667" }), (e) => !/within 30 minutes/.test(e.message));
   assert.equal(f.calls.length, 0);
 });
 
