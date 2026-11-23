@@ -1158,7 +1158,12 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const corrections = (d.ticketPosts?.[ticketNo] || []).filter((p) => /^correction\b/i.test(String(p.text || "").trim())).length + ((ledger.data.audit || []).filter((a) => a.kind === "correction_posted" && a.ticket === ticketNo).length);
     // A challenge only counts once Keir has answered: an opening report that says "this is wrong" is the bug report itself.
     const replied = Boolean(job.lastPublishedAt) || (d.ticketPosts?.[ticketNo] || []).length > 0 || Boolean(d.lastSubstantive?.[ticketNo]);
-    const e = guardrails.escalation({ playerText: replied ? fresh.map((m) => m.content).join("\n") : "", corrections: Math.max(corrections, 0) >= guardrails.CORRECTIONS_LIMIT ? corrections : 0, wakeCapped, already: Boolean(d.ticketEscalations?.[ticketNo]) });
+    // Corrections hand off once per new correction: an old count must not re-fire a recheck every HANDOFF_MS after the
+    // ticket was answered (1884 got a "rechecking" line hours after staff confirmed the answer).
+    const handled = (d.correctionHandoffs ||= {})[ticketNo] || 0;
+    const newCorrections = corrections >= guardrails.CORRECTIONS_LIMIT && corrections > handled ? corrections : 0;
+    if (newCorrections) d.correctionHandoffs[ticketNo] = corrections;
+    const e = guardrails.escalation({ playerText: replied ? fresh.map((m) => m.content).join("\n") : "", corrections: newCorrections, wakeCapped, already: Boolean(d.ticketEscalations?.[ticketNo]) });
     ledger.save();
     return e ? workerHandoff(job, ticketNo, e.why, e.detail) : null;
   }
