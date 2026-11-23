@@ -2831,7 +2831,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       // away; a rule, balance or economy behaviour change waits for his answer.
       const changeClass = replyPolicy.normalizeChangeClass(input.changeClass) || (input.kind === "bug" ? "bugfix" : null);
       if (["decision", "enhancement"].includes(input.kind) && !changeClass) throw new Error(`Not raised: say what kind of change this is. Set changeClass to ${replyPolicy.CHANGE_CLASSES.join(", ")}. Bug and display fixes and documented data heals may ship while the owner is away; rule, balance and economy changes wait for his decision.`);
-      const ownerRequired = changeClass ? replyPolicy.requiresOwner(changeClass) : false;
+      // Owner, 2026-11-23: a rule fix whose direction the owner already chose on this ticket is built and shipped without
+      // asking again (ruleDirectionChosen); money (balance, economy) still waits for him.
+      const ownerRequired = changeClass ? replyPolicy.requiresOwner(changeClass) && !(changeClassMod.normalizeClass(changeClass) === "rule" && ruleDirectionChosen(job)) : false;
       if (changeClass) { job.changeClass = changeClass; job.requiresOwner = ownerRequired || job.requiresOwner === true; }
       if (input.kind === "decision") {
         require("./decisionpolicy").requireRealDecision(`${input.title || ""}. ${input.question || input.detail || ""}`);
