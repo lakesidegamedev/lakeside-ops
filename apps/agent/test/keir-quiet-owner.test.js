@@ -136,3 +136,11 @@ test("Keir's own staff hand-off pauses are lifted once; a pause a person set is 
   assert.equal(data.jobs.b.state, "paused"); assert.ok(data.ticketPauses[1700]); assert.ok(data.channels.c2.keirPaused);
   assert.deepEqual(liftKeirEscalationPauses(data, 2000), [], "once");
 });
+
+test("a handed-back ticket is Keir's even when the developer agent posted to the player minutes ago", async () => {
+  const t0 = 10 * 3600000;
+  const f = setup({ call: async (s, tool) => tool === "support_get" ? { publicUpdates: [{ at: new Date(t0 - 5 * 60000).toISOString(), message: "The fix is live.", delivery: { status: "posted" } }] } : tool === "kanban_list" ? [] : { ok: true } });
+  f.job.handback = { card: 255732, prs: [7268] };
+  assert.equal(await f.broker.ownedElsewhere(f.job, 123), null);
+  assert.equal(f.ledger.data.ticketOwners[123].handback, true);
+});

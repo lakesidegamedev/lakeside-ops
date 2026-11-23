@@ -5,6 +5,13 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.1 (2026-11-23)
+
+- **A timer or internal wake does nothing while someone else has the ticket** (a developer agent or staff posted to the player in the last two hours, a running worker, a claimed card or an open PR); Keir looks again in 30 minutes, and a player's message is still answered (owner, ticket 1884).
+- **A handed-back ticket is always Keir's**, even when the developer agent posted to the player just before handing it back.
+
+- **A rule fix whose direction the owner already chose is built by the fix worker too** (owner, 2026-11-23), not only merged; money changes still wait for him.
+
 ## 11.7.0 (2026-11-23)
 
 ### Keir only interrupts the owner for real decisions (owner, 2026-11-23)
