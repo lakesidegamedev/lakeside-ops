@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.0 (2026-11-23)
+
 ### Keir only interrupts the owner for real decisions (owner, 2026-11-23)
 
 - **North star in KEIR.md**: how the coordinator session behaved overnight is the standard: one place, plain words, act on your own, interrupt only for real decisions, check facts first, push back with evidence, stay quiet when nothing changed.
