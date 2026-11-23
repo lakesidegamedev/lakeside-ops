@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.1 (2026-11-23)
+
 - **A rule fix whose direction the owner already chose is built by the fix worker too** (owner, 2026-11-23), not only merged; money changes still wait for him.
 
 ## 11.7.0 (2026-11-23)
