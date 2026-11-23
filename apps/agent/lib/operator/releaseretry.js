@@ -9,6 +9,9 @@ function retryBlockedOwnerWork(data, { ownerId, releaseId, now = Date.now() }) {
   const retried = [];
   for (const job of Object.values(data.jobs || {})) {
     if (job.state !== "blocked" || job.kind !== "command" || job.role !== "owner" || job.actorId !== ownerId) continue;
+    // 2026-11-23: only the owner's own requests are retried. Keir's scheduled tasks (brief, goals, self-review) and a task
+    // blocked on a permission rule are not: a blocked brief re-ran on every restart and pushed its error each time.
+    if (job.appBrief || job.appGoal || job.selfReview || job.ownerMuseBlocker) continue;
     if (job.retriedRelease === releaseId || now - (job.updatedAt || job.startedAt || 0) > DAY) continue;
     if (job.ownerDecisionPending || Object.values(data.decisions || {}).some((x) => x.jobId === job.id && x.state === "pending")) continue;
     job.retriedRelease = releaseId; job.state = "queued"; job.wakeAt = 0;

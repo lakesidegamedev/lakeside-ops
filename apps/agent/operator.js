@@ -29,6 +29,8 @@ const { readAgentToken } = require("./lib/operator/token");
 const { redactSecrets, chunkMessage, parseCommandFooter } = require("./lib/text");
 const { splitReply, GAP_MS: replyGapMs } = require("./lib/operator/replysplit");
 const { ownerText } = require("./lib/operator/privacy");
+// Owner rule 2026-11-23: owner DMs in plain words, without raw links (they render as embeds).
+const ownerDmText = (value) => require("./lib/operator/ownerpolicy").plain(ownerText(value));
 const { integrityReport, v3Stale, rootJob } = require("./lib/operator/workrecord");
 const { hold: admissionHold } = require("./lib/operator/admission");
 const { openSink, attachSink, taskIdOf } = require("./lib/operator/events");
@@ -426,6 +428,55 @@ codingWorkersInst = createCodingWorkers({ ledger, api: ciApi, write: ciApi, mcp,
   model: config.providerOverride.startsWith("claude:") ? config.providerOverride.split("@")[0].split(":")[1] : undefined,
   effort: config.effortOverride || "high",
   probe: (service) => new Promise((resolve) => require("node:child_process").execFile(env.KEIR_DEPLOYED_SHA_CMD || "/opt/lakeside-platform/host/ahd-deployed-sha.sh", [service], { timeout: 45000 }, (e, out) => resolve(e ? null : String(out || "").trim()))) });
+// Owner rule 2026-11-23 (always a worker): lift the pauses Keir's own older staff hand-off left on tickets.
+try { const lifted = require("./lib/operator/ticketpause").liftKeirEscalationPauses(ledger.data, Date.now()); if (lifted.length) { ledger.audit("escalation_pauses_lifted", { tickets: lifted }); ledger.save(); log(`lifted Keir's own staff hand-off pauses: ${lifted.join(", ")}`); } }
+catch (e) { log(`escalation pause lift: ${e.message}`); }
+// Owner rule 2026-11-23 (handback.js): tickets handed back to Keir with "HANDOFF TO KEIR" on their kanban card. The
+// note reaches the ticket task once per change; each named fix is checked against the live build every 5 minutes and
+// the task is woken to post "fix is live" only when the running web (and turn worker) contain its merge commit.
+tickers.every("handbacks", 5 * 60000, async () => {
+  const hb = require("./lib/operator/handback");
+  const cards = new Map();
+  for (const lane of ["now", "next", "blocked"]) {
+    try { const r = await mcp.call("ops-knowledge", "kanban_list", { lane, limit: 200 }, false); for (const c of (Array.isArray(r) ? r : r?.items || [])) if (hb.isHandback(c)) cards.set(c.id, c); }
+    catch (e) { log(`handbacks: kanban_list ${lane}: ${e.message}`); }
+  }
+  const book = (ledger.data.handbacks ||= {});
+  for (const c of cards.values()) {
+    const h = hb.parse(c);
+    for (const n of h.tickets) {
+      const root = ledger.data.jobs[ledger.data.seen[`ticket:${n}`]];
+      if (!root || root.channelClosed || root.resolved) continue;
+      const prev = book[n];
+      if (!prev || prev.at !== h.at || prev.card !== h.card) {
+        book[n] = { ...h, ticket: n, seenAt: Date.now(), liveAt: prev?.card === h.card ? prev.liveAt || null : null };
+        root.handback = { card: h.card, prs: h.prs, at: h.at, liveAt: book[n].liveAt };
+        (root.inbox ||= []).push({ role: "system", authorId: "handback", at: new Date().toISOString(), content: hb.inboxNote(h) });
+        if (!["running", "queued"].includes(root.state) && !require("./lib/operator/machines").JOB_TERMINAL.includes(root.state)) { root.state = "queued"; root.wakeAt = 0; }
+        ledger.audit("handback_received", { ticket: n, card: h.card, prs: h.prs }); ledger.save(); drain();
+      }
+      const rec = book[n];
+      if (rec.liveAt || !rec.prs?.length) continue;
+      const results = [];
+      for (const pr of rec.prs) { try { results.push([pr, await broker.liveFix(pr)]); } catch (e) { results.push([pr, { live: false, reason: e.message }]); } }
+      rec.checkedAt = Date.now(); rec.lastReason = results.filter(([, v]) => !v.live).map(([pr, v]) => `#${pr}: ${v.reason}`).join("; ").slice(0, 300) || null;
+      if (results.every(([, v]) => v.live)) {
+        rec.liveAt = Date.now(); root.handback = { ...(root.handback || {}), liveAt: rec.liveAt };
+        const [pr, v] = results[0];
+        (root.inbox ||= []).push({ role: "system", authorId: "handback-live", at: new Date().toISOString(), content: hb.liveNote(rec, pr, v) });
+        if (!["running", "queued"].includes(root.state) && !require("./lib/operator/machines").JOB_TERMINAL.includes(root.state)) { root.state = "queued"; root.wakeAt = 0; }
+        ledger.audit("handback_fix_live", { ticket: n, card: rec.card, prs: rec.prs }); drain();
+      }
+      ledger.save();
+    }
+  }
+});
+// Owner rule 2026-11-23: who already has each open ticket (a developer agent, staff, a worker, a PR), refreshed every
+// 10 minutes so the stuck-ticket sweep stays quiet on tickets someone else is working.
+tickers.every("ticket-owners", 10 * 60000, async () => {
+  const roots = Object.values(ledger.data.jobs).filter((j) => j.kind === "ticket" && j.ticket && !j.codingParent && !j.channelClosed && !j.resolved && !require("./lib/operator/machines").JOB_TERMINAL.includes(j.state) && j.state !== "running");
+  for (const j of roots.slice(0, 12)) { try { await broker.ownedElsewhere(j, j.ticket); } catch (e) { log(`ticket-owners ${j.ticket}: ${e.message}`); } }
+});
 tickers.every("codingworkers", 60000, async () => {
   try { await codingWorkersInst.tick(); } catch (e) { log(`codingworkers: ${e.message}`); }
   if (Object.values(ledger.data.jobs).some((j) => j.state === "queued")) drain();
@@ -643,7 +694,7 @@ async function flushOutbox() {
         if (![config.ownerId, ...config.staffIds].includes(recipient)) throw new Error("untrusted notification recipient");
         dmId = await ensureDm(recipient);
         // Keir 11.4: owner and staff DMs never show UTC; clock times become ET.
-        clean = require("./lib/operator/ownercopy").etTimes(recipient === config.ownerId ? ownerText(entry.content) : redactSecrets(entry.content));
+        clean = require("./lib/operator/ownercopy").etTimes(recipient === config.ownerId ? ownerDmText(entry.content) : redactSecrets(entry.content));
       }
       // Keir 8.4.1: a channel reply goes out as a few short messages a moment apart (one outbox entry, one update).
       const text = clean.replace(/[\u2013\u2014]/g, ",");
@@ -662,7 +713,9 @@ async function flushOutbox() {
         const files = i === 0 ? entry.files || [] : [];
         // Answers thread under the request that asked for them.
         const reference = channelJob && i === 0 && !key.startsWith("ack:") && snowflake(entry.answerTo || channelJob.source?.messageId) ? { message_reference: { message_id: entry.answerTo || channelJob.source.messageId, fail_if_not_exists: false } } : {};
-        const sent = await discord("POST", `/channels/${dmId}/messages`, { content: chunks[i], allowed_mentions: { parse: [] }, nonce: `${entry.id}-${i}`, enforce_nonce: true, ...reference,
+        // Owner rule 2026-11-23: no link previews in the owner's DMs (flag 4 = SUPPRESS_EMBEDS).
+        const ownerDm = (!channelJob && entry.destination === "owner") || (channelJob && channelJob.role === "owner" && !channelJob.source?.guildId);
+        const sent = await discord("POST", `/channels/${dmId}/messages`, { content: chunks[i], allowed_mentions: { parse: [] }, nonce: `${entry.id}-${i}`, enforce_nonce: true, ...reference, ...(ownerDm ? { flags: 4 } : {}),
           ...(lastRow && i === chunks.length - 1 ? { components: lastRow } : {}),
           ...(files.length ? { attachments: files.map((f, id) => ({ id, filename: f.name })) } : {}) }, files);
         if (entry.decision && i === chunks.length - 1) { entry.sentContent = chunks[i]; decisions.delivered(entry, dmId, sent.id); }

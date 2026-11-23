@@ -16,11 +16,11 @@ test("kill switch persists, cancels all roles and publications, and Start cannot
   const { jobId } = app.authenticatedPost("Investigate repository", "new");
   ledger.data.jobs[jobId].state = "running";
   const support = ledger.createJob("support", { role: "support", kind: "ticket" });
-  ledger.notify("queued-publication", "owner", "a pending message");
+  ledger.notify("ask:queued-publication", "owner", "a pending message");
   app.controls.update({ action: "stop" });
   const saved = createLedger(path.join(dir, "ledger.json"));
   assert.equal(saved.data.paused, true); assert.equal(saved.data.jobs[jobId].state, "cancelled");
-  assert.equal(saved.data.jobs[support.id].state, "cancelled"); assert.ok(saved.data.outbox["queued-publication"].skipped);
+  assert.equal(saved.data.jobs[support.id].state, "cancelled"); assert.ok(saved.data.outbox["ask:queued-publication"].skipped);
   assert.throws(() => app.authenticatedPost("New work", "blocked"), /stopped/);
   app.authenticatedPost("/start", "start");
   assert.equal(ledger.data.paused, false); assert.equal(ledger.data.jobs[jobId].state, "cancelled");
@@ -237,7 +237,8 @@ test("a saved model choice whose route no longer exists falls back to Auto and t
   assert.doesNotThrow(() => applyModel(job, config, ledger, "quick"));
   assert.equal(job.provider?.ownerSelected, undefined, "no stale route is pinned");
   assert.ok(ledger.data.audit.some((a) => a.kind === "stale_route_selection" && a.selected === "deepseek:deepseek-flash@low"));
-  assert.ok(Object.values(ledger.data.outbox || {}).some((o) => o.destination === "owner" && /not available any more/.test(o.content || "")));
+  // Owner rule 2026-11-23: an informational notice goes to the daily digest, not a DM.
+  assert.ok((ledger.data.alerts || []).some((a) => a.digest && /not available any more/.test(a.content || "")));
   assert.ok(job.history.some((h) => h.kind === "route-fallback"));
 });
 test("the voice lane's default label follows the configured voice route, not a fixed string", t => {

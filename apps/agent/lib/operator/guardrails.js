@@ -10,9 +10,9 @@
 //      "running/fixed/live/paid" is refused unless this activation read a record showing that figure for the
 //      player's own entity. When a failure overlaps the period, the claim names the turn range.
 //   4. Scope (D6): ticket lanes do not change balance, offer to build features or quote the owner's intentions.
-//   5. Escalation (D10): a challenge from the player or two corrections hands the ticket to staff. A wake cap hit
-//      (2026-11-23, ticket 1891) hands it to a worker instead: staff are not there overnight, so "staff are reviewing"
-//      was untrue and the ticket sat paused until morning. Only when no worker can start does the cap reach staff.
+//   5. Escalation (D10, changed by the owner 2026-11-23): a challenge from the player, two corrections or a wake cap hit
+//      hands the ticket to a worker that rechecks it, never to staff who are not there. Only when no worker can start
+//      does it reach staff, and never while someone else already has the ticket.
 
 const DAY = 24 * 3600000;
 const CLEAN_TURNS_REQUIRED = 2;
@@ -184,6 +184,8 @@ const STAFF_REVIEWING = "Staff are reviewing this ticket. I have stopped replyin
 // Posted by code when the wake cap hands the ticket to a worker. Plain words, no internals; the post path records it as a
 // promise, so the follow-up is tracked like any other.
 const CAP_HANDOFF_LINE = "I am still on this. A deeper check has started, and I will post here when it reports back.";
+// Posted by code when the player disputes Keir or Keir corrected itself twice (owner, 2026-11-23: always a worker).
+const RECHECK_LINE = "Thanks for flagging this. I am rechecking it against your records and the game code now, and will post here when that check is done.";
 // Decide whether to hand the ticket to staff. input: { playerText, corrections, wakeCapped, already }.
 function escalation({ playerText = "", corrections = 0, wakeCapped = false, already = false } = {}) {
   if (already) return null;
@@ -194,4 +196,4 @@ function escalation({ playerText = "", corrections = 0, wakeCapped = false, alre
   return null;
 }
 
-module.exports = { incidentContext, turnRows, failureRows, recoveryClaim, recoveryRefusal, claimSentences, claimProblems, claimRefusal, entityRead, balanceChange, scopeProblem, ownerCardBody, challenge, escalation, STAFF_REVIEW_LINE, STAFF_REVIEWING, CAP_HANDOFF_LINE, CLEAN_TURNS_REQUIRED, CORRECTIONS_LIMIT, FEATURE_NOTICE, INTENT_NOTICE };
+module.exports = { incidentContext, turnRows, failureRows, recoveryClaim, recoveryRefusal, claimSentences, claimProblems, claimRefusal, entityRead, balanceChange, scopeProblem, ownerCardBody, challenge, escalation, STAFF_REVIEW_LINE, STAFF_REVIEWING, CAP_HANDOFF_LINE, RECHECK_LINE, CLEAN_TURNS_REQUIRED, CORRECTIONS_LIMIT, FEATURE_NOTICE, INTENT_NOTICE };

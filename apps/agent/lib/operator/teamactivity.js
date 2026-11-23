@@ -85,7 +85,7 @@ function createTeamActivity({ config = {}, discord, mcp, exec, ledger, isModerat
     if (failed === LANES.length) return { error: lastErr };
     const strength = (c) => byTicket && byTicket(`${c.title} ${c.detail_excerpt || ""} ${c.progress_summary || ""}`) ? "ticket" : byTopic && byTopic(`${c.title} ${c.detail_excerpt || ""}`) ? "topic" : null;
     const rows = [...found.values()].map((c) => ({ c, by: strength(c) })).filter((x) => x.by).sort((a, b) => (a.by === "ticket" ? 0 : 1) - (b.by === "ticket" ? 0 : 1)).slice(0, 4).map(({ c, by }) => ({
-      by, id: c.id, lane: c.lane, title: oneLine(c.title, 110), owner: c.assigned_to || "unassigned",
+      by, id: c.id, lane: c.lane, title: oneLine(c.title, 110), owner: c.assigned_to || "unassigned", handback: require("./handback").isHandback(c),
       progress: oneLine(String(c.progress_summary || "").split("\n").filter(Boolean).at(-1) || "", 140),
       age: c.created_at ? ageOf(now() - Date.parse(c.created_at)) : null,
     }));
@@ -182,7 +182,11 @@ function createTeamActivity({ config = {}, discord, mcp, exec, ledger, isModerat
     const [s1, s2, s3, s4] = await Promise.all([section(() => staffMessages(job, ticket, signal)), section(() => cards(ticket, topic, signal)), section(() => workers(ticket, signal)), section(() => prs(ticket, topic, signal))]);
     const staffSaid = (s1.messages || []).filter((m) => STAFF_FIXING.test(m.text));
     const strong = (list) => (list || []).some((x) => x.by === "ticket");
-    const covered = Boolean(staffSaid.length || strong(s2.cards) || strong(s3.workers) || strong(s4.prs));
+    // 2026-11-23 (1886): a card covers the ticket only when someone has claimed it (in progress, assigned to a person or
+    // agent other than Keir). Cards Keir filed for itself and nobody picked up made stalled tickets look covered.
+    // A card whose note says HANDOFF TO KEIR was handed back: Keir owns the ticket, whoever the card still names.
+    const claimed = (s2.cards || []).some((c) => c.by === "ticket" && c.lane === "now" && c.owner !== "unassigned" && !/^keir\b/i.test(c.owner) && !c.handback);
+    const covered = Boolean(staffSaid.length || claimed || strong(s3.workers) || strong(s4.prs));
     const possible = !covered && Boolean((s2.cards || []).length || (s4.prs || []).length);
     const result = {
       ticket, topic: topic || null, covered,

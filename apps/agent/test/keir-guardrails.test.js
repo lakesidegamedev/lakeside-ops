@@ -197,7 +197,7 @@ test("challenge phrases, two corrections and a wake cap each escalate; ordinary 
   assert.equal(g.escalation({ playerText: "are you sure", already: true }), null, "only once per ticket");
 });
 
-test("a player challenge posts one staff-reviewing message, marks needsHuman, alerts the owner, and stops Keir on the ticket", async () => {
+test("a player challenge with no worker available falls back to staff: one staff-reviewing message, a person card, no owner DM (owner rule 2026-11-23)", async () => {
   const f = setup({ call: async (s, tool) => (tool === "kanban_add" ? { id: 970 } : tool === "kanban_list" ? [] : { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }) });
   f.job.lastPublishedAt = f.now() - 60000; // Keir has already answered
   f.job.inbox = [{ authorId: "888888888888888888", messageId: "5001", role: "player", content: "are you sure? that's not true", at: new Date(f.now()).toISOString() }];
@@ -205,15 +205,9 @@ test("a player challenge posts one staff-reviewing message, marks needsHuman, al
   assert.equal(e.why, "player_challenge");
   assert.deepEqual(f.posts(), [g.STAFF_REVIEWING], "one short message");
   assert.equal(f.ledger.data.ticketEscalations[123].card, 970, "a person card is on the board");
-  assert.match(f.calls.find((c) => c[1] === "kanban_add")[2].title, /staff review needed/);
-  const alert = f.ledger.data.outbox["escalation:123"];
-  assert.equal(alert.destination, "owner", "the owner is alerted");
+  assert.equal(f.ledger.data.outbox["escalation:123"], undefined, "the owner is not DMed");
+  assert.ok((f.ledger.data.alerts || []).some((a) => a.key === "escalation:123" && a.digest), "it goes to the daily digest");
   assert.equal(f.ledger.data.ticketPauses[123].by, "keir-escalation", "Keir is paused on the ticket");
-  assert.equal(f.job.state, "paused");
-  // Nothing more is posted by any task on this ticket.
-  f.job.state = "running";
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Here is another update on your plant." }), /paused/);
-  // A second check does not post again.
   assert.equal(await f.broker.escalationCheck(f.job), null);
   assert.equal(f.posts().length, 1);
 });

@@ -1061,6 +1061,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
   async function escalateTicket(job, ticketNo, why, detail) {
     const record = (d.ticketEscalations ||= {});
     if (!ticketNo || record[ticketNo]) return record[ticketNo] || null;
+    if (await ownedElsewhere(job, ticketNo)) { ledger.audit("escalation_quiet_owned", { job: job.id, ticket: ticketNo, why }); return null; }
     record[ticketNo] = { at: now(), why, detail: String(detail || "").slice(0, 300) }; ledger.save();
     try {
       await callSupport("support_public_update", { kind: "ticket", number: ticketNo, message: guardrails.STAFF_REVIEWING, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
@@ -1071,32 +1072,69 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.audit("ticket_escalated", { job: job.id, ticket: ticketNo, why, detail: String(detail || "").slice(0, 200) }); ledger.save();
     return record[ticketNo];
   }
-  // 2026-11-23 (ticket 1891): the wake cap hands the ticket to a worker run, not to staff. The task waits out its cap as
-  // before; the worker's report wakes it. The player gets one plain line (recorded as a promise by the post path). At
-  // most one hand-off per ticket in CAP_HANDOFF_MS. Only when no worker can start does the old staff escalation run.
-  const CAP_HANDOFF_MS = 6 * 3600000;
-  async function capHandoff(job, ticketNo) {
-    const rec = (d.capHandoffs ||= {});
-    const prev = rec[ticketNo];
-    if (prev && now() - prev.at < CAP_HANDOFF_MS) return null;
+  // A rule direction the owner already chose for this ticket (an answered choice in the last 14 days), or null.
+  function ruleDirectionChosen(job) {
+    const n = ticketOf(job), ids = new Set(Object.values(d.jobs).filter((j) => j.id === job.id || (n && ticketOf(j) === n) || j.id === job.codingParent).map((j) => j.id));
+    return Object.values(d.decisions || {}).find((x) => (ids.has(x.jobId) || (n && Number(x.ticket) === n)) && x.options && ["selected", "answered", "approved"].includes(x.state) && now() - (x.answeredAt || x.at || 0) < 14 * 86400000) || null;
+  }
+  // Owner rule 2026-11-23 (ticket 1884: a "needs a person (wake cap)" DM while a developer agent was posting to the player):
+  // before Keir steps in on a ticket, it checks whether someone already has it. A worker or agent unit on the ticket, a
+  // staff "I'm fixing it", a card or PR naming the ticket (team_activity), or a public update in the last two hours that
+  // Keir did not post. If so, Keir stays quiet: no hand-off, no post, no owner message. The answer is cached on the
+  // ledger for the sweeper (d.ticketOwners), which has no network of its own.
+  const OWNED_MS = 2 * 3600000;
+  const normPost = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").slice(0, 120);
+  async function ownedElsewhere(job, ticketNo) {
+    let who = null;
+    try {
+      const act = await w3.teamActivity(job, { ticket: ticketNo });
+      if (act?.covered) who = { by: act.staffSaidFixing ? "staff" : "team", detail: String(act.report || "").split("\n").slice(1, 4).join(" ").slice(0, 300) };
+    } catch (e) { ledger.audit("ownership_check_failed", { ticket: ticketNo, source: "team_activity", error: String(e.message).slice(0, 160) }); }
+    if (!who) {
+      try {
+        const rec = await mcp.call("support", "support_get", { kind: "ticket", number: ticketNo }, false);
+        const mine = new Set((d.ticketPosts?.[ticketNo] || []).map((p) => normPost(p.text)));
+        const other = (rec?.publicUpdates || []).filter((u) => now() - Date.parse(u.at || 0) < OWNED_MS && u.delivery?.status === "posted" && !mine.has(normPost(u.message))
+          && ![guardrails.STAFF_REVIEWING, guardrails.CAP_HANDOFF_LINE, guardrails.RECHECK_LINE].includes(u.message)).at(-1);
+        if (other) who = { by: "agent", detail: `posted to the player at ${String(other.at).slice(11, 16)} UTC: "${String(other.message).slice(0, 160)}"` };
+      } catch (e) { ledger.audit("ownership_check_failed", { ticket: ticketNo, source: "support_get", error: String(e.message).slice(0, 160) }); }
+    }
+    (d.ticketOwners ||= {})[ticketNo] = { at: now(), owned: Boolean(who), ...(who || {}) }; ledger.save();
+    return who;
+  }
+  // 2026-11-23 (ticket 1891, owner "always a worker"): the wake cap, a player challenging Keir and a second correction all
+  // hand the ticket to a worker run, never to staff who are not there. The task waits as before; the worker's report wakes
+  // it. The player gets one plain line (recorded as a promise by the post path). At most one hand-off per ticket and reason
+  // in HANDOFF_MS. Only when no worker can start does the old staff escalation run, and then without an owner DM.
+  const HANDOFF_MS = 6 * 3600000;
+  async function workerHandoff(job, ticketNo, why, detail) {
+    const rec = (d.capHandoffs ||= {}), key = why === "wake_cap" ? String(ticketNo) : `${ticketNo}:${why}`;
+    const prev = rec[key];
+    if (prev && now() - prev.at < HANDOFF_MS) return null;
+    const owner = await ownedElsewhere(job, ticketNo);
+    if (owner) { rec[key] = { at: now(), quiet: owner.by }; ledger.audit("handoff_quiet_owned", { job: job.id, ticket: ticketNo, why, by: owner.by }); ledger.save(); return null; }
     const cw = codingWorkers();
+    const reason = why === "wake_cap" ? `Keir's ticket task hit its retry limit (${(job.runStarts || []).filter((t) => now() - t < 3600000).length} runs in the last hour) without settling the ticket`
+      : why === "player_challenge" ? `The player disputed Keir's answer (${detail}). Recheck every claim Keir made on this ticket against the code and live data, and say plainly which were right and which were wrong`
+      : `Keir corrected itself more than once on this ticket (${detail}). Recheck every claim it made against the code and live data`;
     let out = null;
-    try { out = cw ? cw.queueInvestigation({ job, reason: `Keir's ticket task hit its wake limit (${(job.runStarts || []).filter((t) => now() - t < 3600000).length} runs in the last hour) without settling the ticket`, stall: true }) : null; }
-    catch (e) { ledger.audit("cap_handoff_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
+    try { out = cw ? cw.queueInvestigation({ job, reason, stall: true }) : null; }
+    catch (e) { ledger.audit("cap_handoff_failed", { job: job.id, ticket: ticketNo, why, error: String(e.message).slice(0, 200) }); }
     const run = out?.run || null;
     if (!run) {
-      ledger.audit("cap_handoff_failed", { job: job.id, ticket: ticketNo, reason: String(out?.reason || "coding workers are not running").slice(0, 200) });
-      return escalateTicket(job, ticketNo, "wake_cap", `the ticket hit its wake cap and no worker could be started (${out?.reason || "coding workers are not running"})`);
+      ledger.audit("cap_handoff_failed", { job: job.id, ticket: ticketNo, why, reason: String(out?.reason || "coding workers are not running").slice(0, 200) });
+      return escalateTicket(job, ticketNo, why, `${detail}; no worker could be started (${out?.reason || "coding workers are not running"})`);
     }
-    rec[ticketNo] = { at: now(), run: run.id, existing: Boolean(out.skipped) }; ledger.save();
+    rec[key] = { at: now(), run: run.id, existing: Boolean(out.skipped) }; ledger.save();
     if (!out.skipped) {
+      const line = why === "wake_cap" ? guardrails.CAP_HANDOFF_LINE : guardrails.RECHECK_LINE;
       try {
-        await callSupport("support_public_update", { kind: "ticket", number: ticketNo, message: guardrails.CAP_HANDOFF_LINE, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
-        recordTicketPost(job, ticketNo, guardrails.CAP_HANDOFF_LINE);
+        await callSupport("support_public_update", { kind: "ticket", number: ticketNo, message: line, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
+        recordTicketPost(job, ticketNo, line);
       } catch (e) { ledger.audit("cap_handoff_post_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
     }
-    ledger.audit("cap_handoff", { job: job.id, ticket: ticketNo, run: run.id, existing: Boolean(out.skipped) }); ledger.save();
-    return { why: "wake_cap", handedTo: run.id };
+    ledger.audit("cap_handoff", { job: job.id, ticket: ticketNo, why, run: run.id, existing: Boolean(out.skipped) }); ledger.save();
+    return { why, handedTo: run.id };
   }
   // Called when a ticket job wakes (player message) and when the wake cap trips. Returns the escalation if one just happened.
   async function escalationCheck(job, { wakeCapped = false } = {}) {
@@ -1112,8 +1150,7 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const replied = Boolean(job.lastPublishedAt) || (d.ticketPosts?.[ticketNo] || []).length > 0 || Boolean(d.lastSubstantive?.[ticketNo]);
     const e = guardrails.escalation({ playerText: replied ? fresh.map((m) => m.content).join("\n") : "", corrections: Math.max(corrections, 0) >= guardrails.CORRECTIONS_LIMIT ? corrections : 0, wakeCapped, already: Boolean(d.ticketEscalations?.[ticketNo]) });
     ledger.save();
-    if (e?.why === "wake_cap") return capHandoff(job, ticketNo);
-    return e ? escalateTicket(job, ticketNo, e.why, e.detail) : null;
+    return e ? workerHandoff(job, ticketNo, e.why, e.detail) : null;
   }
   // 2026-11-23 (ticket 1891): a public correction is checked by a separate one-shot model call against the records this
   // activation read before the player sees it (correctioncheck.js). The checker runs on the configured Codex route; tests
@@ -2999,7 +3036,7 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       }
       if ((input.kind || "question") === "question" && input.needsHuman === true
           && (job.reviewItem?.kind === "doc_conflict" || changeClass === "display")) {
-        throw new Error("Keep this correction on your task. Use repository_snapshot and shell or delegate_fix to prepare a patch, then publish_patch. Use github merge to ask for exact owner approval once the PR is ready.");
+        throw new Error("Keep this correction on your task. Use repository_snapshot and shell or delegate_fix to prepare a patch, then publish_patch. Then merge it with github merge once its required checks are green: ordinary fixes ship under the standing merge permission without asking the owner.");
       }
       const prior = (job.raisedToDevelopers || []).find((r) => similarity(r.title, title) > 0.6);
       if (prior) return { raised: true, id: prior.id, duplicate: true };
@@ -3864,6 +3901,13 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
             shipClass = { declared: input.changeClass, body: prd?.body, title: prd?.title, blastClass: Array.isArray(files) ? blast.classify(files).cls : "economy", ownerId: config.ownerId, action: input.action, number: input.action === "merge" ? Number(input.number) : null, to };
             klass = changeClassMod.classifyChange(shipClass);
             if (klass.needsDeclaration) { if (input.action === "merge") changeClassMod.assertShippable(d, shipClass); shipClass = null; }
+            // Owner, 2026-11-23 (ticket 1886): once the owner has chosen the direction for a rule question on this ticket, the
+            // fix that carries it out ships under the standing merge permission; he is not asked again to approve the merge.
+            // Money (balance, economy) and the sensitive paths below still ask.
+            if (klass.gated && klass.cls === "rule") {
+              const chosen = ruleDirectionChosen(job);
+              if (chosen) { klass = { ...klass, gated: false, direction: chosen.id }; shipClass = null; delete job.requiresOwner; ledger.audit("rule_direction_ships", { job: job.id, ticket: ticketOf(job) || null, decision: chosen.id, number: Number(input.number) || null }); }
+            }
           }
           if (findingShip && input.action === "promote" && files?.length) {
             const range = await api([`repos/${repo}/compare/${to}...${from}`]).catch(() => null);
@@ -5735,7 +5779,9 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     return { checked };
   }
   let watch = null;
-  return { incidentContext: incidentFacts, escalationCheck, escalateTicket, fileOwnerCard, ticketCommandAllowed: (job) => !ticketCommands.refusal(job), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
+  return { incidentContext: incidentFacts, escalationCheck, escalateTicket, ownedElsewhere,
+    // Hand-back live watch (handback.js): is this AHDGame fix PR in the running web (and turn worker) build?
+    liveFix: (number, signal) => verifyLiveFix({ api: async (args) => JSON.parse(await exec("/usr/bin/gh", ["api", ...args], { timeout: 60000, ...(signal ? { signal } : {}) }) || "null"), number, signal }), fileOwnerCard, ticketCommandAllowed: (job) => !ticketCommands.refusal(job), askHealthRefresh: () => w3.refreshAskHealth(), turnStatus: () => w3.turnStatus(), resolveReporter: (job, signal) => w3.resolveIdentity(job, signal), postBudget, draftCheck, pageCheckAfterTurn: (job) => { const n = ticketOf(job); return n ? pageCheck(n).catch(() => null) : Promise.resolve(null); }, warmReadyReads: () => config.readyReads === false ? Promise.resolve(0) : readyReads.warm(mcp.servers()), readyReads: (job) => config.readyReads === false ? Promise.resolve([]) : readyReads.pick(job, { servers: readServers(job) }).catch(() => []), readable, caseRead: (tool, args, signal) => { if (!/^support_(?:search|list)$/.test(tool)) throw new Error("case lookup reads support search and list only"); return mcp.call("support", tool, args, false, signal); }, recentImages: (job) => conversation?.recentImages?.(job) || [], voiceReads: (job, signal) => require("./voiceturn").voiceRoot(d, job) ? require("./voiceturn").readSchemas(mcp, signal) : Promise.resolve([]), supportDirective: supportDirectives.send, supportDirectiveTick: supportDirectives.tick, supportDirectiveHeld: supportDirectives.held, setWatch: (w) => { watch = w; }, issueSweep, closeDuplicateIssues, reporterOf, notebook, tool, active, incidentPrecheck, relatedPrecheck: (job, signal) => surge.checkTicket(job, signal), sharedAnswerPrecheck, sharedAnswerContext: (ticket) => { const k = d.sharedAnswers?.[ticket]; return k ? sharedAnswer.contextFor({ ticket: k.from, answer: k.answer, why: k.why }) : undefined; }, surgeTick: () => surge.tick(), proposeIncident: (p) => surge.propose(p), chatterTick: () => surge.chatterTick(), adminStatusCard, instantCard, advanceCardStage, liveNotice, stageTick, promiseFallback, codingComplete: delegation.complete, delegationTick: delegation.tick, waitingUpdate, supportAuthority, effect, ticketWork, servers: readServers, appContext: (job) => job.role === "owner" ? { ...appMuse()?.context(job), sharedWork: sharedWork() } : undefined, context: (job) => {
       const root = require("./appcontrols").rootOf(d, job);
       return isAppJob(root) && appChannel ? { channelId: "app", thread: root.appThread || "main", evidenceOnly: true,
         attachments: (root.appAttachments || []).map((a, index) => ({ index, name: a.name, type: a.type, sourceMessageId: a.messageId })),

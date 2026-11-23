@@ -51,8 +51,10 @@ function createLedger(file) {
   // review. Only Keir's reply to a task the owner gave it by DM still DMs.
   const QUIET = /^(?:close-stalled|deadline|scan-error|intake-delivery|delivery|legacy-handoff|closed|error|decision|action|effect-error|recovery|digest):/;
   function notify(key, destination, content, extra = {}) {
-    if (destination === "owner" && QUIET.test(key)) {
-      data.alerts = [...(data.alerts || []).filter((a) => a.key !== key), { key, content: String(content).slice(0, 2000), at: Date.now() }].slice(-200);
+    // Owner rule 2026-11-23 (ownerpolicy.js): only decisions, the daily digest and direct replies interrupt the owner;
+    // everything else lands in alerts, which the daily digest summarises.
+    if (destination === "owner" && (QUIET.test(key) || !require("./ownerpolicy").allowedDm(key))) {
+      data.alerts = [...(data.alerts || []).filter((a) => a.key !== key), { key, content: String(content).slice(0, 2000), at: Date.now(), ...(QUIET.test(key) ? {} : { digest: true }) }].slice(-200);
       console.log(`[keir] alert ${key}: ${String(content).slice(0, 300)}`);
       return;
     }

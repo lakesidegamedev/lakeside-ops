@@ -59,6 +59,11 @@ function decideTicket(t, now, cfg = DEFAULTS) {
     return { action: "none", reason: "awaiting the owner's decision" };
   }
   if (t.running) return { action: "none", reason: "being worked" };
+  // Owner rule 2026-11-23: a handed-back ticket that is only waiting (on the player, or on its fix reaching the live game,
+  // which the hand-back ticker watches) is never escalated and never swept; its triggers are armed.
+  if (t.handback && (t.waitingOnPlayer || t.handback.waitingOnLive)) return { action: "none", reason: t.handback.waitingOnLive ? "waiting for the fix to reach the live game (watched)" : "waiting on the player" };
+  // Owner rule 2026-11-23: someone else (a developer agent, staff, a worker, an open PR) already has it: stay quiet.
+  if (t.ownedElsewhere) return { action: "none", reason: `someone else is on it (${t.ownedElsewhere})` };
   if (t.investigationActive) return { action: "none", reason: "a worker run is on it" };
   if (t.lastActionAt && now - t.lastActionAt < cfg.windowMs) return { action: "none", reason: "swept recently" };
   // A self-owned blocking question nobody is working. A worker that just reported gets one window to be acted on.
@@ -78,6 +83,7 @@ function decideTicket(t, now, cfg = DEFAULTS) {
   // sent; the owner got a DM at 3 a.m. instead. A worker picks the ticket up first; the owner hears only when that could
   // not start or came back with nothing.
   if (t.waitingOnDeveloper && !investigatedWithoutResult) return { action: "investigate_worker", stall: true, reason: `${reason}; waiting on a card Keir filed, so a worker picks it up` };
+  if (t.handback && investigatedWithoutResult) return { action: "none", reason: "handed back; a worker already tried, the next player message or live build wakes it" };
   if (investigatedWithoutResult || t.waitingOnDeveloper) {
     if (t.lastEscalationAt && now - t.lastEscalationAt < cfg.ownerRepingMs) return { action: "none", reason: "owner already told" };
     return { action: "escalate_owner", reason: `${reason}${investigatedWithoutResult ? "; a fresh investigation produced nothing substantive" : "; waiting on a developer"}` };
@@ -118,6 +124,8 @@ function createSweeper({ ledger, config, now = () => Date.now(), log = () => {},
         playerNotified: sweep.playerNoticedFor === (pending.id || pending.actionId) || t.replies.some((r) => r.ticket === n && r.at >= ts(pending.at)) } : null,
       waitingOnPlayer: root.waitingFor?.kind === "player_reply" && lastReplyAt >= lastHumanAt,
       waitingOnDeveloper: root.waitingFor?.kind === "developer_reply" || (root.raisedToDevelopers || []).some((r) => r.blocking && r.id && !r.releasedAt && !r.selfOwned),
+      handback: root.handback ? { card: root.handback.card, waitingOnLive: Boolean(root.handback.prs?.length && !root.handback.liveAt) } : null,
+      ownedElsewhere: (() => { const o = d.ticketOwners?.[n]; return o?.owned && at - o.at < 30 * MIN ? o.by : null; })(),
       ownQuestion: own ? { id: own.id, at: Number(own.at) || 0 } : null, investigationActive: Boolean(activeRun), lastRunEndedAt: inv.lastEndedAt(d, n),
       lastHumanAt, lastReplyAt, lastSubstantiveAt, inActiveHours: inActiveHours(at, c),
       lastActionAt: sweep.at || 0, lastActionKind: sweep.kind || null, lastEscalationAt: sweep.lastEscalationAt || 0 };

@@ -173,7 +173,7 @@ test("a decision that is still open but not answerable stays queued instead of b
   assert.equal(calls.length, 2);
 });
 
-test("a quiet phone still receives nothing for replies, and only the newest progress update afterwards", async () => {
+test("progress updates never push, quiet hours or not (owner rule 2026-11-23: status goes to the digest)", async () => {
   const { ledger, app } = setup();
   app.register(A, {}, NY);
   const t0 = at("2026-10-15T03:00:00Z");
@@ -185,10 +185,9 @@ test("a quiet phone still receives nothing for replies, and only the newest prog
   const calls = [];
   const push = createAppPush({ ledger, now: () => clock, apns: apnsFor(calls) });
   await push.tick();
-  assert.equal(calls.length, 0);
   clock = at("2026-10-15T11:30:00Z");
   await push.tick();
-  assert.deepEqual(calls.map((c) => c.payload.aps.alert.body), ["Update 3"]);
+  assert.equal(calls.length, 0);
 });
 
 test("removing a dead device discards its queue", async () => {
