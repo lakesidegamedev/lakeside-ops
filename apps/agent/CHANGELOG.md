@@ -5,6 +5,11 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.2 (2026-11-23)
+
+- **The "now live" note waits while the player's question is unanswered.** Keir had read the question, so nothing was left in its inbox, and the note went out over it two minutes later (owner, ticket 1890).
+- **The "now live" note no longer quotes the ticket title as if it were the fix** ("This is now live on the main server: Few issues."). A title-only card item reads "The fix for this ticket is now live on the main server."
+
 ## 11.7.1 (2026-11-23)
 
 - **A timer or internal wake does nothing while someone else has the ticket** (a developer agent or staff posted to the player in the last two hours, a running worker, a claimed card or an open PR); Keir looks again in 30 minutes, and a player's message is still answered (owner, ticket 1884).

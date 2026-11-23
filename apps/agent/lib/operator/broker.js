@@ -2036,7 +2036,11 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     if (!fresh.length) return false;
     const root = d.jobs[d.seen[`ticket:${ticketNo}`]];
     const openAsk = d.ticketCases?.[ticketNo]?.asked?.some(ask => !ask.answeredAt);
-    if (root && (conversationTurn.inFlight(root) || root.inbox?.some(m => conversationTurn.human(root, m)) || (openAsk && !pending))) {
+    // Keir 11.7.2 (ticket 1890, 2026-11-23): the player asked a question at 10:14, the model had read it (so the inbox was
+    // empty) but not answered, and the notice went out at 10:16 over the unanswered question. An unanswered player message
+    // holds the notice exactly like one still in the inbox.
+    const owesAnswer = humanAt(ticketNo) > 0 && !playerAnswered(ticketNo);
+    if (root && (conversationTurn.inFlight(root) || root.inbox?.some(m => conversationTurn.human(root, m)) || owesAnswer || (openAsk && !pending))) {
       const names = fresh.map(i => statusCard.cleanName(i.name));
       if (!pending || names.some(n => !pending.names.includes(n))) {
         card.pendingLiveNotice = { names, at: pending?.at || now() };
@@ -2061,7 +2065,15 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     const said = announced || saidSince || (d.ticketPosts?.[ticketNo] || []).some((p) => now() - p.at < 15 * 60000 && !isCardPost(p) && /\blive\b|\b(?:fix|change) is working\b|\bnow works\b|\bis fixed\b|\bworking for you\b/i.test(p.text)); // ticket 1755: "The fix is working for you" then a contradicting live notice
     if (said) { delete card.pendingLiveNotice; card.liveNotified = [...told, ...fresh.map(i => statusCard.cleanName(i.name))].slice(-20); ledger.save(); ledger.audit("live_notice_skipped", { job: effectJob.id, ticket: ticketNo, reason: "already said" }); return false; }
     const names = fresh.map((i) => i.name.replace(/[.\s]+$/, ""));
-    const message = (names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
+    // Keir 11.7.2 (ticket 1890): a card built from a hand-back can carry the ticket title as its one item ("Few issues"),
+    // and "This is now live on the main server: Few issues." read as a canned reply. A title-only name is not quoted.
+    let ticketTitle = "";
+    if (names.length === 1) {
+      try { ticketTitle = String((await callSupport("support_get", { kind: "ticket", number: Number(ticketNo) }, false))?.title || ""); } catch {}
+    }
+    const norm = (t) => String(t || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const titleOnly = names.length === 1 && ticketTitle && norm(names[0]) === norm(ticketTitle);
+    const message = (titleOnly ? "The fix for this ticket is now live on the main server." : names.length === 1 ? `This is now live on the main server: ${names[0]}.` : `These are now live on the main server:\n${names.map((n) => `- ${n}`).join("\n")}`)
       + "\n\nIf you still see the problem, reply here.";
     try {
       guardPlayerRegister(effectJob, ticketNo, message);

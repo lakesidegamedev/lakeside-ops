@@ -88,3 +88,34 @@ test("a human interruption defers the live notice and the stage tick delivers it
   await f.broker.stageTick();
   assert.equal(f.ledger.data.audit.filter(a => a.kind === "live_notice").length, 1);
 });
+
+test("a player question Keir has read but not answered holds the live notice (ticket 1890)", async () => {
+  const f = await setup();
+  f.job.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/7001"];
+  f.job.releaseEvidence = { patch: { development: true, staging: true, main: true, repository: "AHDGame", pr: 7001 } };
+  f.job.inbox = [];
+  f.job.state = "waiting";
+  f.job.lastPlayerAt = 4000; // the player wrote; the model read it, so nothing is left in the inbox
+  await f.broker.stageTick();
+  const card = f.ledger.data.statusCards[123];
+  assert.equal(f.ledger.data.audit.filter((a) => a.kind === "live_notice").length, 0, "no notice over an unanswered question");
+  assert.equal(card.pendingLiveNotice.names.length, 1);
+  (f.ledger.data.ticketPosts[123] ||= []).push({ at: 999999, text: "The law is missing from the menu; we are adding it and I will post when it is live.", jobId: f.job.id });
+  await f.broker.stageTick();
+  const notices = f.ledger.data.audit.filter((a) => a.kind === "live_notice" || a.kind === "live_notice_skipped");
+  assert.ok(notices.length >= 1, "after a real answer the held notice is resolved");
+});
+
+test("a live notice never quotes the ticket title as the fix name (ticket 1890)", async () => {
+  const { setup: post } = require("./keir10-post.helpers");
+  const f = post({ call: async (server, tool) => (tool === "support_get" ? { number: 123, title: "Few issues" } : { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }) });
+  const d = f.ledger.data;
+  f.job.pullRequests = ["https://github.com/lakesidegamedev/AHDGame/pull/7001"];
+  f.job.releaseEvidence = { abc1234def: { at: f.now() - 60000, main: true, development: true, staging: true, repository: "AHDGame", pr: 7001 } };
+  d.statusCards = { 123: { messageId: "9", channelId: f.job.channelId, items: [], liveNotified: [] } };
+  d.ticketPosts = { 123: [] };
+  await f.broker.liveNotice(f.job, 123, [], [{ name: "Few issues", stage: "main", blocked: false }]);
+  const sent = f.calls.filter((c) => c[1] === "support_public_update").map((c) => c[2]?.message || "");
+  assert.equal(sent.length, 1, "the notice goes out");
+  assert.equal(sent[0].split("\n")[0], "The fix for this ticket is now live on the main server.");
+});
