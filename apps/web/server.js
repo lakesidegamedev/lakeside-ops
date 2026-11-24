@@ -8194,9 +8194,20 @@ loadDeadLetters();
       const tierActive = Boolean(tier) && (exp === null || exp > Date.now());
 
       let character = null, corporation = null;
-      if (user.activeCharacterId) {
+      // The game sends the character its page is showing. Honour it only when
+      // it belongs to this account; otherwise use the account's active one.
+      let characterKey = user.activeCharacterId;
+      const requestedCharacter = String(p.characterId || "").trim();
+      if (userId && /^[a-f0-9]{24}$/i.test(requestedCharacter)) {
+        const owned = await db.collection("characters").findOne(
+          { _id: new ObjectId(requestedCharacter), userId: user._id },
+          { projection: { _id: 1 } }
+        ).catch(() => null);
+        if (owned) characterKey = owned._id;
+      }
+      if (characterKey) {
         const c = await db.collection("characters").findOne(
-          { _id: user.activeCharacterId },
+          { _id: characterKey },
           { projection: { name: 1, sequentialId: 1, countryId: 1, partyId: 1 } }
         );
         if (c) {
