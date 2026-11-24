@@ -322,6 +322,17 @@ function outsideScopeMessage(scope, server, tool) {
   if (!allowed) return `read tool is outside support scope: ${server} is not a readable server here. Readable servers: ${Object.keys(scope).join(", ")}.`;
   return `read tool is outside support scope: ${tool} is not a ${server} read available to this task. Available on ${server}: ${allowed.join(", ")}.`;
 }
+// Keir 11.2: a card read outside the task's own cards has to name the call that works.
+// The bare "read only this task's own card or confirmed developer handoffs" named a rule,
+// not a way forward: 23 refusals in three days (2026-11-23) re-sent the same kanban_get up
+// to five times on ids offered by raise_to_developers as append candidates. The model does
+// not need to read another card: appendTo reads it and appends the evidence, and support_get
+// answers the ticket's own status. Say both, and say which ids this task really can read.
+function cardReadRefusal({ id, ownIds = [] } = {}) {
+  const which = ownIds.length ? `This task may read card${ownIds.length === 1 ? "" : "s"} ${ownIds.join(", ")}.` : "This task has not filed a card yet, so it has none to read.";
+  if (!Number.isSafeInteger(id)) return `That is not a board card id: kanban_get takes the whole number shown as "card <id>" in your brief or in a raise result, not a ticket number, a review item id or a quoted string. ${which} For a ticket's own status use support_get (number). To add evidence to an existing card use raise_to_developers with appendTo <id>; the broker reads that card and appends for you.`;
+  return `Card ${id} is not one of this task's cards. ${which} To add evidence to card ${id} use raise_to_developers with appendTo ${id}; the broker reads that card and appends for you. For a ticket's own status use support_get (number).`;
+}
 const FINDING_READS = {
   "heal-ops": ["heal_list", "heal_detect", ...SUPPORT_READS["heal-ops"]],
   turndiag: [...SUPPORT_READS.turndiag, "turn_anomalies"],
@@ -3391,7 +3402,10 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
         if (input.server === "ops-knowledge" && input.tool === "kanban_get") {
           const root = rootJob(job, d.jobs);
           const ownEngineeringCard = root?.operatorRole === "engineering" && args.id === (root.engineeringKanbanId || config.engineeringKanbanId);
-          if (!Number.isSafeInteger(args.id) || !(ownEngineeringCard || (job.raisedToDevelopers || []).some((r) => r.id === args.id))) throw new Error("read only this task's own card or confirmed developer handoffs");
+          const ownIds = (job.raisedToDevelopers || []).map((r) => r.id).filter((id) => Number.isSafeInteger(id));
+          const engineeringId = root?.engineeringKanbanId || config.engineeringKanbanId;
+          if (ownEngineeringCard) ownIds.push(engineeringId);
+          if (!Number.isSafeInteger(args.id) || !ownIds.includes(args.id)) throw new Error(cardReadRefusal({ id: args.id, ownIds }));
           const card = await mcp.call(input.server, input.tool, { id: args.id }, false, signal);
           if (Number(card?.id) !== args.id) throw new Error("developer handoff receipt does not match");
           return Object.fromEntries(["id", "title", "lane", "assigned_to", "progress_summary", "last_progress_at", "evidence_url"].filter((k) => card[k] !== undefined).map((k) => [k, card[k]]));
@@ -5836,4 +5850,4 @@ function repeatedHandoff(jobs, job, title, refs, at) {
   }
   return null;
 }
-module.exports = { problemReport, snowflakeTime, handoffRefs, repeatedHandoff, outsideScopeMessage, mapSnapshotScopeCheck, nearCollections, TYPED_READS, SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };
+module.exports = { problemReport, snowflakeTime, handoffRefs, repeatedHandoff, outsideScopeMessage, cardReadRefusal, mapSnapshotScopeCheck, nearCollections, TYPED_READS, SUPPORT_READS, FINDING_READS, PLAYER_PRIVATE, coerceArgs, oidFilter, hexIdFilter, outcomeClaims, similarity, localMcpUrl, validateArguments, validationRejected, createBroker, createMcp, QUICK_TOOLS, hash, parseRpc, run, rawReadArgs, redactRaw, META_SUMMARY };

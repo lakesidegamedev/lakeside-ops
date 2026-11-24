@@ -28,7 +28,7 @@ const CLASSES = [
   ["tool timed out", /timed? ?out|aborted due to timeout|This operation was aborted/i],
 ];
 // Refusals that are policy, not missing capability.
-const POLICY = /Not posted|authority is inactive|outside (?:support|quick read) scope|closed to support reads|read the assigned ticket only|own card|reporter|channel no longer exists|channels\/null|copy|owner decision/i;
+const POLICY = /Not posted|authority is inactive|outside (?:support|quick read) scope|closed to support reads|read the assigned ticket only|own card|one of this task's cards|board card id|reporter|channel no longer exists|channels\/null|copy|owner decision/i;
 
 function signatureOf(event) {
   if (event.kind === "raw_read" && event.collection) return { sig: `raw:${event.collection}`, title: `A read for ${event.collection} without raw database queries`, what: `Tasks had to read the ${event.collection} collection through heal-ops raw queries because no purpose-built read covers it.` };
