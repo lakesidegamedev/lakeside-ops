@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+### For developers
+
+- `broker.js` `cardReadRefusal`: a refused `kanban_get` now names the card ids this task may read and the call that works (`raise_to_developers` with `appendTo`), and a non-integer id is named as a shape problem; the rule itself is unchanged, so only a task's own cards and confirmed handoffs are read.
+
 ## 11.7.6 (2026-11-24)
 
 - A ticket whose Keir answers were corrected twice hands off to a recheck worker once per new correction. An old count no longer re-fires the "rechecking" line every six hours after the ticket was answered (1884).
