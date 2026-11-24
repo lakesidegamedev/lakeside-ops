@@ -1105,7 +1105,9 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
         const rec = await mcp.call("support", "support_get", { kind: "ticket", number: ticketNo }, false);
         const mine = new Set((d.ticketPosts?.[ticketNo] || []).map((p) => normPost(p.text)));
         const other = (rec?.publicUpdates || []).filter((u) => now() - Date.parse(u.at || 0) < OWNED_MS && u.delivery?.status === "posted" && !mine.has(normPost(u.message))
-          && ![guardrails.STAFF_REVIEWING, guardrails.CAP_HANDOFF_LINE, guardrails.RECHECK_LINE].includes(u.message)).at(-1);
+          && ![guardrails.STAFF_REVIEWING, guardrails.CAP_HANDOFF_LINE, guardrails.RECHECK_LINE, AI_LINE, DISCLOSURE].includes(u.message)
+          // Keir's own opener and status card are posted outside ticketPosts; they are not another agent owning the ticket.
+          && !String(u.message || "").startsWith("Hi, I'm Keir") && !String(u.key || "").startsWith("status-card:")).at(-1);
         if (other) who = { by: "agent", detail: `posted to the player at ${String(other.at).slice(11, 16)} UTC: "${String(other.message).slice(0, 160)}"` };
       } catch (e) { ledger.audit("ownership_check_failed", { ticket: ticketNo, source: "support_get", error: String(e.message).slice(0, 160) }); }
     }

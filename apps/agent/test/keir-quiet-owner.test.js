@@ -149,3 +149,13 @@ test("a handed-back ticket is Keir's even when the developer agent posted to the
   assert.equal(await f.broker.ownedElsewhere(f.job, 123), null);
   assert.equal(f.ledger.data.ticketOwners[123].handback, true);
 });
+
+test("Keir's own opener and status card do not make a ticket look owned by another agent", async () => {
+  const t0 = 10 * 3600000;
+  const at = new Date(t0 - 5 * 60000).toISOString();
+  const f = setup({ call: async (s, tool) => tool === "support_get" ? { publicUpdates: [
+    { at, message: "I'm Keir, an AI assistant. Staff review anything that needs a decision.", delivery: { status: "posted" } },
+    { at, key: "status-card:123:1", message: "Can't do the thing: Investigating", delivery: { status: "posted" } },
+  ] } : tool === "kanban_list" ? [] : { ok: true } });
+  assert.equal(await f.broker.ownedElsewhere(f.job, 123), null);
+});
