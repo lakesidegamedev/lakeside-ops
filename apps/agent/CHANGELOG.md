@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.8 (2026-11-24)
+
+- Keir's own opener and status card no longer make a ticket look owned by another agent. A new ticket went quiet after its first reply because the opener read as someone else's post (1895).
+
 ## 11.7.7 (2026-11-24)
 
 - turn_status is an allowed read in owner app tasks. The scheduled owner brief refused it as a write and finished blocked.
