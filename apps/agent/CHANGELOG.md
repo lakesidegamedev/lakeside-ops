@@ -5,6 +5,10 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+## 11.7.7 (2026-11-24)
+
+- turn_status is an allowed read in owner app tasks. The scheduled owner brief refused it as a write and finished blocked.
+
 ## 11.7.6 (2026-11-24)
 
 - A ticket whose Keir answers were corrected twice hands off to a recheck worker once per new correction. An old count no longer re-fires the "rechecking" line every six hours after the ticket was answered (1884).
