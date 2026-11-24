@@ -57,6 +57,11 @@ test("team_activity is an allowed read for scheduled app tasks (it failed every 
   assert.match(src.slice(src.indexOf("const READS"), src.indexOf("const PRIVATE")), /"team_activity"/);
 });
 
+test("turn_status is an allowed read for scheduled app tasks (the scheduled brief refused it as a write)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "../lib/operator/ownermuse-policy.js"), "utf8");
+  assert.match(src.slice(src.indexOf("const READS"), src.indexOf("const PRIVATE")), /"turn_status"/);
+});
+
 // ---- hand-backs -----------------------------------------------------------------------------------------------------
 
 const CARD = { id: 255738, tickets: [1892], pull_requests: ["lakesidegamedev/AHDGame#7275"], last_progress_at: "2026-11-23T14:53:22.403Z", assigned_to: "claude:t1892", lane: "now",

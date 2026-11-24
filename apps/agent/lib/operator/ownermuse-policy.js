@@ -69,7 +69,9 @@ function inherit(ledger, parent, child) {
 }
 const READS = new Set(["discord_search", "ticket_performance", "release_efficiency", "evidence_batch", "read_servers", "read_tools", "read_tool", "recent_changes", "past_ticket", "similar_reports", "recall", "calculate", "ticket_history", "source_history", "view_attachment", "task_progress", "reporter_state", "support_tools",
   // 2026-11-23: team_activity only reads (staff messages, cards, workers, PRs). Missing here, it failed every morning brief since 11-18.
-  "team_activity"]);
+  "team_activity",
+  // turn_status only reads the turn lock and recent turns. Missing here, the scheduled owner brief refused it as a write.
+  "turn_status"]);
 const PRIVATE = new Set(["owner_updates", "present_choices", "task_plan", "goal_update", "feed_post", "artifact_save", "idea_suggest", "checkpoint", "finish", "watch_turn", "handoff", "delegate_fix", "delegate_investigation", "review_fix", "repository_snapshot", "local_file"]);
 // A read token alone does not prove an arbitrary MCP method has no side effects.
 const MCP_READS = {
