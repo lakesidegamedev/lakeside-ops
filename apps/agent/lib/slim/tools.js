@@ -114,10 +114,14 @@ function buildTools(ctx) {
         capture("post", { text: shaped, postKind: kind, basis: String(basis).slice(0, 1000), delivery: delivered });
         return { posted: true, delivery: delivered };
       }),
-    tool("resolve_ticket", "Close the ticket with a receipt the player reads: what happened, what was done, anything they should do. Only when the reported problem is dealt with.",
-      obj({ message: str("plain summary for the player"), actions: strList("what was done, in player words", 8), follow_up: str("what they should do next, if anything"), basis: str("the reads and receipts behind it") }, ["message", "basis"]),
+    tool("resolve_ticket", "Close the ticket with a receipt the player reads. Only when the problem is dealt with AND the player is done: they confirmed it (quote them in player_confirmed), they asked to close (quote them in player_asked_to_close), or 24 hours passed after your last post with no word from them. After posting that a fix is live, set a 24 hour reminder and wait.",
+      obj({ message: str("plain summary for the player"), actions: strList("what was done, in player words", 8), follow_up: str("what they should do next, if anything"), basis: str("the reads and receipts behind it"),
+        player_confirmed: str("the player's own words, written after your last post, confirming it is sorted"),
+        player_asked_to_close: str("the player's own words asking to close the ticket") }, ["message", "basis"]),
       async (a) => {
         const blocked = writesStopped(); if (blocked) throw new Error(blocked);
+        const quiet = await resolveAllowed(a);
+        if (!quiet.ok) return { resolved: false, note: quiet.why };
         // A ticket already resolved is never resolved (and its receipt never sent) again from here.
         let current = null;
         try { current = await ctx.adapters.readTicket(ctx.ticket); } catch { /* unreadable: the support service still guards */ }
@@ -233,6 +237,26 @@ function buildTools(ctx) {
         return { state: "waiting", note: "Finished. Issue no more tools." };
       }),
   ];
+
+  // The owner's rule: resolve only once the player is done. They confirmed after the last post, asked to close, or stayed
+  // quiet for 24 hours after it. A quote must really be in one of the player's own messages.
+  async function resolveAllowed(a) {
+    const s = st();
+    const lastPost = [...s.posts].reverse().find((p) => p.kind !== "resolution" && p.delivered !== false);
+    let said = [];
+    try { said = ((await ctx.adapters.historyRead({ number: ctx.ticket, limit: 300, kinds: ["player_message"] }))?.events || []).map((e) => ({ at: Date.parse(e.at), text: String(e.text || "") })); } catch { /* unreadable */ }
+    const norm = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const quoted = (q, after) => q && norm(q).length >= 2 && said.some((m) => m.at > after && norm(m.text).includes(norm(q)));
+    if (a.player_asked_to_close) return quoted(a.player_asked_to_close, -Infinity) ? { ok: true } : { ok: false, why: "That quote is not in any of the player's messages. Resolve only on their real words, a confirmation after your last post, or 24 quiet hours." };
+    if (!lastPost) return { ok: false, why: "Post the answer or the fix to the player first, then wait for them." };
+    const postedAt = Date.parse(lastPost.at);
+    if (a.player_confirmed) return quoted(a.player_confirmed, postedAt) ? { ok: true } : { ok: false, why: "That confirmation is not in a player message written after your last post. Wait for the player or for 24 quiet hours." };
+    const lastPlayer = Math.max(Date.parse(s.lastPlayerAt || 0) || 0, ...said.map((m) => m.at));
+    if (lastPlayer > postedAt) return { ok: false, why: "The player wrote after your last post. Answer them first; resolve when they confirm or after 24 quiet hours." };
+    const hours = (ctx.now() - postedAt) / 3600000;
+    if (hours < 24) return { ok: false, why: `Only ${hours.toFixed(1)} hours since your last post. Set a reminder (set_reminder, 1440 minutes) and resolve after 24 quiet hours or when the player confirms.` };
+    return { ok: true };
+  }
 
   async function approval(kind, payload) {
     const { state, approval: a } = S.addApproval(st(), kind, payload, ctx.now());
