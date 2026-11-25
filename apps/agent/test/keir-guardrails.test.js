@@ -117,13 +117,6 @@ test("through the post path: a claim without evidence is refused even when the t
   assert.equal(r.published, true);
 });
 
-test("the semantic screen's certainty flag no longer yields to a ticket-wide release", async () => {
-  const f = setup({ noEntityRead: true, config: { screenOutgoing: async () => ({ labels: [{ label: "certaintyWithoutReceipt", probability: 0.95 }], refuse: null }) } });
-  f.playerWrote(5);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Done, all sorted on your side now." }), /states an outcome/);
-  assert.equal(f.audits("certainty_refused").length, 1);
-});
-
 // ---- 3. one message per reply ---------------------------------------------------------------------------------------
 
 test("a reply is one Discord message unless it passes 2000 characters; the hourly cap defaults to 3", () => {

@@ -10,7 +10,7 @@ const ticketDiscord = async (_method, url) => (String(url).includes("/guilds/") 
 function setup(over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir10-post-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, ...(over.config || {}) };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, ...(over.config || {}) };
   const calls = [];
   const handler = over.call || (async () => ({ ok: true, id: "card-9", hits: [], delivery: { posted: true, delivery: { status: "posted" } } }));
   const mcp = {
@@ -19,7 +19,7 @@ function setup(over = {}) {
     call: async (...a) => { calls.push(a); return handler(...a); },
   };
   let clock = 10 * 3600000;
-  const broker = createBroker({ ledger, config, mcp, discord: over.discord || ticketDiscord, ...(over.exec ? { exec: over.exec } : {}), sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock, ...(over.codingWorkers ? { codingWorkers: over.codingWorkers } : {}), ...(over.correctionCheck ? { correctionCheck: over.correctionCheck } : {}) });
+  const broker = createBroker({ ledger, config, mcp, discord: over.discord || ticketDiscord, ...(over.exec ? { exec: over.exec } : {}), sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock, ...(over.codingWorkers ? { codingWorkers: over.codingWorkers } : {}) });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: CH, replyChannel: CH, source: { channelId: CH, channelName: "ticket-bug-fixture-123", content: "Why is my plant idle?" }, deadline: 9e15 });
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id; ledger.data.disclosed = { 123: { at: 1, posted: true } };
   // A read of the player's own record this activation, so the evidence-gated claim check (guardrails.js) is satisfied unless a test turns it off.

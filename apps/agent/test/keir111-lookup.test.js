@@ -15,7 +15,7 @@ const OWNER = "111111111111111111", DEV = "222222222222222222";
 function setup({ listed = ["market_history", "reporter_operating_results", "reporter_action_points", "trace_corp"], listFails = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir111l-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: OWNER, staffIds: [DEV], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntake: 5, readyReads: false };
+  const config = { ownerId: OWNER, staffIds: [DEV], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntake: 5, readyReads: false };
   const calls = [];
   const mcp = { servers: () => ["support", "gamestate", "ops-knowledge"],
     list: async (server) => { if (listFails) throw new Error("down"); return server === "gamestate" ? listed.map((name) => ({ name })) : []; },

@@ -29,7 +29,6 @@ const SWITCHES = Object.freeze({
   decisionCards: { env: "KEIR_DECISION_CARDS", on: true, what: "complete a decision's kanban card when the decision ends" },
   closedTicketSweep: { env: "KEIR_CLOSED_TICKET_SWEEP", on: true, what: "withdraw open questions on closed tickets" },
   quietWakes: { env: "KEIR_QUIET_WAKE_CHECK", on: true, what: "quiet-wake check in code, escalation and parking" },
-  stepBack: { env: "KEIR_STEP_BACK", on: true, what: "step-back activation on long tickets" },
   findingExpiry: { env: "KEIR_FINDING_EXPIRY", on: true, what: "close stale findings" },
   reviewGate: { env: "KEIR_REVIEW_ITEM_GATE", on: true, what: "review items stay fix in review until live; reopen on an unmerged close" },
   ownerAnswerNotice: { env: "KEIR_OWNER_ANSWER_NOTICE", on: true, what: "tell the owner once when a ticket message was not taken as an answer" },

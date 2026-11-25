@@ -16,7 +16,7 @@ const stateFile = path.join(dir, "state.json"), statusFile = path.join(dir, "sta
 const ownerId = env.KEIR_OWNER_ID || "333052320252297216";
 const UNITS = (env.KEIR_GUARDIAN_UNITS || "keir-operator,keir-summon,keir-inbox").split(",").map((s) => s.trim()).filter(Boolean);
 // Timers that must be armed. A timer that stopped re-arming went unnoticed for ten days (conversation audit, 2026-10-26).
-const TIMERS = (env.KEIR_GUARDIAN_TIMERS || "keir-watchkeeper.timer,keir-conversation-audit.timer,keir-self-review.timer,keir-shadow.timer").split(",").map((s) => s.trim()).filter(Boolean);
+const TIMERS = (env.KEIR_GUARDIAN_TIMERS || "keir-watchkeeper.timer,keir-conversation-audit.timer,keir-self-review.timer").split(",").map((s) => s.trim()).filter(Boolean);
 const PROBES = { "keir-operator": env.KEIR_GUARDIAN_OPERATOR_URL || "http://127.0.0.1:9765/health", "keir-summon": env.KEIR_GUARDIAN_SUMMON_URL || "http://127.0.0.1:9763/api/summon/health", "keir-inbox": env.KEIR_GUARDIAN_INBOX_URL || null };
 const cfg = { ...DEFAULTS, ...(env.KEIR_GUARDIAN_MAX_RESTARTS ? { maxRestarts: Number(env.KEIR_GUARDIAN_MAX_RESTARTS) } : {}), ...(env.KEIR_GUARDIAN_HANG_GRACE_MS ? { hangGraceMs: Number(env.KEIR_GUARDIAN_HANG_GRACE_MS) } : {}) };
 

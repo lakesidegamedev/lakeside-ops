@@ -45,7 +45,7 @@ const ticketDiscord = async (_m, url) => (String(url).includes("/guilds/") ? [{ 
 function setup(extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir9-staffticket-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: OWNER, staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false };
+  const config = { ownerId: OWNER, staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false };
   const calls = [];
   const mcp = { servers: () => ["support"], list: async () => ["support_public_update"].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })),
     call: async (...a) => { calls.push(a); return { ok: true, id: "card-9", delivery: { posted: true, delivery: { status: "posted" } } }; } };

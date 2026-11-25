@@ -2641,14 +2641,14 @@ test("task completion forecasts need evidence and stay separate from deadlines a
  assert.equal(j.state,"running");assert.equal(j.resolutionReadyAt,undefined);
 });
 
-test("voice activation preloads reviewed reads and limits discovery rounds without intake classification", async () => {
-  const f = fixture(), seen = []; let classified = 0;
+test("voice activation preloads reviewed reads and limits discovery rounds without intake tags", async () => {
+  const f = fixture(), seen = [];
   const j = running(f, { kind: "conversation", voiceMode: true, channelId: "app", replyChannel: "app", actorId: f.config.ownerId, source: { channelId: "app", authorId: f.config.ownerId, content: "What's the story with the fund?" } });
   const schemas = [{server:"ops-knowledge",tool:"kanban_get",schema:{type:"object"}}];
   f.broker.voiceReads = async () => schemas;
-  const agent = createAgent({ledger:f.ledger,broker:f.broker,config:{briefFile:path.join(__dirname,"../KEIR.md"),model:"claude-opus-5-5",quickProvider:"claude",quickMaxRounds:6,quickMaxTurnMs:10000,maxRounds:12,maxTurnMs:10000,stateDir:f.dir,tagIntake:async()=>{classified++;return null;}},
+  const agent = createAgent({ledger:f.ledger,broker:f.broker,config:{briefFile:path.join(__dirname,"../KEIR.md"),model:"claude-opus-5-5",quickProvider:"claude",quickMaxRounds:6,quickMaxTurnMs:10000,maxRounds:12,maxTurnMs:10000,stateDir:f.dir},
     spawnImpl:fakeClaude(async({prompt,call,args})=>{assert.deepEqual(prompt.voiceReadSchemas,schemas);assert.equal(prompt.voiceTurn.jobId,j.id);assert.equal(args[args.indexOf("--max-turns")+1],"4");await call("channel_reply",{message:"The current evidence is incomplete."});await call("finish",{closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state:"done",summary:"Answered current voice turn."});return{};},seen)});
-  await agent.run(j,new AbortController().signal);assert.equal(j.state,"done");assert.equal(seen.length,1);assert.equal(classified,0);
+  await agent.run(j,new AbortController().signal);assert.equal(j.state,"done");assert.equal(seen.length,1);assert.equal(j.tags,undefined);
 });
 
 test("a waiting app task does not repost the same answer on every wake, and waits longer each time", async () => {

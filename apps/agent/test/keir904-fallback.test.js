@@ -11,8 +11,7 @@ const CH = "777777777777777777";
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir904-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const state = { screen: null };
-  const config = { screenOutgoing: async () => (state.screen ? { labels: [], refuse: state.screen } : { labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
   const mcp = { servers: () => ["support"], list: async () => [], call: async (...a) => { calls.push(a); return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }; } };
   const discord = async (_m, url) => (/\/guilds\/.*\/channels$/.test(String(url)) ? [{ id: CH, name: "ticket-bug-fixture-123" }] : []);
@@ -24,15 +23,13 @@ function setup() {
   a.observedPlayerAt = clock - 5 * 60000; a.lastGameReadAt = clock - 4 * 60000; a.codeLookups = 1; a.lastCodeReadAt = clock - 4 * 60000;
   const limitation = () => calls.filter((c) => c[1] === "support_public_update" && /confirmed answer for you yet/.test(c[2].message || "")).length;
   const finish = (job, summary = "Found the cause.") => broker.tool(job, "finish", { closesWhen: "closes when the test case is settled", waitingOn: "the event this test waits for", state: "waiting", waitFor: "developer_reply", summary });
-  return { ledger, broker, a, mk, calls, state, limitation, finish, advance: (m) => { clock += m * 60000; }, now: () => clock };
+  return { ledger, broker, a, mk, calls, limitation, finish, advance: (m) => { clock += m * 60000; }, now: () => clock };
 }
 const ANSWER = "The slideshow moves on when each slide's progress bar finishes. With motion reduced the bar finishes at once, so it jumps. A fix is being made.";
 
-test("1829 sequence: draft refused by the screen, rewrite refused, finishes: no limitation line; once the answer posts, finish succeeds", async () => {
+test("1829 sequence: draft refused, rewrite refused, finishes: no limitation line; once the answer posts, finish succeeds", async () => {
   const f = setup();
-  f.state.screen = "names code files";
-  await assert.rejects(f.broker.tool(f.a, "channel_reply", { message: ANSWER }));
-  f.state.screen = null;
+  await assert.rejects(f.broker.tool(f.a, "channel_reply", { message: "The cause is in slideshow.js, line 40, in src/lib/slides/progress.ts." }));
   await assert.rejects(f.broker.tool(f.a, "channel_reply", { message: "See broker.js and the slideshow.js file for the cause of the jump." }));
   const b = f.mk(); // a later task on the same ticket (same job here, hold cleared)
   for (let i = 0; i < 2; i++) await assert.rejects(f.finish(b), /no answer since they last wrote/);

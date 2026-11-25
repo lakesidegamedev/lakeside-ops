@@ -235,7 +235,6 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   const fastLane = config.fastLane === true ? require("./fastlane").createFastLane({
     ledger, broker, config, fetcher: config.fetch || fetch,
     numbersIn: (t) => require("./knowledge").numbersIn(t),
-    tagIntake: config.tagIntake || require("./jevgate").tagIntake,
     recordUsage: (job, r) => {
       try {
         fs.appendFileSync(usageFile, JSON.stringify({ event: "activation", at: new Date().toISOString(), job: job.id, kind: job.kind, ticket: job.ticket || null,
@@ -409,15 +408,11 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
     // Keir 10: which activation this is, and when the last one began (the delta wake reads both).
     job.runStarts = [...(job.runStarts || []), Date.now()].filter((t) => Date.now() - t < 24 * 3600000).slice(-60);
     job.prevActivationAt = job.lastRunStartedAt || 0; job.lastRunStartedAt = Date.now(); job.activationCount = (job.activationCount || 0) + 1;
-    // Keir 11.2 (closing.js): a parked job that woke is no longer parked; a long ticket's next activation is a step-back.
+    // Keir 11.2 (closing.js): a parked job that woke is no longer parked.
     if (!replyOnly) {
       try {
         const closing = require("./closing");
         closing.onActivation(job, Date.now(), { human: humanInbox(job) });
-        // Third pass (review M7): the step-back has a switch (KEIR_STEP_BACK); in preview it is recorded, not applied.
-        const sg = (config.controls || require("./controls").DEFAULT_CONTROLS).gate("stepBack");
-        if (sg.act) { if (closing.stepBack(ledger.data, job, Date.now(), config.closing || closing.settings(process.env))) ledger.audit("step_back", { job: job.id, ticket: job.ticket, level: job.stepBackLevel, why: job.stepBack.why }); }
-        else if (sg.run) { const shadow = JSON.parse(JSON.stringify(job)); if (closing.stepBack(ledger.data, shadow, Date.now(), config.closing || closing.settings(process.env))) require("./controls").preview(ledger.data, "step-back", "step back", `job ${job.id}`, `ticket ${job.ticket}: ${shadow.stepBack.why.join(" and ")}`); }
       } catch (e) { ledger.audit("closing_activation_failed", { job: job.id, error: String(e.message).slice(0, 160) }); }
     }
     job.state = "running"; job.startedAt = Date.now(); ledger.save();
@@ -439,7 +434,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       try {
         const tags = chatContext.literalGreeting(job)
           ? { kind: "banter", kindConfidence: 1, complexity: "trivial", contextProfile: "minimal", model: null, via: "literal-greeting", at: Date.now() }
-          : await (config.tagIntake || require("./jevgate").tagIntake)(job);
+          : null;
         if (tags) { job.tags = tags; ledger.audit("intake_tagged", { job: job.id, ticket: job.ticket, tags }); }
       } catch {}
     }

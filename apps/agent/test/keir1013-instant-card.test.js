@@ -10,7 +10,7 @@ const CH = "777777777777777777";
 
 function setup({ category = "bug", title = "Canadian Resources not existing" } = {}) {
   const ledger = createLedger(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "k1013-")), "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: [], botId: "333333333333333333", guildId: "444444444444444444" };
+  const config = { ownerId: "111111111111111111", staffIds: [], botId: "333333333333333333", guildId: "444444444444444444" };
   const sent = [];
   const discord = async (method, url, body) => {
     if (String(url).includes("/guilds/")) return [{ id: CH, name: "ticket-bug-fixture-1836" }];

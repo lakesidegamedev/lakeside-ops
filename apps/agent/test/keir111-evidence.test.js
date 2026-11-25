@@ -14,7 +14,7 @@ const ok = (metric, rows = [{ turn: 10, value: 5 }], gaps = []) => ({ schemaVers
 function setup({ withNotebook = false, list = async () => [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir111-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: [], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { ownerId: "111111111111111111", staffIds: [], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
   const mcp = { servers: () => ["support", "gamestate"], list, call: async (server, tool, args) => {
     calls.push([server, tool, args]);

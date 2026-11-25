@@ -16,7 +16,7 @@ function job(fields = {}) {
 function sse(done) { return `event: meta\ndata: {}\n\nevent: delta\ndata: "x"\n\nevent: done\ndata: ${JSON.stringify(done)}\n\n`; }
 const CLEAN = { answer: "Cloture needs three fifths of the votes cast, so 60 of 100 when every member votes.", modelId: "deepseek-v4-flash", validation: { issues: [], grounding: [], inventedPaths: [], attribution: { coverage: 0.9 } } };
 
-function harness(t, { done = CLEAN, status = 200, refuse = null, tags } = {}) {
+function harness(t, { done = CLEAN, status = 200, refuse = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-fastlane-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const calls = [], requests = [], usage = [];
@@ -28,7 +28,7 @@ function harness(t, { done = CLEAN, status = 200, refuse = null, tags } = {}) {
     return { ok: true };
   } };
   const fetcher = async (url, init) => { requests.push({ url, init, body: JSON.parse(init.body) }); return { ok: status === 200, status, text: async () => sse(done) }; };
-  const lane = createFastLane({ ledger, broker, config: CONFIG, fetcher, numbersIn, tagIntake: async () => tags, recordUsage: (_j, r) => usage.push(r) });
+  const lane = createFastLane({ ledger, broker, config: CONFIG, fetcher, numbersIn, recordUsage: (_j, r) => usage.push(r) });
   return { ledger, lane, calls, requests, usage };
 }
 
@@ -112,18 +112,18 @@ test("a doubted, failed or refused answer escalates once with its draft", async 
   assert.ok(!refused.calls.some(cl => cl.name === "finish"));
 });
 
-test("a follow-up is re-tagged, so a question that turns into a bug report goes to the agent", async t => {
-  const h = harness(t, { tags: { kind: "bug_report", kindConfidence: 0.95 } });
-  const j = job({ history: [{}], fastLane: { answers: 1 }, inbox: [{ authorId: "42", content: "Ok, and why does my vote count show zero?" }] });
+test("a follow-up has no kind verdict, so it goes to the agent", async t => {
+  const h = harness(t);
+  const j = job({ history: [{}], fastLane: { answers: 1 }, inbox: [{ authorId: "42", content: "And what about filibusters?" }] });
   const r = await h.lane.attempt(j);
-  assert.equal(r.handled, false); assert.match(r.reason, /bug_report|player data report/);
+  assert.equal(r.handled, false); assert.match(r.reason, /kind unknown/);
   assert.equal(h.requests.length, 0);
 });
 
 test("without the Ask secret a question falls through to the agent", async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-fastlane-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const lane = createFastLane({ ledger, broker: { tool: async () => { throw new Error("no calls"); } }, config: { ...CONFIG, askSecret: null }, fetcher: async () => { throw new Error("no calls"); }, numbersIn, tagIntake: async () => null });
+  const lane = createFastLane({ ledger, broker: { tool: async () => { throw new Error("no calls"); } }, config: { ...CONFIG, askSecret: null }, fetcher: async () => { throw new Error("no calls"); }, numbersIn });
   assert.deepEqual(await lane.attempt(job()), { handled: false, reason: "no ask secret" });
 });
 

@@ -13,8 +13,8 @@ const NOTE = "## Maximum steps reached for this agent\n\nTools are now disabled,
 async function run(t, text, extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-step-limit-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { stateDir: dir, briefFile: path.join(__dirname, "../KEIR.md"), model: "fixture", quickProvider: "claude:fixture", taskLifetimeMs: 60000, skills: false, tagIntake: async () => ({ kind: "owner_command", kindConfidence: 0.9, contextProfile: "focused" }), dynamicEffort: false, ownerId: "owner", repositories: {} };
-  const job = ledger.createJob("q", { kind: "conversation", role: "owner", actorId: "owner", replyChannel: "chan", channelId: "chan", source: { channelId: "chan", authorId: "owner", content: "how many players have logged on in the last 7 days?", at: new Date().toISOString() }, ...extra });
+  const config = { stateDir: dir, briefFile: path.join(__dirname, "../KEIR.md"), model: "fixture", quickProvider: "claude:fixture", taskLifetimeMs: 60000, skills: false, dynamicEffort: false, ownerId: "owner", repositories: {} };
+  const job = ledger.createJob("q", { kind: "conversation", role: "owner", actorId: "owner", replyChannel: "chan", channelId: "chan", source: { channelId: "chan", authorId: "owner", content: "how many players have logged on in the last 7 days?", at: new Date().toISOString() }, tags: { kind: "owner_command", kindConfidence: 0.9, contextProfile: "focused" }, ...extra });
   const calls = [];
   const broker = { servers: () => ["gamestate"], appContext: () => ({}), context: () => ({}), notebook: { recall: () => [] },
     tool: async (_job, name, input) => { calls.push({ name, input }); if (name === "finish" || name === "handoff") job.state = name === "handoff" ? "queued" : "done"; return { state: job.state }; } };

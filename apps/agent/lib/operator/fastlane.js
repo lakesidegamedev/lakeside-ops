@@ -117,14 +117,12 @@ function rejectReason(done) {
   return null;
 }
 
-function createFastLane({ ledger, broker, config, fetcher, numbersIn, tagIntake, recordUsage = () => {}, now = () => Date.now() }) {
+function createFastLane({ ledger, broker, config, fetcher, numbersIn, recordUsage = () => {}, now = () => Date.now() }) {
   async function attempt(job, signal) {
-    // A follow-up is judged on what the player just wrote, not on the
-    // ticket's first message: a question can turn into a bug report.
     let tags = job.tags || {};
     if (job.fastLane?.answers && !job.fastLane.escalated && plan(job, config, tags).question) {
-      const fresh = humanMessages(job);
-      try { tags = await tagIntake({ ...job, source: fresh[0], inbox: fresh.slice(1), requestInbox: [] }) || { kind: null }; } catch { tags = { kind: null }; }
+      // Nothing re-reads a follow-up for its kind, so it has no verdict and goes to the agent.
+      tags = { kind: null };
     }
     const p = plan(job, config, tags);
     if (p.skip) return { handled: false, reason: p.skip };

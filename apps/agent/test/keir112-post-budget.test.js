@@ -20,7 +20,7 @@ function replay(ticket, { cap = 4, close = null } = {}) {
   const events = [...f.posts.map((p) => ({ ...p, t: t(p.at) })), ...f.player.map((p) => ({ kind: "player", t: t(p.at) }))].sort((a, b) => a.t - b.t);
   const accepted = [], suppressed = [], announced = new Set();
   const d = { ticketPromises: {}, watch: {} }, job = { id: `j${ticket}`, kind: "ticket", ticket };
-  let humanAt = 0, overflowAt = null, turn = null, turnAt = 0, stepBacks = [];
+  let humanAt = 0, overflowAt = null, turn = null, turnAt = 0;
   for (const e of events) {
     if (e.kind === "player") { humanAt = e.t; continue; }
     // Turns run hourly: the clock is the latest turn a post named, plus the hours since.
@@ -58,12 +58,9 @@ function replay(ticket, { cap = 4, close = null } = {}) {
     if (e.kind !== "notice") {
       promises.notePost(d, ticket, job, e.text, e.t);
       closing.notePost(d, ticket, e.text, { now: e.t, correction: isCorrection(e.text) });
-      // The activation after this post: a step-back when a threshold was crossed (job.at: the ticket's first post).
-      job.at ||= e.t;
-      if (closing.stepBack(d, job, e.t + 60000, closing.DEFAULTS)) { stepBacks.push({ after: e.at, level: job.stepBackLevel, why: job.stepBack.why.join(", ") }); job.stepBack.done = true; }
     }
   }
-  return { accepted, suppressed, live: accepted.filter((p) => pb.liveClaim(p.text)), stepBacks, promises: d.ticketPromises[ticket] || [] };
+  return { accepted, suppressed, live: accepted.filter((p) => pb.liveClaim(p.text)), promises: d.ticketPromises[ticket] || [] };
 }
 const hhmm = (iso) => iso.slice(5, 16);
 
@@ -93,7 +90,7 @@ test("ticket 1845: eight 'now live' notices become four, the repeated model anno
   assert.ok(!r.suppressed.some((s) => isCorrection(s.text)));
 });
 
-test("ticket 1845 through the wake path: every turn report that goes out was called for, and one step-back comes at the threshold", () => {
+test("ticket 1845 through the wake path: every turn report that goes out was called for", () => {
   const r = replay(1845, { close: CLOSE_1845 });
   // Why each turn report went out, as the rule decided it: a promise Keir had made (each promise licenses one report), the
   // closing condition's one turn, the player had just written, or a correction.
@@ -102,10 +99,6 @@ test("ticket 1845 through the wake path: every turn report that goes out was cal
     ["11-18T04:58", "answer"], ["11-18T10:59", "promise"], ["11-18T23:08", "promise"]]);
   // The promises those posts kept were recorded by the post path, not by the model.
   assert.ok(r.promises.some((p) => p.state === "kept" && /\bI will check\b|\bI will\b/i.test(p.text)));
-  // Exactly one step-back activation at the threshold (the 10th Keir post).
-  assert.equal(r.stepBacks.length, 1, JSON.stringify(r.stepBacks));
-  assert.equal(r.stepBacks[0].level, 1);
-  assert.match(r.stepBacks[0].why, /10 Keir posts/);
   // Without the closing condition one more report (turn 22) is held back: only a promise, the player or the condition opens one.
   const bare = replay(1845);
   assert.equal(bare.suppressed.filter((s) => s.why === "turn not called for").length, 8);

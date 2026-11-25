@@ -8,8 +8,8 @@ const { createLedger } = require("../lib/operator/store");
 async function capture(t, content = "Hello", tags = { kind: "banter", complexity: "trivial", kindConfidence: 0.99 }, extra = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-chat-context-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { stateDir: dir, briefFile: path.join(__dirname, "../KEIR.md"), model: "fixture", quickProvider: "claude:fixture", taskLifetimeMs: 60000, skills: false, tagIntake: async () => tags, dynamicEffort: false, ownerId: "owner", repositories: {} };
-  const job = ledger.createJob("hello", { kind: "conversation", role: "owner", actorId: "owner", replyChannel: "app", channelId: "app", source: { channelId: "app", content, at: new Date().toISOString() }, ...extra });
+  const config = { stateDir: dir, briefFile: path.join(__dirname, "../KEIR.md"), model: "fixture", quickProvider: "claude:fixture", taskLifetimeMs: 60000, skills: false, dynamicEffort: false, ownerId: "owner", repositories: {} };
+  const job = ledger.createJob("hello", { kind: "conversation", role: "owner", actorId: "owner", replyChannel: "app", channelId: "app", source: { channelId: "app", content, at: new Date().toISOString() }, tags, ...extra });
   let seen, recalled = 0;
   const broker = { servers: () => ["gamestate"], appContext: () => ({ sharedWork: "UNRELATED_WORK".repeat(2000) }), context: () => ({ messages: [{ text: "OLD_THREAD".repeat(2000) }] }), notebook: { recall: () => { recalled++; return ["UNRELATED_MEMORY".repeat(1000)]; } },
     tool: async (_job, name) => { if (name === "finish") job.state = "done"; return { state: job.state }; } };

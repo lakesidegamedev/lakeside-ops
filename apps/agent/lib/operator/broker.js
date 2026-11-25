@@ -561,14 +561,14 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null, correctionCheck = null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null}) {
   // Keir 11.2: closing-condition settings (KEIR_QUIET_WAKES and friends); tests may pass config.closing.
   const closingConfig = config.closing || closing.settings(process.env);
-  // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, quiet-wake escalation and the
-  // step-back, read at each use (lib/operator/controls.js; operator.js puts them on config.controls).
+  // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, and quiet-wake escalation,
+  // read at each use (lib/operator/controls.js; operator.js puts them on config.controls).
   const controlsLib = require("./controls");
   const ctl = () => config.controls || controlsLib.DEFAULT_CONTROLS;
-  // Review M6 and the second pass's soft spot: every post a budget, turn or step-back rule holds back is recorded where a
+  // Review M6 and the second pass's soft spot: every post a budget or turn rule holds back is recorded where a
   // person can read it (ledger.data.refusedPosts, printed by bin/keir-preview.js): which ticket, which rule, the text.
   function noteRefused(rule, job, ticketNo, message) {
     const all = (d.refusedPosts ||= {});
@@ -1169,38 +1169,6 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.save();
     return e ? workerHandoff(job, ticketNo, e.why, e.detail) : null;
   }
-  // 2026-11-23 (ticket 1891): a public correction is checked by a separate one-shot model call against the records this
-  // activation read before the player sees it (correctioncheck.js). The checker runs on the configured Codex route; tests
-  // inject correctionCheck. One answer per draft per activation.
-  const cc = require("./correctioncheck");
-  // operator.js injects the live checker (cc.makeChecker); without one the check is recorded as unavailable.
-  async function askCorrection(payload) { return typeof correctionCheck === "function" ? correctionCheck(payload) : null; }
-  async function correctionGate(job, ticketNo, message) {
-    if (!cc.isCorrection(message)) return;
-    if (!String(job.evidenceText || "").trim()) {
-      // A correction that states a figure needs a read that shows it; a status correction ("not live yet") does not.
-      if (cc.statesFigure(message)) {
-        ledger.audit("correction_refused", { job: job.id, ticket: ticketNo, why: "no_read" });
-        throw new Error("Not posted: a correction that states a figure needs a read in this activation that shows it. Read the record first and say what the figure measures, or do not post a correction.");
-      }
-      ledger.audit("correction_checked", { job: job.id, ticket: ticketNo, verdict: "no_read_status_only", refused: false });
-      return;
-    }
-    const memo = (job.correctionChecks ||= {}), key = hash([job.startedAt || 0, message]).slice(0, 16);
-    if (!memo[key]) {
-      const earlier = (d.ticketPosts?.[ticketNo] || []).map((p) => p.text).filter(Boolean);
-      let answer = null;
-      try { answer = await askCorrection({ earlier, draft: message, evidence: job.evidenceText }); }
-      catch (e) { ledger.audit("correction_check_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
-      memo[key] = { at: now(), verdict: answer?.verdict || null, reason: String(answer?.reason || "").slice(0, 300) };
-      for (const k of Object.keys(memo)) if (now() - memo[k].at > 6 * 3600000) delete memo[k];
-    }
-    const m = memo[key], uncertainSeen = job.correctionUncertainAt === (job.startedAt || 0) && m.verdict === "uncertain" && m.seen;
-    const r = cc.decide(m.verdict ? { verdict: m.verdict, reason: m.reason } : null, { uncertainSeen });
-    if (m.verdict === "uncertain") { job.correctionUncertainAt = job.startedAt || 0; m.seen = true; }
-    ledger.audit("correction_checked", { job: job.id, ticket: ticketNo, verdict: m.verdict || "unavailable", refused: Boolean(r.refuse) }); ledger.save();
-    if (r.refuse) throw new Error(r.refuse);
-  }
   // Everything a player-facing post must pass for the incident, claim and scope guardrails. Throws a refusal.
   async function guardrailGates(job, ticketNo, message, opts = {}) {
     if (!playerFacing(job) || job.role === "player") return;
@@ -1212,7 +1180,6 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       await fileOwnerCard(job, ticketNo, scope.kind === "offer" ? "feature or design request" : "question about the owner's intent", `What the player asked and what the lane drafted:\n${String(job.source?.content || "").slice(0, 600)}\n\nDraft: ${String(message).slice(0, 600)}`);
       throw new Error(`${scope.refusal} An owner card is filed for this ticket; ${guardrails.STAFF_REVIEW_LINE}`);
     }
-    await correctionGate(job, ticketNo, message);
     if (!guardrails.recoveryClaim(message) && !guardrails.claimSentences(message).length) return;
     const ctx = job.incidentContext && now() - (job.incidentContextAt || 0) < 120000 ? job.incidentContext : await incidentFacts(job).then((c) => { job.incidentContextAt = now(); return c; });
     const rec = guardrails.recoveryRefusal(ctx, message);
@@ -1249,29 +1216,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       const clash = sharedAnswer.contradiction(message, { ticket: reuse.from, answer: reuse.answer });
       if (clash) { reuse.refused = true; ledger.audit("shared_answer_contradiction_refused", { job: job.id, ticket: ticketNo, from: reuse.from }); ledger.save(); throw Object.assign(new Error(clash), { screened: true }); }
     }
-    // Keir 4.0: a typed semantic read of the draft (Jev). Decisive leaks are
-    // refused; everything else is a proposed label in the event sink.
-    try {
-      const screen = await (config.screenOutgoing || require("./jevgate").screenOutgoing)({ text: message, request: String(job.source?.content || "").slice(0, 800), ticket: ticketNo });
-      if (screen.labels.length || screen.refuse) ledger.audit("post_screened", { job: job.id, ticket: ticketNo, labels: screen.labels, refused: Boolean(screen.refuse), model: screen.model });
-      if (screen.refuse) throw Object.assign(new Error(screen.refuse), { screened: true });
-      // Keir 8.2: ten drafts on 2026-11-05 scored 0.95 to 0.97 for asserting an outcome as settled
-      // and went out anyway; one was reported wrong by the player. Without a verified receipt, refuse.
-      // Keir guardrails (2026-11-22): the semantic flag no longer yields to "any verified release on the ticket". An outcome claim
-      // needs a read of the player's own record in this activation; the per-claim check above covers the sentences it can parse.
-      const certain = screen.labels.find((l) => l.label === "certaintyWithoutReceipt" && l.probability >= 0.9);
-      if (certain && !opts.system && playerFacing(job) && job.role !== "player" && !job.ownRecordRead && !guardrails.entityRead(job.evidenceText, job.reporterCharacter)) {
-        ledger.audit("certainty_refused", { job: job.id, ticket: ticketNo, probability: certain.probability });
-        throw Object.assign(new Error("Not posted: this states an outcome (fixed, live, changed, paid) as settled fact, and no read in this activation shows a record for this player's own character or company. Read their own record first, then say what it shows and which turn, or say you have not confirmed it."), { screened: true });
-      }
-    } catch (e) { if (e.screened) throw e; }
     await guardNeedlessClarification(job, ticketNo, message);
     if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
     return message;
   }
   // Keir 10 claim check: check_draft runs every content guard a real post runs, against a draft, and lists all the problems at
   // once with a fix for each. It posts nothing, records nothing, spends no post budget and leaves every refusal counter as it was,
-  // so the answer it gives is the answer the real post will get (the outgoing semantic screen runs only on the real post).
+  // so the answer it gives is the answer the real post will get.
   const DRAFT_STATE = ["ruleLookupRefusals", "ruleLookupRefused", "inclusionRefusals", "readClaimRefusals", "bugClaimRefusals", "accountClaimRefusals", "settingClaimRefusals", "identityAskRefusals", "numberCheckRefused", "numberCheckGaveUp", "sharedAnswers", "ticketSymptoms"];
   const DRAFT_FIXES = {
     length: "Cut it to at most five short sentences: the answer first, then what happens next. The detail goes on the status card note.",
@@ -1628,13 +1579,6 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (said) refuse(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
     }
     attempt(() => guardStall(job, ticketNo, message, posts));
-    // Keir 11.2: a step-back activation states the ticket's position in a checkpoint first, then posts at most once.
-    // Review N3: only a step-back started by this activation applies; one left open by an activation that ended without
-    // finish (turn limit, crash, restart) never refuses a later activation's answer.
-    if (!opts.system && closing.stepBackActive(job)) attempt(() => {
-      const t = closing.stepBackRefusal(job, { checkpointed: (job.history || []).some((h) => h.kind === "checkpoint" && Date.parse(h.at || "") >= job.stepBack.at) });
-      if (t) { ledger.audit("step_back_post_refused", { job: job.id, ticket: ticketNo }); if (!opts.collect) noteRefused("step_back", job, ticketNo, message); throw new Error(t); }
-    });
     // Keir 11.2 post budget (postbudget.js): one live announcement per shipped change, turn reports only when the answer
     // changed, and an hourly cap without a new player message whose overflow is one merged correction or answer.
     if (!opts.system && !answeringStaff) {
@@ -2302,10 +2246,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       try { const pb = require("./postbudget"), h = humanAt(ticketNo); if (pb.recentRun(d.ticketPosts?.[ticketNo], h, now()).length >= (Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR)) (d.postOverflow ||= {})[ticketNo] = { at: now(), humanAt: h }; } catch {}
       // Keir 11.2: every follow-up promise Keir makes is recorded with a due time by the post path itself (promises.js).
       if (job.kind !== "notice") { try { const askedAt = Math.max(humanAt(ticketNo), ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo && j.kind === "command" && !j.internalProbe).map((j) => Date.parse(j.source?.at || "") || 0)); const p = require("./promises").notePost(d, ticketNo, job, message, now(), { askedAt }); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt, afterTurn: p.afterTurn ?? null }); } catch {} }
-      // Keir 11.2: the ticket's pace (posts, corrections) for the step-back threshold; a step-back posts once; a turn
-      // report the closing condition called for uses that call up.
+      // Keir 11.2: the ticket's pace (posts, corrections); a turn report the closing condition called for uses that call up.
       try { closing.notePost(d, ticketNo, message, { now: now(), correction: isCorrection(message) }); } catch {}
-      if (closing.stepBackActive(job)) job.stepBack.posted = (job.stepBack.posted || 0) + 1;
       if (job.turnReportViaPromise) { delete job.turnReportViaPromise; require("./promises").keepForReport(d, ticketNo, now()); }
       if (job.turnReportViaClosing) { delete job.turnReportViaClosing; const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]]; for (const j of [job, root]) if (j && closing.closingCallsForTurn(d, j, now())) closing.noteTurnReport(d, j, now()); }
     }
@@ -5297,7 +5239,6 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "finish") {
       // Keir 11.2: after the state and timer are settled, record the wait for the code check and escalate quiet waits once.
       const settleClosing = () => {
-        if (job.stepBack && !job.stepBack.done) job.stepBack.done = true;
         const startedAt = job.startedAt || job.lastRunStartedAt || 0;
         const acted = (job.lastPublishedAt || 0) >= startedAt || Object.values(job.effects || {}).some((e) => (e?.at || 0) >= startedAt)
           || Object.values(d.decisions || {}).some((x) => x.jobId === job.id && (x.at || x.createdAt || 0) >= startedAt);

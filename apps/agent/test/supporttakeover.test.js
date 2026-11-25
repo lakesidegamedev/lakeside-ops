@@ -102,9 +102,11 @@ test("a waiting notice keeps ticket provenance when takeover lands during its hi
   const f = fixture(t); f.job.state = "waiting";
   f.ledger.data.disclosed = { 1558: { posted: true } };
   let writes = 0;
+  // Takeover lands after the notice is authorised and drafted, just before its delivery is checked.
+  const createJob = f.ledger.createJob.bind(f.ledger);
+  f.ledger.createJob = (id, opts) => { const made = createJob(id, opts); if (String(id).startsWith("ci-notice:")) f.owner.setTicketOwner(1558, "codex", "owner"); return made; };
   const broker = createBroker({ ledger: f.ledger,
-    config: { ownerId: "owner", staffIds: [], stateDir: f.dir, repositories: {}, guildId: "guild", supportDeferred: () => false,
-      screenOutgoing: async () => { f.owner.setTicketOwner(1558, "codex", "owner"); return { labels: [], refuse: null }; } },
+    config: { ownerId: "owner", staffIds: [], stateDir: f.dir, repositories: {}, guildId: "guild", supportDeferred: () => false },
     mcp: { servers: () => [], call: async () => { writes++; return {}; } }, sandbox: {},
     discord: async (_method, route) => {
       if (route.includes("/guilds/")) return [{ id: "channel", name: "ticket-bug-test-1558" }];

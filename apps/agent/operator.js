@@ -22,7 +22,6 @@ const { createReopenedTickets } = require("./lib/operator/reopened");
 const { createEffectShadow } = require("./lib/operator/effectshadow");
 const { createEngineering } = require("./lib/operator/engineering");
 const { createRoles, scopedToken } = require("./lib/operator/roles");
-const { shadowReport } = require("./lib/operator/shadow3");
 const { createAgent } = require("./lib/operator/agent");
 const { createClassifier, screenReport } = require("./lib/operator/classify");
 const { readAgentToken } = require("./lib/operator/token");
@@ -130,7 +129,7 @@ const prodHoldUntil = () => { try { const until = Date.parse(require("node:fs").
 const controls = require("./lib/operator/controls").createControls({ file: env.KEIR_SWITCHES_FILE || path.join(config.stateDir, "switches.json"), env, killSwitch, data: ledger.data, prodHold: prodHoldUntil,
   log: (s) => console.log(new Date().toISOString(), s), audit: (kind, detail) => ledger.audit(kind, detail) });
 config.controls = controls; // the broker, the agent loop and the lifecycle read the switches from here
-// Keir 11.2: closing conditions, quiet wakes, step-backs and finding expiry (lib/operator/closing.js). Plain settings, shared
+// Keir 11.2: closing conditions, quiet wakes and finding expiry (lib/operator/closing.js). Plain settings, shared
 // by the broker, the agent loop and the lifecycle.
 const closingSettings = require("./lib/operator/closing").settings(env);
 // Review N8: a quiet job hands its own PR to the open-PR pass only while that pass can act on it (switch on, not in
@@ -204,8 +203,7 @@ const starmer = require("./lib/operator/starmer").createStarmer({ ledger, config
 // Keir 2.1 owner app (Muse parity): goals, feed, brief, approvals, upcoming, files.
 const appMuse = createAppMuse({ ledger, config, app: appChannel, starmer, drain: () => drain() });
 let codingWorkersInst = null; // Keir 8.5: built after the CI helpers below; the broker reads it lazily
-const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse, codingWorkers: () => codingWorkersInst,
-  correctionCheck: require("./lib/operator/correctioncheck").makeChecker({ providerOverride: config.providerOverride, stateDir: config.stateDir }) });
+const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse, codingWorkers: () => codingWorkersInst });
 const agent = createAgent({ ledger, broker, config });
 const toolSessions = new Map(); // Keir 4.0: Rust runner tool sessions (see /v4/tool-session)
 // Keir 5.7: Jev-logged feedback and a daily self-review (lib/operator/selfimprove.js).
@@ -1105,7 +1103,7 @@ const server = http.createServer(async (req, res) => {
   // Keir 3.0 operator visibility and the support handoff.
   if (req.url === "/v3/status" && req.method === "GET") {
     return reply(200, { supportOwner: supportOwner.status(), lanes: Object.fromEntries(Object.entries(active).map(([k, s]) => [k, s?.job.id || null])),
-      recoveries: (ledger.data.recoveries || []).slice(-10), feedback: (ledger.data.feedbackLog || []).slice(-10), selfReview: (ledger.data.selfReview?.runs || []).slice(-3), effectGate: effectShadow.summary(Date.now() - 7 * 86400000), shadow: shadowReport(ledger.data, { now: Date.now(), ownerId: config.ownerId, staffIds: config.staffIds }) });
+      recoveries: (ledger.data.recoveries || []).slice(-10), feedback: (ledger.data.feedbackLog || []).slice(-10), selfReview: (ledger.data.selfReview?.runs || []).slice(-3), effectGate: effectShadow.summary(Date.now() - 7 * 86400000) });
   }
   if ((req.url === "/v3/handoff" || req.url === "/v3/support-owner" || req.url === "/v3/ticket-owner" || req.url === "/v3/ticket-model" || req.url === "/v3/status-card") && req.method === "POST") {
     let body = ""; for await (const chunk of req) { body += chunk; if (body.length > 64000) return reply(413, { error: "too large" }); }

@@ -4,7 +4,6 @@ members = [
     "crates/harness-core",
     "crates/harness-store",
     "crates/harness-runner",
-    "bins/keir-shadow-rs",
     "bins/lakeside",
 ]
 

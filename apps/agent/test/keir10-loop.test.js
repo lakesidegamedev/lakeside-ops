@@ -118,8 +118,8 @@ test("a first ticket activation runs the router and the live check in the agent,
 function fixture(t, { content = "how do I assign generals to a conflict", tags = { kind: "mechanics_question", complexity: "simple", kindConfidence: 0.9 }, live = null, history = 0, inboxBulk = 0 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir10-loop-")); t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { stateDir: dir, briefFile: path.join(__dirname, "../KEIR.md"), coreBriefFile: path.join(__dirname, "../KEIR-CORE.md"), model: "fixture", provider: "claude:fixture", taskLifetimeMs: 60000, skills: false, tagIntake: async () => tags, dynamicEffort: false, ownerId: "owner", repositories: {}, orientation: true, maxRounds: 20, ticketMaxRounds: 16, quickMaxRounds: 6, maxTurnMs: 60000, quickMaxTurnMs: 30000 };
-  const job = ledger.createJob("ticket:9", { kind: "ticket", role: "support", ticket: 9, channelId: "c1", replyChannel: "c1", source: { channelId: "c1", channelName: "ticket-9", content, at: new Date().toISOString() } });
+  const config = { stateDir: dir, briefFile: path.join(__dirname, "../KEIR.md"), coreBriefFile: path.join(__dirname, "../KEIR-CORE.md"), model: "fixture", provider: "claude:fixture", taskLifetimeMs: 60000, skills: false, dynamicEffort: false, ownerId: "owner", repositories: {}, orientation: true, maxRounds: 20, ticketMaxRounds: 16, quickMaxRounds: 6, maxTurnMs: 60000, quickMaxTurnMs: 30000 };
+  const job = ledger.createJob("ticket:9", { kind: "ticket", role: "support", ticket: 9, channelId: "c1", replyChannel: "c1", source: { channelId: "c1", channelName: "ticket-9", content, at: new Date().toISOString() }, tags });
   ledger.data.channels["c1"] = { category: "mechanics" };
   job.history = Array.from({ length: history }, (_, i) => ({ at: new Date().toISOString(), kind: "checkpoint", summary: `earlier step ${i} `.repeat(30) }));
   const reads = [];

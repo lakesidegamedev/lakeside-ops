@@ -1,6 +1,6 @@
 "use strict";
-// Keir 11.2 second pass, item 9, through the real broker: a ticket cannot wait without a closing condition, a turn report
-// needs a reason, and a step-back activation checkpoints first and posts at most once.
+// Keir 11.2 second pass, item 9, through the real broker: a ticket cannot wait without a closing condition, and a turn report
+// needs a reason.
 const test = require("node:test");
 const assert = require("node:assert");
 const { setup } = require("./keir10-post.helpers");
@@ -49,25 +49,6 @@ test("turn commentary is opt-in: a turn report needs a player message or a due p
   assert.equal(f.posts().length, 2);
 });
 
-test("a step-back activation checkpoints first and posts at most once", async () => {
-  const f = setup(); f.playerWrote(30);
-  const d = f.ledger.data;
-  d.ticketPace = { 123: { posts: 10, corrections: 1, firstAt: f.now() - 5 * 3600000, log: [{ at: f.now() - 3600000, by: "keir", text: "Turn 39 figures." }] } };
-  f.job.closing = { closesWhen: CLOSE.closesWhen, waitingOn: CLOSE.waitingOn, on: { kind: "turn", ref: 41 } };
-  assert.equal(closing.stepBack(d, f.job, f.now(), closing.DEFAULTS), true);
-  assert.match(f.job.inbox.at(-1).content, /^Step back before anything else\. This ticket has 10 Keir posts\./);
-  assert.match(f.job.inbox.at(-1).content, /Recorded closing condition: closes when the player's plant output/);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Your plant is waiting on its coal contract." }), /First call checkpoint with what the player actually needs/);
-  f.job.history = [...(f.job.history || []), { at: new Date(f.now()).toISOString(), kind: "checkpoint", summary: "Needs: output restored. Missing: one turn with coal. Waiting on: turn 41. Last posts did not move it." }];
-  await f.broker.tool(f.job, "channel_reply", { message: "Your plant is waiting on its coal contract, which starts next turn." });
-  f.advance(11);
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "One more thing about coal." }), /posts at most one message/);
-  // Once per threshold crossing: the next activation at the same level is not a step-back.
-  await f.broker.tool(f.job, "finish", { state: "waiting", summary: "Waiting for turn 41.", wakeAfterMinutes: 60 });
-  assert.equal(f.job.stepBack.done, true);
-  assert.equal(closing.stepBack(d, f.job, f.now(), closing.DEFAULTS), false);
-});
-
 test("a recorded promise opens one turn report, through the real post path", async () => {
   const f = setup(); f.playerWrote(30);
   const d = f.ledger.data;
@@ -79,50 +60,6 @@ test("a recorded promise opens one turn report, through the real post path", asy
   assert.equal(d.ticketPromises[123][0].state, "kept");
   f.advance(65); d.watch.turnClock = { turn: 42, iteration: 3, at: f.now() }; f.job.lastGameReadAt = f.now();
   await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: "Turn 42: your plant kept producing and made a profit." }), /a turn having run is not a reason to post/);
-});
-
-test("N3: a step-back whose activation ended without finish never refuses the next activation's answer", async () => {
-  const f = setup(); f.playerWrote(30);
-  const d = f.ledger.data;
-  d.ticketPace = { 123: { posts: 10, corrections: 0, firstAt: f.now() - 30 * 3600000, log: [] } };
-  f.job.closing = { closesWhen: CLOSE.closesWhen, waitingOn: CLOSE.waitingOn, on: { kind: "turn", ref: 41 } };
-  // Activation 1 is a step-back: checkpoint, one line, then the turn limit ends it (no finish).
-  f.job.lastRunStartedAt = f.now();
-  closing.onActivation(f.job, f.now());
-  assert.equal(closing.stepBack(d, f.job, f.now(), closing.DEFAULTS), true);
-  f.job.history = [...(f.job.history || []), { at: new Date(f.now()).toISOString(), kind: "checkpoint", summary: "Needs: output. Waiting on: turn 41." }];
-  await f.broker.tool(f.job, "channel_reply", { message: "Your plant is waiting on its coal contract, which starts next turn." });
-  assert.equal(f.job.stepBack.posted, 1);
-  // The player asks again; activation 2 starts (a new run) and has the answer.
-  f.advance(20); f.playerWrote(1);
-  f.job.lastRunStartedAt = f.now();
-  closing.onActivation(f.job, f.now());
-  assert.equal(f.job.stepBack.endedAbnormally, true);
-  assert.equal(closing.stepBack(d, f.job, f.now(), closing.DEFAULTS), false, "same level, and it already posted: no new step-back");
-  await f.broker.tool(f.job, "channel_reply", { message: "The coal contract is signed and starts on the next turn, so your plant will produce then." });
-  assert.equal(f.posts().length, 2, "the answer went out");
-  assert.equal(f.audits("step_back_post_refused").length, 0);
-  // The step-back limit still holds inside its own activation (the side the fix must not lose).
-  const g = setup(); g.playerWrote(30);
-  g.ledger.data.ticketPace = { 123: { posts: 10, corrections: 0, firstAt: g.now() - 30 * 3600000, log: [] } };
-  g.job.lastRunStartedAt = g.now(); closing.onActivation(g.job, g.now());
-  closing.stepBack(g.ledger.data, g.job, g.now(), closing.DEFAULTS);
-  g.job.history = [{ at: new Date(g.now()).toISOString(), kind: "checkpoint", summary: "x" }];
-  await g.broker.tool(g.job, "channel_reply", { message: "Your plant is waiting on its coal contract, which starts next turn." });
-  g.advance(11);
-  await assert.rejects(g.broker.tool(g.job, "channel_reply", { message: "One more thing about coal." }), /posts at most one message/);
-});
-
-test("N3: a step-back that crashed before it posted is tried once more on the next activation", () => {
-  const d = { ticketPace: { 9: { posts: 10, corrections: 0, firstAt: Date.now() - 3600000, log: [] } }, jobs: {}, decisions: {} };
-  const job = { id: "s", kind: "ticket", ticket: 9, role: "support", state: "running", at: Date.now() - 3600000, effects: {}, inbox: [], lastRunStartedAt: 1 };
-  closing.onActivation(job, 1);
-  assert.equal(closing.stepBack(d, job, Date.now(), closing.DEFAULTS), true);
-  job.lastRunStartedAt = 2; closing.onActivation(job, 2);
-  assert.equal(closing.stepBack(d, job, Date.now(), closing.DEFAULTS), true, "retried once");
-  assert.equal(job.stepBack.retry, true);
-  job.lastRunStartedAt = 3; closing.onActivation(job, 3);
-  assert.equal(closing.stepBack(d, job, Date.now(), closing.DEFAULTS), false, "never a loop");
 });
 
 test("N10: a second, substantive answer to the player's open question gets through when it names a turn", async () => {

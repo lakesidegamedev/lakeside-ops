@@ -266,9 +266,9 @@ test("closing conditions: inference, refusal limit and the plain settings", () =
   assert.deepEqual(closing.infer("turn 77 results"), { kind: "turn", ref: 77 });
   assert.equal(closing.infer("the player's reply", { waitFor: "player_reply" }).kind, "player");
   assert.equal(closing.infer("something else entirely").kind, "other");
-  const s = closing.settings({ KEIR_QUIET_WAKES: "5", KEIR_STEPBACK_POSTS: "12" });
-  assert.equal(s.quietWakes, 5); assert.equal(s.stepBackPosts, 12); assert.equal(s.stepBackHours, 24); assert.equal(s.findingExpiryHours, 72);
-  assert.deepEqual(closing.DEFAULTS, { quietWakes: 3, stepBackPosts: 10, stepBackHours: 24, stepBackCorrections: 3, findingExpiryHours: 72, parkRecheckHours: 2, findingParkRecheckHours: 6, slowWakeHours: 2 });
+  const s = closing.settings({ KEIR_QUIET_WAKES: "5" });
+  assert.equal(s.quietWakes, 5); assert.equal(s.findingExpiryHours, 72);
+  assert.deepEqual(closing.DEFAULTS, { quietWakes: 3, findingExpiryHours: 72, parkRecheckHours: 2, findingParkRecheckHours: 6, slowWakeHours: 2 });
   // Twice refused per activation, then derived from the summary so a finish never loops.
   const w = world();
   const job = { id: "x", kind: "ticket", ticket: 5, state: "running", lastRunStartedAt: 1, effects: {} };
