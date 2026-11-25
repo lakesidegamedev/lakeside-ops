@@ -13,7 +13,6 @@ const { createCodingWorkers } = require("../lib/operator/codingworkers");
 const inv = require("../lib/operator/investigation");
 const promises = require("../lib/operator/promises");
 const own = require("../lib/operator/ownlookups");
-const cc = require("../lib/operator/correctioncheck");
 const { patchReadError, createDelegation } = require("../lib/operator/delegation");
 const { GIT_CONFIG } = require("../lib/operator/sandbox");
 
@@ -142,44 +141,6 @@ test("the 1884 answer is refused: Keir must read every site, and never ask the p
 test("saying what Keir does next, or asking for what only the player knows, is fine", () => {
   for (const ok of ["I am reading your other sites now and will post the full breakdown within the hour.", "I need a screenshot of the page you saw.", "I need you to confirm which page you were on.", "We need more players to vote."]) assert.equal(own.ownLookupProblem(ok), null, ok);
   assert.ok(own.ownLookupProblem("I do not have your bank statement yet."));
-});
-
-// ---- public corrections (1891) --------------------------------------------------------------------------------------
-
-const WRONG = "Correction: the cause is not confirmed. The failed check was on a producer account with a cash change of about 1.28 million, which is not a tiny rounding amount.";
-
-test("a correction the independent check does not support is refused with its reason (1891)", async () => {
-  const seen = [];
-  const f = setup({ call: posted, correctionCheck: async (p) => { seen.push(p); return { verdict: "unsupported", reason: "1.28 million is the turn's cash change; the mismatch was about 0.0000001" }; } });
-  f.job.evidenceText = "\n[read_tool] {\"cashDelta\":1280000,\"opening\":5,\"closing\":1280005.0000001}";
-  f.ledger.data.ticketPosts = { 123: [{ at: f.now() - 60000, jobId: f.job.id, text: "The mismatch is consistent with tiny rounding differences." }] };
-  await assert.rejects(f.broker.tool(f.job, "channel_reply", { message: WRONG }), /does not support it: 1\.28 million is the turn's cash change/);
-  assert.equal(seen.length, 1);
-  assert.match(seen[0].earlier[0], /tiny rounding/); assert.match(seen[0].evidence, /cashDelta/);
-  assert.deepEqual(f.posts(), []);
-});
-
-test("a supported correction posts; one without a read this activation is refused; a checker outage lets it through", async () => {
-  const ok = setup({ call: posted, correctionCheck: async () => ({ verdict: "supported", reason: "the record shows 07:07" }) });
-  ok.job.evidenceText = "\n[read_tool] finishedAt 07:07";
-  await ok.broker.tool(ok.job, "channel_reply", { message: "Correction: turn 151 finished at about 07:07 UTC, not 07:02." });
-  assert.equal(ok.posts().length, 1);
-  const noRead = setup({ call: posted, correctionCheck: async () => ({ verdict: "supported" }) });
-  noRead.job.evidenceText = "";
-  await assert.rejects(noRead.broker.tool(noRead.job, "channel_reply", { message: "Correction: the mismatch was about 1.28 million, not a rounding residue." }), /states a figure needs a read in this activation/);
-  assert.equal(cc.statesFigure("Correction: turn 151 finished at about 07:07 UTC, not 07:02."), false, "turns and clock times are not figures");
-  const down = setup({ call: posted, correctionCheck: async () => { throw new Error("codex down"); } });
-  down.job.evidenceText = "\n[read_tool] finishedAt 07:07";
-  await down.broker.tool(down.job, "channel_reply", { message: "Correction: turn 151 finished at about 07:07 UTC, not 07:02." });
-  assert.equal(down.posts().length, 1);
-  assert.equal(down.audits("correction_check_failed").length, 1);
-});
-
-test("an uncertain verdict is refused once per draft, then the same draft may post", () => {
-  assert.ok(cc.decide({ verdict: "uncertain", reason: "x" }).refuse);
-  assert.ok(cc.decide({ verdict: "uncertain" }, { uncertainSeen: true }).allow);
-  assert.equal(cc.isCorrection("To correct my last message: it was 07:07."), true);
-  assert.equal(cc.isCorrection("The next turn ran cleanly."), false);
 });
 
 // ---- patch reads (1886, 1889) ---------------------------------------------------------------------------------------

@@ -19,7 +19,7 @@ function setup(over = {}) {
     call: async (...a) => { calls.push(a); return handler(...a); },
   };
   let clock = 10 * 3600000;
-  const broker = createBroker({ ledger, config, mcp, discord: over.discord || ticketDiscord, ...(over.exec ? { exec: over.exec } : {}), sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock, ...(over.codingWorkers ? { codingWorkers: over.codingWorkers } : {}), ...(over.correctionCheck ? { correctionCheck: over.correctionCheck } : {}) });
+  const broker = createBroker({ ledger, config, mcp, discord: over.discord || ticketDiscord, ...(over.exec ? { exec: over.exec } : {}), sandbox: { run: async () => ({ code: 0, output: "" }) }, now: () => clock, ...(over.codingWorkers ? { codingWorkers: over.codingWorkers } : {}) });
   const job = ledger.createJob("t", { role: "support", kind: "ticket", ticket: 123, channelId: CH, replyChannel: CH, source: { channelId: CH, channelName: "ticket-bug-fixture-123", content: "Why is my plant idle?" }, deadline: 9e15 });
   job.state = "running"; ledger.data.seen["ticket:123"] = job.id; ledger.data.disclosed = { 123: { at: 1, posted: true } };
   // A read of the player's own record this activation, so the evidence-gated claim check (guardrails.js) is satisfied unless a test turns it off.

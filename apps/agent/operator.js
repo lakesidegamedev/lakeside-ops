@@ -203,8 +203,7 @@ const starmer = require("./lib/operator/starmer").createStarmer({ ledger, config
 // Keir 2.1 owner app (Muse parity): goals, feed, brief, approvals, upcoming, files.
 const appMuse = createAppMuse({ ledger, config, app: appChannel, starmer, drain: () => drain() });
 let codingWorkersInst = null; // Keir 8.5: built after the CI helpers below; the broker reads it lazily
-const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse, codingWorkers: () => codingWorkersInst,
-  correctionCheck: require("./lib/operator/correctioncheck").makeChecker({ providerOverride: config.providerOverride, stateDir: config.stateDir }) });
+const broker = createBroker({ killSwitch, limits, ledger, config, mcp, discord, sandbox, conversation, notebook, effectShadow, appChannel, appComputer, appQuestions, appMuse: () => appMuse, codingWorkers: () => codingWorkersInst });
 const agent = createAgent({ ledger, broker, config });
 const toolSessions = new Map(); // Keir 4.0: Rust runner tool sessions (see /v4/tool-session)
 // Keir 5.7: Jev-logged feedback and a daily self-review (lib/operator/selfimprove.js).

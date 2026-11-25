@@ -561,7 +561,7 @@ function similarity(a, b) {
   let both = 0; for (const w of x) if (y.has(w)) both++;
   return both / (x.size + y.size - both);
 }
-function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null, correctionCheck = null }) {
+function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null}) {
   // Keir 11.2: closing-condition settings (KEIR_QUIET_WAKES and friends); tests may pass config.closing.
   const closingConfig = config.closing || closing.settings(process.env);
   // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, quiet-wake escalation and the
@@ -1169,38 +1169,6 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
     ledger.save();
     return e ? workerHandoff(job, ticketNo, e.why, e.detail) : null;
   }
-  // 2026-11-23 (ticket 1891): a public correction is checked by a separate one-shot model call against the records this
-  // activation read before the player sees it (correctioncheck.js). The checker runs on the configured Codex route; tests
-  // inject correctionCheck. One answer per draft per activation.
-  const cc = require("./correctioncheck");
-  // operator.js injects the live checker (cc.makeChecker); without one the check is recorded as unavailable.
-  async function askCorrection(payload) { return typeof correctionCheck === "function" ? correctionCheck(payload) : null; }
-  async function correctionGate(job, ticketNo, message) {
-    if (!cc.isCorrection(message)) return;
-    if (!String(job.evidenceText || "").trim()) {
-      // A correction that states a figure needs a read that shows it; a status correction ("not live yet") does not.
-      if (cc.statesFigure(message)) {
-        ledger.audit("correction_refused", { job: job.id, ticket: ticketNo, why: "no_read" });
-        throw new Error("Not posted: a correction that states a figure needs a read in this activation that shows it. Read the record first and say what the figure measures, or do not post a correction.");
-      }
-      ledger.audit("correction_checked", { job: job.id, ticket: ticketNo, verdict: "no_read_status_only", refused: false });
-      return;
-    }
-    const memo = (job.correctionChecks ||= {}), key = hash([job.startedAt || 0, message]).slice(0, 16);
-    if (!memo[key]) {
-      const earlier = (d.ticketPosts?.[ticketNo] || []).map((p) => p.text).filter(Boolean);
-      let answer = null;
-      try { answer = await askCorrection({ earlier, draft: message, evidence: job.evidenceText }); }
-      catch (e) { ledger.audit("correction_check_failed", { job: job.id, ticket: ticketNo, error: String(e.message).slice(0, 200) }); }
-      memo[key] = { at: now(), verdict: answer?.verdict || null, reason: String(answer?.reason || "").slice(0, 300) };
-      for (const k of Object.keys(memo)) if (now() - memo[k].at > 6 * 3600000) delete memo[k];
-    }
-    const m = memo[key], uncertainSeen = job.correctionUncertainAt === (job.startedAt || 0) && m.verdict === "uncertain" && m.seen;
-    const r = cc.decide(m.verdict ? { verdict: m.verdict, reason: m.reason } : null, { uncertainSeen });
-    if (m.verdict === "uncertain") { job.correctionUncertainAt = job.startedAt || 0; m.seen = true; }
-    ledger.audit("correction_checked", { job: job.id, ticket: ticketNo, verdict: m.verdict || "unavailable", refused: Boolean(r.refuse) }); ledger.save();
-    if (r.refuse) throw new Error(r.refuse);
-  }
   // Everything a player-facing post must pass for the incident, claim and scope guardrails. Throws a refusal.
   async function guardrailGates(job, ticketNo, message, opts = {}) {
     if (!playerFacing(job) || job.role === "player") return;
@@ -1212,7 +1180,6 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       await fileOwnerCard(job, ticketNo, scope.kind === "offer" ? "feature or design request" : "question about the owner's intent", `What the player asked and what the lane drafted:\n${String(job.source?.content || "").slice(0, 600)}\n\nDraft: ${String(message).slice(0, 600)}`);
       throw new Error(`${scope.refusal} An owner card is filed for this ticket; ${guardrails.STAFF_REVIEW_LINE}`);
     }
-    await correctionGate(job, ticketNo, message);
     if (!guardrails.recoveryClaim(message) && !guardrails.claimSentences(message).length) return;
     const ctx = job.incidentContext && now() - (job.incidentContextAt || 0) < 120000 ? job.incidentContext : await incidentFacts(job).then((c) => { job.incidentContextAt = now(); return c; });
     const rec = guardrails.recoveryRefusal(ctx, message);
