@@ -564,11 +564,11 @@ function similarity(a, b) {
 function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, discord, sandbox, conversation, now = () => Date.now(), exec = run, notebook = null, effectShadow = null, appChannel = null, appComputer = null, appQuestions = null, appMuse = () => null, codingWorkers = () => null}) {
   // Keir 11.2: closing-condition settings (KEIR_QUIET_WAKES and friends); tests may pass config.closing.
   const closingConfig = config.closing || closing.settings(process.env);
-  // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, quiet-wake escalation and the
-  // step-back, read at each use (lib/operator/controls.js; operator.js puts them on config.controls).
+  // Keir 11.2 third pass (review M7): the switches for the post budget, the turn rule, and quiet-wake escalation,
+  // read at each use (lib/operator/controls.js; operator.js puts them on config.controls).
   const controlsLib = require("./controls");
   const ctl = () => config.controls || controlsLib.DEFAULT_CONTROLS;
-  // Review M6 and the second pass's soft spot: every post a budget, turn or step-back rule holds back is recorded where a
+  // Review M6 and the second pass's soft spot: every post a budget or turn rule holds back is recorded where a
   // person can read it (ledger.data.refusedPosts, printed by bin/keir-preview.js): which ticket, which rule, the text.
   function noteRefused(rule, job, ticketNo, message) {
     const all = (d.refusedPosts ||= {});
@@ -1579,13 +1579,6 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       if (said) refuse(`Not posted: ticket ${ticketNo} was told this is live ${Math.max(1, Math.round((now() - said.at) / 60000))} min ago ("${said.text.slice(0, 160)}"). Do not announce it again; post only what is new.`);
     }
     attempt(() => guardStall(job, ticketNo, message, posts));
-    // Keir 11.2: a step-back activation states the ticket's position in a checkpoint first, then posts at most once.
-    // Review N3: only a step-back started by this activation applies; one left open by an activation that ended without
-    // finish (turn limit, crash, restart) never refuses a later activation's answer.
-    if (!opts.system && closing.stepBackActive(job)) attempt(() => {
-      const t = closing.stepBackRefusal(job, { checkpointed: (job.history || []).some((h) => h.kind === "checkpoint" && Date.parse(h.at || "") >= job.stepBack.at) });
-      if (t) { ledger.audit("step_back_post_refused", { job: job.id, ticket: ticketNo }); if (!opts.collect) noteRefused("step_back", job, ticketNo, message); throw new Error(t); }
-    });
     // Keir 11.2 post budget (postbudget.js): one live announcement per shipped change, turn reports only when the answer
     // changed, and an hourly cap without a new player message whose overflow is one merged correction or answer.
     if (!opts.system && !answeringStaff) {
@@ -2253,10 +2246,8 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
       try { const pb = require("./postbudget"), h = humanAt(ticketNo); if (pb.recentRun(d.ticketPosts?.[ticketNo], h, now()).length >= (Number(config.ticketPostsPerHour) || pb.DEFAULT_PER_HOUR)) (d.postOverflow ||= {})[ticketNo] = { at: now(), humanAt: h }; } catch {}
       // Keir 11.2: every follow-up promise Keir makes is recorded with a due time by the post path itself (promises.js).
       if (job.kind !== "notice") { try { const askedAt = Math.max(humanAt(ticketNo), ...Object.values(d.jobs).filter((j) => ticketOf(j) === ticketNo && j.kind === "command" && !j.internalProbe).map((j) => Date.parse(j.source?.at || "") || 0)); const p = require("./promises").notePost(d, ticketNo, job, message, now(), { askedAt }); if (p && p.at === now()) ledger.audit("promise_recorded", { job: job.id, ticket: ticketNo, kind: p.kind, dueAt: p.dueAt, afterTurn: p.afterTurn ?? null }); } catch {} }
-      // Keir 11.2: the ticket's pace (posts, corrections) for the step-back threshold; a step-back posts once; a turn
-      // report the closing condition called for uses that call up.
+      // Keir 11.2: the ticket's pace (posts, corrections); a turn report the closing condition called for uses that call up.
       try { closing.notePost(d, ticketNo, message, { now: now(), correction: isCorrection(message) }); } catch {}
-      if (closing.stepBackActive(job)) job.stepBack.posted = (job.stepBack.posted || 0) + 1;
       if (job.turnReportViaPromise) { delete job.turnReportViaPromise; require("./promises").keepForReport(d, ticketNo, now()); }
       if (job.turnReportViaClosing) { delete job.turnReportViaClosing; const root = d.jobs[d.seen?.[`ticket:${ticketNo}`]]; for (const j of [job, root]) if (j && closing.closingCallsForTurn(d, j, now())) closing.noteTurnReport(d, j, now()); }
     }
@@ -5248,7 +5239,6 @@ function isCardPost(p) { return p.kind ? p.kind === "status_card" : String(p.tex
     if (name === "finish") {
       // Keir 11.2: after the state and timer are settled, record the wait for the code check and escalate quiet waits once.
       const settleClosing = () => {
-        if (job.stepBack && !job.stepBack.done) job.stepBack.done = true;
         const startedAt = job.startedAt || job.lastRunStartedAt || 0;
         const acted = (job.lastPublishedAt || 0) >= startedAt || Object.values(job.effects || {}).some((e) => (e?.at || 0) >= startedAt)
           || Object.values(d.decisions || {}).some((x) => x.jobId === job.id && (x.at || x.createdAt || 0) >= startedAt);

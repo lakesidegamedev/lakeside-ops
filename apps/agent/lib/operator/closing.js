@@ -20,10 +20,6 @@
 // open) gets one activation to raise the single ask, or it parks: no more timed model wakes, one owner line saying what
 // it is parked on. A parked job still wakes on a message or when the thing it waits on changes.
 //
-// A long ticket gets one step-back activation each time it crosses a threshold (10 Keir posts, 24 hours open or 3
-// corrections; doubling after that): it reads the whole ticket as a short timeline and states what the player needs,
-// what is missing to close, who it waits on and whether the last posts moved that, before it may post once.
-//
 // Finding jobs that are blocked with no question behind them, parked with nothing changing, or from a world that no
 // longer exists are closed with a one-line record after KEIR_FINDING_EXPIRY_HOURS (72).
 const { JOB_TERMINAL } = require("./machines");
@@ -34,9 +30,6 @@ const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) :
 function settings(env = process.env) {
   return {
     quietWakes: num(env.KEIR_QUIET_WAKES, 3),
-    stepBackPosts: num(env.KEIR_STEPBACK_POSTS, 10),
-    stepBackHours: num(env.KEIR_STEPBACK_HOURS, 24),
-    stepBackCorrections: num(env.KEIR_STEPBACK_CORRECTIONS, 3),
     findingExpiryHours: num(env.KEIR_FINDING_EXPIRY_HOURS, 72),
     // Fourth pass (review N1): the safety net for a parked job. Code re-checks the wait this often (no post, no model run
     // when nothing changed). Hours, not days, for a ticket a player is waiting on.
@@ -414,15 +407,8 @@ function parkedCheck(d, job, now, config = DEFAULTS) {
   return { quiet: true, effects: [] };
 }
 
-// A message or an unparking event wakes a parked job; it is no longer parked once a model run starts. A step-back left
-// open by an activation that ended without finish (turn limit, crash, restart) no longer applies (review N3).
+// A message or an unparking event wakes a parked job; it is no longer parked once a model run starts.
 function onActivation(job, now, { human = false } = {}) {
-  if (job.stepBack && !job.stepBack.done) {
-    const s = job.stepBack;
-    s.done = true; s.endedAbnormally = true;
-    // It never got to its checkpoint and one post: let the next activation try it once more.
-    if (!s.retry && !s.posted && job.stepBackLevel === s.level) { job.stepBackLevel = Math.max(0, s.level - 1); job.stepBackRetry = s.level; }
-  }
   const c = job.closing;
   if (!c) return;
   if (c.parked || c.handedPrs) unpark(c);
@@ -430,67 +416,15 @@ function onActivation(job, now, { human = false } = {}) {
   c.activatedAt = now;
 }
 
-// --- Step back on long tickets -----------------------------------------------------------------------------------------
+// --- Per-ticket pace -------------------------------------------------------------------------------------------------------
 
-// Durable per-ticket pace: Keir posts, corrections and a short log for the step-back timeline.
+// Durable per-ticket pace: Keir posts, corrections and a short log of what Keir said.
 function notePost(d, ticket, text, { now, correction = false } = {}) {
   if (!ticket) return null;
   const p = ((d.ticketPace ||= {})[ticket] ||= { posts: 0, corrections: 0, firstAt: now, log: [] });
   p.posts += 1; if (correction) p.corrections += 1;
   p.log = [...p.log, { at: now, by: "keir", text: clip(text, 140) }].slice(-30);
   return p;
-}
-const level = (v, t) => (t > 0 && v >= t ? Math.floor(Math.log2(v / t)) + 1 : 0);
-function stepBackLevel(d, job, now, config = DEFAULTS) {
-  const p = d.ticketPace?.[job.ticket];
-  const opened = Math.min(...[Date.parse(job.source?.at || "") || Infinity, job.at || Infinity, p?.firstAt || Infinity]);
-  const hours = Number.isFinite(opened) ? (now - opened) / HOUR : 0;
-  const parts = { posts: level(p?.posts || 0, config.stepBackPosts), hours: level(hours, config.stepBackHours), corrections: level(p?.corrections || 0, config.stepBackCorrections) };
-  const top = Math.max(parts.posts, parts.hours, parts.corrections);
-  const why = Object.entries(parts).filter(([, v]) => v === top && v > 0).map(([k]) => k === "posts" ? `${p.posts} Keir posts` : k === "hours" ? `${Math.floor(hours)} hours open` : `${p.corrections} corrections`);
-  return { level: top, why, posts: p?.posts || 0 };
-}
-
-// The compact timeline a step-back activation reads first.
-function timeline(d, job) {
-  const tc = d.ticketCases?.[String(job.ticket)];
-  const rows = [
-    ...(tc?.asked || []).map((a) => ({ at: a.at, by: "player", text: clip(a.text, 140) })),
-    ...(d.ticketPace?.[job.ticket]?.log || []),
-    ...Object.values(d.decisions || {}).filter((x) => x.ticket === job.ticket || d.jobs?.[x.jobId]?.ticket === job.ticket).map((x) => ({ at: x.at || x.createdAt, by: "owner question", text: `${clip(x.question || x.title || x.summary, 100)} (${x.state})` })),
-    ...(d.ticketPromises?.[job.ticket] || []).map((p) => ({ at: p.at, by: "promise", text: `${clip(p.text, 100)} (${p.state})` })),
-  ].filter((r) => Number.isFinite(r.at)).sort((a, b) => a.at - b.at).slice(-40);
-  return rows.map((r) => `${new Date(r.at).toISOString().slice(5, 16).replace("T", " ")} ${r.by}: ${r.text}`).join("\n");
-}
-
-// At activation start. Returns true when this activation is a step-back; puts the timeline in front of the model.
-function stepBack(d, job, now, config = DEFAULTS) {
-  if (job.kind !== "ticket" || !job.ticket || !applies(job)) return false;
-  const lv = stepBackLevel(d, job, now, config);
-  if (lv.level <= (job.stepBackLevel || 0)) return false;
-  job.stepBackLevel = lv.level;
-  // Tied to this activation (review N3): a later activation never inherits its one-post limit.
-  job.stepBack = { at: now, level: lv.level, why: lv.why, posted: 0, run: job.lastRunStartedAt || null, ...(job.stepBackRetry === lv.level ? { retry: true } : {}) };
-  delete job.stepBackRetry;
-  const c = job.closing;
-  (job.inbox ||= []).push({ authorId: "step-back", role: "system", at: new Date(now).toISOString(),
-    content: `Step back before anything else. This ticket has ${lv.why.join(" and ")}. Here is the whole ticket in short:\n${timeline(d, job) || "(no record)"}\n${c ? `Recorded closing condition: closes when ${clip(c.closesWhen, 200).replace(/^closes when /i, "")}; waiting on ${clip(c.waitingOn, 200)}.\n` : ""}First call checkpoint stating: what the player actually needs, what is still missing to close this, who it is waiting on, and whether your last several posts moved that. Then post at most one message, and only if it is the answer, a question you need answered, or a plain statement of what the ticket is waiting for. Finish with closesWhen and waitingOn updated.` });
-  return true;
-}
-// The step-back in force for this activation, or null: one that is done, or was started by an earlier activation, is not.
-function stepBackActive(job) {
-  const s = job?.stepBack;
-  if (!s || s.done) return null;
-  if (s.run && job.lastRunStartedAt && s.run !== job.lastRunStartedAt) return null;
-  return s;
-}
-// Post guard during a step-back activation: a checkpoint first, then at most one post.
-function stepBackRefusal(job, { checkpointed }) {
-  const s = stepBackActive(job);
-  if (!s) return null;
-  if (!checkpointed) return "Not posted: this is a step-back activation. First call checkpoint with what the player actually needs, what is still missing to close the ticket, who it is waiting on, and whether your last posts moved that.";
-  if (s.posted >= 1) return "Not posted: a step-back activation posts at most one message, and it already went out. Finish with closesWhen and waitingOn.";
-  return null;
 }
 
 // --- Turn commentary is opt-in ------------------------------------------------------------------------------------------
@@ -596,5 +530,5 @@ function describe(job) {
 }
 
 module.exports = { DEFAULTS, settings, WAIT_KINDS, PARKABLE, MISSING, applies, infer, observe, fromFinish, afterFinish, quietWake, onActivation, escalate, park, slow, parkable, owedTo, recheckMs, heldPr,
-  notePost, stepBackLevel, stepBack, stepBackRefusal, stepBackActive, blockedByOwnFinish, hasQuestion, timeline, closingCallsForTurn, noteTurnReport, oldWorld, expireFindings, describe, turnClock,
+  notePost, blockedByOwnFinish, hasQuestion, closingCallsForTurn, noteTurnReport, oldWorld, expireFindings, describe, turnClock,
   CLOCK_FRESH_MS, PR_FRESH_MS, PARK_RECHECK_MS, MIN_CHECKED_WAIT_MS };
