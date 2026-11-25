@@ -556,7 +556,7 @@ async function readHistory(db, number, { offset = 0, limit = 200, maxChars = 600
     const text = String(e.text || "");
     if (used + text.length > maxChars && events.length) break;
     used += text.length;
-    events.push({ at: e.at, kind: e.kind, who: WHO(e), text, ...(Object.keys(e.meta || {}).length ? { meta: e.meta } : {}) });
+    events.push({ id: e._id, at: e.at, kind: e.kind, who: WHO(e), ...(e.actor?.id ? { authorId: e.actor.id } : {}), text, ...(Object.keys(e.meta || {}).length ? { meta: e.meta } : {}) });
   }
   const next = offset + events.length;
   return {

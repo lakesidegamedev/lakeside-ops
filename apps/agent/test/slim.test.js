@@ -288,3 +288,16 @@ test("replay adapters hide everything after the replay point and capture writes"
   cursor = "2026-11-24T20:00:00.000Z";
   assert.equal((await a.readTicket(1896)).conversation.length, 2);
 });
+
+test("slim MCP client: SSE responses parse, writes pass the gate, reads retry on connect failure", async () => {
+  const { parseRpc, createSlimMcp } = require("../lib/slim/mcp");
+  assert.deepEqual(parseRpc('event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"ok":1}}\n\n'), { jsonrpc: "2.0", id: 1, result: { ok: 1 } });
+  const dir = tmp(); const cfgFile = path.join(dir, "c.json");
+  fs.writeFileSync(cfgFile, JSON.stringify({ mcpServers: { s: { url: "http://127.0.0.1:9/mcp", headers: { Authorization: "Bearer w" } }, remote: { url: "https://example.com/mcp" } } }));
+  let tries = 0;
+  const fetchImpl = async () => { tries++; if (tries < 2) throw new TypeError("fetch failed"); return { ok: true, text: async () => '{"result":{"content":[{"type":"text","text":"{\\"a\\":1}"}]}}' }; };
+  const m = createSlimMcp({ configFile: cfgFile, readToken: "r", fetchImpl, retryMs: [1], gate: (w) => { throw new Error(`${w} refused`); } });
+  assert.deepEqual(await m.call("s", "t", {}), { a: 1 });
+  await assert.rejects(m.call("s", "t", {}, true), /refused/);
+  await assert.rejects(m.call("remote", "t", {}), /no local MCP server/);
+});

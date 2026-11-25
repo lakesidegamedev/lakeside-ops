@@ -15,10 +15,10 @@ const { createLiveAdapters, createReplayAdapters } = require("./adapters");
 const { createKillSwitch } = require("../operator/killswitch");
 
 function createMcpClient(cfg) {
-  const { createMcp } = require("../operator/broker");
+  const { createSlimMcp } = require("./mcp");
   const { readAgentToken } = require("../operator/token");
   const killSwitch = createKillSwitch({ file: cfg.killSwitchFile });
-  return createMcp(cfg.mcpConfig, readAgentToken(cfg.agentEnvFile), { gate: (what) => { if (cfg.mode !== "live") throw new Error(`${what} is refused outside live mode`); killSwitch.assertClear(what); } });
+  return createSlimMcp({ configFile: cfg.mcpConfig, readToken: readAgentToken(cfg.agentEnvFile), gate: (what) => { if (cfg.mode !== "live") throw new Error(`${what} is refused outside live mode`); killSwitch.assertClear(what); } });
 }
 
 /** An approval card for the owner, as plain multiple choice where it applies. */
@@ -53,14 +53,14 @@ function liveCheckout(cfg) {
  * mode "live": real adapters. mode "replay": opts.replay = { ticket, history,
  * getCursor, checkout } and every write is captured.
  */
-function createRuntime({ env = process.env, mode, replay, onWake, log = console.error, mcp } = {}) {
+function createRuntime({ env = process.env, mode, replay, onWake, log = console.error, mcp, sessions: injectedSessions } = {}) {
   const cfg = { ...slimConfig(env), ...(mode ? { mode } : {}) };
   if (cfg.mode === "off") throw new Error("KEIR_SLIM_MODE is off");
   if (cfg.mode === "replay" && !replay) throw new Error("replay mode needs the replay inputs");
   const client = mcp || createMcpClient(cfg);
   const killSwitch = createKillSwitch({ file: cfg.killSwitchFile });
   const store = S.createFileStore(path.join(cfg.stateDir, "tickets"));
-  const sessions = createCodexSessions({ stateDir: cfg.stateDir, model: cfg.model, effort: cfg.effort, compactTokens: cfg.autoCompactTokens, codexBin: cfg.codexBin || undefined });
+  const sessions = injectedSessions || createCodexSessions({ stateDir: cfg.stateDir, model: cfg.model, effort: cfg.effort, compactTokens: cfg.autoCompactTokens, codexBin: cfg.codexBin || undefined });
   const toolServer = createSlimToolServer();
   const checkout = cfg.mode === "replay" ? () => replay.checkout : liveCheckout(cfg);
   const notifyOwner = async (req) => {

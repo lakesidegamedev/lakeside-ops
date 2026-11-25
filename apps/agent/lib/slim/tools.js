@@ -6,7 +6,8 @@
 const S = require("./state");
 const rules = require("./rules");
 
-const GAME_SERVERS = ["gamestate", "engine", "turndiag", "lore"];
+// Read-only data servers: game state, engine and turn health, lore, production errors.
+const GAME_SERVERS = ["gamestate", "engine", "turndiag", "lore", "sentry"];
 const WRITE_LIKE = /(?:^|_)(?:patch|apply|write|set|update|delete|send|create|run|heal|post|resolve|merge|promote|reset|grant|pay)(?:_|$)/i;
 const KANBAN_READS = ["kanban_brief", "kanban_list", "kanban_get"];
 const CODE_READS = ["code_search", "code_exact", "code_read"];
@@ -53,10 +54,10 @@ function buildTools(ctx) {
     tool("history_read", "Read one past ticket in full, in time order: what the player wrote, staff messages, support posts, findings, fixes and the resolution.",
       obj({ number: { type: "integer" }, offset: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 300 }, kinds: strList("only these event kinds") }, ["number"]),
       async (a) => ctx.adapters.historyRead(a)),
-    tool("game_tools", `List the read-only game data tools on a server (${GAME_SERVERS.join(", ")}) with their arguments.`,
+    tool("game_tools", `List the read-only game data and production error tools on a server (${GAME_SERVERS.join(", ")}) with their arguments.`,
       obj({ server: str("server", { enum: GAME_SERVERS }) }, ["server"]),
       async ({ server }) => (await ctx.adapters.mcpList(server)).filter((t) => !WRITE_LIKE.test(t.name)).map((t) => ({ name: t.name, description: String(t.description || "").slice(0, 400), args: t.inputSchema?.properties ? Object.keys(t.inputSchema.properties) : [] }))),
-    tool("game_read", "Call one read-only game data tool. Use game_tools first to see names and arguments.",
+    tool("game_read", "Call one read-only game data or production error tool (sentry: errors players hit, by time or reference). Use game_tools first to see names and arguments.",
       obj({ server: str("server", { enum: GAME_SERVERS }), tool: str("tool name"), args: { type: "object", description: "the tool's arguments" } }, ["server", "tool"]),
       async ({ server, tool: name, args }) => {
         if (WRITE_LIKE.test(name)) throw new Error(`${name} is not a read`);

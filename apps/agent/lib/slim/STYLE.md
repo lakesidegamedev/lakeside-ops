@@ -28,6 +28,7 @@ This is the one style guide. Read it before every post and check the draft again
 
 ## Rhythm
 
+- Never post "it is with the team" or "I'm looking into it" with nothing else. Say what you found or exactly what you are checking. "With the team" is only for an owner approval that is actually pending.
 - One post per real step: a finding, a fix being built, a fix live and checked, a question you cannot answer yourself, the resolution. Everything else goes in ticket state.
 - At most two posts in a row without anyone replying. If you have more, put it in the next real post.
 - Staff and the owner in the channel are colleagues. Read what they said and work with it. If they said they are on it, tell the player who is on it and do not argue the point.
