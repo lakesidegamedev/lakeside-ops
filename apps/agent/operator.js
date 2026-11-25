@@ -22,7 +22,6 @@ const { createReopenedTickets } = require("./lib/operator/reopened");
 const { createEffectShadow } = require("./lib/operator/effectshadow");
 const { createEngineering } = require("./lib/operator/engineering");
 const { createRoles, scopedToken } = require("./lib/operator/roles");
-const { shadowReport } = require("./lib/operator/shadow3");
 const { createAgent } = require("./lib/operator/agent");
 const { createClassifier, screenReport } = require("./lib/operator/classify");
 const { readAgentToken } = require("./lib/operator/token");
@@ -1105,7 +1104,7 @@ const server = http.createServer(async (req, res) => {
   // Keir 3.0 operator visibility and the support handoff.
   if (req.url === "/v3/status" && req.method === "GET") {
     return reply(200, { supportOwner: supportOwner.status(), lanes: Object.fromEntries(Object.entries(active).map(([k, s]) => [k, s?.job.id || null])),
-      recoveries: (ledger.data.recoveries || []).slice(-10), feedback: (ledger.data.feedbackLog || []).slice(-10), selfReview: (ledger.data.selfReview?.runs || []).slice(-3), effectGate: effectShadow.summary(Date.now() - 7 * 86400000), shadow: shadowReport(ledger.data, { now: Date.now(), ownerId: config.ownerId, staffIds: config.staffIds }) });
+      recoveries: (ledger.data.recoveries || []).slice(-10), feedback: (ledger.data.feedbackLog || []).slice(-10), selfReview: (ledger.data.selfReview?.runs || []).slice(-3), effectGate: effectShadow.summary(Date.now() - 7 * 86400000) });
   }
   if ((req.url === "/v3/handoff" || req.url === "/v3/support-owner" || req.url === "/v3/ticket-owner" || req.url === "/v3/ticket-model" || req.url === "/v3/status-card") && req.method === "POST") {
     let body = ""; for await (const chunk of req) { body += chunk; if (body.length > 64000) return reply(413, { error: "too large" }); }

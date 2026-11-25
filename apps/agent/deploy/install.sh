@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mode=${1:-install}; status=0
-units=(keir-operator.service keir-summon.service keir-inbox.service keir-shadow.service keir-shadow.timer keir-watchkeeper.service keir-watchkeeper.timer keir-guardian.service keir-guardian.timer)
+units=(keir-operator.service keir-summon.service keir-inbox.service keir-watchkeeper.service keir-watchkeeper.timer keir-guardian.service keir-guardian.timer)
 for u in "${units[@]}"; do
   if ! cmp -s "$u" "/etc/systemd/system/$u"; then echo "drift: $u differs from /etc/systemd/system/$u"; status=1; fi
 done
@@ -27,7 +27,6 @@ if [[ "$mode" == --check ]]; then [[ $status == 0 ]] && echo "ok: units and env 
 [[ -e /opt/keir/current/operator.js ]] || { echo "no release at /opt/keir/current; run deploy/release.sh <ref> first"; exit 1; }
 for u in "${units[@]}"; do install -m 0644 "$u" "/etc/systemd/system/$u"; done
 systemctl daemon-reload
-systemctl enable --now keir-shadow.timer
 if [[ -f /etc/keir-watchkeeper.env ]]; then systemctl enable --now keir-watchkeeper.timer; fi
 # The guardian never starts a stopped unit, so enabling it is safe while Keir is stopped.
 systemctl enable --now keir-guardian.timer
