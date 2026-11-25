@@ -169,6 +169,16 @@ function buildTools(ctx) {
         capture("reminder", s.reminder);
         return { ok: true };
       }),
+    tool("record_owner_answer", "Record the owner's answer to one of your pending approval requests, when the owner gave it in this ticket's channel during this wake. Use their words; never infer an answer they did not give.",
+      obj({ approval_id: str("the pending approval id"), status: str("approved, declined or answered", { enum: ["approved", "declined", "answered"] }), answer: str("the owner's answer in their words") }, ["approval_id", "status", "answer"]),
+      async (a) => {
+        if (!ctx.ownerSpoke) throw new Error("Only when the owner wrote in this ticket during this wake. Otherwise the answer comes from their reply to the approval card.");
+        const { state, approval: ap } = S.answerApproval(st(), a.approval_id, { status: a.status, text: a.answer }, ctx.now());
+        if (!ap) throw new Error(`no approval ${a.approval_id} on this ticket`);
+        save(state);
+        capture("owner_answer", { id: ap.id, status: ap.status, answer: ap.answer });
+        return { ok: true, approval: { id: ap.id, status: ap.status, answer: ap.answer } };
+      }),
     tool("finish", "End this wake. Name the next step and what it waits on. Call it exactly once, last.",
       obj({ next_step: str("your next step"), waits_on: str("what it waits on: the player, the owner, a turn, a check") }, ["next_step", "waits_on"]),
       async (a) => {

@@ -75,7 +75,7 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
     }
     savePending(n, []);
 
-    const ctx = { ticket: n, cfg, store, adapters: adaptersFor(n), killSwitch, now, effects: [], ruleHits: [], finished: null, playerNames: () => store.load(n).playerNames || [] };
+    const ctx = { ticket: n, cfg, store, adapters: adaptersFor(n), killSwitch, now, effects: [], ruleHits: [], finished: null, playerNames: () => store.load(n).playerNames || [], ownerSpoke: queued.some((e) => e.role === "owner") };
     const tools = buildTools(ctx);
     const calls = [];
     const endpoint = await toolServer.open({ tools, ctx, onCall: (c) => calls.push({ at: new Date(now()).toISOString(), name: c.name, ok: c.ok, ...(c.ok ? {} : { error: String(c.error).slice(0, 300) }) }) });

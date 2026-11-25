@@ -31,19 +31,22 @@ function approvalCard({ ticket, kind, id, payload }) {
   } else if (kind === "promote") {
     lines.push(`Put live: ${payload.what}`, `Fix: ${payload.pr}`, `Why: ${payload.why}`, `Risk: ${payload.risk}`, `Checks: ${payload.evidence}`);
   }
-  lines.push(`Answer: keir-slim answer ${ticket} ${id} approved|declined|answered "text"`);
+  lines.push(kind === "decision" ? "Reply to this message with the letter (A, B ...), or your own answer." : "Reply to this message: yes or no (anything else is passed on as your answer).");
   return lines.join("\n").slice(0, 1900);
 }
 
 /** One game checkout per ticket, on development. Code is written only here. */
 function liveCheckout(cfg) {
   return (ticket) => {
-    const dir = path.join(cfg.worktreeRoot, `ticket-${Number(ticket)}`);
+    const dir = path.join(cfg.worktreeRoot, `keir-slim-ticket-${Number(ticket)}`);
     if (!fs.existsSync(path.join(dir, ".git"))) {
       if (!cfg.gameRepo) throw new Error("KEIR_SLIM_GAME_REPO is not set");
       fs.mkdirSync(cfg.worktreeRoot, { recursive: true });
       execFileSync("git", ["-C", cfg.gameRepo, "fetch", "-q", "origin", "development"]);
-      execFileSync("git", ["-C", cfg.gameRepo, "worktree", "add", "-B", `keir/ticket-${Number(ticket)}`, dir, "origin/development"]);
+      execFileSync("git", ["-C", cfg.gameRepo, "worktree", "add", "-B", `keir/ticket-${Number(ticket)}`, dir, "origin/development"], { stdio: "ignore" });
+      // The sandbox has no network: share the main checkout's installed dependencies.
+      const modules = path.join(cfg.gameRepo, "node_modules");
+      if (fs.existsSync(modules) && !fs.existsSync(path.join(dir, "node_modules"))) fs.symlinkSync(modules, path.join(dir, "node_modules"));
     }
     return dir;
   };
@@ -53,7 +56,7 @@ function liveCheckout(cfg) {
  * mode "live": real adapters. mode "replay": opts.replay = { ticket, history,
  * getCursor, checkout } and every write is captured.
  */
-function createRuntime({ env = process.env, mode, replay, onWake, log = console.error, mcp, sessions: injectedSessions } = {}) {
+function createRuntime({ env = process.env, mode, replay, onWake, log = console.error, mcp, sessions: injectedSessions, notifyOwner: injectedNotify } = {}) {
   const cfg = { ...slimConfig(env), ...(mode ? { mode } : {}) };
   if (cfg.mode === "off") throw new Error("KEIR_SLIM_MODE is off");
   if (cfg.mode === "replay" && !replay) throw new Error("replay mode needs the replay inputs");
@@ -63,12 +66,12 @@ function createRuntime({ env = process.env, mode, replay, onWake, log = console.
   const sessions = injectedSessions || createCodexSessions({ stateDir: cfg.stateDir, model: cfg.model, effort: cfg.effort, compactTokens: cfg.autoCompactTokens, codexBin: cfg.codexBin || undefined });
   const toolServer = createSlimToolServer();
   const checkout = cfg.mode === "replay" ? () => replay.checkout : liveCheckout(cfg);
-  const notifyOwner = async (req) => {
+  const notifyOwner = injectedNotify || (async (req) => {
     const channel = env.KEIR_SLIM_APPROVAL_CHANNEL;
     if (!channel) return { sent: false, reason: "KEIR_SLIM_APPROVAL_CHANNEL is not set" };
     await client.call("discord", "discord_send", { channel, content: approvalCard(req) }, true);
     return { sent: true };
-  };
+  });
   const adaptersFor = (ticket) => cfg.mode === "replay"
     ? createReplayAdapters({ mcp: client, ticket, getCursor: replay.getCursor, history: replay.history })
     : createLiveAdapters({ mcp: client, cfg, ticketCheckout: checkout, notifyOwner });
