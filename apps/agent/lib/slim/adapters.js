@@ -71,6 +71,50 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       const url = (await gh(["pr", "create", "-R", cfg.gameRepoSlug, "--base", "development", "--head", branch, "--title", title, "--body", `${body}\n\nTests: ${tests}`], { cwd })).trim().split("\n").pop();
       return { opened: true, url };
     },
+    /**
+     * Where a merged game fix is on its way to players, and whether the
+     * auto-promoter (development -> staging -> main on green) is held for it.
+     */
+    async promotionStatus({ pr }) {
+      const R = cfg.gameRepoSlug;
+      const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1] || pr);
+      if (!n) throw new Error("Give the fix's pull request url or number");
+      const fix = JSON.parse(await gh(["api", `repos/${R}/pulls/${n}`]));
+      const out = { pr: n, merged: Boolean(fix.merged), base: fix.base?.ref, inDevelopment: false, inStaging: false, inMain: false, autoPromote: { enabled: true, reasons: [] }, promotePrs: [], holds: [] };
+      const off = fs.existsSync(cfg.autoPromoteOffFile);
+      let timer = "unknown"; try { timer = (await run("systemctl", ["is-active", cfg.autoPromoteTimer])).trim(); } catch (e) { timer = "inactive"; }
+      if (off) out.autoPromote.reasons.push("the auto-promote off switch is set");
+      if (timer !== "active") out.autoPromote.reasons.push(`the auto-promote timer is ${timer}`);
+      out.autoPromote.enabled = out.autoPromote.reasons.length === 0;
+      if (!fix.merged) { out.note = "The fix is not merged yet; promotion starts after it merges into development."; return out; }
+      const contains = async (branch) => {
+        try { const c = JSON.parse(await gh(["api", `repos/${R}/compare/${branch}...${fix.merge_commit_sha}`, "--jq", "{status: .status}"])); return ["behind", "identical"].includes(c.status); } catch { return false; }
+      };
+      [out.inDevelopment, out.inStaging, out.inMain] = [await contains("development"), await contains("staging"), await contains("main")];
+      if (out.inMain) { out.note = "The fix is on main: it reaches players with the next deploy (about 45 minutes). Read the player's own numbers before saying it is live."; return out; }
+      const hop = out.inStaging ? { base: "main", head: "staging" } : { base: "staging", head: "development" };
+      const open = JSON.parse(await gh(["api", `repos/${R}/pulls?state=open&base=${hop.base}&head=${R.split("/")[0]}:${hop.head}`]));
+      let heldCards = [];
+      try { heldCards = ((await mcp.call("ops-knowledge", "kanban_list", { product: "ahd", q: "Auto-promote held", limit: 50 }, false)).items || []).map((c) => String(c.title || "")); } catch { /* board unreadable */ }
+      for (const p of open) {
+        const full = JSON.parse(await gh(["api", `repos/${R}/pulls/${p.number}`]));
+        const runs = JSON.parse(await gh(["api", `repos/${R}/commits/${full.head.sha}/check-runs?per_page=100`])).check_runs || [];
+        const failed = REQUIRED_CHECKS.filter((c) => runs.some((r) => r.name === c && r.status === "completed" && !["success", "skipped", "neutral"].includes(r.conclusion)));
+        const reasons = [];
+        if (full.draft) reasons.push("draft");
+        if ((full.labels || []).some((l) => l.name === "hold")) reasons.push("labelled hold");
+        if (full.mergeable_state === "dirty") reasons.push("has conflicts");
+        if (failed.length) reasons.push(`required checks failed: ${failed.join(", ")}`);
+        const card = heldCards.find((t) => t.includes(full.head.sha.slice(0, 12)));
+        if (card) reasons.push(`held card: ${card}`);
+        out.promotePrs.push({ number: p.number, from: hop.head, to: hop.base, url: full.html_url, reasons });
+        out.holds.push(...reasons.map((r) => `${hop.head} to ${hop.base} #${p.number}: ${r}`));
+      }
+      if (!out.autoPromote.enabled) out.holds.unshift(...out.autoPromote.reasons);
+      out.held = out.holds.length > 0;
+      out.note = out.held ? "The promotion is held; the owner can release it with request_promote." : "Auto-promote will ship this by itself once the required checks are green. Track it with promotion_status and a reminder; do not ask the owner.";
+      return out;
+    },
     async mergeToDevelopment({ pr }) {
       const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1]);
       if (!n) throw new Error("Not a pull request url");
@@ -118,6 +162,7 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
       return r;
     },
     githubGet: closed("GitHub"),
+    promotionStatus: closed("Promotion status"),
     mcpCall: async (server, tool, args) => {
       if (server === "ops-knowledge") throw new Error("That index is not available right now; read the code in your checkout with the shell instead.");
       return mcp.call(server, tool, args, false);

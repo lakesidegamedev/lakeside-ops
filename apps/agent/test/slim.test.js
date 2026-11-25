@@ -114,6 +114,7 @@ function fakeCtx(over = {}) {
       approval: async () => ({ recorded: true }),
       openPr: async () => ({ opened: true, url: "https://example.invalid/pull/1" }),
       mergeToDevelopment: async () => ({ merged: true }),
+      promotionStatus: async () => ({ held: true, holds: ["development to staging #1: labelled hold"], inMain: false, autoPromote: { enabled: true, reasons: [] } }),
       mcpCall: async (server, tool) => ({ server, tool }),
       mcpList: async () => [{ name: "trace_bonds" }, { name: "lean_patch" }],
     },
@@ -417,4 +418,24 @@ test("host: messages in flight when the process stopped are delivered after a re
   await again.deliver(5, []);
   assert.match(f.sessions.calls.at(-1).prompt, /lost in a restart/);
   f.toolServer.close();
+});
+
+test("request_promote: the auto-promoter ships it unless the promotion is held or a hotfix", async () => {
+  const ask = { pr: "https://github.com/o/r/pull/7557", what: "Researched methods work right away", why: "The fix is merged.", risk: "Only player companies.", evidence: "tests pass" };
+  const status = (over) => async () => ({ held: false, holds: [], inMain: false, inStaging: false, autoPromote: { enabled: true, reasons: [] }, promotePrs: [{ number: 7582 }], ...over });
+  let f = fakeCtx(); f.ctx.adapters.promotionStatus = status();
+  let r = await f.tools.request_promote.handler(ask);
+  assert.equal(r.requested, false);
+  assert.match(r.note, /Do not ask the owner/);
+  assert.equal(f.store.load(7).approvals.length, 0, "no owner ping");
+  r = await f.tools.request_promote.handler({ ...ask, hotfix_reason: "players are losing money every turn" });
+  assert.equal(r.requested, true, "a hotfix may ask");
+  f = fakeCtx(); f.ctx.adapters.promotionStatus = status({ held: true, holds: ["the auto-promote off switch is set"] });
+  assert.equal((await f.tools.request_promote.handler(ask)).requested, true, "held: ask");
+  f = fakeCtx(); f.ctx.adapters.promotionStatus = status({ inMain: true });
+  assert.match((await f.tools.request_promote.handler(ask)).note, /already on main/);
+  f = fakeCtx(); f.ctx.adapters.promotionStatus = async () => { throw new Error("gh down"); };
+  const err = await f.tools.request_promote.handler(ask);
+  assert.equal(err.requested, false);
+  assert.equal(f.store.load(7).approvals.length, 0, "never ask on a guess");
 });
