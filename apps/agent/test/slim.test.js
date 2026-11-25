@@ -468,3 +468,52 @@ test("cutover: nothing from before Keir went live is delivered, and a resolved t
   assert.equal(r.resolved, false);
   assert.equal(resolved, 0);
 });
+
+test("resolve_ticket: only after confirmation, a request to close, or 24 quiet hours after the last post", async () => {
+  const f = fakeCtx();
+  let sent = 0;
+  let clock = Date.parse("2026-11-25T19:00:00Z");
+  f.ctx.now = () => clock;
+  f.ctx.adapters.readTicket = async () => ({ status: "open" });
+  f.ctx.adapters.resolve = async () => { sent++; return { delivered: true }; };
+  let player = [{ at: "2026-11-25T14:00:00Z", text: "tech says 2036" }];
+  f.ctx.adapters.historyRead = async () => ({ events: player });
+  const s = f.store.load(7); s.lastPlayerAt = "2026-11-25T14:00:00Z"; f.store.save(s);
+  const close = { message: "Your report is closed.", basis: "fix live receipt" };
+  assert.match((await f.tools.resolve_ticket.handler(close)).note, /Post the answer/);
+  f.store.save(S.recordPost(f.store.load(7), { text: "It's live now.", kind: "update", delivered: true }, Date.parse("2026-11-25T18:58:00Z")));
+  // Two minutes after "it's live": refused (ticket 1902).
+  const early = await f.tools.resolve_ticket.handler(close);
+  assert.equal(early.resolved, false);
+  assert.match(early.note, /1440 minutes/);
+  // A made-up confirmation is refused.
+  assert.equal((await f.tools.resolve_ticket.handler({ ...close, player_confirmed: "works now, thanks" })).resolved, false);
+  // The player writes something else after the post: answer first.
+  player = [...player, { at: "2026-11-25T19:30:00Z", text: "still shows 2036 on one plant" }];
+  clock = Date.parse("2026-11-26T20:00:00Z");
+  assert.match((await f.tools.resolve_ticket.handler(close)).note, /wrote after your last post/);
+  // They confirm after a new post: allowed.
+  f.store.save(S.recordPost(f.store.load(7), { text: "That plant is fixed too.", kind: "update", delivered: true }, Date.parse("2026-11-26T20:05:00Z")));
+  player = [...player, { at: "2026-11-26T20:10:00Z", text: "Works now, thanks!" }];
+  clock = Date.parse("2026-11-26T20:11:00Z");
+  assert.equal((await f.tools.resolve_ticket.handler({ ...close, player_confirmed: "works now, thanks" })).resolved, true);
+  assert.equal(sent, 1);
+});
+
+test("resolve_ticket: 24 quiet hours, or the player asking to close", async () => {
+  const f = fakeCtx();
+  let clock = Date.parse("2026-11-26T19:01:00Z");
+  f.ctx.now = () => clock;
+  f.ctx.adapters.readTicket = async () => ({ status: "open" });
+  f.ctx.adapters.resolve = async () => ({ delivered: true });
+  f.ctx.adapters.historyRead = async () => ({ events: [{ at: "2026-11-25T14:00:00Z", text: "you can close this" }] });
+  f.store.save(S.recordPost(f.store.load(7), { text: "It's live now.", kind: "update", delivered: true }, Date.parse("2026-11-25T19:00:00Z")));
+  assert.equal((await f.tools.resolve_ticket.handler({ message: "Closed.", basis: "x" })).resolved, true, "24 quiet hours passed");
+  const g = fakeCtx();
+  g.ctx.now = () => Date.parse("2026-11-25T19:05:00Z");
+  g.ctx.adapters.readTicket = async () => ({ status: "open" });
+  g.ctx.adapters.resolve = async () => ({ delivered: true });
+  g.ctx.adapters.historyRead = async () => ({ events: [{ at: "2026-11-25T19:03:00Z", text: "All good, you can close this ticket" }] });
+  g.store.save(S.recordPost(g.store.load(7), { text: "It's live now.", kind: "update", delivered: true }, Date.parse("2026-11-25T19:00:00Z")));
+  assert.equal((await g.tools.resolve_ticket.handler({ message: "Closed.", basis: "x", player_asked_to_close: "you can close this ticket" })).resolved, true);
+});
