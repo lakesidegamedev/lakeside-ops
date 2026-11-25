@@ -157,13 +157,21 @@ function buildTools(ctx) {
         if (problems.length) return { requested: false, problems, note: "The owner reads this card. Fix the copy and ask again." };
         return approval("decision", { summary: a.question, question: a.question, options, why: a.why, changeClass: a.change_class || null });
       }),
-    tool("request_promote", "Ask the owner to put a merged fix live. Only the owner's approval starts it. The owner is not technical: plain words, no ids or code terms in what, why and risk.",
-      obj({ pr: str("the merged pull request url (shown only as a link button)"), what: str("what changes for players, one short sentence"), why: str("at most three short sentences"), risk: str("what could go wrong and who it touches, one sentence"), evidence: str("tests and checks that passed (kept in the record, not shown)") }, ["pr", "what", "why", "risk", "evidence"]),
+    tool("promotion_status", "Where a merged game fix is on its way to players: in development, staging or main, the open promote pull requests, and whether the auto-promoter is held. Use it to track a fix to live.",
+      obj({ pr: str("the fix's pull request url or number") }, ["pr"]),
+      async ({ pr }) => ctx.adapters.promotionStatus({ pr })),
+    tool("request_promote", "Ask the owner to release a held promotion. Normally the auto-promoter ships a merged fix to players by itself once checks are green: then do not ask, track it with promotion_status. Ask only when the promotion is held (auto-promote off, a held promote pull request) or for a hotfix that must skip the queue (give hotfix_reason). Plain words, no ids or code terms in what, why and risk.",
+      obj({ pr: str("the merged pull request url (shown only as a link button)"), what: str("what changes for players, one short sentence"), why: str("at most three short sentences"), risk: str("what could go wrong and who it touches, one sentence"), evidence: str("tests and checks that passed (kept in the record, not shown)"), hotfix_reason: str("only for a hotfix that must skip the normal queue: why it cannot wait") }, ["pr", "what", "why", "risk", "evidence"]),
       async (a) => {
         const blocked = writesStopped(); if (blocked) throw new Error(blocked);
+        let status;
+        try { status = await ctx.adapters.promotionStatus({ pr: a.pr }); }
+        catch (e) { return { requested: false, note: `Could not check the promotion (${e.message}). Do not ask the owner on a guess: set a reminder and check promotion_status again.` }; }
+        if (status.inMain) return { requested: false, status, note: "The fix is already on main. Nothing to approve: wait for the deploy, read the player's numbers, then tell them." };
+        if (!status.held && !String(a.hotfix_reason || "").trim()) return { requested: false, status, note: "Auto-promote ships this by itself once checks are green. Do not ask the owner. Track it with promotion_status and a reminder, and tell the player when it is live and you have read their numbers." };
         const problems = ownercopy.checkOwnerCopy({ what: a.what, why: a.why, risk: a.risk });
         if (problems.length) return { requested: false, problems, note: "The owner reads this card: plain words, no ids or code terms. Fix the copy and ask again." };
-        return approval("promote", { summary: `Put live: ${a.what}`, ...a });
+        return approval("promote", { summary: `Put live: ${a.what}`, ...a, holds: status.holds || [] });
       }),
     tool("request_compensation", "Ask the owner to approve a payment to the player. Payment runs only through the owner. The owner is not technical: plain words, no ids or code terms.",
       obj({ amount: str("amount with currency"), recipient: str("character or company to pay"), basis: str("how the amount was worked out, one or two sentences"), evidence: str("what happened to the player, at most three short sentences") }, ["amount", "recipient", "basis", "evidence"]),
