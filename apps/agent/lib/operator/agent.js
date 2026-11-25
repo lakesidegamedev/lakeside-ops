@@ -235,7 +235,6 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
   const fastLane = config.fastLane === true ? require("./fastlane").createFastLane({
     ledger, broker, config, fetcher: config.fetch || fetch,
     numbersIn: (t) => require("./knowledge").numbersIn(t),
-    tagIntake: config.tagIntake || require("./jevgate").tagIntake,
     recordUsage: (job, r) => {
       try {
         fs.appendFileSync(usageFile, JSON.stringify({ event: "activation", at: new Date().toISOString(), job: job.id, kind: job.kind, ticket: job.ticket || null,
@@ -439,7 +438,7 @@ function createAgent({ ledger, broker, config, spawnImpl = spawn, invokeImpl = i
       try {
         const tags = chatContext.literalGreeting(job)
           ? { kind: "banter", kindConfidence: 1, complexity: "trivial", contextProfile: "minimal", model: null, via: "literal-greeting", at: Date.now() }
-          : await (config.tagIntake || require("./jevgate").tagIntake)(job);
+          : null;
         if (tags) { job.tags = tags; ledger.audit("intake_tagged", { job: job.id, ticket: job.ticket, tags }); }
       } catch {}
     }
