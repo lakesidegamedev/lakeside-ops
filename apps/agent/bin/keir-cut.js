@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const newer = (a, b) => { const x = a.split(".").map(Number), y = b.split(".").map(Number); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
-const CRATES = ["harness-core", "harness-runner", "harness-store", "keir-shadow-rs", "lakeside"];
+const CRATES = ["harness-core", "harness-runner", "harness-store", "lakeside"];
 
 // files: { changelog, pkg, lock, cargo, cargoLock } as text. Returns updated texts.
 function cut(files, version, date) {

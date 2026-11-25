@@ -18,10 +18,9 @@ through pull requests Keir opens there.
 | `keir-operator` | `operator.js` | Durable owner operator and support desk: tickets, owner commands, decisions, publishing, releases |
 | `keir-summon` | `server.js` | Discord `/summon` edge, forwards pokes to the operator |
 | `keir-inbox` | `inbox.js` | Owner DM inbox and reward claims (ops dashboard `/inbox`) |
-| `keir-shadow-rs.timer` | `rust/bins/keir-shadow-rs` | Rust harness shadow pass every ten minutes, published to the ops dashboard |
 | `lakeside-agent` CLI | `rust/bins/lakeside` | Raw task harness; root `lakeside` is the product setup/client CLI |
 
-The live Keir hub is an ops dashboard page, `/keir` (LSGD-ops-dash `keir-hub-*.js`), reading this operator's ledger, usage log, harness database and shadow report.
+The live Keir hub is an ops dashboard page, `/keir` (LSGD-ops-dash `keir-hub-*.js`), reading this operator's ledger, usage log, and harness database.
 
 All units run from a pinned release under `/opt/keir/current` (Node) and
 `/opt/keir/bin` (Rust). Merging to `main` changes nothing live until a release is cut.
@@ -36,7 +35,7 @@ All units run from a pinned release under `/opt/keir/current` (Node) and
   task graph, routing with provider capabilities and data classes, outcome labels,
   metrics), `harness-store` (ledger and event-sink readers, `harness.db`, MCP
   client), `harness-runner` (per-attempt loopback MCP endpoint, tool backends,
-  subscription CLI invocations, traces, admission), `keir-shadow-rs`, `lakeside`.
+  subscription CLI invocations, traces, admission), `lakeside`.
 - **Runner split**: subscriptions only, so each provider CLI (Claude, Codex, Muse,
   Antigravity) owns its model loop with built-in tools off; the harness serves the
   tools over a loopback MCP endpoint and keeps the trace. `KEIR_RUST_RUNNER_LANES`
@@ -55,7 +54,7 @@ operator.js  server.js  inbox.js   entry points
 lib/operator/                     broker, agent, providers, publisher, gates, decisions, store
 lib/inbox/                        inbox ingestion and discovery
 test/                             node:test suites (KEIR_JEV=off, no network)
-rust/                             Cargo workspace: crates/{harness-core,harness-store,harness-runner}, bins/{keir-shadow-rs,lakeside}, deploy/
+rust/                             Cargo workspace: crates/{harness-core,harness-store,harness-runner}, bins/lakeside, deploy/
 deploy/                           release.sh, install.sh, systemd units and env examples
 bin/                              operator scripts (handoff, scores, lessons)
 assets/                           chart fonts and marks
