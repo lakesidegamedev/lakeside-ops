@@ -10,7 +10,7 @@ const { createBroker } = require("../lib/operator/broker");
 function setup({ reporter = { username: "linked_player" } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir902-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
   const mcp = { servers: () => ["support", "heal-ops"], list: async () => [], call: async (...a) => {
     calls.push(a);

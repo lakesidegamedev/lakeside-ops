@@ -13,7 +13,7 @@ const CH = "777777777777777777";
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir111fg-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntake: 5, readyReads: false };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntake: 5, readyReads: false };
   const calls = [];
   const names = ["market_history", "commodity_market", "country_fiscal", "reporter_operating_results", "reporter_action_points", "trace_corp"];
   const mcp = { servers: () => ["support", "gamestate", "ops-knowledge", "heal-ops"],

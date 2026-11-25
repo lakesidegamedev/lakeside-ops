@@ -29,7 +29,7 @@ async function fixture(t, { offline = false } = {}) {
   const now = () => clock;
   const state = { offline, claim: null, discordWrites: [], drains: 0 };
   const config = { ownerId: OWNER, staffIds: [STAFF], botId: BOT, guildId: GUILD, scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4,
-    stateDir: dir, repositories: {}, screenOutgoing: async () => ({ labels: [], refuse: null }) };
+    stateDir: dir, repositories: {} };
   const supportOwner = createSupportOwner({ ledger, now });
   config.supportDeferred = (job) => supportOwner.deferred(job);
   const discord = async (method, route) => {

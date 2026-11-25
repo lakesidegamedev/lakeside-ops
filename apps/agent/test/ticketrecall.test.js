@@ -108,7 +108,7 @@ test("a recalled not-verified note does not satisfy the code lookup rule", async
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const CH = "777777777777777777";
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 1 };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 1 };
   const calls = [];
   const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => [], call: async (...a) => { calls.push(a); return {}; } };
   const discord = async (_m, url) => (String(url).includes("/guilds/") ? [{ id: CH, name: "ticket-bug-fixture-123" }] : []);

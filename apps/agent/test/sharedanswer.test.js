@@ -16,7 +16,7 @@ const ANSWER_A = "The tile was reading the offer instead of the sales, so that i
 function setup({ search = [] } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sharedanswer-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
   const mcp = { servers: () => ["support"], list: async () => [], call: async (server, tool, args) => {
     calls.push([tool, args]);

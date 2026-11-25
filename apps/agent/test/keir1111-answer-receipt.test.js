@@ -37,7 +37,7 @@ function setup({ rows = baseRows(), ticket = ticketRecord(), at = ANSWER_AT + 10
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir-answer-receipt-")); dirs.push(dir);
   const ledger = createLedger(path.join(dir, "ledger.json"));
   const config = { ownerId: OWNER, staffIds: [STAFF], botId: BOT, guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 60 * MIN,
-    maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false, screenOutgoing: async () => ({ labels: [], refuse: null }) };
+    maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
   const mcp = { servers: () => ["support"], list: async () => ["support_public_update", "support_resolve"].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })),
     call: async (_server, tool, args) => {

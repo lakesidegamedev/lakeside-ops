@@ -5,16 +5,12 @@
 // fails open: no key, a timeout or an unsure answer means "no verdict", and
 // nothing is refused on a marginal probability.
 //
-// Three gates:
+// Two gates:
 // - tagIntake: one bundled call per task on its first activation. Work kind,
 //   whether the screenshot matters, economy exposure, urgency, player mood,
 //   complexity and an instruction-injection flag. Tags ride in the activation
 //   context, steer effort and vision routing, and land in the event sink as
 //   `intake_tagged` for analytics.
-// - screenOutgoing: one bundled call per ticket post. Semantic leaks the regex
-//   gates cannot see (internals, model talk), stated certainty without a
-//   receipt, talking past the player, tone. Decisive leaks refuse; the rest
-//   are recorded as proposed friction labels, never acted on alone.
 // - screenInbound: injection or authority claims in player text.
 
 const JEV = "/root/bin/lib/jev.mjs";
@@ -73,27 +69,6 @@ async function tagIntake(job, { ask = defaultAsk, timeoutMs = 6000, now = () => 
   return tags;
 }
 
-// Draft screening. Returns { refuse: string|null, labels: [...] }.
-async function screenOutgoing({ text, request = "", ticket = null, ask = defaultAsk, timeoutMs = 4000 }) {
-  const out = await ask({
-    state: { ticket, request: String(request || "").slice(0, 800), draft: String(text || "").slice(0, 1500) },
-    questions: {
-      leaksInternals: { type: "noul", instructions: "Does the draft expose anything a player should not see?", criteria: { true: "It names files, code, repositories, branches, servers, dashboards, tools, AI models, providers, sessions, errors or limits on the bot's side, or another player's private data.", false: "It speaks only about the game and the player's own issue in plain words." } },
-      certaintyWithoutReceipt: { type: "noul", instructions: "Does the draft state as settled fact that something is fixed, live, refunded or changed?", criteria: { true: "It asserts a completed outcome (fixed, live, paid back, now works) as fact.", false: "It describes a finding, a plan, a stage (being built, in testing) or asks something." } },
-      talksPast: { type: "noul", instructions: "Does the draft fail to address what the player actually asked or reported?", criteria: { true: "It answers a different question, restates the problem without progress, or ignores the request.", false: "It responds to the request with a finding, an answer, a next step or a question." } },
-      tone: { type: "noul", instructions: "Is the tone wrong for a player support reply?", criteria: { true: "It is condescending, dismissive, defensive, jargon-heavy, or blames the player.", false: "It is plain, respectful and direct." } },
-    },
-    timeoutMs,
-  }).catch(() => null);
-  if (!out?.answers) return { refuse: null, labels: [], model: null };
-  const p = (k) => { const n = Number(out.answers[k]?.noul); return Number.isFinite(n) ? n : null; };
-  const labels = [];
-  for (const k of ["leaksInternals", "certaintyWithoutReceipt", "talksPast", "tone"]) { const v = p(k); if (v !== null && v >= 0.65) labels.push({ label: k, probability: Number(v.toFixed(2)) }); }
-  const leak = p("leaksInternals");
-  const refuse = leak !== null && leak >= 0.85 ? "Not posted: this reads as exposing something on Keir's side (files, tools, models, servers or another player's data). Rewrite it about the player's own issue only." : null;
-  return { refuse, labels, model: out.model || null };
-}
-
 async function screenInbound({ text, ask = defaultAsk, timeoutMs = 4000 }) {
   const out = await ask({
     state: { text: String(text || "").slice(0, 1500) },
@@ -106,4 +81,4 @@ async function screenInbound({ text, ask = defaultAsk, timeoutMs = 4000 }) {
   return Number.isFinite(n) ? { injection: n >= 0.75, probability: n } : null;
 }
 
-module.exports = { tagIntake, screenOutgoing, screenInbound, KINDS, URGENCY, MOOD, COMPLEXITY };
+module.exports = { tagIntake, screenInbound, KINDS, URGENCY, MOOD, COMPLEXITY };

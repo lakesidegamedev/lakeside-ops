@@ -1249,29 +1249,13 @@ function createBroker({ killSwitch = null, limits = null, ledger, config, mcp, d
       const clash = sharedAnswer.contradiction(message, { ticket: reuse.from, answer: reuse.answer });
       if (clash) { reuse.refused = true; ledger.audit("shared_answer_contradiction_refused", { job: job.id, ticket: ticketNo, from: reuse.from }); ledger.save(); throw Object.assign(new Error(clash), { screened: true }); }
     }
-    // Keir 4.0: a typed semantic read of the draft (Jev). Decisive leaks are
-    // refused; everything else is a proposed label in the event sink.
-    try {
-      const screen = await (config.screenOutgoing || require("./jevgate").screenOutgoing)({ text: message, request: String(job.source?.content || "").slice(0, 800), ticket: ticketNo });
-      if (screen.labels.length || screen.refuse) ledger.audit("post_screened", { job: job.id, ticket: ticketNo, labels: screen.labels, refused: Boolean(screen.refuse), model: screen.model });
-      if (screen.refuse) throw Object.assign(new Error(screen.refuse), { screened: true });
-      // Keir 8.2: ten drafts on 2026-11-05 scored 0.95 to 0.97 for asserting an outcome as settled
-      // and went out anyway; one was reported wrong by the player. Without a verified receipt, refuse.
-      // Keir guardrails (2026-11-22): the semantic flag no longer yields to "any verified release on the ticket". An outcome claim
-      // needs a read of the player's own record in this activation; the per-claim check above covers the sentences it can parse.
-      const certain = screen.labels.find((l) => l.label === "certaintyWithoutReceipt" && l.probability >= 0.9);
-      if (certain && !opts.system && playerFacing(job) && job.role !== "player" && !job.ownRecordRead && !guardrails.entityRead(job.evidenceText, job.reporterCharacter)) {
-        ledger.audit("certainty_refused", { job: job.id, ticket: ticketNo, probability: certain.probability });
-        throw Object.assign(new Error("Not posted: this states an outcome (fixed, live, changed, paid) as settled fact, and no read in this activation shows a record for this player's own character or company. Read their own record first, then say what it shows and which turn, or say you have not confirmed it."), { screened: true });
-      }
-    } catch (e) { if (e.screened) throw e; }
     await guardNeedlessClarification(job, ticketNo, message);
     if (!require("./advicerouting").requiresRedirect(job, d)) await ensureDisclosure(ticketNo);
     return message;
   }
   // Keir 10 claim check: check_draft runs every content guard a real post runs, against a draft, and lists all the problems at
   // once with a fix for each. It posts nothing, records nothing, spends no post budget and leaves every refusal counter as it was,
-  // so the answer it gives is the answer the real post will get (the outgoing semantic screen runs only on the real post).
+  // so the answer it gives is the answer the real post will get.
   const DRAFT_STATE = ["ruleLookupRefusals", "ruleLookupRefused", "inclusionRefusals", "readClaimRefusals", "bugClaimRefusals", "accountClaimRefusals", "settingClaimRefusals", "identityAskRefusals", "numberCheckRefused", "numberCheckGaveUp", "sharedAnswers", "ticketSymptoms"];
   const DRAFT_FIXES = {
     length: "Cut it to at most five short sentences: the answer first, then what happens next. The detail goes on the status card note.",

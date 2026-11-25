@@ -10,7 +10,7 @@ const ticketDiscord = async (_method, url) => (String(url).includes("/guilds/") 
 function setup(over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir10-post-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, ...(over.config || {}) };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, ...(over.config || {}) };
   const calls = [];
   const handler = over.call || (async () => ({ ok: true, id: "card-9", hits: [], delivery: { posted: true, delivery: { status: "posted" } } }));
   const mcp = {

@@ -11,7 +11,7 @@ const { refusal } = require("../lib/operator/ticketquality");
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir82-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false, stateDir: dir, repositories: {}, watched: () => false };
   const calls = [];
   const state = { fail: false };
   const mcp = { servers: () => ["support"], list: async () => [], call: async (...a) => { calls.push(a); if (a[1] === "kanban_add") { if (state.fail) throw new Error("kanban down"); return { id: "card-1" }; } return { ok: true, delivery: { posted: true, delivery: { status: "posted" } } }; } };

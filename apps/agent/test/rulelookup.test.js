@@ -93,7 +93,7 @@ const ticketDiscord = async (_method, url) => (String(url).includes("/guilds/") 
 function setup() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "keir9-rule-"));
   const ledger = createLedger(path.join(dir, "ledger.json"));
-  const config = { screenOutgoing: async () => ({ labels: [], refuse: null }), ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false };
+  const config = { ownerId: "111111111111111111", staffIds: ["222222222222222222"], botId: "333333333333333333", guildId: "444444444444444444", scanChannels: [], taskLifetimeMs: 86400000, closeGraceMs: 3600000, maxIntakePerHour: 4, supportDeferred: () => false };
   const calls = [], state = { codeFail: false, codeEmpty: false };
   const mcp = { servers: () => ["support", "ops-knowledge"], list: async () => ["support_public_update", "support_resolve", "code_search"].map((name) => ({ name, inputSchema: { type: "object", additionalProperties: true } })), call: async (...a) => { calls.push(a); if (a[1] === "code_search" || a[1] === "code_exact") { if (state.codeFail) throw new Error("code index unavailable"); return { hits: state.codeEmpty ? [] : [{ path: "src/rules.ts", source: "code", text: "x" }] }; } return { ok: true, id: "card-9", hits: [], delivery: { posted: true, delivery: { status: "posted" } } }; } };
   let clock = 10 * 3600000;
