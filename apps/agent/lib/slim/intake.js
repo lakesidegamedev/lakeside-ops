@@ -50,7 +50,10 @@ async function readAll(mcp, n) {
  * One poll. Returns [{ ticket, events, intro?, takeover?, names }] to deliver.
  * `started` marks the intake's first poll: tickets seen then are taken over.
  */
-async function poll({ mcp, cfg, state, first }) {
+async function poll({ mcp, cfg, state, first, now = Date.now() }) {
+  // Nothing that happened before Keir went live is ever delivered or acted on.
+  state.data.liveSince ||= new Date(now).toISOString();
+  const live = Date.parse(state.data.liveSince);
   const list = await mcp.call("support", "support_list", { kind: "ticket", openOnly: true, limit: 60 }, false);
   const open = (list.items || []).filter((t) => t.kind === "ticket" && !SKIP_CATEGORIES.has(String(t.category || "").toLowerCase()));
   const out = [];
@@ -71,7 +74,12 @@ async function poll({ mcp, cfg, state, first }) {
           events: [{ role: "system", at: new Date().toISOString(), text: "You are taking over this ticket now. Earlier messages and replies (by the support team) are in its history: read it with history_read and ticket_read before doing anything, and do not repeat what was already said." }] });
       } else {
         state.data.tickets[n] = { seen: ids, open: true, since: new Date().toISOString() };
-        out.push({ ticket: n, names, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`, events: humans });
+        const opened = Date.parse(h.opened || h.events[0]?.at || 0);
+        // A ticket new to Keir that opened before it went live is a takeover, never a replay of old messages.
+        const recent = humans.filter((e) => Date.parse(e.at) >= live);
+        if (opened < live) out.push({ ticket: n, names, takeover: true, lastHumanAt: humans[humans.length - 1]?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`,
+          events: [{ role: "system", at: new Date(now).toISOString(), text: "You are taking over this ticket now. Earlier messages and replies (by the support team) are in its history: read it with history_read and ticket_read before doing anything, and do not repeat what was already said." }, ...recent] });
+        else out.push({ ticket: n, names, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`, events: humans });
       }
       continue;
     }
@@ -81,7 +89,7 @@ async function poll({ mcp, cfg, state, first }) {
     if (!fresh.length) continue;
     known.seen.push(...fresh.map((e) => e.id));
     if (known.seen.length > 5000) known.seen = known.seen.slice(-5000);
-    const events = fresh.map((e) => eventFor(e, cfg)).filter(Boolean);
+    const events = fresh.filter((e) => Date.parse(e.at) >= live).map((e) => eventFor(e, cfg)).filter(Boolean);
     if (events.length) out.push({ ticket: n, names, events });
   }
   state.save();
