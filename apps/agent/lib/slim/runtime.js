@@ -21,20 +21,6 @@ function createMcpClient(cfg) {
   return createSlimMcp({ configFile: cfg.mcpConfig, readToken: readAgentToken(cfg.agentEnvFile), gate: (what) => { if (cfg.mode !== "live") throw new Error(`${what} is refused outside live mode`); killSwitch.assertClear(what); } });
 }
 
-/** An approval card for the owner, as plain multiple choice where it applies. */
-function approvalCard({ ticket, kind, id, payload }) {
-  const lines = [`Keir needs you on ticket ${ticket} (${kind}, ${id})`];
-  if (kind === "decision") {
-    lines.push(payload.question, ...payload.options.map((o, i) => `${String.fromCharCode(65 + i)}) ${o}`), `Why: ${payload.why}`);
-  } else if (kind === "compensation") {
-    lines.push(`Pay ${payload.amount} to ${payload.recipient}`, `Basis: ${payload.basis}`, `Evidence: ${payload.evidence}`);
-  } else if (kind === "promote") {
-    lines.push(`Put live: ${payload.what}`, `Fix: ${payload.pr}`, `Why: ${payload.why}`, `Risk: ${payload.risk}`, `Checks: ${payload.evidence}`);
-  }
-  lines.push(kind === "decision" ? "Reply to this message with the letter (A, B ...), or your own answer." : "Reply to this message: yes or no (anything else is passed on as your answer).");
-  return lines.join("\n").slice(0, 1900);
-}
-
 /** One game checkout per ticket, on development. Code is written only here. */
 function liveCheckout(cfg) {
   return (ticket) => {
@@ -66,12 +52,9 @@ function createRuntime({ env = process.env, mode, replay, onWake, log = console.
   const sessions = injectedSessions || createCodexSessions({ stateDir: cfg.stateDir, model: cfg.model, effort: cfg.effort, compactTokens: cfg.autoCompactTokens, codexBin: cfg.codexBin || undefined });
   const toolServer = createSlimToolServer();
   const checkout = cfg.mode === "replay" ? () => replay.checkout : liveCheckout(cfg);
-  const notifyOwner = injectedNotify || (async (req) => {
-    const channel = env.KEIR_SLIM_APPROVAL_CHANNEL;
-    if (!channel) return { sent: false, reason: "KEIR_SLIM_APPROVAL_CHANNEL is not set" };
-    await client.call("discord", "discord_send", { channel, content: approvalCard(req) }, true);
-    return { sent: true };
-  });
+  // Approval cards go through the injected notifier (the owner's direct messages, bin/keir-slim-serve.js).
+  const notifyOwner = injectedNotify || (async () => ({ sent: false, reason: "no owner notifier configured" }));
+
   const adaptersFor = (ticket) => cfg.mode === "replay"
     ? createReplayAdapters({ mcp: client, ticket, getCursor: replay.getCursor, history: replay.history })
     : createLiveAdapters({ mcp: client, cfg, ticketCheckout: checkout, notifyOwner });
@@ -85,4 +68,4 @@ function createRuntime({ env = process.env, mode, replay, onWake, log = console.
   return { cfg, host, store, killSwitch, toolServer, close: () => toolServer.close() };
 }
 
-module.exports = { createRuntime, approvalCard, liveCheckout };
+module.exports = { createRuntime, liveCheckout };

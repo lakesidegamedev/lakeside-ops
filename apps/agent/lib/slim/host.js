@@ -44,6 +44,14 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
   const pendingFile = (n) => path.join(pendingDir, `ticket-${Number(n)}.json`);
   const loadPending = (n) => { try { return JSON.parse(fs.readFileSync(pendingFile(n), "utf8")); } catch { return []; } };
   const savePending = (n, list) => fs.writeFileSync(pendingFile(n), JSON.stringify(list), { mode: 0o600 });
+  // Messages being worked when the process stopped go back to pending, so a
+  // restart in the middle of a wake loses nothing.
+  const inflightFile = (n) => path.join(pendingDir, `inflight-${Number(n)}.json`);
+  for (const f of fs.readdirSync(pendingDir).filter((x) => /^inflight-\d+\.json$/.test(x))) {
+    const n = Number(f.match(/\d+/)[0]);
+    try { savePending(n, [...JSON.parse(fs.readFileSync(path.join(pendingDir, f), "utf8")), ...loadPending(n)]); } catch { /* unreadable: dropped */ }
+    fs.rmSync(path.join(pendingDir, f), { force: true });
+  }
 
   /** Queue events for a ticket and wake its session when allowed. */
   function deliver(ticket, events, opts = {}) {
@@ -74,6 +82,7 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
       return { ticket: n, skipped: "budget" };
     }
     savePending(n, []);
+    fs.writeFileSync(inflightFile(n), JSON.stringify(queued), { mode: 0o600 });
 
     const ctx = { ticket: n, cfg, store, adapters: adaptersFor(n), killSwitch, now, effects: [], ruleHits: [], finished: null, playerNames: () => store.load(n).playerNames || [], ownerSpoke: queued.some((e) => e.role === "owner") };
     const tools = buildTools(ctx);
@@ -98,6 +107,7 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
       log(`[keir-slim] ticket ${n} wake failed: ${e.message}`);
     } finally {
       endpoint.close();
+      fs.rmSync(inflightFile(n), { force: true });
     }
     const minutes = (now() - started) / 60000;
     state = store.load(n);
