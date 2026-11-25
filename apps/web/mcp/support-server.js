@@ -135,6 +135,11 @@ async function main() {
   await tokens.ensureIndexes(db);
   const Tickets = db.collection("tickets"), Suggestions = db.collection("suggestions"), Assessments = db.collection("assessments");
   const TrackerItems = db.collection(merge.TRACKER_COLLECTION);
+  // Durable ticket history: every message, post, finding and resolution,
+  // kept after Discord deletes the channel (Keir slim-down stage 1).
+  const history = require("./support-history");
+  const historyCfg = history.configFromEnv();
+  history.startRecorder(db, historyCfg);
 
   async function getAssessment(kind, number) {
     return Assessments.findOne({ targetType: kind, displayNumber: number }, { sort: { createdAt: -1 } });
@@ -538,6 +543,9 @@ async function main() {
             ...(reply_to && delivery_mode === "reply" ? { replyTo: reply_to } : {}),
           });
         }
+        // The ticket record keeps neither who posted nor a ticket-only reply's
+        // exact text; the history does. Never blocks the post itself.
+        await history.notePost(db, { ticketNumber: number, key: updateKey, by: auth.name || "agent", text: String(message).trim().slice(0, 1400), updateKind: update_kind, deliveryMode: delivery_mode, ticketOnly: narrow, at: now }).catch((e) => console.error(`[ticket-history] post ${number}: ${e.message}`));
         return jsonResult({
           ok: true,
           kind: "ticket",
@@ -605,6 +613,7 @@ async function main() {
     registerReopen(server, { auth, Tickets, TrackerItems, z, jsonResult, errorResult, ticketPublicUrl });
 
     registerMerge(server, { auth, Tickets, z, jsonResult, errorResult });
+    history.registerHistoryTools(server, { db, z, jsonResult, errorResult, cfg: historyCfg });
     return server;
   }
 
