@@ -118,6 +118,10 @@ function buildTools(ctx) {
       obj({ message: str("plain summary for the player"), actions: strList("what was done, in player words", 8), follow_up: str("what they should do next, if anything"), basis: str("the reads and receipts behind it") }, ["message", "basis"]),
       async (a) => {
         const blocked = writesStopped(); if (blocked) throw new Error(blocked);
+        // A ticket already resolved is never resolved (and its receipt never sent) again from here.
+        let current = null;
+        try { current = await ctx.adapters.readTicket(ctx.ticket); } catch { /* unreadable: the support service still guards */ }
+        if (current && ["resolved", "closed"].includes(String(current.status || "").toLowerCase())) return { resolved: false, note: "This ticket is already resolved. Nothing was sent." };
         const text = rules.shape([a.message, ...(a.actions || []), a.follow_up || ""].join("\n"));
         const check = rules.checkPost(text, ruleCtx("resolution"));
         if (!check.ok) { ctx.ruleHits.push(...check.problems.map((p) => ({ ...p, tool: "resolve_ticket", at: new Date(ctx.now()).toISOString() }))); return refuse(check.problems); }

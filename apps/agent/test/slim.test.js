@@ -312,15 +312,15 @@ test("intake: takeover on first poll, new messages after, moderation never", asy
     return { title: "x", reporter: "v", character: "Vincent", events: events[a.number] || [] };
   } };
   const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
-  const one = await intake.poll({ mcp, cfg, state, first: true });
+  const one = await intake.poll({ mcp, cfg, state, first: true, now: Date.parse("2026-11-25T14:40:00Z") });
   assert.equal(one.length, 1);
   assert.equal(one[0].ticket, 1902);
   assert.equal(one[0].takeover, true);
   assert.equal(one[0].lastHumanAt, "2026-11-25T14:38:21.000Z");
-  assert.equal((await intake.poll({ mcp, cfg, state, first: false })).length, 0, "nothing new");
+  assert.equal((await intake.poll({ mcp, cfg, state, first: false, now: Date.parse("2026-11-25T14:41:00Z") })).length, 0, "nothing new");
   events[1902].push({ id: "1902:m2", kind: "staff_message", who: "staff egg3901", authorId: "100", at: "2026-11-25T15:00:00Z", text: "owner here" });
   events[1903] = [{ id: "1903:opened", kind: "opened", who: "player a", at: "2026-11-25T16:00:00Z", text: "t" }, { id: "1903:m1", kind: "player_message", who: "player a", at: "2026-11-25T16:00:01Z", text: "help" }];
-  const two = await intake.poll({ mcp, cfg, state, first: false });
+  const two = await intake.poll({ mcp, cfg, state, first: false, now: Date.parse("2026-11-25T14:41:00Z") });
   assert.deepEqual(two.map((x) => [x.ticket, x.events.map((e) => e.role)]), [[1902, ["owner"]], [1903, ["player"]]]);
   assert.equal(intake.roleFor({ kind: "staff_message", who: "staff egg3901" }, cfg), "owner", "owner by handle when no id");
   assert.equal(intake.roleFor({ kind: "staff_message", who: "staff other", authorId: "5" }, cfg), "staff");
@@ -438,4 +438,33 @@ test("request_promote: the auto-promoter ships it unless the promotion is held o
   const err = await f.tools.request_promote.handler(ask);
   assert.equal(err.requested, false);
   assert.equal(f.store.load(7).approvals.length, 0, "never ask on a guess");
+});
+
+test("cutover: nothing from before Keir went live is delivered, and a resolved ticket is never resolved again", async () => {
+  const intake = require("../lib/slim/intake");
+  const cfg = { ownerIds: [], ownerHandles: [] };
+  const events = { 5: [{ id: "5:opened", kind: "opened", who: "player a", at: "2026-11-25T10:00:00Z", text: "t" }, { id: "5:m1", kind: "player_message", who: "player a", at: "2026-11-25T10:00:01Z", text: "old" }] };
+  const items = [{ kind: "ticket", number: 5, category: "bug" }];
+  const mcp = { call: async (s, tool, a) => (tool === "support_list" ? { items } : { title: "x", opened: events[a.number][0].at, events: events[a.number] }) };
+  const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
+  const now = Date.parse("2026-11-25T18:00:00Z");
+  assert.equal((await intake.poll({ mcp, cfg, state, first: true, now })).length, 1);
+  // A later poll that finds an old event for the first time (a backfilled or late record) does not deliver it.
+  events[5].push({ id: "5:m0", kind: "player_message", who: "player a", at: "2026-11-25T09:00:00Z", text: "backfilled earlier message" });
+  assert.equal((await intake.poll({ mcp, cfg, state, first: false, now })).length, 0);
+  // A ticket Keir sees for the first time after start that opened before go-live is a takeover, not a replay.
+  items.push({ kind: "ticket", number: 6, category: "bug" });
+  events[6] = [{ id: "6:opened", kind: "opened", who: "player b", at: "2026-10-20T00:00:00Z", text: "t" }, { id: "6:m1", kind: "player_message", who: "player b", at: "2026-10-20T00:00:01Z", text: "from october" }];
+  const late = await intake.poll({ mcp, cfg, state, first: false, now });
+  assert.equal(late[0].ticket, 6);
+  assert.equal(late[0].takeover, true);
+  assert.ok(!late[0].events.some((e) => /from october/.test(e.text)));
+  // resolve_ticket on an already resolved ticket sends nothing.
+  const f = fakeCtx();
+  let resolved = 0;
+  f.ctx.adapters.readTicket = async () => ({ status: "resolved" });
+  f.ctx.adapters.resolve = async () => { resolved++; return { delivered: true }; };
+  const r = await f.tools.resolve_ticket.handler({ message: "Your report is closed.", basis: "x" });
+  assert.equal(r.resolved, false);
+  assert.equal(resolved, 0);
 });
