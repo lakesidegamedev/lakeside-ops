@@ -36,6 +36,12 @@ function slimConfig(env = process.env) {
     gameRepoSlug: env.KEIR_SLIM_GAME_REPO_SLUG || "lakesidegamedev/AHDGame",
     worktreeRoot: env.KEIR_SLIM_WORKTREE_ROOT || path.join(stateDir, "worktrees"),
     ownerIds: list(env.KEIR_OWNER_ID),
+    // Discord handles of the owner, used only when a message has no author id.
+    ownerHandles: list(env.KEIR_SLIM_OWNER_HANDLES),
+    // The owner's direct-message channel with Keir's bot: approval cards go here.
+    ownerDmChannel: env.KEIR_SLIM_OWNER_DM_CHANNEL || "",
+    pollMs: Math.max(5000, Number(env.KEIR_SLIM_POLL_MS) || 20000),
+    maxConcurrentWakes: Math.max(1, Number(env.KEIR_SLIM_MAX_WAKES) || 3),
     // Names that refer to the owner in player copy. The owner's own name never goes in a post.
     ownerNames: list(env.KEIR_SLIM_OWNER_NAMES || "the owner"),
     ownerPrivateNames: list(env.KEIR_SLIM_OWNER_PRIVATE_NAMES),

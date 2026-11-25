@@ -301,3 +301,46 @@ test("slim MCP client: SSE responses parse, writes pass the gate, reads retry on
   await assert.rejects(m.call("s", "t", {}, true), /refused/);
   await assert.rejects(m.call("remote", "t", {}), /no local MCP server/);
 });
+
+test("intake: takeover on first poll, new messages after, moderation never", async () => {
+  const intake = require("../lib/slim/intake");
+  const cfg = { ownerIds: ["100"], ownerHandles: ["egg3901"] };
+  let events = { 1902: [{ id: "1902:opened", kind: "opened", who: "player v", at: "2026-11-25T14:38:20Z", text: "t" }, { id: "1902:m1", kind: "player_message", who: "player v", at: "2026-11-25T14:38:21Z", text: "hi" }] };
+  const mcp = { call: async (s, tool, a) => {
+    if (tool === "support_list") return { items: [{ kind: "ticket", number: 1902, category: "bug" }, { kind: "ticket", number: 1901, category: "moderation" }, ...(events[1903] ? [{ kind: "ticket", number: 1903, category: "bug" }] : [])] };
+    return { title: "x", reporter: "v", character: "Vincent", events: events[a.number] || [] };
+  } };
+  const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
+  const one = await intake.poll({ mcp, cfg, state, first: true });
+  assert.equal(one.length, 1);
+  assert.equal(one[0].ticket, 1902);
+  assert.equal(one[0].takeover, true);
+  assert.equal(one[0].lastHumanAt, "2026-11-25T14:38:21.000Z");
+  assert.equal((await intake.poll({ mcp, cfg, state, first: false })).length, 0, "nothing new");
+  events[1902].push({ id: "1902:m2", kind: "staff_message", who: "staff egg3901", authorId: "100", at: "2026-11-25T15:00:00Z", text: "owner here" });
+  events[1903] = [{ id: "1903:opened", kind: "opened", who: "player a", at: "2026-11-25T16:00:00Z", text: "t" }, { id: "1903:m1", kind: "player_message", who: "player a", at: "2026-11-25T16:00:01Z", text: "help" }];
+  const two = await intake.poll({ mcp, cfg, state, first: false });
+  assert.deepEqual(two.map((x) => [x.ticket, x.events.map((e) => e.role)]), [[1902, ["owner"]], [1903, ["player"]]]);
+  assert.equal(intake.roleFor({ kind: "staff_message", who: "staff egg3901" }, cfg), "owner", "owner by handle when no id");
+  assert.equal(intake.roleFor({ kind: "staff_message", who: "staff other", authorId: "5" }, cfg), "staff");
+  assert.equal(intake.roleFor({ kind: "system_message" }, cfg), null);
+});
+
+test("owner answers: letters pick decision options; yes and no", () => {
+  const { parseAnswer } = require("../lib/slim/owner-dm");
+  const dec = { kind: "decision", payload: { options: ["Cash", "Rebuild"] } };
+  assert.deepEqual(parseAnswer("B", dec), { status: "answered", text: "B) Rebuild" });
+  assert.deepEqual(parseAnswer("decision-1a2b3c4d5e a, but quick", dec).text, "A) Cash (, but quick)");
+  assert.equal(parseAnswer("yes do it", { kind: "promote" }).status, "approved");
+  assert.equal(parseAnswer("no, wait for the reset", { kind: "compensation" }).status, "declined");
+  assert.equal(parseAnswer("pay half", { kind: "compensation" }).status, "answered");
+});
+
+test("record_owner_answer only when the owner wrote this wake", async () => {
+  const f = fakeCtx();
+  const r = await f.tools.request_compensation.handler({ amount: "CA$1", recipient: "x", basis: "b", evidence: "e" });
+  await assert.rejects(f.tools.record_owner_answer.handler({ approval_id: r.id, status: "approved", answer: "yes" }), /Only when the owner/);
+  f.ctx.ownerSpoke = true;
+  await f.tools.record_owner_answer.handler({ approval_id: r.id, status: "approved", answer: "yes" });
+  assert.equal(f.store.load(7).approvals[0].status, "approved");
+});

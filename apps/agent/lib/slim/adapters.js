@@ -61,7 +61,11 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       const cwd = ticketCheckout(ticket);
       const branch = `keir/ticket-${Number(ticket)}`;
       await git(["-C", cwd, "checkout", "-B", branch]);
-      await git(["-C", cwd, "add", "-A"]);
+      // node_modules is a link to the shared install, never part of a fix.
+      await git(["-C", cwd, "add", "-A", "--", ".", ":(exclude)node_modules"]);
+      const staged = (await git(["-C", cwd, "diff", "--cached", "--name-only"])).split("\n").filter(Boolean);
+      if (!staged.length) throw new Error("Nothing to commit: the checkout has no changes.");
+      if (staged.some((f) => f === "node_modules" || f.startsWith("node_modules/"))) throw new Error("node_modules must not be committed.");
       await git(["-C", cwd, "commit", "-m", `${title}\n\n${body}\n\nTests: ${tests}`]);
       await git(["-C", cwd, "push", "-u", "origin", branch, "--force-with-lease"]);
       const url = (await gh(["pr", "create", "-R", cfg.gameRepoSlug, "--base", "development", "--head", branch, "--title", title, "--body", `${body}\n\nTests: ${tests}`], { cwd })).trim().split("\n").pop();
