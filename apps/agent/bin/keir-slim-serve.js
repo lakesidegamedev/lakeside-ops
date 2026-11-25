@@ -13,7 +13,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { slimConfig } = require("../lib/slim/config");
-const { createRuntime, approvalCard } = require("../lib/slim/runtime");
+const { createRuntime } = require("../lib/slim/runtime");
+const { renderCard } = require("../lib/slim/ownercopy");
 const { createSlimMcp } = require("../lib/slim/mcp");
 const { readAgentToken } = require("../lib/operator/token");
 const { createKillSwitch } = require("../lib/operator/killswitch");
@@ -30,7 +31,7 @@ const mcp = createSlimMcp({ configFile: cfg.mcpConfig, readToken: readAgentToken
 const ownerDm = createOwnerDm({ token: process.env.DISCORD_BOT_TOKEN, channel: cfg.ownerDmChannel, ownerIds: cfg.ownerIds, stateFile: path.join(cfg.stateDir, "owner-dm.json") });
 const rt = createRuntime({
   mode: "live", mcp, log: (m) => log(m),
-  notifyOwner: async (req) => ownerDm.sendCard({ ...req, text: approvalCard(req) }),
+  notifyOwner: async (req) => ownerDm.sendCard({ ...req, card: renderCard(req) }),
   onWake: (r) => {
     const line = { at: new Date().toISOString(), ticket: r.ticket, minutes: r.minutes, finished: r.finished, error: r.error, timedOut: r.timedOut, posts: r.effects.filter((e) => e.kind === "post").length, effects: r.effects.map((e) => e.kind), ruleHits: r.ruleHits.map((h) => h.rule), calls: r.calls.length };
     fs.appendFileSync(path.join(cfg.stateDir, "wakes.jsonl"), JSON.stringify(line) + "\n", { mode: 0o600 });
@@ -70,15 +71,17 @@ async function tick() {
     } catch (e) { beat.errors.push(`intake: ${e.message}`); }
     // 2 owner answers
     try {
-      for (const a of await ownerDm.answers()) {
-        const st = rt.store.load(a.ticket);
-        const approval = st.approvals.find((x) => x.id === a.approvalId);
+      const approvalOf = (t, id) => rt.store.load(t).approvals.find((x) => x.id === id) || null;
+      for (const a of await ownerDm.answers(approvalOf)) {
+        const approval = approvalOf(a.ticket, a.approvalId);
         if (!approval || approval.status !== "pending") continue;
-        const ans = parseAnswer(a.content, approval);
-        log(`ticket ${a.ticket}: owner answered ${a.approvalId}: ${ans.status}`);
+        const ans = a.answer || parseAnswer(a.content, approval);
+        log(`ticket ${a.ticket}: owner ${a.clicked ? "clicked" : "answered"} ${a.approvalId}: ${ans.status}`);
         limited(() => rt.host.answer(a.ticket, a.approvalId, ans)).catch((e) => log(`answer failed: ${e.message}`));
-        await ownerDm.acknowledge(a.messageId);
+        if (!a.clicked) await ownerDm.acknowledge(a.messageId);
       }
+      // Cards answered another way (the CLI, the ticket channel) stop being polled.
+      for (const n of rt.store.list()) for (const x of rt.store.load(n).approvals) if (x.status !== "pending") ownerDm.closeCard(x.id);
     } catch (e) { beat.errors.push(`owner answers: ${e.message}`); }
     // 3 reminders and held messages
     try {

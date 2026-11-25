@@ -5,6 +5,7 @@
 
 const S = require("./state");
 const rules = require("./rules");
+const ownercopy = require("./ownercopy");
 
 // Read-only data servers: game state, engine and turn health, lore, production errors.
 const GAME_SERVERS = ["gamestate", "engine", "turndiag", "lore", "sentry"];
@@ -126,19 +127,52 @@ function buildTools(ctx) {
         capture("resolve", { message: a.message, actions: a.actions || [], followUp: a.follow_up || null, basis: a.basis });
         return { resolved: true, result };
       }),
-    tool("request_decision", "Ask the owner one plain multiple choice question. Two to four options, your recommendation first. The ticket waits on the answer.",
-      obj({ question: str("the question, plain words"), options: strList("2 to 4 options, recommendation first", 4), why: str("the evidence and why you recommend the first option"), change_class: str("bugfix, display, rule, balance, economy, data", { enum: ["bugfix", "display", "rule", "balance", "economy", "data"] }) }, ["question", "options", "why"]),
+    tool("request_decision", "Ask the owner one plain multiple choice question. Before asking, check this ticket's history and state for an owner or staff decision on the same question: if they already decided, use it and do not ask. The owner is not technical: the question first, plain words, no ids or code terms. Two to four options, your recommendation first, each a short label and a one-line description. The ticket waits on the answer.",
+      obj({
+        question: str("the question, plain words, at most 200 characters"),
+        options: { type: "array", minItems: 2, maxItems: 4, description: "recommended first", items: obj({ label: str("short label, at most 60 characters"), detail: str("one line: what this choice means for players, at most 160 characters") }, ["label", "detail"]) },
+        why: str("at most three short sentences: what happened and why you recommend the first option"),
+        change_class: str("bugfix, display, rule, balance, economy, data", { enum: ["bugfix", "display", "rule", "balance", "economy", "data"] }),
+        owner_messages_checked: str("after a first refusal listed owner and staff messages: why none of them already answers this question"),
+      }, ["question", "options", "why"]),
       async (a) => {
         const blocked = writesStopped(); if (blocked) throw new Error(blocked);
-        if (!Array.isArray(a.options) || a.options.length < 2) throw new Error("Give two to four options, your recommendation first.");
-        return approval("decision", { summary: a.question, question: a.question, options: a.options.slice(0, 4), why: a.why, changeClass: a.change_class || null });
+        const options = (a.options || []).map((o) => (typeof o === "string" ? { label: o, detail: "" } : o));
+        if (options.length < 2) throw new Error("Give two to four options, your recommendation first.");
+        // Already answered on this ticket? Then it is decided.
+        const answered = st().approvals.find((x) => x.kind === "decision" && x.status !== "pending" && ownercopy.similarity(x.summary, a.question) >= 0.5);
+        if (answered) return { requested: false, alreadyDecided: { question: answered.summary, answer: answered.answer }, note: "The owner already answered this. Use that answer; do not ask again." };
+        const pending = st().approvals.find((x) => x.kind === "decision" && x.status === "pending" && ownercopy.similarity(x.summary, a.question) >= 0.5);
+        if (pending) return { requested: false, pending: { id: pending.id, question: pending.summary }, note: "This question is already with the owner. Wait for the answer." };
+        // Owner or staff may have decided it in the channel already.
+        if (!String(a.owner_messages_checked || "").trim()) {
+          let said = [];
+          try {
+            const h = await ctx.adapters.historyRead({ number: ctx.ticket, limit: 300, kinds: ["staff_message"] });
+            said = (h?.events || []).map((e) => ({ at: e.at, who: e.who, text: String(e.text || "").slice(0, 600) })).slice(-12);
+          } catch { /* history unreadable: the state check above still applied */ }
+          if (said.length) return { requested: false, ownerAndStaffMessages: said, note: "Before asking the owner: these owner and staff messages are on this ticket. If one already answers your question, treat it as decided (record it with update_state as established, with the message as its source) and do not ask. If none does, call request_decision again with owner_messages_checked saying why none answers it." };
+        }
+        const problems = ownercopy.checkOwnerCopy({ question: a.question, why: a.why, options });
+        if (problems.length) return { requested: false, problems, note: "The owner reads this card. Fix the copy and ask again." };
+        return approval("decision", { summary: a.question, question: a.question, options, why: a.why, changeClass: a.change_class || null });
       }),
-    tool("request_promote", "Ask the owner to put a merged fix live. Only the owner's approval starts it.",
-      obj({ pr: str("the merged pull request url"), what: str("what changes for players"), why: str("the ticket evidence"), risk: str("what could go wrong and who it touches"), evidence: str("tests and checks that passed") }, ["pr", "what", "why", "risk", "evidence"]),
-      async (a) => { const blocked = writesStopped(); if (blocked) throw new Error(blocked); return approval("promote", { summary: `Put live: ${a.what}`, ...a }); }),
-    tool("request_compensation", "Ask the owner to approve a payment to the player. Payment runs only through the owner. Give the amount, its basis and the evidence.",
-      obj({ amount: str("amount with currency"), recipient: str("character or company to pay"), basis: str("how the amount was worked out"), evidence: str("the reads that show the loss") }, ["amount", "recipient", "basis", "evidence"]),
-      async (a) => { const blocked = writesStopped(); if (blocked) throw new Error(blocked); return approval("compensation", { summary: `Pay ${a.amount} to ${a.recipient}`, ...a }); }),
+    tool("request_promote", "Ask the owner to put a merged fix live. Only the owner's approval starts it. The owner is not technical: plain words, no ids or code terms in what, why and risk.",
+      obj({ pr: str("the merged pull request url (shown only as a link button)"), what: str("what changes for players, one short sentence"), why: str("at most three short sentences"), risk: str("what could go wrong and who it touches, one sentence"), evidence: str("tests and checks that passed (kept in the record, not shown)") }, ["pr", "what", "why", "risk", "evidence"]),
+      async (a) => {
+        const blocked = writesStopped(); if (blocked) throw new Error(blocked);
+        const problems = ownercopy.checkOwnerCopy({ what: a.what, why: a.why, risk: a.risk });
+        if (problems.length) return { requested: false, problems, note: "The owner reads this card: plain words, no ids or code terms. Fix the copy and ask again." };
+        return approval("promote", { summary: `Put live: ${a.what}`, ...a });
+      }),
+    tool("request_compensation", "Ask the owner to approve a payment to the player. Payment runs only through the owner. The owner is not technical: plain words, no ids or code terms.",
+      obj({ amount: str("amount with currency"), recipient: str("character or company to pay"), basis: str("how the amount was worked out, one or two sentences"), evidence: str("what happened to the player, at most three short sentences") }, ["amount", "recipient", "basis", "evidence"]),
+      async (a) => {
+        const blocked = writesStopped(); if (blocked) throw new Error(blocked);
+        const problems = ownercopy.checkOwnerCopy({ why: a.evidence, what: a.basis });
+        if (problems.length) return { requested: false, problems, note: "The owner reads this card: plain words, no ids or code terms. Fix the copy and ask again." };
+        return approval("compensation", { summary: `Pay ${a.amount} to ${a.recipient}`, why: a.evidence, ...a });
+      }),
     tool("open_pr", "Open a pull request to development from this ticket's checkout, with the fix you built and tested there. The text is public: no player names, ids or internal details.",
       obj({ title: str("conventional commit style title"), body: str("what changes and why, and the tests run"), tests: str("the focused tests you ran and their result") }, ["title", "body", "tests"]),
       async (a) => {

@@ -344,3 +344,77 @@ test("record_owner_answer only when the owner wrote this wake", async () => {
   await f.tools.record_owner_answer.handler({ approval_id: r.id, status: "approved", answer: "yes" });
   assert.equal(f.store.load(7).approvals[0].status, "approved");
 });
+
+test("request_decision: an owner or staff decision already on the ticket is used, not asked again", async () => {
+  const f = fakeCtx();
+  f.ctx.adapters.historyRead = async () => ({ events: [{ at: "2026-11-25T15:00:00Z", kind: "staff_message", who: "staff egg3901", text: "we can remove that arbitrary restriction, if it's been researched it should be added" }] });
+  const ask = { question: "Should researched production methods work before they reach the plant's country?", options: [{ label: "Allow once researched", detail: "Player companies can switch as soon as they research it." }, { label: "Keep the wait", detail: "Show the opening year instead." }], why: "A player researched a method but could not use it." };
+  const first = await f.tools.request_decision.handler(ask);
+  assert.equal(first.requested, false);
+  assert.match(first.ownerAndStaffMessages[0].text, /remove that arbitrary restriction/);
+  assert.equal(f.store.load(7).approvals.length, 0, "nothing sent to the owner");
+  const second = await f.tools.request_decision.handler({ ...ask, owner_messages_checked: "the staff message is about a different screen" });
+  assert.equal(second.requested, true);
+  // Answered (here by the owner) means decided: the same question is not asked again.
+  const { state } = S.answerApproval(f.store.load(7), second.id, { status: "answered", text: "A) Allow once researched" });
+  f.store.save(state);
+  const third = await f.tools.request_decision.handler({ ...ask, question: "Should researched production methods be usable before they reach the plant's country?", owner_messages_checked: "x" });
+  assert.equal(third.requested, false);
+  assert.match(third.alreadyDecided.answer, /Allow once researched/);
+});
+
+test("owner cards: plain copy, recommended first, the id only in button ids, clicks read back", () => {
+  const oc = require("../lib/slim/ownercopy");
+  const bad = oc.checkOwnerCopy({ question: "Remove the country diffusion check?", why: "decision-d3f787d6b5 covers it. The switch_command path runs it. See PR #7557.", options: [{ label: "A", detail: "x" }] });
+  for (const m of [/diffusion/, /decision-d3f787d6b5/, /PR #7557/]) assert.ok(bad.some((p) => m.test(p)), String(m));
+  assert.ok(oc.checkOwnerCopy({ question: "q", why: "One. Two. Three. Four.", options: [] }).some((p) => /three short sentences/.test(p)));
+  const payload = { question: "Should researched methods be usable right away?", why: "A player researched a method but the game made them wait until 2036.", options: [{ label: "Allow once researched", detail: "Players can switch as soon as they research it." }, { label: "Keep the wait", detail: "Show the opening year on the screen instead." }] };
+  assert.deepEqual(oc.checkOwnerCopy(payload), []);
+  const card = oc.renderCard({ ticket: 1902, kind: "decision", id: "decision-d3f787d6b5", payload });
+  const visible = JSON.stringify({ c: card.content, e: card.embeds, labels: card.components.flatMap((r) => r.components.map((b) => b.label)) });
+  assert.doesNotMatch(visible, /decision-d3f787d6b5/);
+  assert.equal(card.embeds[0].title, payload.question);
+  assert.match(card.embeds[0].fields[0].name, /^A\. Allow once researched \(recommended\)$/);
+  assert.deepEqual(card.components[0].components.map((b) => b.custom_id), ["keir_decision:choose1:decision-d3f787d6b5", "keir_decision:choose2:decision-d3f787d6b5"]);
+  const approval = { kind: "decision", payload };
+  assert.deepEqual(oc.verdictFrom(`${card.content}\n\n**Decision:** 🔹 Selected 1 by <@333052320252297216> <t:1795571366:R>`, card.content, approval), { actor: "333052320252297216", status: "answered", text: "A) Allow once researched" });
+  const promote = oc.renderCard({ ticket: 1, kind: "promote", id: "promote-0123456789", payload: { what: "Researched methods work right away", why: "Fix tested.", risk: "Only player companies.", pr: "https://github.com/o/r/pull/1" } });
+  assert.deepEqual(promote.components[0].components.map((b) => b.custom_id || b.url), ["keir_decision:approve:promote-0123456789", "keir_decision:reject:promote-0123456789", "keir_decision:explain:promote-0123456789", "https://github.com/o/r/pull/1"]);
+  assert.equal(oc.verdictFrom(`${promote.content}\n\n**Decision:** ✅ Approved by <@333052320252297216>`, promote.content, null).status, "approved");
+  assert.equal(oc.verdictFrom(`${promote.content}\n\n**Decision:** ❌ Rejected by <@333052320252297216>: not yet`, promote.content, null).text, "not yet");
+  assert.equal(oc.verdictFrom("someone else's text", promote.content, null), null);
+});
+
+test("owner DM: a clicked card is read back once; typed letters still work", async () => {
+  const { createOwnerDm } = require("../lib/slim/owner-dm");
+  const oc = require("../lib/slim/ownercopy");
+  const payload = { question: "Cash or rebuild?", why: "w", options: [{ label: "Cash", detail: "d" }, { label: "Rebuild", detail: "d" }] };
+  const card = oc.renderCard({ ticket: 9, kind: "decision", id: "decision-aaaaaaaaaa", payload });
+  let content = card.content;
+  const fetchImpl = async (url, opts = {}) => {
+    const ok = (b) => ({ ok: true, status: 200, json: async () => b });
+    if (opts.method === "POST") return ok({ id: "500", content: JSON.parse(opts.body).content });
+    if (/messages\/500$/.test(url)) return ok({ id: "500", content });
+    if (/limit=1$/.test(url)) return ok([{ id: "400" }]);
+    return ok([]);
+  };
+  const dm = createOwnerDm({ token: "t", channel: "c", ownerIds: ["333052320252297216"], stateFile: path.join(tmp(), "dm.json"), fetchImpl });
+  await dm.sendCard({ ticket: 9, kind: "decision", id: "decision-aaaaaaaaaa", card });
+  const approvalOf = () => ({ kind: "decision", payload });
+  assert.deepEqual(await dm.answers(approvalOf), []);
+  content = `${card.content}\n\n**Decision:** 🔹 Selected 2 by <@333052320252297216>`;
+  const got = await dm.answers(approvalOf);
+  assert.equal(got.length, 1);
+  assert.deepEqual(got[0].answer, { status: "answered", text: "B) Rebuild" });
+  assert.deepEqual(await dm.answers(approvalOf), [], "read once");
+});
+
+test("host: messages in flight when the process stopped are delivered after a restart", async () => {
+  const f = hostFixture();
+  fs.writeFileSync(path.join(f.dir, "pending", "inflight-5.json"), JSON.stringify([{ role: "player", at: "2026-11-25T10:00:00Z", text: "lost in a restart" }]));
+  const again = createHost({ cfg: { mode: "replay", stateDir: f.dir, ownerNames: [], ownerPrivateNames: [], wakeTimeoutMs: 60000, budget: { wakesPerDay: 9, minutesPerTicket: 300 } }, store: f.store, sessions: f.sessions, toolServer: f.toolServer, killSwitch: clear, checkoutFor: () => f.dir, adaptersFor: () => ({ post: async () => ({ delivered: true }), mcpCall: async () => ({}), mcpList: async () => [] }) });
+  assert.ok(!fs.existsSync(path.join(f.dir, "pending", "inflight-5.json")));
+  await again.deliver(5, []);
+  assert.match(f.sessions.calls.at(-1).prompt, /lost in a restart/);
+  f.toolServer.close();
+});
