@@ -200,7 +200,7 @@ function fakeSessions(script) {
 function hostFixture({ mode = "replay", killSwitch = clear, script } = {}) {
   const dir = tmp();
   const store = S.createFileStore(path.join(dir, "tickets"));
-  const sessions = fakeSessions(script || (() => [["post_reply", { text: "I'm looking at your bank now.", kind: "update", basis: "no facts" }], ["finish", { next_step: "read the bank", waits_on: "nothing" }]]));
+  const sessions = fakeSessions(script || (() => [["post_reply", { text: "Your bank failed on turn 183 when the advance was spent on bills.", kind: "update", basis: "no facts" }], ["finish", { next_step: "read the bank", waits_on: "nothing" }]]));
   const toolServer = createSlimToolServer();
   const posted = [];
   const reports = [];
@@ -741,4 +741,38 @@ test("spam cap: a live conversation may answer up to 6 times in 30 minutes; a he
   assert.match(r.note, /woken in \d+ minutes/);
   const rem = f.store.load(7).reminder;
   assert.ok(rem.minutes >= 5 && rem.minutes <= 22, `reminder ${rem.minutes}`);
+});
+
+test("no placeholder posts: an acknowledgement or a promise to look is refused; real content passes", () => {
+  for (const t of [
+    "I have the bill you linked. I'll check whether voting is open and whether your seat is eligible.",
+    "I haven't confirmed what closed your bank. I'll check the closure record and look for any notice.",
+    "Thanks, I have the bill link. I'm checking why the Pennsylvania bill shows as expired.",
+  ]) assert.ok(rules.checkPost(t, base()).problems.some((p) => p.match === "only says you will look"), t);
+  for (const t of [
+    "The Canadians First Act is still open in the House of Commons. Your seat can vote once the second reading starts.",
+    "Found it. Your bill isn't expired. Its vote is still open and I'll check why the page says expired.",
+    "Your bank failed on turn 183. I'll check the other two banks next.",
+  ]) assert.deepEqual(rules.checkPost(t, base()).problems, [], t);
+  assert.deepEqual(rules.checkPost("I'll check and post here.", base({ kind: "resolution" })).problems.filter((p) => p.match === "only says you will look"), []);
+});
+
+test("intake: a brand-new ticket carries its channel and opening time, and the cheap check spots it", async () => {
+  const intake = require("../lib/slim/intake");
+  const events = { 1906: [{ id: "1906:opened", kind: "opened", who: "player m", at: "2026-11-26T06:49:14.767Z", text: "t" }, { id: "1906:m1", kind: "player_message", who: "player m", at: "2026-11-26T06:49:14.767Z", text: "will not let me vote" }] };
+  const items = [];
+  const mcp = { call: async (s, tool, a) => {
+    if (tool === "support_list") return { items };
+    if (tool === "support_get") return { conversation: { channelId: "1575403035826458677" } };
+    return { title: "x", opened: "2026-11-26T06:49:14.767Z", events: events[a.number] };
+  } };
+  const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
+  await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: true, now: Date.parse("2026-11-26T06:00:00Z") });
+  items.push({ kind: "ticket", number: 1906, category: "bug" }, { kind: "ticket", number: 1907, category: "moderation" });
+  assert.deepEqual(await intake.newTickets({ mcp, state }), [1906], "moderation tickets are never picked up");
+  const got = await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: false, now: Date.parse("2026-11-26T06:49:20Z") });
+  assert.equal(got[0].isNew, true);
+  assert.equal(got[0].channelId, "1575403035826458677");
+  assert.equal(got[0].openedAt, "2026-11-26T06:49:14.767Z");
+  assert.deepEqual(await intake.newTickets({ mcp, state }), [], "seen now");
 });

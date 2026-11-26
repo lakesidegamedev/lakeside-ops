@@ -133,6 +133,9 @@ function checkPost(text, ctx = {}) {
     if (twin) add("spam_cap", `repeats an earlier post: "${twin.slice(0, 60)}"`, "This repeats something you already posted. Say something new, or wait for the player.");
   }
 
+  // 6b no placeholder: a post must carry something real, not only an acknowledgement or a promise to look
+  if (ctx.kind !== "resolution" && isPlaceholder(t)) add("spam_cap", "only says you will look", "This only acknowledges or promises to check. Post nothing until you have something real (a fact, a cause, a rule, what they can do now), then post that.");
+
   // 7 no promises of compensation or features
   const approvedComp = (state.approvals || []).some((a) => a.kind === "compensation" && a.status === "approved");
   for (const s of sentences(t)) {
@@ -150,6 +153,15 @@ function checkPost(text, ctx = {}) {
   if (vm && !answered) add("owner_voice", vm[0], "Do not speak for the owner. Ask with request_decision and tell the player it is waiting on the team.");
 
   return { ok: problems.length === 0, problems };
+}
+
+const INTENT = /^(?:(?:ok(?:ay)?|thanks?(?: you)?(?: for [^,.]{0,60})?|got it|understood|noted)[,.!]?\s*)?(?:i(?:'|\u2019)ll|i will|i(?:'|\u2019)m going to|i am going to|i(?:'|\u2019)m|i am|let me|we(?:'|\u2019)ll|we are|we(?:'|\u2019)re)\s+(?:now\s+|still\s+|also\s+)?(?:check|checking|look|looking|investigat\w*|dig\w*|review\w*|trac\w*|verif\w*|confirm\w*|find\w*|get back)\b/i;
+const ACK = /^(?:thanks?(?: you)?|got it|understood|noted|i (?:have|see|got|can see|received)|i(?:'|\u2019)ve (?:got|received|seen)|i haven(?:'|\u2019)t (?:confirmed|found|checked)(?: yet)?)\b/i;
+/** Every sentence only acknowledges or promises to look: nothing a player can use. */
+function isPlaceholder(text) {
+  const parts = sentences(text);
+  if (!parts.length || parts.length > 3 || String(text).length > 320) return false;
+  return parts.every((p) => INTENT.test(p.trim()) || ACK.test(p.trim()));
 }
 
 function overlap(a, b) {
@@ -173,4 +185,4 @@ function shape(text) {
     .trim();
 }
 
-module.exports = { checkPost, shape, sentences, RX };
+module.exports = { checkPost, shape, sentences, isPlaceholder, RX };

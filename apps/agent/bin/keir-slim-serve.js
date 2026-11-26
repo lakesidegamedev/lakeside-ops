@@ -90,7 +90,12 @@ async function tick() {
       for (const it of items) {
         if (it.names?.length) rt.host.setPlayerNames(it.ticket, it.names);
         if (it.takeover && it.lastHumanAt) { const s = rt.store.load(it.ticket); s.lastHumanAt = it.lastHumanAt; rt.store.save(s); }
-        log(`ticket ${it.ticket}: ${it.events.length} event(s)${it.takeover ? " (takeover)" : ""}`);
+        // A brand-new ticket: typing at once and the clock from when it opened.
+        if (it.isNew && it.channelId && !rt.store.load(it.ticket).paused) {
+          startTyping(it.ticket, it.channelId);
+          if (it.openedAt) clock.message(it.ticket, { messageId: `opened-${it.ticket}`, at: it.openedAt, typingAt: new Date().toISOString() });
+        }
+        log(`ticket ${it.ticket}: ${it.events.length} event(s)${it.takeover ? " (takeover)" : it.isNew ? ` (new, typing ${it.openedAt ? Date.now() - Date.parse(it.openedAt) : "?"} ms after it opened)` : ""}`);
         deliver(it.ticket, it.events, { intro: it.intro });
       }
       beat.openTickets = Object.entries(intakeState.data.tickets).filter(([, t]) => t.open).map(([n]) => Number(n));
@@ -173,6 +178,8 @@ const fast = createFastWatch({
   await tick();
   setInterval(tick, cfg.pollMs);
   setInterval(() => fast.tick().catch((e) => log(`fast watch: ${e.message}`)), cfg.fastPollMs);
+  // New tickets: a cheap list read every 8 seconds; one appearing runs intake at once.
+  setInterval(() => intake.newTickets({ mcp, state: intakeState }).then((ns) => { if (ns.length) { log(`new ticket(s) ${ns.join(", ")}`); tick().catch(() => {}); } }).catch(() => {}), 2 * cfg.fastPollMs);
 })();
 
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { log(`${sig}: stopping; running wakes are cut off`); process.exit(0); });

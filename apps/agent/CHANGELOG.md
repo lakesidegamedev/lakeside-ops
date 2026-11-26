@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **New tickets get the fast start too.** A cheap check every 8 seconds spots a brand-new ticket and runs intake at once; the ticket channel shows typing straight away and the response clock starts from when it opened. Before, fast pickup only watched channels already known, so a new ticket waited for the 20 second poll with no typing (ticket 1906).
+- **No placeholder posts.** A post that only acknowledges or promises to look ("I have the bill you linked. I'll check...") is refused; Keir posts once it has something real. Resolutions are exempt.
+
 - **The slim Keir knows when a fix is live and says so within minutes.** `deploy_status` (and `promotion_status` once a fix is on main) compares the fix's merge commit with the web and worker commits the deployer recorded (`KEIR_SLIM_DEPLOY_RELEASES`, one JSON line per deploy) using git ancestry. A fix that is not live yet is watched; the service checks every 20 seconds and wakes the ticket the moment both web and worker contain it, with what to do next. (Ticket 1905: the fix was live at 05:15 and Keir still said "still checking" at 05:52.)
 - **Public game pages.** `site_read` renders a public page as a logged-out visitor sees it, on the host with old Keir's page viewer (`KEIR_PLAYWRIGHT_MODULE`); the session's shell stays offline.
 - **The 30 minute limit no longer cuts off a conversation.** A real answer to a person who wrote since Keir's last post may go up to 6 posts in 30 minutes (updates and questions stay at 3), and an answer the limit holds back wakes Keir again the moment the window clears. (Ticket 1905: an answer about California waited 54 minutes.)
