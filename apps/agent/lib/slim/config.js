@@ -35,6 +35,8 @@ function slimConfig(env = process.env) {
     gameRepo: env.KEIR_SLIM_GAME_REPO || "",
     gameRepoSlug: env.KEIR_SLIM_GAME_REPO_SLUG || "lakesidegamedev/AHDGame",
     // The game's auto-promoter: development -> staging -> main on green.
+    // The deployer's record of production deploys (one JSON line per deploy).
+    deployReleasesFile: env.KEIR_SLIM_DEPLOY_RELEASES || "/var/lib/autodeploy/ahd-us-releases.jsonl",
     autoPromoteTimer: env.KEIR_SLIM_AUTO_PROMOTE_TIMER || "ahd-auto-promote.timer",
     autoPromoteOffFile: env.KEIR_SLIM_AUTO_PROMOTE_OFF_FILE || "/etc/lakeside-platform/ahd-auto-promote.off",
     worktreeRoot: env.KEIR_SLIM_WORKTREE_ROOT || path.join(stateDir, "worktrees"),

@@ -679,3 +679,66 @@ test("a post is reported the moment it happens (typing stops, clock stops)", asy
   await f.tools.post_reply.handler({ text: "The label column is too narrow, so each word wraps. A fix is being built.", kind: "answer", basis: "screenshot" });
   assert.deepEqual(seen, ["post"]);
 });
+
+test("deploy: live means the deployed web and worker both contain the fix", async () => {
+  const d = require("../lib/slim/deploy");
+  const jsonl = [
+    { row: "ahd-us-web", sha: "aaa111", result: "deployed", finished_at: "2026-11-26T04:17:55Z" },
+    { row: "ahd-us-worker", sha: "fff999", result: "deployed", finished_at: "2026-11-26T05:08:00Z" },
+    { row: "ahd-us-web", sha: "bbb222", result: "failed" },
+    { row: "ahd-us-web", sha: "fff999", result: "deployed", finished_at: "2026-11-26T05:15:11Z" },
+  ].map((r) => JSON.stringify(r)).join("\n");
+  assert.deepEqual(d.latestDeployed("x", () => jsonl), { web: { sha: "fff999", at: "2026-11-26T05:15:11Z" }, worker: { sha: "fff999", at: "2026-11-26T05:08:00Z" } });
+  const calls = [];
+  const ancestry = { "fix1:fff999": 0, "fix2:fff999": 1 };
+  const run = async (repo, args) => { calls.push(args.join(" ")); if (args[0] === "cat-file") return { code: args[2].startsWith("fix3") ? 1 : 0 }; if (args[0] === "fetch") return { code: 0 }; return { code: ancestry[`${args[2]}:${args[3]}`] ?? 1 }; };
+  const live = await d.liveStatus({ repo: "/r", releasesFile: "x", mergeSha: "fix1", run, read: () => jsonl });
+  assert.equal(live.live, true);
+  assert.equal(live.web.at, "2026-11-26T05:15:11Z");
+  assert.equal((await d.liveStatus({ repo: "/r", releasesFile: "x", mergeSha: "fix2", run, read: () => jsonl })).live, false);
+  await d.liveStatus({ repo: "/r", releasesFile: "x", mergeSha: "fix3", run, read: () => jsonl });
+  assert.ok(calls.some((c) => c.startsWith("fetch")), "an unknown commit is fetched before comparing");
+});
+
+test("a fix that is not live is watched, and the ticket is woken the moment it is", async () => {
+  const f = fakeCtx();
+  f.ctx.adapters.deployStatus = async () => ({ pr: 7612, merged: true, mergeSha: "abc", live: false, note: "Waits for the next deploy." });
+  const r = await f.tools.deploy_status.handler({ pr: "7612" });
+  assert.equal(r.watching, true);
+  assert.deepEqual(f.store.load(7).liveWatch.map((w) => [w.pr, w.mergeSha]), [[7612, "abc"]]);
+  const d = require("../lib/slim/deploy");
+  const woke = [];
+  let live = false;
+  const status = async () => ({ live, web: { sha: "f75ea4d9147e", at: "2026-11-26T05:15:11Z" }, worker: { sha: "f75ea4d9147e", at: "2026-11-26T05:08:00Z" } });
+  await d.checkLiveWatches({ store: f.store, repo: "/r", releasesFile: "x", status, deliver: (n, ev) => woke.push([n, ev[0].text]) });
+  assert.equal(woke.length, 0);
+  live = true;
+  await d.checkLiveWatches({ store: f.store, repo: "/r", releasesFile: "x", status, deliver: (n, ev) => woke.push([n, ev[0].text]) });
+  assert.equal(woke.length, 1);
+  assert.match(woke[0][1], /Fix #7612 is live on the game now/);
+  assert.equal(f.store.load(7).liveWatch.length, 0, "woken once");
+  // Already live: nothing to watch.
+  f.ctx.adapters.deployStatus = async () => ({ pr: 7613, merged: true, mergeSha: "def", live: true });
+  assert.equal((await f.tools.deploy_status.handler({ pr: "7613" })).watching, undefined);
+});
+
+test("spam cap: a live conversation may answer up to 6 times in 30 minutes; a held answer is woken when the window clears", async () => {
+  // Ticket 1905: three answers to three questions, then a fourth question.
+  let s = S.emptyState(1905);
+  for (const [q, a] of [["04:39:00", "04:40:07"], ["04:42:00", "04:42:55"], ["04:46:00", "04:46:52"]]) {
+    s = S.recordHuman(s, { role: "player", at: `2026-11-26T${q}Z` });
+    s = S.recordPost(s, { text: `Answer at ${a} about districts ${a}`, kind: "answer", delivered: true }, Date.parse(`2026-11-26T${a}Z`));
+  }
+  s = S.recordHuman(s, { role: "player", at: "2026-11-26T04:58:01Z" });
+  const ok = rules.checkPost("California's 2030 House race has 48 seats, and the same label fix covers it.", { state: s, kind: "answer", now: Date.parse("2026-11-26T04:58:40Z") }).problems;
+  assert.deepEqual(ok, [], "answering a new question is allowed");
+  // Without a new message, three in 30 minutes is still the limit, and the held answer gets a reminder.
+  const f = fakeCtx();
+  f.ctx.now = () => Date.parse("2026-11-26T04:50:00Z");
+  let t = f.store.load(7); t.lastHumanAt = "2026-11-26T04:47:30Z"; t.posts = s.posts; f.store.save(t);
+  const r = await f.tools.post_reply.handler({ text: "One more detail about the map labels for you.", kind: "update", basis: "no facts" });
+  assert.equal(r.posted, false);
+  assert.match(r.note, /woken in \d+ minutes/);
+  const rem = f.store.load(7).reminder;
+  assert.ok(rem.minutes >= 5 && rem.minutes <= 22, `reminder ${rem.minutes}`);
+});
