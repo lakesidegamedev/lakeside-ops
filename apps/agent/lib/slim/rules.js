@@ -136,6 +136,12 @@ function checkPost(text, ctx = {}) {
   // 6b no placeholder: a post must carry something real, not only an acknowledgement or a promise to look
   if (ctx.kind !== "resolution" && isPlaceholder(t)) add("spam_cap", "only says you will look", "This only acknowledges or promises to check. Post nothing until you have something real (a fact, a cause, a rule, what they can do now), then post that.");
 
+  // 6c moderation: never accuse anyone, never talk about bans or punishment; moderators decide
+  if (ctx.category === "moderation") {
+    const a = accusation(t);
+    if (a) add("owner_voice", a, "On a moderation report, say what was checked and that moderators review it. Never call anyone an alt or a cheater, and never talk about bans or punishment.");
+  }
+
   // 7 no promises of compensation or features
   const approvedComp = (state.approvals || []).some((a) => a.kind === "compensation" && a.status === "approved");
   for (const s of sentences(t)) {
@@ -164,6 +170,10 @@ function isPlaceholder(text) {
   return parts.every((p) => INTENT.test(p.trim()) || ACK.test(p.trim()));
 }
 
+const ACCUSE = /\b(?:(?:is|are|was|were)\s+(?:definitely\s+|clearly\s+|probably\s+)?(?:an?\s+)?alts?\b|alt accounts? (?:confirmed|caught)|confirmed alts?|cheat(?:er|ers|ing|ed)?\b|(?:will be|gets?|got|be|been|are|is)\s+(?:banned|suspended|punished)|\b(?:ban|bans|banning|suspend|suspension|punish\w*)\b)/i;
+/** The first accusing phrase in a text, or null. */
+function accusation(text) { const m = ACCUSE.exec(String(text || "")); return m ? m[0] : null; }
+
 function overlap(a, b) {
   const words = (x) => new Set(String(x || "").toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 3));
   const x = words(a), y = words(b);
@@ -185,4 +195,4 @@ function shape(text) {
     .trim();
 }
 
-module.exports = { checkPost, shape, sentences, isPlaceholder, RX };
+module.exports = { checkPost, shape, sentences, isPlaceholder, accusation, RX };

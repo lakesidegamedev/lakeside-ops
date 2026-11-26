@@ -305,12 +305,12 @@ test("slim MCP client: SSE responses parse, writes pass the gate, reads retry on
   await assert.rejects(m.call("remote", "t", {}), /no local MCP server/);
 });
 
-test("intake: takeover on first poll, new messages after, moderation never", async () => {
+test("intake: takeover on first poll, new messages after; investigation tickets never", async () => {
   const intake = require("../lib/slim/intake");
   const cfg = { ownerIds: ["100"], ownerHandles: ["egg3901"] };
   let events = { 1902: [{ id: "1902:opened", kind: "opened", who: "player v", at: "2026-11-25T14:38:20Z", text: "t" }, { id: "1902:m1", kind: "player_message", who: "player v", at: "2026-11-25T14:38:21Z", text: "hi" }] };
   const mcp = { call: async (s, tool, a) => {
-    if (tool === "support_list") return { items: [{ kind: "ticket", number: 1902, category: "bug" }, { kind: "ticket", number: 1901, category: "moderation" }, ...(events[1903] ? [{ kind: "ticket", number: 1903, category: "bug" }] : [])] };
+    if (tool === "support_list") return { items: [{ kind: "ticket", number: 1902, category: "bug" }, { kind: "ticket", number: 1901, category: "investigation" }, ...(events[1903] ? [{ kind: "ticket", number: 1903, category: "bug" }] : [])] };
     return { title: "x", reporter: "v", character: "Vincent", events: events[a.number] || [] };
   } };
   const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
@@ -769,10 +769,50 @@ test("intake: a brand-new ticket carries its channel and opening time, and the c
   const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
   await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: true, now: Date.parse("2026-11-26T06:00:00Z") });
   items.push({ kind: "ticket", number: 1906, category: "bug" }, { kind: "ticket", number: 1907, category: "moderation" });
-  assert.deepEqual((await intake.newTickets({ mcp, state })).map((t) => t.number), [1906], "moderation tickets are never picked up");
+  assert.deepEqual((await intake.newTickets({ mcp, state })).map((t) => t.number), [1906, 1907], "moderation tickets get the same fast pickup");
   const got = await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: false, now: Date.parse("2026-11-26T06:49:20Z") });
   assert.equal(got[0].isNew, true);
   assert.equal(got[0].channelId, "1575403035826458677");
   assert.equal(got[0].openedAt, "2026-11-26T06:49:14.767Z");
   assert.deepEqual(await intake.newTickets({ mcp, state }), [], "seen now");
+});
+
+test("moderation: picked up like any ticket; one already answered by the team is watched quietly", async () => {
+  const intake = require("../lib/slim/intake");
+  const items = [];
+  const events = {
+    1907: [{ id: "1907:opened", kind: "opened", who: "player jbm", at: "2026-11-26T16:33:00Z", text: "Potential alting" }, { id: "1907:m1", kind: "player_message", who: "player jbm", at: "2026-11-26T16:33:34Z", text: "Both went offline at the same time" }, { id: "1907:p1", kind: "support_post", who: "support", at: "2026-11-26T16:54:43Z", text: "I checked both accounts." }],
+    1909: [{ id: "1909:opened", kind: "opened", who: "player k", at: "2026-11-26T17:10:00Z", text: "alts" }, { id: "1909:m1", kind: "player_message", who: "player k", at: "2026-11-26T17:10:01Z", text: "these two look like alts" }],
+  };
+  const mcp = { call: async (s, tool, a) => (tool === "support_list" ? { items } : tool === "support_get" ? { conversation: { channelId: "c" } } : { title: "t", category: "moderation", opened: events[a.number][0].at, events: events[a.number] }) };
+  const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
+  await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: true, now: Date.parse("2026-11-26T16:00:00Z") });
+  items.push({ kind: "ticket", number: 1907, category: "moderation" }, { kind: "ticket", number: 1909, category: "moderation" });
+  const got = await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: false, now: Date.parse("2026-11-26T17:10:05Z") });
+  assert.deepEqual(got.map((g) => [g.ticket, g.category, Boolean(g.isNew)]), [[1909, "moderation", true]], "1907 was answered already: no wake, no replay");
+  events[1907].push({ id: "1907:m2", kind: "player_message", who: "player jbm", at: "2026-11-26T17:20:00Z", text: "thanks, anything else?" });
+  const later = await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: false, now: Date.parse("2026-11-26T17:20:05Z") });
+  assert.deepEqual(later.map((g) => [g.ticket, g.events.map((e) => e.text)]), [[1907, ["thanks, anything else?"]]], "its next message wakes Keir");
+});
+
+test("moderation: neutral moderator summary without personal data; never accuse the reported player", async () => {
+  const f = fakeCtx();
+  const posted = [];
+  f.ctx.adapters.modPost = async (p) => { posted.push(p.text); return { posted: true }; };
+  await assert.rejects(f.tools.mod_summary.handler({ text: "Checked two characters." }), /only for moderation/);
+  const s = f.store.load(7); s.category = "moderation"; f.store.save(s);
+  let r = await f.tools.mod_summary.handler({ text: "Report: characters 131 and 143. alt_ring_audit found a shared IP 203.0.113.9 and email a@b.co." });
+  assert.equal(r.posted, false);
+  assert.ok(r.problems.some((p) => /203\.0\.113\.9/.test(p)) && r.problems.some((p) => /a@b\.co/.test(p)));
+  r = await f.tools.mod_summary.handler({ text: "These two are clearly alts and should be banned." });
+  assert.equal(r.posted, false);
+  r = await f.tools.mod_summary.handler({ text: "Alt report on Chris Hansen and Dan Rourke (ticket 1907). alt_ring_audit: no shared device or other technical signal; same offline time only. For moderators to review." });
+  assert.equal(r.posted, true);
+  await f.tools.mod_summary.handler({ text: "Follow up: the reporter added nothing new. Still for moderators to review." });
+  assert.equal((await f.tools.mod_summary.handler({ text: "A third note for moderators." })).posted, false, "two summaries per ticket at most");
+  assert.equal(posted.length, 2);
+  // The reporter is told what was checked, never that someone is an alt or will be punished.
+  const reply = await f.tools.post_reply.handler({ text: "Those two are clearly alts and will be banned.", kind: "answer", basis: "alt_ring_audit" });
+  assert.equal(reply.posted, false);
+  assert.equal((await f.tools.post_reply.handler({ text: "I checked both accounts with our alt-account check and sent what it showed to the moderators. They review every report.", kind: "answer", basis: "alt_ring_audit" })).posted, true);
 });

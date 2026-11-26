@@ -89,6 +89,7 @@ async function tick() {
       first = false;
       for (const it of items) {
         if (it.names?.length) rt.host.setPlayerNames(it.ticket, it.names);
+        if (it.category) { const s0 = rt.store.load(it.ticket); if (s0.category !== it.category) { s0.category = it.category; rt.store.save(s0); } }
         if (it.takeover && it.lastHumanAt) { const s = rt.store.load(it.ticket); s.lastHumanAt = it.lastHumanAt; rt.store.save(s); }
         // A brand-new ticket: typing at once and the clock from when it opened.
         if (it.isNew && it.channelId && !rt.store.load(it.ticket).paused) {

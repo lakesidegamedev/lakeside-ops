@@ -45,6 +45,8 @@ function slimConfig(env = process.env) {
     ownerHandles: list(env.KEIR_SLIM_OWNER_HANDLES),
     // The owner's direct-message channel with Keir's bot: approval cards go here.
     ownerDmChannel: env.KEIR_SLIM_OWNER_DM_CHANNEL || "",
+    // The moderators' channel: short neutral summaries from moderation tickets, nothing else.
+    modChannel: env.KEIR_SLIM_MOD_CHANNEL || "",
     pollMs: Math.max(5000, Number(env.KEIR_SLIM_POLL_MS) || 20000),
     // Fast pickup: how often to ask Discord whether a person wrote in an open ticket.
     fastPollMs: Math.max(2000, Number(env.KEIR_SLIM_FAST_POLL_MS) || 4000),

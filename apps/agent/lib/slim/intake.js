@@ -4,14 +4,14 @@
 // The ticket history (support_history_get) is the source: every player, staff
 // and owner message lands there within seconds, Discord channel or not.
 //
-// Never handled: moderation tickets (staff own them) and internal
-// investigation tickets. A ticket already open when Keir starts gets one
+// Never handled: internal investigation tickets. Moderation tickets are
+// handled with their own limits (see BRIEF.md and the mod_summary tool). A ticket already open when Keir starts gets one
 // takeover wake; its earlier messages are read from the history, not replayed.
 
 const fs = require("node:fs");
 const path = require("node:path");
 
-const SKIP_CATEGORIES = new Set(["moderation", "investigation"]);
+const SKIP_CATEGORIES = new Set(["investigation"]);
 const HUMAN = { player_message: "player", staff_message: "staff", participant_message: "participant" };
 
 function roleFor(e, cfg) {
@@ -76,16 +76,21 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
       if (first) {
         state.data.tickets[n] = { seen: ids, open: true, since: new Date().toISOString(), channelId };
         const last = humans[humans.length - 1];
-        out.push({ ticket: n, names, takeover: true, lastHumanAt: last?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`,
+        out.push({ ticket: n, names, category: h.category || null, takeover: true, lastHumanAt: last?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`,
           events: [{ role: "system", at: new Date().toISOString(), text: "You are taking over this ticket now. Earlier messages and replies (by the support team) are in its history: read it with history_read and ticket_read before doing anything, and do not repeat what was already said." }] });
       } else {
         state.data.tickets[n] = { seen: ids, open: true, since: new Date().toISOString(), channelId };
         const opened = Date.parse(h.opened || h.events[0]?.at || 0);
         // A ticket new to Keir that opened before it went live is a takeover, never a replay of old messages.
         const recent = humans.filter((e) => Date.parse(e.at) >= live);
-        if (opened < live) out.push({ ticket: n, names, takeover: true, lastHumanAt: humans[humans.length - 1]?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`,
-          events: [{ role: "system", at: new Date(now).toISOString(), text: "You are taking over this ticket now. Earlier messages and replies (by the support team) are in its history: read it with history_read and ticket_read before doing anything, and do not repeat what was already said." }, ...recent] });
-        else out.push({ ticket: n, names, isNew: true, channelId, openedAt: h.opened || humans[0]?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`, events: humans });
+        // Someone already answered before Keir saw it: never replay it as new. Only messages after the team's
+        // last reply are delivered; with none, Keir just starts watching and wakes on the next message.
+        const teamAt = Math.max(0, ...h.events.filter((e) => e.kind === "support_post" || e.kind === "staff_message").map((e) => Date.parse(e.at)));
+        const unanswered = recent.filter((e) => Date.parse(e.at) > teamAt);
+        if (teamAt && !unanswered.length) continue;
+        if (opened < live || teamAt) out.push({ ticket: n, names, category: h.category || null, takeover: true, lastHumanAt: humans[humans.length - 1]?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`,
+          events: [{ role: "system", at: new Date(now).toISOString(), text: "You are taking over this ticket now. Earlier messages and replies (by the support team) are in its history: read it with history_read and ticket_read before doing anything, and do not repeat what was already said." }, ...(teamAt ? unanswered : recent)] });
+        else out.push({ ticket: n, names, category: h.category || null, isNew: true, channelId, openedAt: h.opened || humans[0]?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`, events: humans });
       }
       continue;
     }
@@ -97,7 +102,7 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
     known.seen.push(...fresh.map((e) => e.id));
     if (known.seen.length > 5000) known.seen = known.seen.slice(-5000);
     const events = fresh.filter((e) => Date.parse(e.at) >= live).map((e) => eventFor(e, cfg)).filter(Boolean);
-    if (events.length) out.push({ ticket: n, names, events });
+    if (events.length) out.push({ ticket: n, names, category: h.category || null, events });
   }
   state.save();
   return out;

@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **The slim Keir handles moderation tickets.** They get the same fast pickup as any ticket (only internal investigation tickets are skipped). Alt reports: alt_ring_audit on the named characters, one short neutral summary to the moderators' channel with the new `mod_summary` tool (no IP addresses, emails or account ids; at most two per ticket), and a plain answer to the reporter about what was checked. A hard rule stops accusing anyone or talking about bans or punishment on moderation tickets. Keir has no tools to act on accounts. (Ticket 1907 was skipped by design until now.)
+- A ticket the team already answered before Keir first saw it is watched quietly: no replay, no wake until someone writes again.
+
 - **New tickets show typing within seconds.** When the 8 second check spots a new ticket, typing and the response clock start right away from one quick read of its channel, before the full intake. Open tickets' histories are now read in parallel, so the full intake no longer takes about 20 seconds. (Ticket 1908: typing started 32 seconds after it opened.)
 
 - **New tickets get the fast start too.** A cheap check every 8 seconds spots a brand-new ticket and runs intake at once; the ticket channel shows typing straight away and the response clock starts from when it opened. Before, fast pickup only watched channels already known, so a new ticket waited for the 20 second poll with no typing (ticket 1906).
