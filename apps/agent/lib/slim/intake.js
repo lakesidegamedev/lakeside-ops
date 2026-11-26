@@ -59,9 +59,12 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
   const out = [];
   const openNow = new Set(open.map((t) => Number(t.number)));
   for (const n of Object.keys(state.data.tickets)) if (!openNow.has(Number(n))) state.data.tickets[n].open = false;
+  // Every open ticket's history is read at once; one slow ticket does not hold up the rest.
+  const histories = new Map(await Promise.all(open.map(async (t) => [Number(t.number), await readAll(mcp, Number(t.number)).catch(() => null)])));
   for (const t of open) {
     const n = Number(t.number);
-    const h = await readAll(mcp, n);
+    const h = histories.get(n);
+    if (!h) continue;
     const known = state.data.tickets[n];
     const names = [h.reporter, h.character].filter(Boolean);
     // The ticket's Discord channel, for the typing indicator and fast pickup.
@@ -100,10 +103,10 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
   return out;
 }
 
-/** Ticket numbers open now that intake has not seen yet (a cheap list read, no history). */
+/** Tickets open now that intake has not seen yet (a cheap list read, no history): [{ number, createdAt }]. */
 async function newTickets({ mcp, state }) {
   const list = await mcp.call("support", "support_list", { kind: "ticket", openOnly: true, limit: 60 }, false);
-  return (list.items || []).filter((t) => t.kind === "ticket" && !SKIP_CATEGORIES.has(String(t.category || "").toLowerCase()) && !state.data.tickets[Number(t.number)]).map((t) => Number(t.number));
+  return (list.items || []).filter((t) => t.kind === "ticket" && !SKIP_CATEGORIES.has(String(t.category || "").toLowerCase()) && !state.data.tickets[Number(t.number)]).map((t) => ({ number: Number(t.number), createdAt: t.createdAt || null }));
 }
 
 module.exports = { poll, newTickets, roleFor, eventFor, createIntakeState, readAll, SKIP_CATEGORIES };

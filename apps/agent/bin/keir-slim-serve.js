@@ -179,7 +179,22 @@ const fast = createFastWatch({
   setInterval(tick, cfg.pollMs);
   setInterval(() => fast.tick().catch((e) => log(`fast watch: ${e.message}`)), cfg.fastPollMs);
   // New tickets: a cheap list read every 8 seconds; one appearing runs intake at once.
-  setInterval(() => intake.newTickets({ mcp, state: intakeState }).then((ns) => { if (ns.length) { log(`new ticket(s) ${ns.join(", ")}`); tick().catch(() => {}); } }).catch(() => {}), 2 * cfg.fastPollMs);
+  setInterval(() => intake.newTickets({ mcp, state: intakeState }).then(async (ns) => {
+    if (!ns.length) return;
+    log(`new ticket(s) ${ns.map((t) => t.number).join(", ")}`);
+    // Typing and the clock start now, from one quick read; the full intake follows.
+    for (const t of ns) {
+      if (typing.has(t.number) || rt.store.load(t.number).paused) continue;
+      try {
+        const channelId = (await mcp.call("support", "support_get", { kind: "ticket", number: t.number }, false))?.conversation?.channelId;
+        if (channelId && startTyping(t.number, channelId) && t.createdAt) {
+          clock.message(t.number, { messageId: `opened-${t.number}`, at: t.createdAt, typingAt: new Date().toISOString() });
+          log(`ticket ${t.number}: new, typing ${Date.now() - Date.parse(t.createdAt)} ms after it opened`);
+        }
+      } catch (e) { log(`ticket ${t.number}: early typing failed: ${e.message}`); }
+    }
+    tickSoon();
+  }).catch(() => {}), 2 * cfg.fastPollMs);
 })();
 
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { log(`${sig}: stopping; running wakes are cut off`); process.exit(0); });
