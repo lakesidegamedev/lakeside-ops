@@ -97,4 +97,32 @@ function createResponseClock({ append, now = () => Date.now() }) {
   return { message, posted, wakeEnded, pending: (t) => open.get(t) || [] };
 }
 
-module.exports = { createFastWatch, createLimiter, createResponseClock };
+/**
+ * One wake at a time per ticket, and one slot per ticket. Messages that arrive while a ticket's wake waits for a
+ * slot join that wake; messages that arrive while it runs make one follow-up wake. A busy ticket can no longer
+ * fill every slot and starve the others.
+ */
+function createTicketQueue({ limiter, run, urgentOf = () => false, log = () => {} }) {
+  const active = new Map(); // ticket -> { events, opts, started, buffer, bufferOpts }
+  function start(n, events, opts) {
+    const entry = { events: [...events], opts, started: false, buffer: null, bufferOpts: null };
+    active.set(n, entry);
+    return limiter.run(() => { entry.started = true; return run(n, entry.events, entry.opts); }, { urgent: urgentOf(events) })
+      .catch((e) => log(`ticket ${n} deliver failed: ${e.message}`))
+      .finally(() => {
+        active.delete(n);
+        if (entry.buffer) start(n, entry.buffer, entry.bufferOpts);
+      });
+  }
+  function deliver(n, events, opts) {
+    const entry = active.get(n);
+    if (!entry) return start(n, events, opts);
+    if (!entry.started) { entry.events.push(...events); if (opts?.intro && !entry.opts?.intro) entry.opts = opts; return null; }
+    entry.buffer = [...(entry.buffer || []), ...events];
+    if (opts?.intro && !entry.bufferOpts?.intro) entry.bufferOpts = opts;
+    return null;
+  }
+  return { deliver, busy: () => [...active.keys()] };
+}
+
+module.exports = { createFastWatch, createLimiter, createResponseClock, createTicketQueue };

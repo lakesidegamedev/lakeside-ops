@@ -71,7 +71,9 @@ const rt = createRuntime({
 const limiter = createLimiter(cfg.maxConcurrentWakes);
 const limited = (fn, opts) => limiter.run(fn, opts);
 const urgentOf = (events) => (events || []).some((e) => e.role === "owner" || e.role === "staff" || e.role === "approval");
-const deliver = (n, events, opts) => limited(() => rt.host.deliver(n, events, opts), { urgent: urgentOf(events) }).catch((e) => log(`ticket ${n} deliver failed: ${e.message}`));
+// One slot per ticket: new messages join its queued wake, or one follow-up wake if it is running.
+const queue = require("../lib/slim/fastwatch").createTicketQueue({ limiter, urgentOf, run: (n, events, opts) => rt.host.deliver(n, events, opts), log: (m) => log(m) });
+const deliver = (n, events, opts) => queue.deliver(n, events, opts);
 
 const intakeState = intake.createIntakeState(path.join(cfg.stateDir, "intake.json"));
 let first = !Object.keys(intakeState.data.tickets).length;

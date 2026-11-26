@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **One wake slot per ticket.** Messages that arrive while a ticket's wake waits for a slot join that wake; messages that arrive while it runs make one follow-up wake with all of them. Before, each message was its own queued wake holding a slot, so one busy ticket could fill all three and keep other tickets waiting (ticket 1909: four messages in 74 seconds, three slots busy, one ticket queued).
+
 - **The slim Keir handles moderation tickets.** They get the same fast pickup as any ticket (only internal investigation tickets are skipped). Alt reports: alt_ring_audit on the named characters, one short neutral summary to the moderators' channel with the new `mod_summary` tool (no IP addresses, emails or account ids; at most two per ticket), and a plain answer to the reporter about what was checked. A hard rule stops accusing anyone or talking about bans or punishment on moderation tickets. Keir has no tools to act on accounts. (Ticket 1907 was skipped by design until now.)
 - A ticket the team already answered before Keir first saw it is watched quietly: no replay, no wake until someone writes again.
 
