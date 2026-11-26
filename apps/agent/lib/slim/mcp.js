@@ -62,7 +62,10 @@ function createSlimMcp({ configFile, readToken, gate = () => {}, fetchImpl = fet
     async call(server, tool, args, write = false) {
       const r = await rpc(server, "tools/call", { name: tool, arguments: args || {} }, write);
       const text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-      try { return JSON.parse(text); } catch { return { text }; }
+      const images = (r.content || []).filter((c) => c.type === "image" && /^image\/(png|jpeg|webp|gif)$/.test(c.mimeType || "") && c.data && c.data.length <= 5600000).slice(0, 6).map((c) => ({ data: c.data, mimeType: c.mimeType }));
+      let out; try { out = JSON.parse(text); } catch { out = { text }; }
+      if (images.length && out && typeof out === "object") Object.defineProperty(out, "_images", { value: images, enumerable: false });
+      return out;
     },
   };
 }

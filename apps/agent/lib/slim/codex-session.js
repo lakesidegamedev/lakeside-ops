@@ -73,7 +73,7 @@ function createCodexSessions({ stateDir, model, effort, compactTokens, codexBin,
    * Run one wake. sessionId null starts the session; otherwise it resumes.
    * Returns { sessionId, completion, result, usage, timedOut, transcript }.
    */
-  async function wake({ ticket, sessionId, cwd, sandbox = "read-only", instructions, prompt, url, completionUrl, timeoutMs, signal = new AbortController().signal }) {
+  async function wake({ ticket, sessionId, cwd, sandbox = "read-only", instructions, prompt, url, completionUrl, timeoutMs, images = [], signal = new AbortController().signal }) {
     const home = homeFor(ticket);
     fs.writeFileSync(path.join(home, "config.toml"), configToml({ model, effort, sandbox, compactTokens, instructions, url }), { mode: 0o600 });
     const runDir = path.join(stateDir, "sessions", `ticket-${Number(ticket)}`, "wakes");
@@ -82,9 +82,11 @@ function createCodexSessions({ stateDir, model, effort, compactTokens, codexBin,
     const transcript = path.join(runDir, `${stamp}.jsonl`);
     const last = path.join(runDir, `${stamp}.last.txt`);
     const run = (resumeId) => (sig) => {
+      // --image=<file> per image: the option takes several values, so a bare -i would swallow the "-" stdin marker.
+      const attach = images.map((f) => `--image=${f}`);
       const args = resumeId
-        ? ["exec", "resume", resumeId, "--json", "--skip-git-repo-check", "-o", last, "-"]
-        : ["exec", "--json", "--skip-git-repo-check", "-C", cwd, "-o", last, "-"];
+        ? ["exec", "resume", resumeId, "--json", "--skip-git-repo-check", ...attach, "-o", last, "-"]
+        : ["exec", "--json", "--skip-git-repo-check", "-C", cwd, ...attach, "-o", last, "-"];
       return spawnBounded(spawnImpl, codexBin || host.bin("codex"), args, {
         cwd,
         env: { HOME: host.home(), CODEX_HOME: home, PATH: host.searchPath(), LANG: "C.UTF-8" },

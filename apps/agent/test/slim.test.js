@@ -517,3 +517,52 @@ test("resolve_ticket: 24 quiet hours, or the player asking to close", async () =
   g.store.save(S.recordPost(g.store.load(7), { text: "It's live now.", kind: "update", delivered: true }, Date.parse("2026-11-25T19:00:00Z")));
   assert.equal((await g.tools.resolve_ticket.handler({ message: "Closed.", basis: "x", player_asked_to_close: "you can close this ticket" })).resolved, true);
 });
+
+test("spam cap on ticket 1904's timeline: the fourth post and the repeated screenshot ask are stopped", () => {
+  let s = S.emptyState(1904);
+  const human = (at) => { s = S.recordHuman(s, { role: "player", at }); };
+  const post = (at, text) => { s = S.recordPost(s, { text, kind: "question", delivered: true }, Date.parse(at)); };
+  const check = (at, text) => rules.checkPost(text, { state: s, now: Date.parse(at), names: ["Ben Harrison"] }).problems.filter((p) => p.rule === "spam_cap");
+  human("2026-11-26T02:59:42Z");
+  const first = "What looks wrong on the corporation page, and which section is it in? I couldn't open the screenshot.";
+  assert.deepEqual(check("2026-11-26T03:00:55Z", first), []);
+  post("2026-11-26T03:00:55Z", first);
+  human("2026-11-26T03:06:21Z");
+  assert.deepEqual(check("2026-11-26T03:07:27Z", "Which word or label is showing vertically? One example is enough."), []);
+  post("2026-11-26T03:07:27Z", "Which word or label is showing vertically? One example is enough.");
+  human("2026-11-26T03:07:57Z");
+  const third = check("2026-11-26T03:08:17Z", "I see the screenshot attached. It still won't open on my side. If you can type one of the words, I can find it.");
+  assert.ok(third.some((p) => /screenshot trouble said again/.test(p.match)), "the repeated screenshot ask is stopped");
+  post("2026-11-26T03:08:17Z", "I see the screenshot attached. It still won't open on my side.");
+  human("2026-11-26T03:10:19Z");
+  const fourth = check("2026-11-26T03:11:19Z", "The screenshot is attached, and you don't need to repeat the report. I have the page link and I'm checking.");
+  assert.ok(fourth.some((p) => /3 posts in the last 30 minutes/.test(p.match)), "three in 30 minutes is the cap");
+  // Later, after a quiet half hour, a new reply is fine again.
+  assert.deepEqual(check("2026-11-26T03:45:00Z", "Found it: the Operations card wraps each word onto its own line. A fix is being built."), []);
+  // The two-in-a-row rule still holds on its own.
+  assert.ok(rules.checkPost("x", { state: { ...s, lastHumanAt: "2026-11-26T03:00:00Z" }, now: Date.parse("2026-11-26T05:00:00Z") }).problems.some((p) => /posts since anyone wrote/.test(p.match)));
+});
+
+test("host: ticket screenshots are attached to the session once; a load failure is said once", async () => {
+  const dir = tmp();
+  const store = S.createFileStore(path.join(dir, "tickets"));
+  const calls = [];
+  const sessions = { wake: async (req) => { calls.push(req); return { sessionId: "t", completion: { state: "waiting" } }; } };
+  const toolServer = createSlimToolServer();
+  let fail = false;
+  const png = Buffer.from("89504e470d0a1a0a", "hex").toString("base64");
+  const host = createHost({ cfg: { mode: "replay", stateDir: dir, ownerNames: [], ownerPrivateNames: [], wakeTimeoutMs: 60000, budget: { wakesPerDay: 9, minutesPerTicket: 300 } }, store, sessions, toolServer, killSwitch: clear, checkoutFor: () => dir,
+    adaptersFor: () => ({ ticketImages: async () => { if (fail) throw new Error("support down"); return [{ data: png, mimeType: "image/png" }]; }, post: async () => ({ delivered: true }), mcpCall: async () => ({}), mcpList: async () => [] }) });
+  await host.deliver(1904, [{ role: "player", at: "2026-11-26T02:59:42Z", text: "Visual broken" }]);
+  assert.equal(calls[0].images.length, 1);
+  assert.ok(fs.existsSync(calls[0].images[0]));
+  assert.match(calls[0].prompt, /attached to this message as images/);
+  await host.deliver(1904, [{ role: "player", at: "2026-11-26T03:06:21Z", text: "words going vertical" }]);
+  assert.equal(calls[1].images.length, 0, "the same screenshot is not attached twice");
+  fail = true;
+  await host.deliver(1905, [{ role: "player", at: "2026-11-26T04:00:00Z", text: "see image" }]);
+  assert.match(calls[2].prompt, /could not be loaded for you/);
+  await host.deliver(1905, [{ role: "player", at: "2026-11-26T04:05:00Z", text: "did you see it?" }]);
+  assert.doesNotMatch(calls[3].prompt, /could not be loaded/, "said once");
+  toolServer.close();
+});

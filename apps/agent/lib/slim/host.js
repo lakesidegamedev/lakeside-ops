@@ -88,6 +88,32 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
     const tools = buildTools(ctx);
     const calls = [];
     const endpoint = await toolServer.open({ tools, ctx, onCall: (c) => calls.push({ at: new Date(now()).toISOString(), name: c.name, ok: c.ok, ...(c.ok ? {} : { error: String(c.error).slice(0, 300) }) }) });
+    // Screenshots: attach every image this session has not seen yet. If they cannot be loaded, the session is told once.
+    let images = [];
+    if (adaptersFor && (!state.sessionId || queued.some((e) => ["player", "staff", "owner", "participant"].includes(e.role)))) {
+      try {
+        const got = (await ctx.adapters.ticketImages?.(n)) || [];
+        const s0 = store.load(n);
+        const seen = new Set(s0.seenImages || []);
+        const dir = path.join(cfg.stateDir, "sessions", `ticket-${n}`, "images");
+        for (const img of got) {
+          const hash = require("node:crypto").createHash("sha1").update(img.data).digest("hex").slice(0, 16);
+          if (seen.has(hash)) continue;
+          fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+          const file = path.join(dir, `${hash}.${(img.mimeType.split("/")[1] || "png").replace("jpeg", "jpg")}`);
+          fs.writeFileSync(file, Buffer.from(img.data, "base64"), { mode: 0o600 });
+          images.push(file); seen.add(hash);
+        }
+        if (images.length) { s0.seenImages = [...seen].slice(-50); store.save(s0); }
+      } catch (e) {
+        const s0 = store.load(n);
+        if (!s0.imageFailNoted) {
+          s0.imageFailNoted = true; store.save(s0);
+          queued.push({ role: "system", at: new Date(now()).toISOString(), text: "This ticket's screenshots could not be loaded for you. If it matters, say so once, then work from the text, the page link and the records. Never ask the player again to describe or resend a screenshot." });
+        }
+        log(`[keir-slim] ticket ${n} images: ${e.message}`);
+      }
+    }
     const started = now();
     let outcome;
     try {
@@ -97,7 +123,8 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
         cwd: checkoutFor(n),
         sandbox: sandboxFor(n),
         instructions: instructions(),
-        prompt: wakePrompt({ ticket: n, state: store.load(n), events: queued, now: now(), first: !state.sessionId, intro }),
+        prompt: wakePrompt({ ticket: n, state: store.load(n), events: queued, now: now(), first: !state.sessionId, intro }) + (images.length ? `\n\n${images.length} screenshot(s) from this ticket are attached to this message as images. Look at them before asking anything about them.` : ""),
+        images,
         url: endpoint.url,
         completionUrl: endpoint.completionUrl,
         timeoutMs: cfg.wakeTimeoutMs,

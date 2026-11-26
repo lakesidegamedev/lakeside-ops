@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **The slim Keir sees ticket screenshots.** Its MCP client keeps the image blocks `support_get` returns, and every screenshot the session has not seen yet is attached to its Codex conversation (`--image=`), once. If they cannot be loaded, the session is told once to work from the text and never to ask the player to describe or resend them. (Ticket 1904: Keir said four times it could not open a normal screenshot.)
+- **One spam cap, now complete.** Besides two posts in a row without a person writing, it stops a third post within 30 minutes, a post that repeats an earlier one, and saying a screenshot will not open more than once. Resolutions are exempt. On 1904 every post followed a new player message, so the old two-in-a-row rule never fired.
+
 - **Resolve only when the player is done.** `resolve_ticket` closes a ticket only when the player confirmed after Keir's last post (quoted from their own message), asked to close (quoted), or stayed quiet for 24 hours after that post. Otherwise it refuses and tells the session to set a 24 hour reminder. The fix-live receipt rule is unchanged. (Ticket 1902 was resolved two minutes after the fix went live, with no word from the player.)
 
 - **Nothing from before the slim Keir went live is ever acted on again.** The intake records when it went live and never delivers an older event, even one recorded late; a ticket it first sees after start that opened before go-live gets a takeover wake, never a replay of its old messages. `resolve_ticket` on a ticket that is already resolved sends nothing. (Incident 2026-11-25: eleven old resolution receipts reached the owner; they were sent by the game's ticket bot, whose delivery list is fixed separately to never offer receipts from before the cutover or older than three days.)
