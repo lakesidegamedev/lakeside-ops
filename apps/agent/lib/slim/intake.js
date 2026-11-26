@@ -82,7 +82,7 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
         const recent = humans.filter((e) => Date.parse(e.at) >= live);
         if (opened < live) out.push({ ticket: n, names, takeover: true, lastHumanAt: humans[humans.length - 1]?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`,
           events: [{ role: "system", at: new Date(now).toISOString(), text: "You are taking over this ticket now. Earlier messages and replies (by the support team) are in its history: read it with history_read and ticket_read before doing anything, and do not repeat what was already said." }, ...recent] });
-        else out.push({ ticket: n, names, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`, events: humans });
+        else out.push({ ticket: n, names, isNew: true, channelId, openedAt: h.opened || humans[0]?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`, events: humans });
       }
       continue;
     }
@@ -100,4 +100,10 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
   return out;
 }
 
-module.exports = { poll, roleFor, eventFor, createIntakeState, readAll, SKIP_CATEGORIES };
+/** Ticket numbers open now that intake has not seen yet (a cheap list read, no history). */
+async function newTickets({ mcp, state }) {
+  const list = await mcp.call("support", "support_list", { kind: "ticket", openOnly: true, limit: 60 }, false);
+  return (list.items || []).filter((t) => t.kind === "ticket" && !SKIP_CATEGORIES.has(String(t.category || "").toLowerCase()) && !state.data.tickets[Number(t.number)]).map((t) => Number(t.number));
+}
+
+module.exports = { poll, newTickets, roleFor, eventFor, createIntakeState, readAll, SKIP_CATEGORIES };
