@@ -42,7 +42,7 @@ function liveCheckout(cfg) {
  * mode "live": real adapters. mode "replay": opts.replay = { ticket, history,
  * getCursor, checkout } and every write is captured.
  */
-function createRuntime({ env = process.env, mode, replay, onWake, log = console.error, mcp, sessions: injectedSessions, notifyOwner: injectedNotify } = {}) {
+function createRuntime({ env = process.env, mode, replay, onWake, onEffect, log = console.error, mcp, sessions: injectedSessions, notifyOwner: injectedNotify } = {}) {
   const cfg = { ...slimConfig(env), ...(mode ? { mode } : {}) };
   if (cfg.mode === "off") throw new Error("KEIR_SLIM_MODE is off");
   if (cfg.mode === "replay" && !replay) throw new Error("replay mode needs the replay inputs");
@@ -62,7 +62,7 @@ function createRuntime({ env = process.env, mode, replay, onWake, log = console.
     cfg, store, sessions, toolServer, adaptersFor, killSwitch, checkoutFor: checkout,
     sandboxFor: () => (cfg.mode === "live" ? "workspace-write" : "read-only"),
     now: replay?.now || (() => Date.now()),
-    log, onWake,
+    log, onWake, onEffect,
     alert: async ({ ticket, reason }) => log(`[keir-slim] ticket ${ticket} paused: ${reason}`),
   });
   return { cfg, host, store, killSwitch, toolServer, close: () => toolServer.close() };

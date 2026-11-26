@@ -44,6 +44,8 @@ function slimConfig(env = process.env) {
     // The owner's direct-message channel with Keir's bot: approval cards go here.
     ownerDmChannel: env.KEIR_SLIM_OWNER_DM_CHANNEL || "",
     pollMs: Math.max(5000, Number(env.KEIR_SLIM_POLL_MS) || 20000),
+    // Fast pickup: how often to ask Discord whether a person wrote in an open ticket.
+    fastPollMs: Math.max(2000, Number(env.KEIR_SLIM_FAST_POLL_MS) || 4000),
     maxConcurrentWakes: Math.max(1, Number(env.KEIR_SLIM_MAX_WAKES) || 3),
     // Names that refer to the owner in player copy. The owner's own name never goes in a post.
     ownerNames: list(env.KEIR_SLIM_OWNER_NAMES || "the owner"),

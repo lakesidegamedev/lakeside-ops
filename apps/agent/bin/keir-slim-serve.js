@@ -21,6 +21,8 @@ const { createKillSwitch } = require("../lib/operator/killswitch");
 const intake = require("../lib/slim/intake");
 const { createOwnerDm, parseAnswer } = require("../lib/slim/owner-dm");
 const S = require("../lib/slim/state");
+const { createFastWatch, createLimiter, createResponseClock } = require("../lib/slim/fastwatch");
+const { createPresence } = require("../lib/operator/presence");
 
 const cfg = slimConfig();
 if (cfg.mode !== "live") { console.error(`keir-slim-serve: KEIR_SLIM_MODE is ${cfg.mode}; it only runs live. Nothing started.`); process.exit(2); }
@@ -29,23 +31,47 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 const killSwitch = createKillSwitch({ file: cfg.killSwitchFile });
 const mcp = createSlimMcp({ configFile: cfg.mcpConfig, readToken: readAgentToken(cfg.agentEnvFile), gate: (what) => killSwitch.assertClear(what) });
 const ownerDm = createOwnerDm({ token: process.env.DISCORD_BOT_TOKEN, channel: cfg.ownerDmChannel, ownerIds: cfg.ownerIds, stateFile: path.join(cfg.stateDir, "owner-dm.json") });
+// Discord, as Keir's bot: typing indicator and the fast "did a person write" reads.
+async function discord(method, route) {
+  const r = await fetch(`https://discord.com/api/v10${route}`, { method, headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }, signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`discord ${method} ${route.split("?")[0]} ${r.status}`);
+  return r.status === 204 ? null : r.json();
+}
+const presence = createPresence({ discord, allowed: () => !killSwitch.state().engaged });
+const typing = new Map(); // ticket -> { end, timer }
+function startTyping(ticket, channelId) {
+  if (!channelId || typing.has(ticket)) return false;
+  const end = presence.begin(channelId);
+  // A wake normally ends it; never type for more than 4 minutes without one.
+  const timer = setTimeout(() => stopTyping(ticket), 4 * 60000);
+  typing.set(ticket, { end, timer });
+  return true;
+}
+function stopTyping(ticket) {
+  const t = typing.get(ticket);
+  if (!t) return;
+  clearTimeout(t.timer); t.end(); typing.delete(ticket);
+}
+const clock = createResponseClock({ append: (line) => fs.appendFileSync(path.join(cfg.stateDir, "response-times.jsonl"), JSON.stringify(line) + "\n", { mode: 0o600 }) });
+
 const rt = createRuntime({
   mode: "live", mcp, log: (m) => log(m),
   notifyOwner: async (req) => ownerDm.sendCard({ ...req, card: renderCard(req) }),
+  onEffect: (ticket, e) => { if (e.kind === "post" || e.kind === "resolve") { stopTyping(ticket); clock.posted(ticket, e.at); } },
   onWake: (r) => {
+    stopTyping(r.ticket);
+    if (clock.pending(r.ticket).length && !r.effects.some((e) => e.kind === "post" || e.kind === "resolve")) clock.wakeEnded(r.ticket);
     const line = { at: new Date().toISOString(), ticket: r.ticket, minutes: r.minutes, finished: r.finished, error: r.error, timedOut: r.timedOut, posts: r.effects.filter((e) => e.kind === "post").length, effects: r.effects.map((e) => e.kind), ruleHits: r.ruleHits.map((h) => h.rule), calls: r.calls.length };
     fs.appendFileSync(path.join(cfg.stateDir, "wakes.jsonl"), JSON.stringify(line) + "\n", { mode: 0o600 });
     log(`ticket ${r.ticket} wake: ${JSON.stringify(line)}`);
   },
 });
 
-// A small limiter: at most N wakes at once across tickets.
-let running = 0; const waiting = [];
-const limited = (fn) => new Promise((resolve, reject) => {
-  const go = () => { running++; fn().then(resolve, reject).finally(() => { running--; waiting.shift()?.(); }); };
-  running < cfg.maxConcurrentWakes ? go() : waiting.push(go);
-});
-const deliver = (n, events, opts) => limited(() => rt.host.deliver(n, events, opts)).catch((e) => log(`ticket ${n} deliver failed: ${e.message}`));
+// At most N wakes at once; owner and staff messages jump the queue.
+const limiter = createLimiter(cfg.maxConcurrentWakes);
+const limited = (fn, opts) => limiter.run(fn, opts);
+const urgentOf = (events) => (events || []).some((e) => e.role === "owner" || e.role === "staff" || e.role === "approval");
+const deliver = (n, events, opts) => limited(() => rt.host.deliver(n, events, opts), { urgent: urgentOf(events) }).catch((e) => log(`ticket ${n} deliver failed: ${e.message}`));
 
 const intakeState = intake.createIntakeState(path.join(cfg.stateDir, "intake.json"));
 let first = !Object.keys(intakeState.data.tickets).length;
@@ -55,7 +81,7 @@ let polling = false;
 async function tick() {
   if (polling) return;
   polling = true;
-  const beat = { at: new Date().toISOString(), mode: cfg.mode, killSwitch: killSwitch.state().engaged, running, waiting: waiting.length, errors: [] };
+  const beat = { at: new Date().toISOString(), mode: cfg.mode, killSwitch: killSwitch.state().engaged, ...limiter.stats(), typing: [...typing.keys()], errors: [] };
   try {
     // 1 intake
     try {
@@ -68,6 +94,12 @@ async function tick() {
         deliver(it.ticket, it.events, { intro: it.intro });
       }
       beat.openTickets = Object.entries(intakeState.data.tickets).filter(([, t]) => t.open).map(([n]) => Number(n));
+      // Fast pickup watches every open ticket channel Keir may answer in, plus the owner's DM.
+      for (const [n, t] of Object.entries(intakeState.data.tickets)) {
+        if (t.open && t.channelId && !rt.store.load(n).paused) fast.watch(t.channelId, { ticket: Number(n) });
+        else if (t.channelId) fast.unwatch(t.channelId);
+      }
+      if (cfg.ownerDmChannel) fast.watch(cfg.ownerDmChannel, { dm: true });
     } catch (e) { beat.errors.push(`intake: ${e.message}`); }
     // 2 owner answers
     try {
@@ -77,7 +109,8 @@ async function tick() {
         if (!approval || approval.status !== "pending") continue;
         const ans = a.answer || parseAnswer(a.content, approval);
         log(`ticket ${a.ticket}: owner ${a.clicked ? "clicked" : "answered"} ${a.approvalId}: ${ans.status}`);
-        limited(() => rt.host.answer(a.ticket, a.approvalId, ans)).catch((e) => log(`answer failed: ${e.message}`));
+        startTyping(a.ticket, intakeState.data.tickets[a.ticket]?.channelId);
+        limited(() => rt.host.answer(a.ticket, a.approvalId, ans), { urgent: true }).catch((e) => log(`answer failed: ${e.message}`));
         if (!a.clicked) await ownerDm.acknowledge(a.messageId);
       }
       // Cards answered another way (the CLI, the ticket channel) stop being polled.
@@ -101,12 +134,32 @@ async function tick() {
       }
     } catch (e) { beat.errors.push(`reminders: ${e.message}`); }
   } finally {
-    beat.running = running; beat.waiting = waiting.length;
+    Object.assign(beat, limiter.stats());
     fs.writeFileSync(path.join(cfg.stateDir, "heartbeat.json"), JSON.stringify(beat), { mode: 0o600 });
     if (beat.errors.length) log(`poll errors: ${beat.errors.join("; ")}`);
     polling = false;
   }
 }
+
+// Fast pickup: a person's new message starts typing now and runs intake now, not at the next slow poll.
+let soon = [];
+function tickSoon() {
+  for (const t of soon) clearTimeout(t);
+  // The message reaches the ticket history a few seconds after Discord; look again until it is there.
+  soon = [2500, 5000, 9000, 15000, 25000].map((ms) => setTimeout(() => tick().catch(() => {}), ms));
+}
+const fast = createFastWatch({
+  discord, botId: null, log: (m) => log(m),
+  onHuman: async (h) => {
+    if (h.dm) { if (cfg.ownerIds.includes(String(h.authorId))) tickSoon(); return; }
+    const st = rt.store.load(h.ticket);
+    if (st.paused || st.closed || killSwitch.state().engaged) return;
+    const started = startTyping(h.ticket, h.channelId);
+    clock.message(h.ticket, { messageId: h.messageId, at: h.at, typingAt: new Date().toISOString() });
+    log(`ticket ${h.ticket}: new message ${h.messageId}${started ? ", typing" : ""} (${Date.now() - Date.parse(h.at)} ms after it was sent)`);
+    tickSoon();
+  },
+});
 
 (async () => {
   fs.mkdirSync(cfg.stateDir, { recursive: true, mode: 0o700 });
@@ -115,6 +168,7 @@ async function tick() {
   if (!dm.ok) { console.error("Approval cards cannot reach the owner; refusing to start."); process.exit(3); }
   await tick();
   setInterval(tick, cfg.pollMs);
+  setInterval(() => fast.tick().catch((e) => log(`fast watch: ${e.message}`)), cfg.fastPollMs);
 })();
 
 for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => { log(`${sig}: stopping; running wakes are cut off`); process.exit(0); });
