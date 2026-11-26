@@ -26,9 +26,26 @@ function formatEvents(events) {
     .join("\n");
 }
 
-function wakePrompt({ ticket, state, events, now, first, intro }) {
+const TEAM_KINDS = new Set(["support_post", "staff_message", "status", "resolution", "fix", "finding", "heal_request", "reopen", "merge"]);
+const ROUTINE = /^(?:resolution receipt recorded|discord-ticket-|closed; earlier resolution receipt kept|ticket channel)/i;
+const sameText = (a, b) => String(a || "").replace(/\s+/g, " ").trim().slice(0, 80).toLowerCase() === String(b || "").replace(/\s+/g, " ").trim().slice(0, 80).toLowerCase();
+
+/** What the team (not this session) did on the ticket since the last sync, oldest first. */
+function teamActivity(events, state) {
+  const since = Date.parse(state.syncedAt || 0) || 0;
+  const mine = (state.posts || []).map((p) => p.text);
+  return events
+    .filter((e) => TEAM_KINDS.has(e.kind) && Date.parse(e.at) > since)
+    .filter((e) => !(e.kind === "support_post" && mine.some((t) => sameText(t, e.text))))
+    .filter((e) => !(e.kind === "status" && (!String(e.text || "").trim() || ROUTINE.test(String(e.text).trim()))))
+    .map((e) => ({ at: new Date(e.at).toISOString(), who: e.kind === "support_post" ? "support team post" : e.kind === "staff_message" ? String(e.who || "staff") : `${e.kind} by ${String(e.who || "the team")}`, text: String(e.text || "").replace(/\s+/g, " ").trim().slice(0, 500) }))
+    .slice(-12);
+}
+
+function wakePrompt({ ticket, state, events, now, first, intro, teamUpdates = [] }) {
   const parts = [];
   parts.push(`Now: ${new Date(now).toISOString()}`);
+  if (teamUpdates.length) parts.push("The team worked on this ticket since you last did. This wins over your own earlier notes and plans: re-plan from it, and never build or post something they already did.", teamUpdates.map((u) => `- [${u.at}] ${u.who}: ${u.text}`).join("\n"));
   if (first) parts.push(`This is ticket ${ticket}. ${intro || ""} Start by reading it with ticket_read.`.trim());
   if (state.paused) parts.push(`The ticket is PAUSED by ${state.paused.by}. Do not post or change anything; finish.`);
   parts.push("New since you last finished:", formatEvents(events) || "- (nothing new; you were woken by a reminder)");
@@ -88,6 +105,24 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
     const tools = buildTools(ctx);
     const calls = [];
     const endpoint = await toolServer.open({ tools, ctx, onCall: (c) => calls.push({ at: new Date(now()).toISOString(), name: c.name, ok: c.ok, ...(c.ok ? {} : { error: String(c.error).slice(0, 300) }) }) });
+    // The team's activity on the ticket since the last wake (staff, owner and coordinator posts, fixes, status notes)
+    // is read from the history first. It wins over the session's own notes: the next step is re-planned from it.
+    let teamUpdates = [];
+    try {
+      const h = await ctx.adapters.historyRead?.({ number: n, limit: 300 });
+      if (h?.events) {
+        const s1 = store.load(n);
+        teamUpdates = teamActivity(h.events, s1);
+        const latest = h.events.reduce((m, e) => Math.max(m, Date.parse(e.at) || 0), Date.parse(s1.syncedAt || 0) || 0);
+        if (teamUpdates.length) {
+          const facts = teamUpdates.map((u) => ({ fact: `${u.who} (${u.at.slice(0, 16).replace("T", " ")} UTC): ${u.text}`, source: "ticket history, team update" }));
+          const synced = S.applyUpdate(s1, { established: facts, next: { step: "Re-plan from the team's latest update before acting: it wins over your own earlier notes", waits_on: "nothing" } }, now());
+          synced.syncedAt = new Date(latest).toISOString();
+          store.save(synced);
+        } else if (latest) { s1.syncedAt = new Date(latest).toISOString(); store.save(s1); }
+      }
+    } catch (e) { log(`[keir-slim] ticket ${n} team sync: ${e.message}`); }
+
     // Screenshots: attach every image this session has not seen yet. If they cannot be loaded, the session is told once.
     let images = [];
     if (adaptersFor && (!state.sessionId || queued.some((e) => ["player", "staff", "owner", "participant"].includes(e.role)))) {
@@ -123,7 +158,7 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
         cwd: checkoutFor(n),
         sandbox: sandboxFor(n),
         instructions: instructions(),
-        prompt: wakePrompt({ ticket: n, state: store.load(n), events: queued, now: now(), first: !state.sessionId, intro }) + (images.length ? `\n\n${images.length} screenshot(s) from this ticket are attached to this message as images. Look at them before asking anything about them.` : ""),
+        prompt: wakePrompt({ ticket: n, state: store.load(n), events: queued, now: now(), first: !state.sessionId, intro, teamUpdates }) + (images.length ? `\n\n${images.length} screenshot(s) from this ticket are attached to this message as images. Look at them before asking anything about them.` : ""),
         images,
         url: endpoint.url,
         completionUrl: endpoint.completionUrl,
@@ -182,4 +217,4 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
   return { deliver, pause, resume, setPlayerNames, answer, wakePrompt, formatEvents };
 }
 
-module.exports = { createHost, instructions, formatEvents, wakePrompt };
+module.exports = { createHost, instructions, formatEvents, wakePrompt, teamActivity };

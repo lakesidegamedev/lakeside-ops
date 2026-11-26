@@ -113,6 +113,8 @@ function fakeCtx(over = {}) {
       resolve: async () => ({ delivered: true }),
       approval: async () => ({ recorded: true }),
       openPr: async () => ({ opened: true, url: "https://example.invalid/pull/1" }),
+      changedFiles: async () => ["src/components/OperationsCard.tsx"],
+      duplicatePrs: async () => ({ strong: [], related: [] }),
       mergeToDevelopment: async () => ({ merged: true }),
       promotionStatus: async () => ({ held: true, holds: ["development to staging #1: labelled hold"], inMain: false, autoPromote: { enabled: true, reasons: [] } }),
       mcpCall: async (server, tool) => ({ server, tool }),
@@ -565,4 +567,59 @@ test("host: ticket screenshots are attached to the session once; a load failure 
   await host.deliver(1905, [{ role: "player", at: "2026-11-26T04:05:00Z", text: "did you see it?" }]);
   assert.doesNotMatch(calls[3].prompt, /could not be loaded/, "said once");
   toolServer.close();
+});
+
+test("open_pr stops when an open or merged fix from the last 48 hours exists", async () => {
+  const f = fakeCtx();
+  let opened = 0;
+  f.ctx.adapters.openPr = async () => { opened++; return { opened: true, url: "https://example.invalid/pull/7611" }; };
+  let seen;
+  f.ctx.adapters.duplicatePrs = async (q) => { seen = q; return { strong: [{ number: 7608, state: "merged", url: "https://example.invalid/pull/7608", why: ["changes the same code: src/components/OperationsCard.tsx"] }], related: [] }; };
+  const r = await f.tools.open_pr.handler({ title: "fix(corporations): give operations notes room", body: "Moves long notes below the figures.", tests: "card tests pass" });
+  assert.equal(r.opened, false);
+  assert.equal(r.duplicates[0].number, 7608);
+  assert.deepEqual(seen.files, ["src/components/OperationsCard.tsx"]);
+  assert.equal(seen.ticket, 7);
+  assert.equal(opened, 0);
+  f.ctx.adapters.duplicatePrs = async () => { throw new Error("github down"); };
+  assert.equal((await f.tools.open_pr.handler({ title: "fix: x", body: "y", tests: "z" })).opened, false, "never on a guess");
+  assert.equal(opened, 0);
+  // A weaker overlap needs the session to say why its fix is different.
+  f.ctx.adapters.duplicatePrs = async () => ({ strong: [], related: [{ number: 7572, state: "merged", why: ["changes the same code: src/components/OperationsCard.tsx"] }] });
+  const soft = await f.tools.open_pr.handler({ title: "fix: x", body: "y", tests: "z" });
+  assert.equal(soft.opened, false);
+  assert.equal(soft.related[0].number, 7572);
+  assert.equal((await f.tools.open_pr.handler({ title: "fix: x", body: "y", tests: "z", related_checked: "7572 changes the pill colours, not the label width" })).opened, true);
+  assert.equal(opened, 1);
+});
+
+test("host: the team's posts since the last wake win over the session's stale notes", async () => {
+  const { teamActivity } = require("../lib/slim/host");
+  const f = hostFixture();
+  let s = f.store.load(1904);
+  s = S.applyUpdate(s, { established: [{ fact: "Cannot reproduce yet", source: "keir" }], next: { step: "Wait for the player to describe the screenshot", waits_on: "player" } });
+  s = S.recordPost(s, { text: "I couldn't open the screenshot. What looks wrong?", kind: "question", delivered: true }, Date.parse("2026-11-26T03:00:55Z"));
+  f.store.save(s);
+  const history = [
+    { at: "2026-11-26T03:00:55Z", kind: "support_post", who: "support", text: "I couldn't open the screenshot. What looks wrong?" },
+    { at: "2026-11-26T03:24:05Z", kind: "support_post", who: "support", text: "Your screenshot came through fine. A fix for the Operations card is being built now." },
+    { at: "2026-11-26T03:30:00Z", kind: "status", who: "support", text: "resolution receipt recorded" },
+    { at: "2026-11-26T03:40:00Z", kind: "fix", who: "support", text: "https://example.invalid/pull/7608" },
+  ];
+  // Only the team's own activity counts: Keir's post and routine notes are left out.
+  assert.deepEqual(teamActivity(history, f.store.load(1904)).map((u) => u.text.slice(0, 20)), ["Your screenshot came", "https://example.inva"]);
+  const host = createHost({ cfg: { mode: "replay", stateDir: f.dir, ownerNames: [], ownerPrivateNames: [], wakeTimeoutMs: 60000, budget: { wakesPerDay: 9, minutesPerTicket: 300 } }, store: f.store, sessions: f.sessions, toolServer: f.toolServer, killSwitch: clear, checkoutFor: () => f.dir,
+    adaptersFor: () => ({ historyRead: async () => ({ events: history }), post: async () => ({ delivered: true }), mcpCall: async () => ({}), mcpList: async () => [] }) });
+  await host.deliver(1904, [{ role: "system", at: "2026-11-26T03:50:00Z", text: "The pause is lifted." }]);
+  const prompt = f.sessions.calls.at(-1).prompt;
+  assert.match(prompt, /The team worked on this ticket since you last did/);
+  assert.match(prompt, /A fix for the Operations card is being built now/);
+  assert.match(prompt, /pull\/7608/);
+  // The state the session saw: next step reset, the team's update established.
+  assert.match(prompt, /Next: Re-plan from the team's latest update/);
+  assert.ok(f.store.load(1904).established.some((e) => /being built now/.test(e.fact) && /team update/.test(e.source)));
+  // The next wake does not show the same updates again.
+  await host.deliver(1904, [{ role: "player", at: "2026-11-26T04:00:00Z", text: "thanks" }]);
+  assert.doesNotMatch(f.sessions.calls.at(-1).prompt, /The team worked on this ticket/);
+  f.toolServer.close();
 });

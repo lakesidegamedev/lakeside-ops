@@ -189,12 +189,18 @@ function buildTools(ctx) {
         if (problems.length) return { requested: false, problems, note: "The owner reads this card: plain words, no ids or code terms. Fix the copy and ask again." };
         return approval("compensation", { summary: `Pay ${a.amount} to ${a.recipient}`, why: a.evidence, ...a });
       }),
-    tool("open_pr", "Open a pull request to development from this ticket's checkout, with the fix you built and tested there. The text is public: no player names, ids or internal details.",
-      obj({ title: str("conventional commit style title"), body: str("what changes and why, and the tests run"), tests: str("the focused tests you ran and their result") }, ["title", "body", "tests"]),
+    tool("open_pr", "Open a pull request to development from this ticket's checkout, with the fix you built and tested there. It first checks GitHub for an open or merged pull request from the last 48 hours on the same files or this ticket, and stops if one exists. The text is public: no player names, ids or internal details.",
+      obj({ title: str("conventional commit style title"), body: str("what changes and why, and the tests run"), tests: str("the focused tests you ran and their result"), related_checked: str("after a first refusal listed related pull requests: why none of them already fixes this") }, ["title", "body", "tests"]),
       async (a) => {
         const blocked = writesStopped(); if (blocked) throw new Error(blocked);
         const problems = checkPublicText(`${a.title}\n${a.body}`, ctx.playerNames());
         if (problems.length) return { opened: false, problems, note: "The pull request text is public. Remove these and try again." };
+        // Someone may already have fixed it: an open or merged PR from the last 48 hours on the same files or this ticket.
+        let found;
+        try { found = await ctx.adapters.duplicatePrs({ ticket: ctx.ticket, files: await ctx.adapters.changedFiles(ctx.ticket), now: ctx.now() }); }
+        catch (e) { return { opened: false, note: `Could not check for an existing fix (${e.message}). Do not open a second one on a guess: set a reminder and try again.` }; }
+        if (found.strong?.length) return { opened: false, duplicates: found.strong, note: "A fix for this already exists. Do not open another: track that one to players with promotion_status, record it in ticket state, and tell the player only what it changes for them." };
+        if (found.related?.length && !String(a.related_checked || "").trim()) return { opened: false, related: found.related, note: "Recent pull requests change some of the same code. Read them. If one already fixes this, do not open another. If not, call open_pr again with related_checked saying why your fix is different." };
         const result = await ctx.adapters.openPr({ ticket: ctx.ticket, ...a });
         if (result?.url) save(S.applyUpdate(st(), { prs: [{ url: result.url, state: "open", what: a.title }] }, ctx.now()));
         capture("open_pr", { title: a.title, body: a.body, tests: a.tests, result });

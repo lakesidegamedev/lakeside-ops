@@ -66,8 +66,8 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       const cwd = ticketCheckout(ticket);
       const branch = `keir/ticket-${Number(ticket)}`;
       await git(["-C", cwd, "checkout", "-B", branch]);
-      // node_modules is a link to the shared install, never part of a fix.
-      await git(["-C", cwd, "add", "-A", "--", ".", ":(exclude)node_modules"]);
+      // node_modules is a link to the shared install and gitignored; it is never part of a fix.
+      await git(["-C", cwd, "add", "-A"]);
       const staged = (await git(["-C", cwd, "diff", "--cached", "--name-only"])).split("\n").filter(Boolean);
       if (!staged.length) throw new Error("Nothing to commit: the checkout has no changes.");
       if (staged.some((f) => f === "node_modules" || f.startsWith("node_modules/"))) throw new Error("node_modules must not be committed.");
@@ -120,6 +120,46 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       out.note = out.held ? "The promotion is held; the owner can release it with request_promote." : "Auto-promote will ship this by itself once the required checks are green. Track it with promotion_status and a reminder; do not ask the owner.";
       return out;
     },
+    /** Files this ticket's checkout changes against development. */
+    async changedFiles(ticket) {
+      const cwd = ticketCheckout(ticket);
+      const diff = await git(["-C", cwd, "diff", "--name-only", "origin/development"]);
+      const untracked = await git(["-C", cwd, "ls-files", "--others", "--exclude-standard"]);
+      return [...new Set([...diff.split("\n"), ...untracked.split("\n")].map((f) => f.trim()).filter((f) => f && f !== "node_modules"))];
+    },
+    /**
+     * Open or merged pull requests from the last 48 hours that may already fix this: { strong, related }.
+     * strong: mentions the ticket, or shares most of its code files (overlap over the union of both
+     * PRs' code files at least 0.4; tests and notes ignored). related: shares any code file.
+     * Release promotions (from development or staging) are not fixes and are skipped.
+     */
+    async duplicatePrs({ ticket, files, now = Date.now() }) {
+      const R = cfg.gameRepoSlug;
+      const since = now - 48 * 3600000;
+      const code = (list) => list.filter((f) => !/(?:\.test\.|\.spec\.|(?:^|\/)__tests__\/|\.md$|^content\/changelog\/)/.test(f));
+      const mine = code(files || []);
+      const pulls = JSON.parse(await gh(["api", `repos/${R}/pulls?state=all&sort=updated&direction=desc&per_page=60`]));
+      const mention = new RegExp(`(?:#|ticket\\s*)${Number(ticket)}\\b`, "i");
+      const strong = [], related = [];
+      for (const p of pulls) {
+        if (Date.parse(p.updated_at) < since) break;
+        if (["development", "staging", `keir/ticket-${Number(ticket)}`].includes(p.head?.ref)) continue;
+        const merged = Boolean(p.merged_at);
+        if (p.state === "closed" && !merged) continue;
+        const entry = { number: p.number, url: p.html_url, state: merged ? "merged" : "open", title: p.title, why: [] };
+        if (mention.test(`${p.title}\n${p.body || ""}`)) entry.why.push("mentions this ticket");
+        let share = 0;
+        if (mine.length) {
+          const theirs = code(JSON.parse(await gh(["api", `repos/${R}/pulls/${p.number}/files?per_page=100`, "--jq", "[.[].filename]"])));
+          const same = theirs.filter((f) => mine.includes(f));
+          share = same.length / new Set([...mine, ...theirs]).size;
+          if (same.length) entry.why.push(`changes the same code: ${same.slice(0, 5).join(", ")}`);
+        }
+        if (entry.why.includes("mentions this ticket") || share >= 0.4) strong.push(entry);
+        else if (entry.why.length) related.push(entry);
+      }
+      return { strong, related };
+    },
     async mergeToDevelopment({ pr }) {
       const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1]);
       if (!n) throw new Error("Not a pull request url");
@@ -169,6 +209,8 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
     githubGet: closed("GitHub"),
     promotionStatus: closed("Promotion status"),
     ticketImages: async () => [],
+    changedFiles: async () => [],
+    duplicatePrs: async () => ({ strong: [], related: [] }),
     mcpCall: async (server, tool, args) => {
       if (server === "ops-knowledge") throw new Error("That index is not available right now; read the code in your checkout with the shell instead.");
       return mcp.call(server, tool, args, false);

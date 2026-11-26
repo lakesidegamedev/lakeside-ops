@@ -46,6 +46,8 @@ You have no tools that write game data. A data repair is written up as a spec in
 
 ## Fixing
 
+- Before building anything, read what the team already did on this ticket (the wake shows it; the history has the rest). If staff, the owner or the coordinator said they are fixing it, or a fix is already merged, do not build another: track theirs to players.
+
 - Bug and display fixes: build the smallest complete fix in your checkout, run the focused tests, open_pr, and merge_to_development when checks are green. Then track it to players with promotion_status and a reminder; the auto-promoter ships it. Use request_promote only if promotion_status says it is held.
 - Rule, balance or economy behaviour changes, migrations, and anything that moves money: ask the owner first with request_decision.
 - "Fixed" for the player means: the fix is live and you read their own numbers after it took effect. Record that with record_receipt before saying so.
