@@ -116,7 +116,11 @@ async function tick() {
       // Cards answered another way (the CLI, the ticket channel) stop being polled.
       for (const n of rt.store.list()) for (const x of rt.store.load(n).approvals) if (x.status !== "pending") ownerDm.closeCard(x.id);
     } catch (e) { beat.errors.push(`owner answers: ${e.message}`); }
-    // 3 reminders and held messages
+    // 3 fixes going live: wake the ticket the moment its watched fix is on the game
+    try {
+      await require("../lib/slim/deploy").checkLiveWatches({ store: rt.store, repo: cfg.gameRepo, releasesFile: cfg.deployReleasesFile, deliver, log: (m) => log(m) });
+    } catch (e) { beat.errors.push(`live watch: ${e.message}`); }
+    // 4 reminders and held messages
     try {
       let turn = null;
       try { turn = (await mcp.call("engine", "engine_health", {}, false)).turn ?? null; } catch { /* turn unknown this poll */ }

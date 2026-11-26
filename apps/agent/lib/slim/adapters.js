@@ -85,7 +85,7 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1] || pr);
       if (!n) throw new Error("Give the fix's pull request url or number");
       const fix = JSON.parse(await gh(["api", `repos/${R}/pulls/${n}`]));
-      const out = { pr: n, merged: Boolean(fix.merged), base: fix.base?.ref, inDevelopment: false, inStaging: false, inMain: false, autoPromote: { enabled: true, reasons: [] }, promotePrs: [], holds: [] };
+      const out = { pr: n, merged: Boolean(fix.merged), mergeSha: fix.merge_commit_sha || null, base: fix.base?.ref, inDevelopment: false, inStaging: false, inMain: false, autoPromote: { enabled: true, reasons: [] }, promotePrs: [], holds: [] };
       const off = fs.existsSync(cfg.autoPromoteOffFile);
       let timer = "unknown"; try { timer = (await run("systemctl", ["is-active", cfg.autoPromoteTimer])).trim(); } catch (e) { timer = "inactive"; }
       if (off) out.autoPromote.reasons.push("the auto-promote off switch is set");
@@ -96,7 +96,14 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
         try { const c = JSON.parse(await gh(["api", `repos/${R}/compare/${branch}...${fix.merge_commit_sha}`, "--jq", "{status: .status}"])); return ["behind", "identical"].includes(c.status); } catch { return false; }
       };
       [out.inDevelopment, out.inStaging, out.inMain] = [await contains("development"), await contains("staging"), await contains("main")];
-      if (out.inMain) { out.note = "The fix is on main: it reaches players with the next deploy (about 45 minutes). Read the player's own numbers before saying it is live."; return out; }
+      if (out.inMain) {
+        out.deploy = await require("./deploy").liveStatus({ repo: cfg.gameRepo, releasesFile: cfg.deployReleasesFile, mergeSha: fix.merge_commit_sha });
+        out.live = out.deploy.live;
+        out.note = out.live
+          ? "The fix is live on the game (web and worker both contain it). Read the player's own data now, record the receipt, then tell them."
+          : "The fix is on main and waits for the next deploy. You will be woken the moment it is live.";
+        return out;
+      }
       const hop = out.inStaging ? { base: "main", head: "staging" } : { base: "staging", head: "development" };
       const open = JSON.parse(await gh(["api", `repos/${R}/pulls?state=open&base=${hop.base}&head=${R.split("/")[0]}:${hop.head}`]));
       let heldCards = [];
@@ -160,6 +167,19 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       }
       return { strong, related };
     },
+    /** Is a merged game fix live on production (web and worker)? */
+    async deployStatus({ pr }) {
+      const R = cfg.gameRepoSlug;
+      const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1] || pr);
+      const fix = JSON.parse(await gh(["api", `repos/${R}/pulls/${n}`]));
+      if (!fix.merged) return { pr: n, merged: false, live: false, note: "Not merged yet." };
+      return { pr: n, merged: true, ...(await require("./deploy").liveStatus({ repo: cfg.gameRepo, releasesFile: cfg.deployReleasesFile, mergeSha: fix.merge_commit_sha })) };
+    },
+    /** A public game page as a logged-out visitor sees it, rendered on the host (old Keir's page viewer). */
+    async siteRead(input) {
+      const r = await require("../operator/pageview").render(input);
+      return { title: r.title, url: r.url, device: r.device, text: r.text, note: r.note };
+    },
     async mergeToDevelopment({ pr }) {
       const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1]);
       if (!n) throw new Error("Not a pull request url");
@@ -209,6 +229,8 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
     githubGet: closed("GitHub"),
     promotionStatus: closed("Promotion status"),
     ticketImages: async () => [],
+    deployStatus: closed("Deploy status"),
+    siteRead: closed("The public site"),
     changedFiles: async () => [],
     duplicatePrs: async () => ({ strong: [], related: [] }),
     mcpCall: async (server, tool, args) => {

@@ -112,7 +112,19 @@ function buildTools(ctx) {
         if (String(basis || "").trim().length < 4) throw new Error("basis is your self-review: list the reads behind each fact in the post, or say 'no facts'.");
         const shaped = rules.shape(text);
         const check = rules.checkPost(shaped, ruleCtx(kind));
-        if (!check.ok) { ctx.ruleHits.push(...check.problems.map((p) => ({ ...p, tool: "post_reply", at: new Date(ctx.now()).toISOString() }))); return refuse(check.problems); }
+        if (!check.ok) {
+          ctx.ruleHits.push(...check.problems.map((p) => ({ ...p, tool: "post_reply", at: new Date(ctx.now()).toISOString() })));
+          // Held only by the 30 minute limit: wake again the moment it clears, so the answer is not lost.
+          if (check.problems.every((p) => /posts in the last 30 minutes/.test(p.match))) {
+            const s = st();
+            const window = s.posts.filter((p) => p.delivered !== false && p.kind !== "resolution" && ctx.now() - Date.parse(p.at) < 30 * 60000).map((p) => Date.parse(p.at)).sort((x, y) => x - y);
+            const minutes = Math.max(5, Math.ceil(((window[0] || ctx.now()) + 30 * 60000 - ctx.now()) / 60000) + 1);
+            s.reminder = { after: `${minutes} minutes`, minutes, reason: "Post the answer the 30 minute limit held back", setAt: new Date(ctx.now()).toISOString() };
+            save(s);
+            return { ...refuse(check.problems), heldUntil: `${minutes} minutes`, note: `Held by the 30 minute limit. You will be woken in ${minutes} minutes to post it; record the answer in ticket state now and finish.` };
+          }
+          return refuse(check.problems);
+        }
         const delivered = await ctx.adapters.post({ ticket: ctx.ticket, text: shaped, kind });
         save(S.recordPost(st(), { text: shaped, kind, delivered: delivered?.delivered !== false }, ctx.now()));
         capture("post", { text: shaped, postKind: kind, basis: String(basis).slice(0, 1000), delivery: delivered });
@@ -171,7 +183,13 @@ function buildTools(ctx) {
       }),
     tool("promotion_status", "Where a merged game fix is on its way to players: in development, staging or main, the open promote pull requests, and whether the auto-promoter is held. Use it to track a fix to live.",
       obj({ pr: str("the fix's pull request url or number") }, ["pr"]),
-      async ({ pr }) => ctx.adapters.promotionStatus({ pr })),
+      async ({ pr }) => watchLive(await ctx.adapters.promotionStatus({ pr }))),
+    tool("deploy_status", "Is a merged game fix live for players? Compares the fix with what is deployed on the game's web and worker. If it is not live yet, you are woken the moment it is.",
+      obj({ pr: str("the fix's pull request url or number") }, ["pr"]),
+      async ({ pr }) => watchLive(await ctx.adapters.deployStatus({ pr }))),
+    tool("site_read", "Open a public page of the game (ahousedividedgame.com) as a logged-out visitor sees it, and read its text. Use it to check a fix on the real page. Your shell has no network; use this instead of curl.",
+      obj({ path: str("page path, for example /corporation/126"), device: str("desktop, iphone or android", { enum: ["desktop", "iphone", "android"] }) }, ["path"]),
+      async (a) => ctx.adapters.siteRead(a)),
     tool("request_promote", "Ask the owner to release a held promotion. Normally the auto-promoter ships a merged fix to players by itself once checks are green: then do not ask, track it with promotion_status. Ask only when the promotion is held (auto-promote off, a held promote pull request) or for a hotfix that must skip the queue (give hotfix_reason). Plain words, no ids or code terms in what, why and risk.",
       obj({ pr: str("the merged pull request url (shown only as a link button)"), what: str("what changes for players, one short sentence"), why: str("at most three short sentences"), risk: str("what could go wrong and who it touches, one sentence"), evidence: str("tests and checks that passed (kept in the record, not shown)"), hotfix_reason: str("only for a hotfix that must skip the normal queue: why it cannot wait") }, ["pr", "what", "why", "risk", "evidence"]),
       async (a) => {
@@ -266,6 +284,16 @@ function buildTools(ctx) {
     const hours = (ctx.now() - postedAt) / 3600000;
     if (hours < 24) return { ok: false, why: `Only ${hours.toFixed(1)} hours since your last post. Set a reminder (set_reminder, 1440 minutes) and resolve after 24 quiet hours or when the player confirms.` };
     return { ok: true };
+  }
+
+  // A merged fix that is not live yet is watched: the service wakes this ticket the moment it is.
+  function watchLive(status) {
+    if (!status?.merged || status.live || !status.mergeSha) return status;
+    const s = st();
+    s.liveWatch = (s.liveWatch || []).filter((w) => w.pr !== status.pr);
+    s.liveWatch.push({ pr: status.pr, mergeSha: status.mergeSha, since: new Date(ctx.now()).toISOString() });
+    save(s);
+    return { ...status, watching: true, note: `${status.note || ""} You will be woken the moment it is live; finish now and wait for that.`.trim() };
   }
 
   async function approval(kind, payload) {

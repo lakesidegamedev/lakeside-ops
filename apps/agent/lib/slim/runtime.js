@@ -65,7 +65,7 @@ function createRuntime({ env = process.env, mode, replay, onWake, onEffect, log 
     log, onWake, onEffect,
     alert: async ({ ticket, reason }) => log(`[keir-slim] ticket ${ticket} paused: ${reason}`),
   });
-  return { cfg, host, store, killSwitch, toolServer, close: () => toolServer.close() };
+  return { cfg, host, store, killSwitch, toolServer, adaptersFor, close: () => toolServer.close() };
 }
 
 module.exports = { createRuntime, liveCheckout };
