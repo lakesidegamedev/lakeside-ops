@@ -5,6 +5,9 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **The team's work comes first.** Before every wake (including after a resume) the slim host reads the ticket history: staff, owner and coordinator posts, fixes and real status notes since the last wake are added to the ticket state as established facts, the next step is reset to re-plan from them, and the wake opens with them. They win over the session's own earlier notes. (Ticket 1904: after a resume Keir worked from a stale "cannot reproduce" note and opened a second fix for a bug already fixed.)
+- **No second fix.** `open_pr` first looks at open or merged pull requests from the last 48 hours (release promotions skipped). One that mentions the ticket or shares most of the fix's code stops it; one that shares some code must be explained (`related_checked`) before it opens. It never opens on a guess when GitHub cannot be read. Committing no longer trips over the shared, gitignored dependencies link.
+
 - **The slim Keir sees ticket screenshots.** Its MCP client keeps the image blocks `support_get` returns, and every screenshot the session has not seen yet is attached to its Codex conversation (`--image=`), once. If they cannot be loaded, the session is told once to work from the text and never to ask the player to describe or resend them. (Ticket 1904: Keir said four times it could not open a normal screenshot.)
 - **One spam cap, now complete.** Besides two posts in a row without a person writing, it stops a third post within 30 minutes, a post that repeats an earlier one, and saying a screenshot will not open more than once. Resolutions are exempt. On 1904 every post followed a new player message, so the old two-in-a-row rule never fired.
 
