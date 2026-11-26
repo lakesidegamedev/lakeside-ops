@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **New tickets show typing within seconds.** When the 8 second check spots a new ticket, typing and the response clock start right away from one quick read of its channel, before the full intake. Open tickets' histories are now read in parallel, so the full intake no longer takes about 20 seconds. (Ticket 1908: typing started 32 seconds after it opened.)
+
 - **New tickets get the fast start too.** A cheap check every 8 seconds spots a brand-new ticket and runs intake at once; the ticket channel shows typing straight away and the response clock starts from when it opened. Before, fast pickup only watched channels already known, so a new ticket waited for the 20 second poll with no typing (ticket 1906).
 - **No placeholder posts.** A post that only acknowledges or promises to look ("I have the bill you linked. I'll check...") is refused; Keir posts once it has something real. Resolutions are exempt.
 

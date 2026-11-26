@@ -769,7 +769,7 @@ test("intake: a brand-new ticket carries its channel and opening time, and the c
   const state = intake.createIntakeState(path.join(tmp(), "intake.json"));
   await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: true, now: Date.parse("2026-11-26T06:00:00Z") });
   items.push({ kind: "ticket", number: 1906, category: "bug" }, { kind: "ticket", number: 1907, category: "moderation" });
-  assert.deepEqual(await intake.newTickets({ mcp, state }), [1906], "moderation tickets are never picked up");
+  assert.deepEqual((await intake.newTickets({ mcp, state })).map((t) => t.number), [1906], "moderation tickets are never picked up");
   const got = await intake.poll({ mcp, cfg: { ownerIds: [] }, state, first: false, now: Date.parse("2026-11-26T06:49:20Z") });
   assert.equal(got[0].isNew, true);
   assert.equal(got[0].channelId, "1575403035826458677");
