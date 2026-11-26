@@ -816,3 +816,27 @@ test("moderation: neutral moderator summary without personal data; never accuse 
   assert.equal(reply.posted, false);
   assert.equal((await f.tools.post_reply.handler({ text: "I checked both accounts with our alt-account check and sent what it showed to the moderators. They review every report.", kind: "answer", basis: "alt_ring_audit" })).posted, true);
 });
+
+test("one slot per ticket: a burst of messages joins the queued wake or one follow-up, never fills every slot", async () => {
+  const { createLimiter, createTicketQueue } = require("../lib/slim/fastwatch");
+  const limiter = createLimiter(2);
+  const runs = [];
+  const gates = [];
+  const run = (n, events) => { runs.push([n, events.map((e) => e.text)]); return new Promise((r) => gates.push(r)); };
+  const q = createTicketQueue({ limiter, run });
+  // Ticket 1909: opened, then three messages while its first wake runs.
+  q.deliver(1909, [{ text: "opened" }]);
+  await new Promise((r) => setImmediate(r));
+  q.deliver(1909, [{ text: "link" }]);
+  q.deliver(1909, [{ text: "actual link:" }]);
+  q.deliver(1909, [{ text: "the url" }]);
+  // Another ticket still gets a slot straight away.
+  q.deliver(1905, [{ text: "other ticket" }]);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(runs, [[1909, ["opened"]], [1905, ["other ticket"]]]);
+  assert.equal(limiter.stats().waiting, 0, "1909's later messages hold no slot");
+  gates[0]();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(runs[2], [1909, ["link", "actual link:", "the url"]], "one follow-up wake with all three");
+  gates.slice(1).forEach((g) => g());
+});
