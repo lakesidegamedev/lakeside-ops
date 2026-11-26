@@ -41,7 +41,7 @@ function buildTools(ctx) {
     ctx.effects.push(entry);
     try { ctx.onEffect?.(entry); } catch { /* observers never break a tool */ }
   };
-  const ruleCtx = (kind) => ({ kind, now: ctx.now(), state: st(), names: ctx.playerNames(), ownerNames: ctx.cfg.ownerNames, ownerPrivateNames: ctx.cfg.ownerPrivateNames, killed: ctx.killSwitch.state().engaged });
+  const ruleCtx = (kind) => ({ kind, now: ctx.now(), category: st().category || null, state: st(), names: ctx.playerNames(), ownerNames: ctx.cfg.ownerNames, ownerPrivateNames: ctx.cfg.ownerPrivateNames, killed: ctx.killSwitch.state().engaged });
   const refuse = (problems) => ({ posted: false, problems, note: "Nothing was posted. Fix every problem listed and post again, or finish without posting." });
   const writesStopped = () => {
     const s = st();
@@ -150,6 +150,25 @@ function buildTools(ctx) {
         s.closed = true; save(s);
         capture("resolve", { message: a.message, actions: a.actions || [], followUp: a.follow_up || null, basis: a.basis });
         return { resolved: true, result };
+      }),
+    tool("mod_summary", "Moderation tickets only: post a short neutral summary for the moderators in their channel: what was reported, what you checked (for example alt_ring_audit), and what it showed. Name characters, never accuse; no IP addresses, emails or account ids. You never ban or act on an account; moderators decide.",
+      obj({ text: str("the summary, a few plain sentences") }, ["text"]),
+      async ({ text }) => {
+        const blocked = writesStopped(); if (blocked) throw new Error(blocked);
+        const s = st();
+        if (s.category !== "moderation") throw new Error("mod_summary is only for moderation tickets.");
+        const sent = (s.modSummaries || []).length;
+        if (sent >= 2) return { posted: false, note: "Two summaries already went to the moderators for this ticket. Record anything new in ticket state." };
+        const problems = [];
+        for (const key of ["discordId", "email", "ip", "path", "host"]) { const m = rules.RX[key].exec(text); if (m) problems.push(`"${m[0].trim()}" must not go in a moderator summary.`); }
+        const accuse = rules.accusation(text);
+        if (accuse) problems.push(`"${accuse}" accuses someone. Say what was checked and what it showed; moderators decide.`);
+        if (problems.length) return { posted: false, problems, note: "Fix these and post again." };
+        const r = await ctx.adapters.modPost({ ticket: ctx.ticket, text: rules.shape(text) });
+        s.modSummaries = [...(s.modSummaries || []), { at: new Date(ctx.now()).toISOString(), text: text.slice(0, 600) }];
+        save(s);
+        capture("mod_summary", { text });
+        return r;
       }),
     tool("request_decision", "Ask the owner one plain multiple choice question. Before asking, check this ticket's history and state for an owner or staff decision on the same question: if they already decided, use it and do not ask. The owner is not technical: the question first, plain words, no ids or code terms. Two to four options, your recommendation first, each a short label and a one-line description. The ticket waits on the answer.",
       obj({

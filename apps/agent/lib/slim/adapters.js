@@ -180,6 +180,12 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       const r = await require("../operator/pageview").render(input);
       return { title: r.title, url: r.url, device: r.device, text: r.text, note: r.note };
     },
+    /** A summary for the moderators' channel. */
+    async modPost({ text }) {
+      if (!cfg.modChannel) throw new Error("The moderators' channel is not configured.");
+      await mcp.call("discord", "discord_send", { channel: cfg.modChannel, content: text.slice(0, 1900) }, true);
+      return { posted: true };
+    },
     async mergeToDevelopment({ pr }) {
       const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1]);
       if (!n) throw new Error("Not a pull request url");
@@ -229,6 +235,7 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
     githubGet: closed("GitHub"),
     promotionStatus: closed("Promotion status"),
     ticketImages: async () => [],
+    modPost: async () => ({ posted: true, status: "captured" }),
     deployStatus: closed("Deploy status"),
     siteRead: closed("The public site"),
     changedFiles: async () => [],
