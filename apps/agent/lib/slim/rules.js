@@ -114,10 +114,18 @@ function checkPost(text, ctx = {}) {
     if (own.size && !own.has(c)) add("player_name", cand, `That is not this player's name. Use one of: ${[...(ctx.names || [])].filter(Boolean).join(", ") || "no name"}, or no name.`);
   }
 
-  // 6 spam cap
+  // 6 spam cap: two in a row without a person writing, three in any 30 minutes, and never the same ask twice
   if (ctx.kind !== "resolution") {
     const since = require("./state").postsSinceHuman(state);
     if (since.length >= 2) add("spam_cap", `${since.length} posts since anyone wrote`, "Two posts in a row already. Record the update in ticket state and wait for the next message, or post only the resolution.");
+    const nowMs = ctx.now || Date.now();
+    const recent = (state.posts || []).filter((p) => p.delivered !== false && p.kind !== "resolution" && nowMs - Date.parse(p.at) < 30 * 60000);
+    if (recent.length >= 3) add("spam_cap", `${recent.length} posts in the last 30 minutes`, "Three posts in 30 minutes already. Put everything into one considered reply later; record progress in ticket state meanwhile.");
+    const earlier = (state.posts || []).filter((p) => p.kind !== "resolution").map((p) => p.text);
+    const imageTrouble = (x) => /\b(?:screenshot|image|picture|attachment)s?\b/i.test(x) && /\b(?:couldn.?t|could not|can.?t|cannot|unable to|won.?t|didn.?t|did not|doesn.?t|does not)\s+(?:\w+\s+){0,3}?(?:open|load|see|view|display)\b/i.test(x);
+    if (imageTrouble(t) && earlier.some(imageTrouble)) add("spam_cap", "screenshot trouble said again", "You already said the screenshot would not open. Do not say it or ask about it again: work from the text, the page link and the records.");
+    const twin = earlier.find((e) => overlap(e, t) >= 0.7);
+    if (twin) add("spam_cap", `repeats an earlier post: "${twin.slice(0, 60)}"`, "This repeats something you already posted. Say something new, or wait for the player.");
   }
 
   // 7 no promises of compensation or features
@@ -137,6 +145,14 @@ function checkPost(text, ctx = {}) {
   if (vm && !answered) add("owner_voice", vm[0], "Do not speak for the owner. Ask with request_decision and tell the player it is waiting on the team.");
 
   return { ok: problems.length === 0, problems };
+}
+
+function overlap(a, b) {
+  const words = (x) => new Set(String(x || "").toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 3));
+  const x = words(a), y = words(b);
+  if (x.size < 6 || y.size < 6) return 0;
+  let common = 0; for (const w of y) if (x.has(w)) common++;
+  return common / Math.min(x.size, y.size);
 }
 
 function escape(s) {

@@ -37,7 +37,7 @@ function buildTools(ctx) {
   const st = () => ctx.store.load(ctx.ticket);
   const save = (s) => ctx.store.save(s);
   const capture = (kind, payload) => ctx.effects.push({ at: new Date(ctx.now()).toISOString(), kind, ...payload });
-  const ruleCtx = (kind) => ({ kind, state: st(), names: ctx.playerNames(), ownerNames: ctx.cfg.ownerNames, ownerPrivateNames: ctx.cfg.ownerPrivateNames, killed: ctx.killSwitch.state().engaged });
+  const ruleCtx = (kind) => ({ kind, now: ctx.now(), state: st(), names: ctx.playerNames(), ownerNames: ctx.cfg.ownerNames, ownerPrivateNames: ctx.cfg.ownerPrivateNames, killed: ctx.killSwitch.state().engaged });
   const refuse = (problems) => ({ posted: false, problems, note: "Nothing was posted. Fix every problem listed and post again, or finish without posting." });
   const writesStopped = () => {
     const s = st();

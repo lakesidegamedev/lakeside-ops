@@ -34,8 +34,13 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
     ...shared({ mcp }),
     async readTicket(n) {
       const t = await mcp.call("support", "support_get", { kind: "ticket", number: Number(n) }, false);
-      delete t._images;
-      return t;
+      const count = (t._images || []).length;
+      return { ...t, ...(count ? { screenshots: `${count} screenshot(s) on this ticket; they are attached to your conversation as images` } : {}) };
+    },
+    /** The ticket's screenshots, as support_get returns them: [{ data (base64), mimeType }]. */
+    async ticketImages(n) {
+      const t = await mcp.call("support", "support_get", { kind: "ticket", number: Number(n) }, false);
+      return t._images || [];
     },
     async githubGet(apiPath) {
       if (!/^repos\/[A-Za-z0-9._/?=&,-]+$/.test(apiPath)) throw new Error("GET paths under repos/ only");
@@ -163,6 +168,7 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
     },
     githubGet: closed("GitHub"),
     promotionStatus: closed("Promotion status"),
+    ticketImages: async () => [],
     mcpCall: async (server, tool, args) => {
       if (server === "ops-knowledge") throw new Error("That index is not available right now; read the code in your checkout with the shell instead.");
       return mcp.call(server, tool, args, false);
