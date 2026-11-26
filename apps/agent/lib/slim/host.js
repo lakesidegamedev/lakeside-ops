@@ -50,11 +50,12 @@ function wakePrompt({ ticket, state, events, now, first, intro, teamUpdates = []
   if (state.paused) parts.push(`The ticket is PAUSED by ${state.paused.by}. Do not post or change anything; finish.`);
   parts.push("New since you last finished:", formatEvents(events) || "- (nothing new; you were woken by a reminder)");
   parts.push("Ticket state:", S.render(state));
+  if (events.some((e) => ["player", "owner", "staff", "participant"].includes(e.role))) parts.push("Answer first, investigate after: they are waiting and can see you typing. As soon as one quick read gives you something true and useful, post it (with self-review), then keep investigating and post the rest when you have it. Never post a canned \"looking into it\".");
   parts.push("Do what the ticket needs now, keep the state current, and end with finish.");
   return parts.join("\n\n");
 }
 
-function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch, checkoutFor, sandboxFor = () => "read-only", now = () => Date.now(), log = () => {}, onWake = () => {}, alert = async () => {} }) {
+function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch, checkoutFor, sandboxFor = () => "read-only", now = () => Date.now(), log = () => {}, onWake = () => {}, onEffect = () => {}, alert = async () => {} }) {
   const chains = new Map();
   const pendingDir = path.join(cfg.stateDir, "pending");
   fs.mkdirSync(pendingDir, { recursive: true, mode: 0o700 });
@@ -101,7 +102,7 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
     savePending(n, []);
     fs.writeFileSync(inflightFile(n), JSON.stringify(queued), { mode: 0o600 });
 
-    const ctx = { ticket: n, cfg, store, adapters: adaptersFor(n), killSwitch, now, effects: [], ruleHits: [], finished: null, playerNames: () => store.load(n).playerNames || [], ownerSpoke: queued.some((e) => e.role === "owner") };
+    const ctx = { ticket: n, cfg, store, adapters: adaptersFor(n), killSwitch, now, effects: [], ruleHits: [], finished: null, playerNames: () => store.load(n).playerNames || [], ownerSpoke: queued.some((e) => e.role === "owner"), onEffect: (e) => onEffect(n, e) };
     const tools = buildTools(ctx);
     const calls = [];
     const endpoint = await toolServer.open({ tools, ctx, onCall: (c) => calls.push({ at: new Date(now()).toISOString(), name: c.name, ok: c.ok, ...(c.ok ? {} : { error: String(c.error).slice(0, 300) }) }) });

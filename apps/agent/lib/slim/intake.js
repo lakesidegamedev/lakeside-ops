@@ -64,16 +64,19 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
     const h = await readAll(mcp, n);
     const known = state.data.tickets[n];
     const names = [h.reporter, h.character].filter(Boolean);
+    // The ticket's Discord channel, for the typing indicator and fast pickup.
+    let channelId = known?.channelId || null;
+    if (!channelId) { try { channelId = (await mcp.call("support", "support_get", { kind: "ticket", number: n }, false))?.conversation?.channelId || null; } catch { /* retried next poll */ } }
     if (!known) {
       const ids = h.events.map((e) => e.id).filter(Boolean);
       const humans = h.events.map((e) => eventFor(e, cfg)).filter(Boolean);
       if (first) {
-        state.data.tickets[n] = { seen: ids, open: true, since: new Date().toISOString() };
+        state.data.tickets[n] = { seen: ids, open: true, since: new Date().toISOString(), channelId };
         const last = humans[humans.length - 1];
         out.push({ ticket: n, names, takeover: true, lastHumanAt: last?.at || null, intro: `Title: ${h.title}. Category: ${h.category || "unknown"}.`,
           events: [{ role: "system", at: new Date().toISOString(), text: "You are taking over this ticket now. Earlier messages and replies (by the support team) are in its history: read it with history_read and ticket_read before doing anything, and do not repeat what was already said." }] });
       } else {
-        state.data.tickets[n] = { seen: ids, open: true, since: new Date().toISOString() };
+        state.data.tickets[n] = { seen: ids, open: true, since: new Date().toISOString(), channelId };
         const opened = Date.parse(h.opened || h.events[0]?.at || 0);
         // A ticket new to Keir that opened before it went live is a takeover, never a replay of old messages.
         const recent = humans.filter((e) => Date.parse(e.at) >= live);
@@ -84,6 +87,7 @@ async function poll({ mcp, cfg, state, first, now = Date.now() }) {
       continue;
     }
     known.open = true;
+    if (channelId) known.channelId = channelId;
     const seen = new Set(known.seen);
     const fresh = h.events.filter((e) => e.id && !seen.has(e.id));
     if (!fresh.length) continue;

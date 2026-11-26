@@ -623,3 +623,59 @@ test("host: the team's posts since the last wake win over the session's stale no
   assert.doesNotMatch(f.sessions.calls.at(-1).prompt, /The team worked on this ticket/);
   f.toolServer.close();
 });
+
+test("fast watch: a person's new message is seen on the next tick; bots and the first look are not", async () => {
+  const { createFastWatch } = require("../lib/slim/fastwatch");
+  let msgs = { c1: [{ id: "100", author: { id: "9" } }] };
+  const seen = [];
+  const discord = async (method, route) => {
+    const [, ch, q] = /^\/channels\/(\w+)\/messages\?(.*)$/.exec(route);
+    if (q === "limit=1") return msgs[ch].slice(-1);
+    const after = BigInt(/after=(\d+)/.exec(q)[1]);
+    return msgs[ch].filter((m) => BigInt(m.id) > after).reverse();
+  };
+  const w = createFastWatch({ discord, botId: "1", onHuman: async (h) => seen.push(h) });
+  w.watch("c1", { ticket: 1904 });
+  await w.tick();
+  assert.equal(seen.length, 0, "the first look only sets the starting point");
+  msgs.c1.push({ id: "101", author: { id: "1", bot: true }, timestamp: "2026-11-26T05:00:00Z" }, { id: "102", author: { id: "7" }, timestamp: "2026-11-26T05:00:01Z" });
+  await w.tick();
+  assert.deepEqual(seen.map((h) => [h.ticket, h.messageId, h.authorId]), [[1904, "102", "7"]]);
+  await w.tick();
+  assert.equal(seen.length, 1, "each message once");
+});
+
+test("limiter: owner and staff wakes jump the queue when every slot is busy", async () => {
+  const { createLimiter } = require("../lib/slim/fastwatch");
+  const l = createLimiter(1);
+  const order = [];
+  let release;
+  const block = new Promise((r) => { release = r; });
+  const p1 = l.run(async () => { await block; order.push("running"); });
+  const p2 = l.run(async () => order.push("player"));
+  const p3 = l.run(async () => order.push("owner"), { urgent: true });
+  release();
+  await Promise.all([p1, p2, p3]);
+  assert.deepEqual(order, ["running", "owner", "player"]);
+});
+
+test("response clock: time to typing and to the first post, per message", () => {
+  const { createResponseClock } = require("../lib/slim/fastwatch");
+  const lines = [];
+  const c = createResponseClock({ append: (l) => lines.push(l) });
+  c.message(1904, { messageId: "m1", at: "2026-11-26T05:00:00.000Z", typingAt: "2026-11-26T05:00:03.500Z" });
+  c.posted(1904, "2026-11-26T05:00:41.000Z");
+  assert.deepEqual(lines[0], { ticket: 1904, messageId: "m1", messageAt: "2026-11-26T05:00:00.000Z", typingMs: 3500, firstPostMs: 41000 });
+  c.message(1904, { messageId: "m2", at: "2026-11-26T05:10:00.000Z", typingAt: "2026-11-26T05:10:02.000Z" });
+  c.wakeEnded(1904);
+  assert.equal(lines[1].firstPostMs, null);
+  assert.equal(c.pending(1904).length, 0);
+});
+
+test("a post is reported the moment it happens (typing stops, clock stops)", async () => {
+  const f = fakeCtx();
+  const seen = [];
+  f.ctx.onEffect = (e) => seen.push(e.kind);
+  await f.tools.post_reply.handler({ text: "The label column is too narrow, so each word wraps. A fix is being built.", kind: "answer", basis: "screenshot" });
+  assert.deepEqual(seen, ["post"]);
+});

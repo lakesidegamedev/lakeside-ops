@@ -5,6 +5,8 @@ New monorepo versions use `keir-vX.Y.Z` tags. Stage and activate with `deploy/re
 
 ## Unreleased
 
+- **The slim Keir answers fast and shows it is typing.** Every 4 seconds (`KEIR_SLIM_FAST_POLL_MS`) it asks Discord whether a person wrote in an open ticket's channel or the owner's DM. A new message starts the typing indicator at once (old Keir's `presence.js`, pulsed every 8 seconds) and runs intake straight away; typing stops at the first post or when the wake ends, and never runs longer than 4 minutes. Owner and staff messages, and owner answers to cards, jump the wake queue. Each wake with a new message is told to answer first with what one quick read shows, then keep investigating; never a canned "looking into it". Time from a message to typing and to the first post is logged per message in `response-times.jsonl`.
+
 - **The team's work comes first.** Before every wake (including after a resume) the slim host reads the ticket history: staff, owner and coordinator posts, fixes and real status notes since the last wake are added to the ticket state as established facts, the next step is reset to re-plan from them, and the wake opens with them. They win over the session's own earlier notes. (Ticket 1904: after a resume Keir worked from a stale "cannot reproduce" note and opened a second fix for a bug already fixed.)
 - **No second fix.** `open_pr` first looks at open or merged pull requests from the last 48 hours (release promotions skipped). One that mentions the ticket or shares most of the fix's code stops it; one that shares some code must be explained (`related_checked`) before it opens. It never opens on a guess when GitHub cannot be read. Committing no longer trips over the shared, gitignored dependencies link.
 
