@@ -947,3 +947,42 @@ test("ticket 1913: a follow-up wake never crashes or drops messages, and an unan
   assert.ok(rules.checkPost("Both bonuses count: 2 for National Vice Chair and 2 for State Chair.", { state: { ...S.emptyState(1), posts: [1, 2, 3, 4].map((i) => ({ at: new Date(Date.now() - i * 60000).toISOString(), kind: "answer", delivered: true, text: `post ${i}` })), lastHumanAt: new Date().toISOString() }, kind: "answer" }).problems.every((p) => p.rule !== "spam_cap"), "never blocked by the count when a person is owed a reply");
   f.toolServer.close();
 });
+
+test("party_roles: fixed read-only queries on four collections through Keir's read token", async () => {
+  const { createLiveAdapters } = require("../lib/slim/adapters");
+  const calls = [];
+  const aegon = "6afb7b51f2d559ce85b3b99c";
+  const docs = {
+    characters: [{ _id: aegon, name: "Aegon Roosevelt", party: "1" }],
+    politicalParties: [{ name: "Democratic Party", countryId: "us", chairId: "x", viceChairId: aegon, committeeIds: [] }],
+    statePartyOrg: [{ stateId: "CA", partyId: "1", chairId: aegon }],
+    caucuses: [{ name: "Progressive Caucus", partyId: "1", chairId: aegon, disbandedAt: null }, { name: "Old Caucus", partyId: "1", viceChairId: aegon, disbandedAt: "2026-11-01" }],
+  };
+  const mcp = { call: async (server, tool, args, write) => { calls.push({ server, tool, write, collection: args.collection, env: args.env }); return { docs: docs[args.collection] }; } };
+  const a = createLiveAdapters({ mcp, cfg: {}, ticketCheckout: () => "/tmp" });
+  const r = await a.partyRoles({ character: "Aegon Roosevelt" });
+  assert.deepEqual(r.roles.map((x) => `${x.level}: ${x.role}`), ["national party: vice chair", "state party: chair", "caucus: chair"], "a disbanded caucus does not count");
+  assert.ok(calls.every((c) => c.server === "heal-ops" && c.tool === "heal_query" && c.write === false && c.env === "prod"));
+  assert.deepEqual([...new Set(calls.map((c) => c.collection))].sort(), ["caucuses", "characters", "politicalParties", "statePartyOrg"]);
+  const none = await createLiveAdapters({ mcp: { call: async () => ({ docs: [] }) }, cfg: {}, ticketCheckout: () => "/tmp" }).partyRoles({ character: "Nobody" });
+  assert.equal(none.found, false);
+});
+
+test("an owner question is always answered: up to two re-wakes, never for an aside", async () => {
+  const { addressedToKeir } = require("../lib/slim/host");
+  assert.equal(addressedToKeir("<@1479984768194969663> just run the exact totals. Is it just because of positions?"), true);
+  assert.equal(addressedToKeir("yeah"), false);
+  // A wake that only records state and never posts (ticket 1913 at 05:48).
+  const f = hostFixture({ script: () => [["update_state", { established: [{ fact: "totals worked out", source: "calc" }] }], ["finish", { next_step: "x", waits_on: "nothing" }]] });
+  await f.host.deliver(1913, [{ role: "owner", name: "egg3901", at: "2026-11-27T05:48:00Z", text: "just run the exact totals. Is it just because of positions?" }]);
+  for (let i = 0; i < 20 && f.sessions.calls.length < 3; i++) await new Promise((r) => setTimeout(r, 20));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(f.sessions.calls.length, 3, "the first wake plus two re-wakes, no more");
+  assert.match(f.sessions.calls[1].prompt, /The owner asked you directly/);
+  assert.match(f.sessions.calls[1].prompt, /Never record the answer only in ticket state/);
+  const g = hostFixture({ script: () => [["finish", { next_step: "x", waits_on: "nothing" }]] });
+  await g.host.deliver(1914, [{ role: "owner", name: "egg3901", at: "2026-11-27T06:00:00Z", text: "yeah" }]);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(g.sessions.calls.length, 1, "an owner aside needs no answer");
+  f.toolServer.close(); g.toolServer.close();
+});
