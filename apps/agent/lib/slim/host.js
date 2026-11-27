@@ -80,7 +80,8 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
     return next;
   }
 
-  async function wakeOnce(n, events, { intro } = {}) {
+  async function wakeOnce(n, events, opts) {
+    const { intro } = opts || {};
     let state = store.load(n);
     for (const e of events) if (e.role && e.role !== "approval" && e.role !== "reminder") state = S.recordHuman(state, e);
     if (events.some((e) => e.role === "reminder")) state.reminder = null;
@@ -178,6 +179,18 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
     state.budget.wakes += 1;
     state.budget.minutes += minutes;
     store.save(state);
+    // The newest message from a person must never be left without a reply because a post was refused: retry it.
+    const after = store.load(n);
+    const lastPostAt = Math.max(0, ...after.posts.filter((p) => p.delivered !== false).map((p) => Date.parse(p.at)));
+    const unanswered = after.lastHumanAt && Date.parse(after.lastHumanAt) > lastPostAt && !after.closed && !after.paused;
+    if (unanswered && ctx.ruleHits.length) {
+      const tries = after.retryFor === after.lastHumanAt ? after.retries || 0 : 0;
+      if (tries < 2 && (!after.reminder || (after.reminder.minutes || 99) > 5)) {
+        after.retryFor = after.lastHumanAt; after.retries = tries + 1;
+        after.reminder = { after: "5 minutes", minutes: 5, reason: "Answer the person's newest message in one consolidated reply: your last draft was refused", setAt: new Date(now()).toISOString() };
+        store.save(after);
+      }
+    }
     const report = { ticket: n, events: queued, startedAt: new Date(started).toISOString(), minutes: Math.round(minutes * 100) / 100, finished: Boolean(ctx.finished || outcome.completion), sessionId: state.sessionId, restarted: Boolean(outcome.restarted), timedOut: Boolean(outcome.timedOut), error: outcome.error || null, usage: outcome.usage || null, effects: ctx.effects, ruleHits: ctx.ruleHits, calls, finalText: outcome.result || null };
     onWake(report);
     return report;

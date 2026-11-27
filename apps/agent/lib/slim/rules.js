@@ -120,11 +120,10 @@ function checkPost(text, ctx = {}) {
     if (since.length >= 2) add("spam_cap", `${since.length} posts since anyone wrote`, "Two posts in a row already. Record the update in ticket state and wait for the next message, or post only the resolution.");
     const nowMs = ctx.now || Date.now();
     const recent = (state.posts || []).filter((p) => p.delivered !== false && p.kind !== "resolution" && nowMs - Date.parse(p.at) < 30 * 60000);
-    // A live conversation (a person wrote since Keir's last post) may go up to 6 in 30 minutes; otherwise 3.
-    const lastPost = recent.length ? Math.max(...recent.map((p) => Date.parse(p.at))) : 0;
-    // Only a real answer to a person who wrote since the last post gets the higher limit; updates and questions do not.
-    const answering = ctx.kind === "answer" && state.lastHumanAt && Date.parse(state.lastHumanAt) > lastPost;
-    const limit = answering ? 6 : 3;
+    // A person who wrote since Keir's last post always gets a reply: the count limits never block it.
+    const lastPost = Math.max(0, ...(state.posts || []).filter((p) => p.delivered !== false).map((p) => Date.parse(p.at)));
+    const owed = state.lastHumanAt && Date.parse(state.lastHumanAt) > lastPost;
+    const limit = owed ? Infinity : 3;
     if (recent.length >= limit) add("spam_cap", `${recent.length} posts in the last 30 minutes`, `${limit} posts in 30 minutes already. You will be woken when you can post again; record the answer in ticket state meanwhile.`);
     const earlier = (state.posts || []).filter((p) => p.kind !== "resolution").map((p) => p.text);
     const imageTrouble = (x) => /\b(?:screenshot|image|picture|attachment)s?\b/i.test(x) && /\b(?:couldn.?t|could not|can.?t|cannot|unable to|won.?t|didn.?t|did not|doesn.?t|does not)\s+(?:\w+\s+){0,3}?(?:open|load|see|view|display)\b/i.test(x);
