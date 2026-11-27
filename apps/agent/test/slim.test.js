@@ -840,3 +840,81 @@ test("one slot per ticket: a burst of messages joins the queued wake or one foll
   assert.deepEqual(runs[2], [1909, ["link", "actual link:", "the url"]], "one follow-up wake with all three");
   gates.slice(1).forEach((g) => g());
 });
+
+test("public: which channels count as public, and what counts as a mention", () => {
+  const pub = require("../lib/slim/public");
+  const VIEW = String(1 << 10);
+  const gid = "g", roles = [{ id: "g", name: "@everyone" }, { id: "m", name: "Member" }];
+  const chans = [
+    { id: "cat1", type: 4, name: "Global Channels", permission_overwrites: [{ id: "m", allow: VIEW, deny: "0" }, { id: "g", allow: "0", deny: VIEW }] },
+    { id: "cat2", type: 4, name: "Dev Channels", permission_overwrites: [] },
+    { id: "ws", type: 0, name: "wall-street", parent_id: "cat1", last_message_id: "5", permission_overwrites: [{ id: "m", allow: VIEW, deny: "0" }, { id: "g", allow: "0", deny: VIEW }] },
+    { id: "gen", type: 0, name: "general", parent_id: "cat1", last_message_id: "6", permission_overwrites: [] },
+    { id: "dev", type: 0, name: "dev-chat", parent_id: "cat2", permission_overwrites: [] },
+    { id: "modc", type: 0, name: "mod-chat", parent_id: "cat1", permission_overwrites: [] },
+    { id: "hidden", type: 0, name: "secret", parent_id: "cat1", permission_overwrites: [{ id: "m", allow: "0", deny: VIEW }] },
+  ];
+  assert.deepEqual(pub.publicChannels(chans, roles, { guildId: gid }).map((c) => c.name), ["wall-street", "general"]);
+  assert.equal(pub.mentionsKeir({ content: "Why can't I build Retail Keith" }, { botId: "b" }), true);
+  assert.equal(pub.mentionsKeir({ content: "keirsten is here" }, { botId: "b" }), false);
+  assert.equal(pub.mentionsKeir({ content: "<@b> help" }, { botId: "b" }), true);
+  assert.equal(pub.mentionsKeir({ content: "ok thanks", referenced_message: { author: { id: "b" } } }, { botId: "b" }), true);
+  const act = (t) => pub.prefilter(t).action;
+  assert.equal(act("Why can't I build Retail Keith"), "judge");
+  assert.equal(act("Keith ur so dumb lol"), "silent");
+  assert.equal(act("Keir I lost all my money, refund?"), "ticket");
+  assert.equal(act("keir is X an alt?"), "silent");
+  assert.equal(act("what do you think Keir, is the economy broken?"), "silent");
+  assert.equal(act("Keir what does Egg think about tariffs"), "silent");
+  assert.equal(act("keith check my ticket 1905"), "silent");
+});
+
+test("public: each message once, one reply per channel per 10 minutes, account matters pointed once, every call logged", async () => {
+  const pub = require("../lib/slim/public");
+  const dir = tmp();
+  const logs = [], posts = [];
+  let clock = Date.parse("2026-11-27T10:00:00Z");
+  let judged = 0;
+  const r = pub.createPublicResponder({ stateFile: path.join(dir, "s.json"), log: (e) => logs.push(e), now: () => clock, mayAct: () => true,
+    post: async (m, t) => posts.push([m.channelId, t]),
+    judge: async () => { judged++; return { posted: true, text: "Retail needs a store site first.", reason: "answered: code" }; } });
+  const m = (id, ch, content) => ({ messageId: id, channelId: ch, channelName: ch, authorName: "p", content });
+  await r.handle(m("1", "ws", "Why can't I build Retail Keith"));
+  await r.handle(m("1", "ws", "Why can't I build Retail Keith"));
+  assert.equal(judged, 1, "never the same message twice");
+  await r.handle(m("2", "ws", "Keith how do I open a store?"));
+  assert.match(logs.at(-1).reason, /channel rate limit/);
+  await r.handle(m("3", "gen", "Keir I lost all my money, refund?"));
+  assert.match(posts.at(-1)[1], /open one with \/ticket/);
+  await r.handle(m("4", "gen2", "keith lol"));
+  assert.deepEqual(logs.map((l) => l.decision), ["answered", "skipped", "pointed to a ticket", "skipped"]);
+  assert.ok(logs.every((l) => l.reason), "every decision has a reason");
+  clock += 11 * 60000;
+  await r.handle(m("5", "ws", "Keith how do I open a store?"));
+  assert.equal(judged, 2, "after 10 minutes the channel may get another answer");
+  const off = pub.createPublicResponder({ stateFile: path.join(dir, "o.json"), log: (e) => logs.push(e), mayAct: () => false, post: async () => { throw new Error("must not post"); }, judge: async () => { throw new Error("must not judge"); } });
+  await off.handle(m("9", "ws", "Why can't I build Retail Keith"));
+  assert.match(logs.at(-1).reason, /not live or kill switch/);
+});
+
+test("public judge: the reply passes the ticket rules and never names the owner; skip records its reason", async () => {
+  const { createPublicJudge } = require("../lib/slim/public-judge");
+  const toolServer = createSlimToolServer();
+  const posted = [];
+  let script;
+  const sessions = { wake: async (req) => {
+    const rpc = async (method, params) => (await (await fetch(req.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) })).json()).result;
+    for (const [name, args] of script) await rpc("tools/call", { name, arguments: args });
+    return { completion: { state: "done" } };
+  } };
+  const judge = createPublicJudge({ cfg: { stateDir: tmp(), ownerNames: ["Egg", "the owner"], ownerPrivateNames: ["Ownername"] }, sessions, toolServer, adapters: {}, post: async (m, t) => posted.push(t), discord: async () => [] });
+  const m = { channelId: "ws", channelName: "wall-street", messageId: "1", authorName: "Sam", content: "Why can't I build Retail Keith" };
+  script = [["answer", { text: "Egg says retail needs a store site first.", basis: "code" }], ["answer", { text: "Retail needs a store site in the state first. Build one from the sector page, then Retail unlocks.", basis: "code_search retail prerequisites" }]];
+  const r = await judge(m);
+  assert.equal(r.posted, true);
+  assert.deepEqual(posted, ["Retail needs a store site in the state first. Build one from the sector page, then Retail unlocks."], "the owner-name draft was refused");
+  script = [["skip", { reason: "banter" }]];
+  const s = await judge({ ...m, messageId: "2", content: "Keith lol" });
+  assert.deepEqual([s.posted, s.reason], [false, "banter"]);
+  toolServer.close();
+});

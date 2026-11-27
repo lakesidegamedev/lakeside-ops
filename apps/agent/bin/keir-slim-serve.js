@@ -32,8 +32,8 @@ const killSwitch = createKillSwitch({ file: cfg.killSwitchFile });
 const mcp = createSlimMcp({ configFile: cfg.mcpConfig, readToken: readAgentToken(cfg.agentEnvFile), gate: (what) => killSwitch.assertClear(what) });
 const ownerDm = createOwnerDm({ token: process.env.DISCORD_BOT_TOKEN, channel: cfg.ownerDmChannel, ownerIds: cfg.ownerIds, stateFile: path.join(cfg.stateDir, "owner-dm.json") });
 // Discord, as Keir's bot: typing indicator and the fast "did a person write" reads.
-async function discord(method, route) {
-  const r = await fetch(`https://discord.com/api/v10${route}`, { method, headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }, signal: AbortSignal.timeout(10000) });
+async function discord(method, route, body) {
+  const r = await fetch(`https://discord.com/api/v10${route}`, { method, headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error(`discord ${method} ${route.split("?")[0]} ${r.status}`);
   return r.status === 204 ? null : r.json();
 }
@@ -173,6 +173,24 @@ const fast = createFastWatch({
   },
 });
 
+// Public channels: one decision at a time, never taking a ticket's slot.
+let publicWatch = null;
+async function startPublic() {
+  if (!cfg.publicMentions) { log("public mentions: off"); return; }
+  const pub = require("../lib/slim/public");
+  const guildId = cfg.guildId || (await discord("GET", "/users/@me/guilds"))?.[0]?.id;
+  const me = await discord("GET", "/users/@me");
+  if (!guildId || !me?.id) { log("public mentions: no guild or bot id; off"); return; }
+  const audit = pub.createPublicLog(path.join(cfg.stateDir, "public-mentions.jsonl"));
+  const post = (m, text) => { killSwitch.assertClear("A public reply"); return discord("POST", `/channels/${m.channelId}/messages`, { content: text.slice(0, 1900), message_reference: { message_id: m.messageId, fail_if_not_exists: false }, allowed_mentions: { parse: [], replied_user: true } }); };
+  const judge = require("../lib/slim/public-judge").createPublicJudge({ cfg, sessions: rt.sessions, toolServer: rt.toolServer, adapters: rt.adaptersFor(0), post, discord, log: (x) => log(x) });
+  const responder = pub.createPublicResponder({ stateFile: path.join(cfg.stateDir, "public-state.json"), log: audit, judge, post, mayAct: () => cfg.mode === "live" && !killSwitch.state().engaged });
+  const one = createLimiter(1);
+  publicWatch = pub.createPublicWatcher({ discord, guildId, botId: me.id, log: (x) => log(x), onMention: async (m) => { log(`public mention in #${m.channelName} (${m.messageId})`); one.run(() => responder.handle(m)).catch((e) => log(`public mention: ${e.message}`)); } });
+  setInterval(() => publicWatch.tick().catch(() => {}), cfg.publicPollMs);
+  log(`public mentions: on (guild ${guildId}, every ${cfg.publicPollMs} ms)`);
+}
+
 (async () => {
   fs.mkdirSync(cfg.stateDir, { recursive: true, mode: 0o700 });
   const dm = await ownerDm.check().catch((e) => ({ ok: false, reason: e.message }));
@@ -180,6 +198,7 @@ const fast = createFastWatch({
   if (!dm.ok) { console.error("Approval cards cannot reach the owner; refusing to start."); process.exit(3); }
   await tick();
   setInterval(tick, cfg.pollMs);
+  startPublic().catch((e) => log(`public mentions failed to start: ${e.message}`));
   setInterval(() => fast.tick().catch((e) => log(`fast watch: ${e.message}`)), cfg.fastPollMs);
   // New tickets: a cheap list read every 8 seconds; one appearing runs intake at once.
   setInterval(() => intake.newTickets({ mcp, state: intakeState }).then(async (ns) => {
