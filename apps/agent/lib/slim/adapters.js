@@ -186,6 +186,15 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
       await mcp.call("discord", "discord_send", { channel: cfg.modChannel, content: text.slice(0, 1900) }, true);
       return { posted: true };
     },
+    /**
+     * A character's party roles: national party (chair, vice chair, treasurer, committee, campaigner), state party
+     * (chair, vice chair, treasurer, campaigner) and caucus (chair, vice chair). Fixed read-only queries through
+     * heal_query on Keir's read token; nothing else of the database is reachable from here.
+     */
+    async partyRoles({ character }) {
+      const q = (collection, filter, projection, limit = 50) => mcp.call("heal-ops", "heal_query", { env: "prod", collection, filter, projection, limit }, false);
+      return partyRolesFrom(q, character);
+    },
     async mergeToDevelopment({ pr }) {
       const n = Number(String(pr).match(/\/pull\/(\d+)/)?.[1]);
       if (!n) throw new Error("Not a pull request url");
@@ -235,6 +244,7 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
     githubGet: closed("GitHub"),
     promotionStatus: closed("Promotion status"),
     ticketImages: async () => [],
+    partyRoles: closed("Party roles"),
     modPost: async () => ({ posted: true, status: "captured" }),
     deployStatus: closed("Deploy status"),
     siteRead: closed("The public site"),
@@ -252,4 +262,29 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
   };
 }
 
-module.exports = { createLiveAdapters, createReplayAdapters, REQUIRED_CHECKS, run };
+/** party_roles over a query function q(collection, filter, projection, limit) -> { docs }. */
+async function partyRolesFrom(q, character) {
+  const who = String(character || "").trim();
+  if (!who) throw new Error("Give a character name or id.");
+  const byId = /^[a-f0-9]{24}$/i.test(who);
+  const found = await q("characters", byId ? { $expr: { $eq: [{ $toString: "$_id" }, who.toLowerCase()] } } : { name: who }, { name: 1, party: 1 }, 2);
+  const ch = (found.docs || [])[0];
+  if (!ch) return { found: false, note: `No character named ${who}.` };
+  const id = String(ch._id);
+  const is = (field) => ({ $eq: [{ $toString: `$${field}` }, id] });
+  const inList = (field) => ({ $in: [id, { $map: { input: { $ifNull: [`$${field}`, []] }, as: "x", in: { $toString: "$$x" } } }] });
+  const [national, state, caucus] = await Promise.all([
+    q("politicalParties", { $expr: { $or: [is("chairId"), is("viceChairId"), is("treasurerId"), inList("committeeIds"), inList("campaignerIds")] } }, { name: 1, countryId: 1, chairId: 1, viceChairId: 1, treasurerId: 1, committeeIds: 1, campaignerIds: 1 }),
+    q("statePartyOrg", { $expr: { $or: [is("chairId"), is("viceChairId"), is("treasurerId"), is("campaignerId")] } }, { stateId: 1, partyId: 1, chairId: 1, viceChairId: 1, treasurerId: 1, campaignerId: 1 }),
+    q("caucuses", { $expr: { $or: [is("chairId"), is("viceChairId")] } }, { name: 1, partyId: 1, chairId: 1, viceChairId: 1, disbandedAt: 1 }),
+  ]);
+  const roleOf = (d, fields) => fields.filter(([f]) => (Array.isArray(d[f]) ? d[f].map(String).includes(id) : String(d[f]) === id)).map(([, label]) => label);
+  const roles = [
+    ...(national.docs || []).flatMap((d) => roleOf(d, [["chairId", "chair"], ["viceChairId", "vice chair"], ["treasurerId", "treasurer"], ["committeeIds", "committee member"], ["campaignerIds", "campaigner"]]).map((role) => ({ level: "national party", party: d.name, country: d.countryId, role }))),
+    ...(state.docs || []).flatMap((d) => roleOf(d, [["chairId", "chair"], ["viceChairId", "vice chair"], ["treasurerId", "treasurer"], ["campaignerId", "campaigner"]]).map((role) => ({ level: "state party", state: d.stateId, party: d.partyId, role }))),
+    ...(caucus.docs || []).filter((d) => !d.disbandedAt).flatMap((d) => roleOf(d, [["chairId", "chair"], ["viceChairId", "vice chair"]]).map((role) => ({ level: "caucus", caucus: d.name, party: d.partyId, role }))),
+  ];
+  return { found: true, character: ch.name, party: ch.party ?? null, roles, note: roles.length ? null : "No party, state party or caucus role." };
+}
+
+module.exports = { partyRolesFrom, createLiveAdapters, createReplayAdapters, REQUIRED_CHECKS, run };

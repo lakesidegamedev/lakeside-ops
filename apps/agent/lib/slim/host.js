@@ -26,6 +26,11 @@ function formatEvents(events) {
     .join("\n");
 }
 
+/** An owner message meant for Keir: it names or mentions Keir, or asks a question. */
+function addressedToKeir(text) {
+  return /\?|\bkeir\b|\bkeith\b|<@!?\d{15,22}>/i.test(String(text || ""));
+}
+
 const TEAM_KINDS = new Set(["support_post", "staff_message", "status", "resolution", "fix", "finding", "heal_request", "reopen", "merge"]);
 const ROUTINE = /^(?:resolution receipt recorded|discord-ticket-|closed; earlier resolution receipt kept|ticket channel)/i;
 const sameText = (a, b) => String(a || "").replace(/\s+/g, " ").trim().slice(0, 80).toLowerCase() === String(b || "").replace(/\s+/g, " ").trim().slice(0, 80).toLowerCase();
@@ -179,6 +184,22 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
     state.budget.wakes += 1;
     state.budget.minutes += minutes;
     store.save(state);
+    // The owner asked Keir something and the wake ended without a post: wake again at once, at most twice.
+    {
+      const s2 = store.load(n);
+      const lastPost = Math.max(0, ...s2.posts.filter((p) => p.delivered !== false).map((p) => Date.parse(p.at)));
+      const newest = [...queued].reverse().find((e) => e.role === "owner" && addressedToKeir(e.text));
+      if (newest && (!s2.ownerAsk || Date.parse(newest.at) > Date.parse(s2.ownerAsk.at))) s2.ownerAsk = { at: newest.at, text: String(newest.text).slice(0, 500) };
+      const ask = s2.ownerAsk && Date.parse(s2.ownerAsk.at) > lastPost ? s2.ownerAsk : null;
+      if (!ask && s2.ownerAsk) { s2.ownerAsk = null; store.save(s2); }
+      if (ask && !s2.closed && !s2.paused) {
+        const tries = s2.ownerRetryFor === ask.at ? s2.ownerRetries || 0 : 0;
+        if (tries < 2) {
+          s2.ownerRetryFor = ask.at; s2.ownerRetries = tries + 1; store.save(s2);
+          setImmediate(() => deliver(n, [{ role: "system", at: new Date(now()).toISOString(), text: `The owner asked you directly (${ask.at}): "${String(ask.text).slice(0, 500)}". You have not answered. Answer the owner now with post_reply in this ticket, with the exact figures they asked for. Never record the answer only in ticket state; do not finish without posting.` }]));
+        } else log(`[keir-slim] ticket ${n}: owner question still unanswered after 2 retries`);
+      }
+    }
     // The newest message from a person must never be left without a reply because a post was refused: retry it.
     const after = store.load(n);
     const lastPostAt = Math.max(0, ...after.posts.filter((p) => p.delivered !== false).map((p) => Date.parse(p.at)));
@@ -231,4 +252,4 @@ function createHost({ cfg, store, sessions, toolServer, adaptersFor, killSwitch,
   return { deliver, pause, resume, setPlayerNames, answer, wakePrompt, formatEvents };
 }
 
-module.exports = { createHost, instructions, formatEvents, wakePrompt, teamActivity };
+module.exports = { createHost, instructions, formatEvents, wakePrompt, teamActivity, addressedToKeir };
