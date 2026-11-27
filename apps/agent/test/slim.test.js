@@ -538,7 +538,8 @@ test("spam cap on ticket 1904's timeline: the fourth post and the repeated scree
   post("2026-11-26T03:08:17Z", "I see the screenshot attached. It still won't open on my side.");
   human("2026-11-26T03:10:19Z");
   const fourth = check("2026-11-26T03:11:19Z", "The screenshot is attached, and you don't need to repeat the report. I have the page link and I'm checking.");
-  assert.ok(fourth.some((p) => /3 posts in the last 30 minutes/.test(p.match)), "three in 30 minutes is the cap");
+  // The player wrote again, so a reply is owed: the count limits never block it (repeat rules still apply).
+  assert.ok(!fourth.some((p) => /posts in the last 30 minutes/.test(p.match)), "a reply to the newest message is never blocked by the count");
   // Later, after a quiet half hour, a new reply is fine again.
   assert.deepEqual(check("2026-11-26T03:45:00Z", "Found it: the Operations card wraps each word onto its own line. A fix is being built."), []);
   // The two-in-a-row rule still holds on its own.
@@ -722,7 +723,7 @@ test("a fix that is not live is watched, and the ticket is woken the moment it i
   assert.equal((await f.tools.deploy_status.handler({ pr: "7613" })).watching, undefined);
 });
 
-test("spam cap: a live conversation may answer up to 6 times in 30 minutes; a held answer is woken when the window clears", async () => {
+test("spam cap: a reply to a new message always goes; an extra post is held and woken when the window clears", async () => {
   // Ticket 1905: three answers to three questions, then a fourth question.
   let s = S.emptyState(1905);
   for (const [q, a] of [["04:39:00", "04:40:07"], ["04:42:00", "04:42:55"], ["04:46:00", "04:46:52"]]) {
@@ -735,7 +736,7 @@ test("spam cap: a live conversation may answer up to 6 times in 30 minutes; a he
   // Without a new message, three in 30 minutes is still the limit, and the held answer gets a reminder.
   const f = fakeCtx();
   f.ctx.now = () => Date.parse("2026-11-26T04:50:00Z");
-  let t = f.store.load(7); t.lastHumanAt = "2026-11-26T04:47:30Z"; t.posts = s.posts; f.store.save(t);
+  let t = f.store.load(7); t.lastHumanAt = "2026-11-26T04:46:00Z"; t.posts = s.posts; f.store.save(t);
   const r = await f.tools.post_reply.handler({ text: "One more detail about the map labels for you.", kind: "update", basis: "no facts" });
   assert.equal(r.posted, false);
   assert.match(r.note, /woken in \d+ minutes/);
@@ -917,4 +918,32 @@ test("public judge: the reply passes the ticket rules and never names the owner;
   const s = await judge({ ...m, messageId: "2", content: "Keith lol" });
   assert.deepEqual([s.posted, s.reason], [false, "banter"]);
   toolServer.close();
+});
+
+test("ticket 1913: a follow-up wake never crashes or drops messages, and an unanswered newest message is retried", async () => {
+  const { createLimiter, createTicketQueue } = require("../lib/slim/fastwatch");
+  const seen = [];
+  let fail = true;
+  const q = createTicketQueue({ limiter: createLimiter(1), run: async (n, events, opts) => {
+    const { intro } = opts; // the real host destructures its options: null must never reach it
+    seen.push(events.map((e) => e.text));
+    if (fail) { fail = false; throw new Error("boom"); }
+  } });
+  q.deliver(1913, [{ text: "I'm also state chair" }]);
+  q.deliver(1913, [{ text: "and I have been the whole iter" }]);
+  await new Promise((r) => setTimeout(r, 20));
+  q.deliver(1913, [{ text: "they're not stacking for me" }]);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(seen[0], ["I'm also state chair"]);
+  assert.ok(seen.slice(1).flat().includes("and I have been the whole iter"), "the follow-up wake ran");
+  assert.ok(seen.slice(1).flat().includes("they're not stacking for me"), "the newest message was delivered");
+  assert.ok(seen.slice(1).flat().includes("I'm also state chair"), "a failed delivery is queued again, not dropped");
+  // A wake that ends with the newest message unanswered after a refusal is retried in 5 minutes.
+  const f = hostFixture({ script: () => [["post_reply", { text: "I'll check.", kind: "answer", basis: "no facts" }], ["finish", { next_step: "x", waits_on: "player" }]] });
+  await f.host.deliver(1913, [{ role: "player", at: new Date().toISOString(), text: "they're not stacking for me" }]);
+  const st = f.store.load(1913);
+  assert.equal(st.reminder.minutes, 5);
+  assert.match(st.reminder.reason, /newest message/);
+  assert.ok(rules.checkPost("Both bonuses count: 2 for National Vice Chair and 2 for State Chair.", { state: { ...S.emptyState(1), posts: [1, 2, 3, 4].map((i) => ({ at: new Date(Date.now() - i * 60000).toISOString(), kind: "answer", delivered: true, text: `post ${i}` })), lastHumanAt: new Date().toISOString() }, kind: "answer" }).problems.every((p) => p.rule !== "spam_cap"), "never blocked by the count when a person is owed a reply");
+  f.toolServer.close();
 });

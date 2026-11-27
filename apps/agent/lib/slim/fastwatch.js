@@ -107,11 +107,15 @@ function createTicketQueue({ limiter, run, urgentOf = () => false, log = () => {
   function start(n, events, opts) {
     const entry = { events: [...events], opts, started: false, buffer: null, bufferOpts: null };
     active.set(n, entry);
-    return limiter.run(() => { entry.started = true; return run(n, entry.events, entry.opts); }, { urgent: urgentOf(events) })
-      .catch((e) => log(`ticket ${n} deliver failed: ${e.message}`))
+    return limiter.run(() => { entry.started = true; return run(n, entry.events, entry.opts || {}); }, { urgent: urgentOf(events) })
+      .catch((e) => {
+        // Never drop messages: a failed delivery is queued again once with what it carried.
+        log(`ticket ${n} deliver failed: ${e.message}`);
+        if (!entry.retried) { entry.buffer = [...entry.events, ...(entry.buffer || [])]; entry.bufferOpts = entry.bufferOpts || entry.opts; entry.retried = true; }
+      })
       .finally(() => {
         active.delete(n);
-        if (entry.buffer) start(n, entry.buffer, entry.bufferOpts);
+        if (entry.buffer) start(n, entry.buffer, entry.bufferOpts || {});
       });
   }
   function deliver(n, events, opts) {
