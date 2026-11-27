@@ -46,7 +46,7 @@ function createSlimToolServer({ port = 0, log = () => {} } = {}) {
       const result = await t.handler(input || {});
       session.calls.push({ name, ms: Date.now() - started, ok: true });
       session.onCall?.({ name, input, result, ok: true });
-      if (name === "finish" && session.ctx.finished) {
+      if (session.ctx.finished && (name === "finish" || session.ctx.finishOnAny)) {
         session.completion = { version: 1, state: session.ctx.finished.state, summary: String(session.ctx.finished.summary).slice(0, 4000), acceptedAt: Date.now(), toolCalls: session.calls.length };
         for (const w of session.waiters) { w.writeHead(200, { "Content-Type": "application/json" }); w.end(JSON.stringify(session.completion)); }
         session.waiters.clear();

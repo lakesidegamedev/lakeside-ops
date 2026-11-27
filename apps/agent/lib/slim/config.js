@@ -48,6 +48,10 @@ function slimConfig(env = process.env) {
     // The moderators' channel: short neutral summaries from moderation tickets, nothing else.
     modChannel: env.KEIR_SLIM_MOD_CHANNEL || "",
     pollMs: Math.max(5000, Number(env.KEIR_SLIM_POLL_MS) || 20000),
+    // Public channels: notice "Keir" / "Keith" / @-mentions and make a conservative call (off with KEIR_SLIM_PUBLIC=off).
+    publicMentions: String(env.KEIR_SLIM_PUBLIC || "on").toLowerCase() !== "off",
+    guildId: env.KEIR_SLIM_GUILD_ID || "",
+    publicPollMs: Math.max(4000, Number(env.KEIR_SLIM_PUBLIC_POLL_MS) || 6000),
     // Fast pickup: how often to ask Discord whether a person wrote in an open ticket.
     fastPollMs: Math.max(2000, Number(env.KEIR_SLIM_FAST_POLL_MS) || 4000),
     maxConcurrentWakes: Math.max(1, Number(env.KEIR_SLIM_MAX_WAKES) || 3),
