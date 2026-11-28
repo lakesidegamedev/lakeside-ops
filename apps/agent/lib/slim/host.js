@@ -26,9 +26,13 @@ function formatEvents(events) {
     .join("\n");
 }
 
-/** An owner message meant for Keir: it names or mentions Keir, or asks a question. */
+/** Keir's Discord bot user, for @-mentions. */
+const KEIR_BOT_ID = process.env.KEIR_BOT_USER_ID || "1479984768194969663";
+
+/** An owner message meant for Keir: it names Keir or @-mentions Keir's bot. A bare question is not enough. */
 function addressedToKeir(text) {
-  return /\?|\bkeir\b|\bkeith\b|<@!?\d{15,22}>/i.test(String(text || ""));
+  const t = String(text || "");
+  return /\bkeir\b|\bkeith\b/i.test(t) || new RegExp(`<@!?${KEIR_BOT_ID}>`).test(t);
 }
 
 const TEAM_KINDS = new Set(["support_post", "staff_message", "status", "resolution", "fix", "finding", "heal_request", "reopen", "merge"]);

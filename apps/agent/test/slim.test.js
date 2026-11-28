@@ -972,9 +972,13 @@ test("an owner question is always answered: up to two re-wakes, never for an asi
   const { addressedToKeir } = require("../lib/slim/host");
   assert.equal(addressedToKeir("<@1479984768194969663> just run the exact totals. Is it just because of positions?"), true);
   assert.equal(addressedToKeir("yeah"), false);
+  assert.equal(addressedToKeir("nope"), false);
+  assert.equal(addressedToKeir("is that really fair?"), false);
+  assert.equal(addressedToKeir("<@123456789012345678> what do you think?"), false);
+  assert.equal(addressedToKeir("keith what are the totals"), true);
   // A wake that only records state and never posts (ticket 1913 at 05:48).
   const f = hostFixture({ script: () => [["update_state", { established: [{ fact: "totals worked out", source: "calc" }] }], ["finish", { next_step: "x", waits_on: "nothing" }]] });
-  await f.host.deliver(1913, [{ role: "owner", name: "egg3901", at: "2026-11-27T05:48:00Z", text: "just run the exact totals. Is it just because of positions?" }]);
+  await f.host.deliver(1913, [{ role: "owner", name: "egg3901", at: "2026-11-27T05:48:00Z", text: "<@1479984768194969663> just run the exact totals. Is it just because of positions?" }]);
   for (let i = 0; i < 20 && f.sessions.calls.length < 3; i++) await new Promise((r) => setTimeout(r, 20));
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(f.sessions.calls.length, 3, "the first wake plus two re-wakes, no more");
