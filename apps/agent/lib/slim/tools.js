@@ -126,9 +126,43 @@ function buildTools(ctx) {
           return refuse(check.problems);
         }
         const delivered = await ctx.adapters.post({ ticket: ctx.ticket, text: shaped, kind });
-        save(S.recordPost(st(), { text: shaped, kind, delivered: delivered?.delivered !== false }, ctx.now()));
+        save(S.recordPost(st(), { text: shaped, kind, delivered: delivered?.delivered !== false, channelId: delivered?.channelId, messageIds: delivered?.messageIds }, ctx.now()));
         capture("post", { text: shaped, postKind: kind, basis: String(basis).slice(0, 1000), delivery: delivered });
         return { posted: true, delivery: delivered };
+      }),
+    tool("edit_reply", "Rewrite one of your own earlier posts in this ticket in place, to correct a wrong statement or tighten it. which: 1 is your most recent post, 2 the one before, and so on. text: the full corrected post. Prefer this over posting a correction underneath. If the player already acted on the wrong version, also post one short line saying what changed.",
+      obj({ which: { type: "integer", minimum: 1, maximum: 20, description: "1 = your most recent post" }, text: str("the full corrected post"), reason: str("what was wrong") }, ["which", "text", "reason"]),
+      async ({ which, text, reason }) => {
+        const s = st();
+        const mine = s.posts.filter((p) => p.delivered !== false && p.kind !== "resolution");
+        const target = mine[mine.length - which];
+        if (!target) throw new Error(`You have ${mine.length} posts on this ticket.`);
+        const shaped = rules.shape(text);
+        const check = rules.checkPost(shaped, { ...ruleCtx(target.kind), editing: true });
+        const problems = check.ok ? [] : check.problems.filter((p) => p.rule !== "spam_cap");
+        if (problems.length) { ctx.ruleHits.push(...problems.map((p) => ({ ...p, tool: "edit_reply", at: new Date(ctx.now()).toISOString() }))); return refuse(problems); }
+        await ctx.adapters.editPost({ channelId: target.channelId, messageIds: target.messageIds, text: shaped });
+        const s2 = st();
+        const p2 = s2.posts.find((p) => p.at === target.at);
+        if (p2) { p2.text = shaped.slice(0, 2000); p2.editedAt = new Date(ctx.now()).toISOString(); if (p2.messageIds) p2.messageIds = p2.messageIds.slice(0, 1); }
+        save(s2);
+        capture("edit", { which, reason: String(reason).slice(0, 300), text: shaped });
+        return { edited: true };
+      }),
+    tool("delete_reply", "Delete one of your own earlier posts in this ticket that is wrong, duplicated or not for the player. which: 1 is your most recent post. If the player may have read and relied on it, post the correct answer as well.",
+      obj({ which: { type: "integer", minimum: 1, maximum: 20, description: "1 = your most recent post" }, reason: str("why it goes") }, ["which", "reason"]),
+      async ({ which, reason }) => {
+        const s = st();
+        const mine = s.posts.filter((p) => p.delivered !== false && p.kind !== "resolution");
+        const target = mine[mine.length - which];
+        if (!target) throw new Error(`You have ${mine.length} posts on this ticket.`);
+        await ctx.adapters.deletePost({ channelId: target.channelId, messageIds: target.messageIds });
+        const s2 = st();
+        const p2 = s2.posts.find((p) => p.at === target.at);
+        if (p2) { p2.delivered = false; p2.deletedAt = new Date(ctx.now()).toISOString(); p2.deletedReason = String(reason).slice(0, 300); }
+        save(s2);
+        capture("delete", { which, reason: String(reason).slice(0, 300) });
+        return { deleted: true };
       }),
     tool("resolve_ticket", "Close the ticket with a receipt the player reads. Only when the problem is dealt with AND the player is done: they confirmed it (quote them in player_confirmed), they asked to close (quote them in player_asked_to_close), or 24 hours passed after your last post with no word from them. After posting that a fix is live, set a 24 hour reminder and wait.",
       obj({ message: str("plain summary for the player"), actions: strList("what was done, in player words", 8), follow_up: str("what they should do next, if anything"), basis: str("the reads and receipts behind it"),

@@ -137,6 +137,25 @@ test("tools: post_reply posts once rules pass and records it", async () => {
   await assert.rejects(tools.post_reply.handler({ text: "x", kind: "answer", basis: "" }), /basis/);
 });
 
+test("tools: edit_reply and delete_reply change Keir's own posts in place", async () => {
+  const edits = [], deletes = [];
+  const { tools, store, ctx } = fakeCtx();
+  ctx.adapters.post = async () => ({ delivered: true, channelId: "c7", messageIds: ["m1", "m2"] });
+  ctx.adapters.editPost = async (a) => { edits.push(a); return { edited: true }; };
+  ctx.adapters.deletePost = async (a) => { deletes.push(a); return { deleted: true }; };
+  await tools.post_reply.handler({ text: "Your bank holds CA$880M.", kind: "answer", basis: "bank record" });
+  assert.deepEqual(store.load(7).posts[0].messageIds, ["m1", "m2"]);
+  const e = await tools.edit_reply.handler({ which: 1, text: "Your bank holds CA$860M on turn 229.", reason: "wrong figure" });
+  assert.equal(e.edited, true);
+  assert.deepEqual(edits[0], { channelId: "c7", messageIds: ["m1", "m2"], text: "Your bank holds CA$860M on turn 229." });
+  assert.equal(store.load(7).posts[0].text, "Your bank holds CA$860M on turn 229.");
+  const d = await tools.delete_reply.handler({ which: 1, reason: "not for the player" });
+  assert.equal(d.deleted, true);
+  assert.equal(deletes[0].channelId, "c7");
+  assert.equal(store.load(7).posts[0].delivered, false);
+  await assert.rejects(tools.delete_reply.handler({ which: 3, reason: "x" }), /posts on this ticket/);
+});
+
 test("tools: approvals record and the ticket waits on the owner", async () => {
   const { tools, store } = fakeCtx();
   await assert.rejects(tools.request_decision.handler({ question: "Cash?", options: ["Cash"], why: "x" }), /two to four/);

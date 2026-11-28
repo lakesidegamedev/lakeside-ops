@@ -26,7 +26,7 @@ function fakeDb(ticket) {
   return { collection: () => collection };
 }
 
-const base = { ticketNumber: 9, key: "progress:1", kind: "progress", deliveryMode: "reply", message: LONG, partGapMs: 0 };
+const base = { ticketNumber: 9, key: "progress:1", kind: "progress", deliveryMode: "reply", message: LONG, partGapMs: 0, replySplitOptions: { single: 220 } };
 
 test("a long reply is posted as several ordered messages and recorded as one update", async () => {
   const ticket = { _id: "t", ticketNumber: 9, discordChannelId: "c1", publicUpdates: [] };
