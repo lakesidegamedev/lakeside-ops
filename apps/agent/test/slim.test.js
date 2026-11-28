@@ -378,11 +378,17 @@ test("owner cards: plain copy, recommended first, the id only in button ids, cli
   assert.doesNotMatch(visible, /decision-d3f787d6b5/);
   assert.equal(card.embeds[0].title, payload.question);
   assert.match(card.embeds[0].fields[0].name, /^A\. Allow once researched \(recommended\)$/);
-  assert.deepEqual(card.components[0].components.map((b) => b.custom_id), ["keir_decision:choose1:decision-d3f787d6b5", "keir_decision:choose2:decision-d3f787d6b5"]);
+  // The game bot (adhd-bot src/utils/keirDecision.ts) accepts only this shape; anything else times out in Discord.
+  const BOT_ID = /^keir_decision:(approve|reject|explain|choose[1-6]):([a-f0-9]{12})$/;
+  const bid = require("../lib/slim/ownercopy").buttonId("decision-d3f787d6b5");
+  assert.deepEqual(card.components[0].components.map((b) => b.custom_id), [`keir_decision:choose1:${bid}`, `keir_decision:choose2:${bid}`]);
+  for (const row of card.components) for (const btn of row.components) assert.match(btn.custom_id, BOT_ID);
   const approval = { kind: "decision", payload };
   assert.deepEqual(oc.verdictFrom(`${card.content}\n\n**Decision:** 🔹 Selected 1 by <@333052320252297216> <t:1795571366:R>`, card.content, approval), { actor: "333052320252297216", status: "answered", text: "A) Allow once researched" });
+  const pbid = oc.buttonId("promote-0123456789");
   const promote = oc.renderCard({ ticket: 1, kind: "promote", id: "promote-0123456789", payload: { what: "Researched methods work right away", why: "Fix tested.", risk: "Only player companies.", pr: "https://github.com/o/r/pull/1" } });
-  assert.deepEqual(promote.components[0].components.map((b) => b.custom_id || b.url), ["keir_decision:approve:promote-0123456789", "keir_decision:reject:promote-0123456789", "keir_decision:explain:promote-0123456789", "https://github.com/o/r/pull/1"]);
+  assert.deepEqual(promote.components[0].components.map((b) => b.custom_id || b.url), [`keir_decision:approve:${pbid}`, `keir_decision:reject:${pbid}`, `keir_decision:explain:${pbid}`, "https://github.com/o/r/pull/1"]);
+  for (const btn of promote.components[0].components) if (btn.custom_id) assert.match(btn.custom_id, BOT_ID);
   assert.equal(oc.verdictFrom(`${promote.content}\n\n**Decision:** ✅ Approved by <@333052320252297216>`, promote.content, null).status, "approved");
   assert.equal(oc.verdictFrom(`${promote.content}\n\n**Decision:** ❌ Rejected by <@333052320252297216>: not yet`, promote.content, null).text, "not yet");
   assert.equal(oc.verdictFrom("someone else's text", promote.content, null), null);

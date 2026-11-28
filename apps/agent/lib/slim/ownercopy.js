@@ -37,7 +37,17 @@ const optionLabel = (o) => (typeof o === "string" ? o : o?.label || "");
 const optionDetail = (o) => (typeof o === "string" ? "" : o?.detail || "");
 
 /** The Discord message for an approval request: { content, embeds, components }. */
+/**
+ * The id in a button's custom_id. The game bot accepts only 12 hex characters there
+ * (keir_decision:<verb>:<12 hex>) and ignores anything else, so Discord shows "didn't respond".
+ * The bot only echoes it back; the answer is read from the card's text, so a stable hash is enough.
+ */
+function buttonId(id) {
+  return require("node:crypto").createHash("sha256").update(String(id)).digest("hex").slice(0, 12);
+}
+
 function renderCard({ ticket, kind, id, payload }) {
+  const bid = buttonId(id);
   const title = kind === "decision" ? payload.question : kind === "promote" ? `Put this fix live? ${payload.what}` : `Pay ${payload.amount} to ${payload.recipient}?`;
   const content = `**Keir needs you** on ticket ${ticket}`;
   const fields = [];
@@ -52,13 +62,13 @@ function renderCard({ ticket, kind, id, payload }) {
   const components = [];
   if (kind === "decision") {
     const opts = payload.options || [];
-    for (let i = 0; i < opts.length; i += 3) components.push({ type: 1, components: opts.slice(i, i + 3).map((o, j) => ({ type: 2, style: i + j === 0 ? 1 : 2, label: `${LETTER(i + j)}. ${optionLabel(o)}`.slice(0, 80), custom_id: `keir_decision:choose${i + j + 1}:${id}` })) });
-    components.push({ type: 1, components: [{ type: 2, style: 2, label: "Ask a question / other answer", custom_id: `keir_decision:explain:${id}` }] });
+    for (let i = 0; i < opts.length; i += 3) components.push({ type: 1, components: opts.slice(i, i + 3).map((o, j) => ({ type: 2, style: i + j === 0 ? 1 : 2, label: `${LETTER(i + j)}. ${optionLabel(o)}`.slice(0, 80), custom_id: `keir_decision:choose${i + j + 1}:${bid}` })) });
+    components.push({ type: 1, components: [{ type: 2, style: 2, label: "Ask a question / other answer", custom_id: `keir_decision:explain:${bid}` }] });
   } else {
     const row = [
-      { type: 2, style: 3, label: kind === "promote" ? "Put it live" : "Approve payment", custom_id: `keir_decision:approve:${id}` },
-      { type: 2, style: 4, label: "Decline", custom_id: `keir_decision:reject:${id}` },
-      { type: 2, style: 2, label: "Ask a question", custom_id: `keir_decision:explain:${id}` },
+      { type: 2, style: 3, label: kind === "promote" ? "Put it live" : "Approve payment", custom_id: `keir_decision:approve:${bid}` },
+      { type: 2, style: 4, label: "Decline", custom_id: `keir_decision:reject:${bid}` },
+      { type: 2, style: 2, label: "Ask a question", custom_id: `keir_decision:explain:${bid}` },
     ];
     if (kind === "promote" && /^https:\/\/github\.com\//.test(String(payload.pr || ""))) row.push({ type: 2, style: 5, label: "See the change", url: payload.pr });
     components.push({ type: 1, components: row });
@@ -96,4 +106,4 @@ function similarity(a, b) {
   return common / Math.min(x.size, y.size);
 }
 
-module.exports = { checkOwnerCopy, renderCard, verdictFrom, similarity, optionLabel, VERDICT };
+module.exports = { checkOwnerCopy, renderCard, buttonId, verdictFrom, similarity, optionLabel, VERDICT };
