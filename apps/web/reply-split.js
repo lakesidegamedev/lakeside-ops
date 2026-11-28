@@ -6,7 +6,7 @@
 // It only turns text into an ordered list; it knows nothing about tickets.
 //
 // Rules:
-//  - a reply that already fits a chat line (SINGLE_MAX) stays one message;
+//  - a reply that fits one Discord message (SINGLE_MAX) stays one message (owner 2026-11-28: one formatted reply, not a stream of one-liners);
 //  - paragraphs are the first boundary; a paragraph over CHUNK_TARGET is cut at
 //    sentence ends, never mid-sentence unless one sentence alone is too long;
 //  - fenced code, and a list with the line that introduces it, stay in one
@@ -14,7 +14,7 @@
 //  - at most MAX_CHUNKS messages: the tail is merged rather than dropped;
 //  - no message passes DISCORD_LIMIT; text is never lost or reordered.
 
-const SINGLE_MAX = 220;
+const SINGLE_MAX = 1900;
 const CHUNK_TARGET = 200;
 const MAX_CHUNKS = 4;
 const DISCORD_LIMIT = 1900;
@@ -78,7 +78,20 @@ function paragraphChunks(text) {
 function splitReply(text, { single = SINGLE_MAX, maxChunks = MAX_CHUNKS, limit = DISCORD_LIMIT } = {}) {
   const whole = String(text || "").trim();
   if (!whole) return [];
-  if (whole.length <= single && !FENCE.test(whole)) return [whole];
+  if (whole.length <= single && (single >= limit || !FENCE.test(whole))) return [whole];
+  // Default (one formatted reply): only an over-limit reply is split, packing whole
+  // paragraphs, lists and code blocks into as few messages as fit.
+  if (single >= limit) {
+    const packed = [];
+    for (const b of blocks(whole)) {
+      for (const piece of hardCut(b.text, limit)) {
+        const prev = packed.at(-1);
+        if (prev && prev.length + 2 + piece.length <= limit) packed[packed.length - 1] = `${prev}\n\n${piece}`;
+        else packed.push(piece);
+      }
+    }
+    return packed.filter((c) => c.trim());
+  }
   let chunks = [];
   for (const b of blocks(whole)) {
     if (b.kind === "keep") chunks.push(b.text);

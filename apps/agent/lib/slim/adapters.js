@@ -29,6 +29,12 @@ function shared({ mcp }) {
 }
 
 /** Live: real posts, real PRs, real approval requests. Used only in live mode. */
+async function discordApi(method, route, body) {
+  const r = await fetch(`https://discord.com/api/v10${route}`, { method, headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`, ...(body ? { "Content-Type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000) });
+  if (!r.ok) throw new Error(`discord ${method} ${r.status}`);
+  return r.status === 204 ? null : r.json();
+}
+
 function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args, o) => run("gh", args, o), git = (args, o) => run("git", args, o) }) {
   return {
     ...shared({ mcp }),
@@ -48,7 +54,22 @@ function createLiveAdapters({ mcp, cfg, ticketCheckout, notifyOwner, gh = (args,
     },
     async post({ ticket, text }) {
       const r = await mcp.call("support", "support_public_update", { kind: "ticket", number: Number(ticket), message: text, deliver: true, update_kind: "progress", delivery_mode: "reply" }, true);
-      return { delivered: r?.delivery?.status !== "failed", status: r?.delivery?.status || null };
+      const d = r?.delivery?.delivery || r?.delivery || {};
+      const parts = Array.isArray(d.parts) ? d.parts.map((p) => p.id).filter(Boolean) : [];
+      return { delivered: r?.delivery?.status !== "failed", status: r?.delivery?.status || null, channelId: d.channelId || d.channel || null, messageIds: parts.length ? parts : (d.messageId ? [d.messageId] : []) };
+    },
+    /** Rewrite one of Keir's own posted messages in place. Extra parts of a split post are removed. */
+    async editPost({ channelId, messageIds, text }) {
+      if (!channelId || !messageIds?.length) throw new Error("That post has no message on record to edit.");
+      await discordApi("PATCH", `/channels/${channelId}/messages/${messageIds[0]}`, { content: String(text).slice(0, 1990) });
+      for (const id of messageIds.slice(1)) await discordApi("DELETE", `/channels/${channelId}/messages/${id}`).catch(() => {});
+      return { edited: true };
+    },
+    /** Delete one of Keir's own posted messages (every part). */
+    async deletePost({ channelId, messageIds }) {
+      if (!channelId || !messageIds?.length) throw new Error("That post has no message on record to delete.");
+      for (const id of messageIds) await discordApi("DELETE", `/channels/${channelId}/messages/${id}`).catch((e) => { if (!/404/.test(e.message)) throw e; });
+      return { deleted: true };
     },
     async resolve({ ticket, message, actions, followUp }) {
       const r = await mcp.call("support", "support_resolve", { number: Number(ticket), message, actions, ...(followUp ? { followUp } : {}), source: "agent", attribution: { agent: "keir", evidence: "slim Keir session" } }, true);
@@ -254,7 +275,9 @@ function createReplayAdapters({ mcp, ticket, getCursor, history }) {
       if (server === "ops-knowledge") throw new Error("That index is not available right now; read the code in your checkout with the shell instead.");
       return mcp.call(server, tool, args, false);
     },
-    post: async () => ({ delivered: true, status: "captured" }),
+    post: async () => ({ delivered: true, status: "captured", channelId: "replay", messageIds: ["replay"] }),
+    editPost: async () => ({ edited: true, captured: true }),
+    deletePost: async () => ({ deleted: true, captured: true }),
     resolve: async () => ({ delivered: true, status: "captured" }),
     approval: async () => ({ recorded: true, sent: false, captured: true }),
     openPr: async ({ ticket: n }) => ({ opened: true, url: `https://example.invalid/replay/ticket-${n}/pull`, captured: true }),

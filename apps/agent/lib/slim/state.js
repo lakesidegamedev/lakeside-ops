@@ -123,7 +123,7 @@ function addReceipt(state, kind, receipt, now = Date.now()) {
 
 function recordPost(state, post, now = Date.now()) {
   const s = structuredClone(state);
-  s.posts = tail([...s.posts, { at: new Date(now).toISOString(), kind: post.kind || "answer", text: short(post.text, 2000), delivered: post.delivered ?? null }], CAP.posts);
+  s.posts = tail([...s.posts, { at: new Date(now).toISOString(), kind: post.kind || "answer", text: short(post.text, 2000), delivered: post.delivered ?? null, ...(post.channelId ? { channelId: post.channelId } : {}), ...(post.messageIds?.length ? { messageIds: post.messageIds } : {}) }], CAP.posts);
   s.updatedAt = new Date(now).toISOString();
   return s;
 }

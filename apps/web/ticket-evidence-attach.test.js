@@ -180,15 +180,23 @@ test("the report link needs explicit configuration and a page in the store that 
   } finally { process.env.EVIDENCE_PUBLIC_BASE = prev; }
 });
 
-test("a long answer is split as usual; the chart and link ride the first message only", async () => {
+test("a long answer split into parts carries the chart and link on the first message only", async () => {
   const dir = store(), t = ticketRow(), r = recorder();
   const message = "Your California plants were mothballed at turn 675 and still make nothing. That is why revenue fell.\n\nReactivating them restarts output the next turn. The loss counter does not reset, so expect one more weak turn before it clears.\n\nCheck your sector page after the next turn ends.";
-  await maybePostTicketChannelUpdate(fakeDb(t), base(dir, r, { message }));
+  await maybePostTicketChannelUpdate(fakeDb(t), base(dir, r, { message, replySplitOptions: { single: 220 } }));
   assert.ok(r.sent.length >= 2);
   assert.equal(r.sent.filter((s) => s.file).length, 1); assert.equal(r.sent[0].file, true);
   assert.match(r.sent[0].content, /support\/evidence/);
   assert.ok(r.sent.slice(1).every((s) => !/support\/evidence/.test(s.content)));
   assert.equal(new Set(r.sent.map((s) => s.nonce)).size, r.sent.length);
+});
+
+test("a normal answer goes as one message with the chart attached", async () => {
+  const dir = store(), t = ticketRow(), r = recorder();
+  const message = "Your California plants were mothballed at turn 675 and still make nothing. That is why revenue fell.\n\nReactivating them restarts output the next turn.";
+  await maybePostTicketChannelUpdate(fakeDb(t), base(dir, r, { message }));
+  assert.equal(r.sent.length, 1);
+  assert.equal(r.sent[0].file, true);
 });
 
 test("card updates never carry evidence", async () => {

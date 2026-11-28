@@ -470,8 +470,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * or a later failure keeps the record. Returns the usual post result with
  * `id` = first message and `parts` = every delivered part.
  */
-async function postReplyParts(channelId, content, { post, nonceBase, done = [], gapMs = replySplit.GAP_MS, onPart, pause = sleep, components, attach = null, reference = null } = {}) {
-  const chunks = replySplit.splitReply(content);
+async function postReplyParts(channelId, content, { post, nonceBase, done = [], gapMs = replySplit.GAP_MS, onPart, pause = sleep, components, attach = null, reference = null, split = undefined } = {}) {
+  const chunks = replySplit.splitReply(content, split);
   const parts = done.filter((p) => p && Number.isInteger(p.index) && p.index < chunks.length).map((p) => ({ index: p.index, id: p.id || null }));
   let channel = channelId;
   let evidence = null;
@@ -590,6 +590,7 @@ async function maybePostTicketChannelUpdate(db, {
   deliveryMode = "card",
   ticketOnly = false,
   partGapMs = replySplit.GAP_MS,
+  replySplitOptions = undefined,
   stripRows = feedbackRow.stripOthers,
   evidence = null,
   replyTo = null,
@@ -731,6 +732,7 @@ async function maybePostTicketChannelUpdate(db, {
         nonceBase: `${ticketNumber}:${updateKey}`,
         done: doneParts,
         gapMs: partGapMs,
+        split: replySplitOptions,
         components: feedbackRow.row(),
         attach,
         reference,
